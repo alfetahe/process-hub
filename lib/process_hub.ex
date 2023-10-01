@@ -557,9 +557,9 @@ defmodule ProcessHub do
   period, the function will return `{:error, term()}`.
 
   ## Example
-    iex> ref = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
-    iex> ProcessHub.await(ref)
-    {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
+      iex> ref = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
+      iex> ProcessHub.await(ref)
+      {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
   @spec await(function()) :: term()
   def await(init_func) when is_function(init_func) do
