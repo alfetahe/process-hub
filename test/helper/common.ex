@@ -100,7 +100,7 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def sync_base_test(%{hub_id: hub_id} = _context, child_specs, type) do
+  def sync_base_test(%{hub_id: hub_id} = _context, child_specs, type, opts \\ []) do
     case type do
       :add ->
         [{:start_children, Hook.registry_pid_inserted(), "Child add timeout.", child_specs}]
@@ -109,15 +109,21 @@ defmodule Test.Helper.Common do
         child_ids = Enum.map(child_specs, & &1.id)
         [{:stop_children, Hook.registry_pid_removed(), "Child remove timeout.", child_ids}]
     end
-    |> sync_type_exec(hub_id)
+    |> sync_type_exec(hub_id, opts)
   end
 
-  def sync_type_exec(actions, hub_id) do
+  def sync_type_exec(actions, hub_id, opts) do
     Enum.each(actions, fn {function_name, hook_key, timeout_msg, children} ->
       apply(ProcessHub, function_name, [hub_id, children])
 
+      message_count =
+        case Keyword.get(opts, :scope, :local) do
+          :local -> length(children)
+          :global -> length(children) * length(Node.list())
+        end
+
       Bag.receive_multiple(
-        length(children),
+        message_count,
         hook_key,
         error_msg: timeout_msg
       )
@@ -169,7 +175,7 @@ defmodule Test.Helper.Common do
        Enum.member?(opts, :compare_started)}
     ]
 
-    sync_type_exec(actions, test_nodes, hub_id)
+    sync_type_exec(actions, test_nodes, hub_id, opts)
   end
 
   def trigger_periodc_sync(%{hub_id: hub_id, peer_nodes: nodes} = context, child_specs, :add) do
@@ -239,7 +245,7 @@ defmodule Test.Helper.Common do
     )
   end
 
-  defp sync_type_exec(actions, test_nodes, hub_id) do
+  defp sync_type_exec(actions, test_nodes, hub_id, _opts) do
     Enum.each(actions, fn {function_name, hook_key, error_msg, children, compare_started} ->
       Enum.each(children, fn child_data ->
         apply(ProcessHub, function_name, [hub_id, child_data])

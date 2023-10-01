@@ -1,5 +1,8 @@
 # ProcessHub
 
+![example workflow](https://github.com/alfetahe/process-hub/actions/workflows/elixir.yml/badge.svg)  [![hex.pm version](https://img.shields.io/hexpm/v/coverex.svg?style=flat)](https://hex.pm/packages/process_hub)
+
+
 ## Table of Contents
 <!-- TOC -->
 * [Description](#description)

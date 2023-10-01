@@ -213,17 +213,21 @@ defmodule ProcessHub do
 
   ## Distribution Strategy
   ProcessHub uses consistent hashing to distribute processes. When the cluster is updated, the
-  hash ring is recalculated. The recalculation is done in a way that each node is assigned a unique hash value, and they form a **hash ring**. Each node in the cluster keeps track of the ProcessHub cluster and updates its local hash ring accordingly.
+  hash ring is recalculated. The recalculation is done in a way that each node is assigned a unique
+  hash value, and they form a **hash ring**. Each node in the cluster keeps track of the ProcessHub
+  cluster and updates its local hash ring accordingly.
 
   To find the node that the process belongs to, the system will use the hash ring to calculate
   the hash value of the process ID (`t:child_id/0`) and assign it to the node with the closest hash value.
 
   When the cluster is updated and the hash ring is recalculated, it does not mean that all
-  processes will be shuffled. Only the processes that are affected by the change will be redistributed. This is done to avoid unnecessary process migrations.
+  processes will be shuffled. Only the processes that are affected by the change will be
+  redistributed. This is done to avoid unnecessary process migrations.
 
   For example, when a node leaves the cluster, only the processes that were running on that node
   will be redistributed. The rest of the processes will stay on the same node. When a new node
-  joins the cluster, only some of the processes will be redistributed to the new node, and the rest will stay on the same node.
+  joins the cluster, only some of the processes will be redistributed to the new node, and the
+  rest will stay on the same node.
 
   > The hash ring implementation **does not guarantee** that all processes will always be
   > evenly distributed, but it does its best to distribute them as evenly as possible.
@@ -337,7 +341,8 @@ defmodule ProcessHub do
   option `true` to avoid any unexpected behavior where `start_child/3` or `start_children/3`
   call timeout but eventually the calling process receives the start responses later. These messages
   will stay in that process's mailbox, and when the same process calls start child functions again with the
-  same `child_id()`s, it will receive the old responses. The default is `true`. This option should be used with `async_wait: true`.
+  same `child_id()`s, it will receive the old responses.This option should be used with `async_wait: true`.
+   The default is `true`.
   - `:check_existing` - is optional and is used to define whether the function should check if the children
   are already started. The default is `true`.
   """
@@ -552,9 +557,9 @@ defmodule ProcessHub do
   period, the function will return `{:error, term()}`.
 
   ## Example
-    iex> ref = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
-    iex> ProcessHub.await(ref)
-    {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
+      iex> ref = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
+      iex> ProcessHub.await(ref)
+      {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
   @spec await(function()) :: term()
   def await(init_func) when is_function(init_func) do
@@ -651,8 +656,8 @@ defmodule ProcessHub do
   to be part of the same cluster.
 
   ## Example
-  iex> ProcessHub.nodes(:my_hub, [:include_local])
-  [:remote_node]
+      iex> ProcessHub.nodes(:my_hub, [:include_local])
+      [:remote_node]
   """
   @spec nodes(hub_id(), [:include_local] | nil) :: [node()]
   defdelegate nodes(hub_id, opts \\ []), to: Cluster

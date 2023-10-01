@@ -79,14 +79,14 @@ defmodule Test.IntegrationTest do
   @tag listed_hooks: [
          {Hook.cluster_join(), :local},
          {Hook.registry_pid_inserted(), :local},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.registry_pid_removed(), :local}
        ]
   test "gossip children starting and removing", %{hub_id: hub_id} = context do
     child_count = 100
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Starts children on all nodes.
-    Common.sync_base_test(context, child_specs, :add)
+    Common.sync_base_test(context, child_specs, :add, scope: :local)
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
@@ -98,7 +98,7 @@ defmodule Test.IntegrationTest do
     Common.validate_sync(context)
 
     # Stops children on all nodes.
-    Common.sync_base_test(context, child_specs, :rem)
+    Common.sync_base_test(context, child_specs, :rem, scope: :local)
 
     # Tests children removing and syncing.
     Common.validate_sync(context)
