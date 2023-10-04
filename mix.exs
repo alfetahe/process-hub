@@ -5,7 +5,7 @@ defmodule ProcessHub.MixProject do
     [
       app: :process_hub,
       version: "0.1.0-alpha",
-      elixir: "~> 1.14.0",
+      elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),

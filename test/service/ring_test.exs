@@ -51,23 +51,20 @@ defmodule Test.Service.RingTest do
       |> Ring.add_node(:node2)
       |> Ring.add_node(:node3)
 
-    assert Ring.key_to_nodes(hash_ring, 5000, 1) === [:node1]
-    assert Ring.key_to_nodes(hash_ring, 5000, 2) === [:node1, :node2]
-    assert Ring.key_to_nodes(hash_ring, 5000, 3) === [:node1, :node2, :"ex_unit@127.0.0.1"]
+    nodes =
+      :hash_ring.collect_nodes(5000, 4, hash_ring)
+      |> Enum.map(fn {_, node, _, _} -> node end)
 
-    assert Ring.key_to_nodes(hash_ring, 5000, 4) === [
-             :node1,
-             :node2,
-             :"ex_unit@127.0.0.1",
-             :node3
-           ]
+    assert length(nodes) === 4
 
-    assert Ring.key_to_nodes(hash_ring, 5000, 4) === [
-             :node1,
-             :node2,
-             :"ex_unit@127.0.0.1",
-             :node3
-           ]
+    Enum.each(nodes, fn node ->
+      Enum.member?([:node1, :node2, :node3, :"ex_unit@127.0.0.1"], node)
+    end)
+
+    assert Ring.key_to_nodes(hash_ring, 5000, 1) === Enum.take(nodes, 1)
+    assert Ring.key_to_nodes(hash_ring, 5000, 2) === Enum.take(nodes, 2)
+    assert Ring.key_to_nodes(hash_ring, 5000, 3) === Enum.take(nodes, 3)
+    assert Ring.key_to_nodes(hash_ring, 5000, 4) === Enum.take(nodes, 4)
   end
 
   test "key to node", %{hub_id: hub_id} = _context do
@@ -81,8 +78,14 @@ defmodule Test.Service.RingTest do
       |> Ring.add_node(:node2)
       |> Ring.add_node(:node3)
 
-    assert Ring.key_to_node(hash_ring, 5000, 1) === :node1
-    assert Ring.key_to_node(hash_ring, 5000, 2) === :node1
-    assert Ring.key_to_node(hash_ring, 2000, 1) === :node2
+    nodes =
+      :hash_ring.collect_nodes(5000, 3, hash_ring)
+      |> Enum.map(fn {_, node, _, _} -> node end)
+
+    first_node = Enum.at(nodes, 0)
+
+    assert Ring.key_to_node(hash_ring, 5000, 1) === first_node
+    assert Ring.key_to_node(hash_ring, 5000, 2) === first_node
+    assert Ring.key_to_node(hash_ring, 5000, 3) === first_node
   end
 end

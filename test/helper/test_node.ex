@@ -16,13 +16,13 @@ defmodule Test.Helper.TestNode do
     #     end
     #   end)
 
-    args = '-loader inet -hosts 127.0.0.1 -setcookie "#{:erlang.get_cookie()}"'
+    args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
 
     nodes =
       Enum.map(1..amount, fn idx ->
         {:ok, pid, name} =
           :peer.start_link(%{
-            host: '127.0.0.1',
+            host: ~c"127.0.0.1",
             name: :"#{prefix}#{idx}",
             args: [args]
           })

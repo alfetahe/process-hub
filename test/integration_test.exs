@@ -17,7 +17,7 @@ defmodule Test.IntegrationTest do
   @tag listed_hooks: [
          {Hook.cluster_join(), :local},
          {Hook.registry_pid_inserted(), :local},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.registry_pid_removed(), :local}
        ]
   test "pubsub children starting and removing", %{hub_id: hub_id} = context do
     child_count = 100

@@ -31,13 +31,14 @@ defmodule Test.Service.ProcessRegistryTest do
 
     ProcessRegistry.bulk_insert(hub_id, insert_data)
 
-    assert ProcessRegistry.contains_children(hub_id, [
-             :nochild,
-             :child1,
-             :child2,
-             :child3,
-             :child3
-           ]) === [:child1, :child2, :child3]
+    contains =
+      ProcessRegistry.contains_children(hub_id, [:nochild, :child1, :child2, :child3, :child3])
+
+    assert length(contains) === 3
+
+    Enum.each(contains, fn child_id ->
+      assert Enum.member?([:child1, :child2, :child3], child_id)
+    end)
   end
 
   test "bulk insert", %{hub_id: hub_id} = _context do

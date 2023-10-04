@@ -433,7 +433,7 @@ defmodule ProcessHub do
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
-          (() -> {:ok, list})
+          (-> {:ok, list})
           | {:error, :no_children | {:already_started, [atom | binary, ...]}}
           | {:ok, :start_initiated}
   def start_child(hub_id, child_spec, opts \\ []) do
@@ -452,7 +452,7 @@ defmodule ProcessHub do
   > especially when the number of children is large.
   """
   @spec start_children(hub_id(), [child_spec()], init_opts()) ::
-          (() -> {:ok, list})
+          (-> {:ok, list})
           | {:ok, :start_initiated}
           | {:error,
              :no_children
@@ -480,7 +480,7 @@ defmodule ProcessHub do
       {:ok, {:my_child, [:mynode]}}
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
-          (() -> {:ok, list}) | {:ok, :stop_initiated}
+          (-> {:ok, list}) | {:ok, :stop_initiated}
   def stop_child(hub_id, child_id, opts \\ []) do
     stop_children(hub_id, [child_id], Keyword.put(opts, :return_first, true))
   end
@@ -497,7 +497,7 @@ defmodule ProcessHub do
   > especially when stopping a large number of child processes.
   """
   @spec stop_children(hub_id(), [child_id()], stop_opts()) ::
-          (() -> {:ok, list}) | {:ok, :stop_initiated} | {:error, list}
+          (-> {:ok, list}) | {:ok, :stop_initiated} | {:error, list}
   def stop_children(hub_id, child_ids, opts \\ []) do
     Distributor.stop_children(hub_id, child_ids, default_init_opts(opts))
   end
