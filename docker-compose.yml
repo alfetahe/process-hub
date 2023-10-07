@@ -2,7 +2,7 @@ version: "3.2"
 services: 
   app:
     image: elixir:1.14.5-otp-25
-    container_name: ccc
+    container_name: process_hub
     tty: true
     working_dir: '/app'
     user: 1000:1000
