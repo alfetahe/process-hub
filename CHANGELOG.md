@@ -9,6 +9,7 @@ Includes minor bugfixes, test fixes and documentation updates.
 ### Added
 - Added GitHub Actions for automated testing.
 - Made sure that `ProcessHub` is compatible with Elixir 1.13-1.15.
+- Added example usage section to the documentation.
 
 ### Changed
 - Updated `ProcessHub` documentation by adding a list of all available strategies.
