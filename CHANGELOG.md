@@ -1,7 +1,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.1.1-alpha - yyyy-mm-dd
+## v0.1.1-alpha - 2023-10-07
 
 Elixir 1.13-1.15 support added.
 Includes minor bugfixes, test fixes and documentation updates.
