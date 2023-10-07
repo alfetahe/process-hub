@@ -104,9 +104,9 @@ defmodule ProcessHubTest do
 
     assert ProcessHub.stop_children(hub_id, [:child2]) === {:ok, :stop_initiated}
 
-    assert ProcessHub.stop_children(hub_id, [:child1], async_wait: true, timeout: 1000)
+    assert ProcessHub.stop_children(hub_id, [:child_none], async_wait: true, timeout: 1000)
            |> ProcessHub.await() ===
-             {:error, [child1: [{node(), {:error, :not_found}}]]}
+             {:error, [child_none: [{node(), {:error, :not_found}}]]}
 
     assert ProcessHub.stop_children(hub_id, [:child3], async_wait: true, timeout: 1000)
            |> ProcessHub.await() === {:ok, [child3: [node()]]}
