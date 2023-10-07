@@ -102,7 +102,7 @@ defmodule ProcessHub.Handler.Synchronization do
         end)
 
       if length(updated_data) > 0 do
-        ProcessRegistry.bulk_insert(args.hub_id, updated_data)
+        ProcessRegistry.bulk_insert(args.hub_id, Map.new(updated_data))
       end
     end
 
