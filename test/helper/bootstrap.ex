@@ -1,3 +1,6 @@
+# Required for Elixir < 1.13
+ExUnit.start()
+
 defmodule Test.Helper.Bootstrap do
   alias Test.Helper.TestNode
   alias ProcessHub.Constant.Hook

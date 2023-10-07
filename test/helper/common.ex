@@ -1,3 +1,6 @@
+# Required for Elixir < 1.13
+ExUnit.start()
+
 defmodule Test.Helper.Common do
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Utility.Name
