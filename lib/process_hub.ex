@@ -705,7 +705,7 @@ defmodule ProcessHub do
   where the child is started, and the second element is the `pid()` of the started child.
 
   ## Example
-      iex> {} = {_child_spec, _node_pid_tuples} = ProcessHub.child_info(:my_hub, :my_child)
+      iex> {} = {_child_spec, _node_pid_tuples} = ProcessHub.child_lookup(:my_hub, :my_child)
       {%{id: :my_child, start: {MyProcess, :start_link, []}}, [{:mynode, #PID<0.123.0>}]}
   """
   @spec child_lookup(hub_id(), child_id()) :: {child_spec(), [{node(), pid()}]} | nil
