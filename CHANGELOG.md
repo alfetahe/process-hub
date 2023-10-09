@@ -20,3 +20,14 @@ Includes minor bugfixes, test fixes and documentation updates.
 - Fixed `ProcessHub` await/1 function example code formatting.
 - Fixed tests for elixir 1.15 & OTP 26
 - Fixed test case which was failing in some cases due to async call being executed before.
+
+
+## v0.1.2-alpha - YYYY-MM-DD
+
+{TEXT}
+
+### Added
+
+### Changed
+
+### Fixed
