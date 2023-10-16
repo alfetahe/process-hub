@@ -172,9 +172,9 @@ defmodule ProcessHubTest do
   end
 
   test "child_spec" do
-    assert ProcessHub.child_spec([]) === %{
-             id: ProcessHub,
-             start: {ProcessHub.Initializer, :start_link, [[]]},
+    assert ProcessHub.child_spec(%{hub_id: :my_hub}) === %{
+             id: :my_hub,
+             start: {ProcessHub.Initializer, :start_link, [%{hub_id: :my_hub}]},
              type: :supervisor
            }
   end

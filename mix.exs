@@ -15,7 +15,7 @@ defmodule ProcessHub.MixProject do
       package: [
         files: ~w(lib .formatter.exs mix.exs README* LICENSE*),
         licenses: ["GPL-3.0"],
-        links: %{"GitHub" => "https://github.com/alfetahe/process-hub"},
+        links: %{"GitHub" => "https://github.com/alfetahe/process-hub"}
       ],
       docs: [
         main: "ProcessHub",

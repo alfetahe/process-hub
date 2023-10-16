@@ -24,10 +24,14 @@ Includes minor bugfixes, test fixes and documentation updates.
 
 ## v0.1.2-alpha - YYYY-MM-DD
 
-{TEXT}
+Contains minor bugfixes and improvements.
+
+### Changed
+- `ProcessHub.child_spec/1` switched static `ProcessHub` id with dynamic child id.
+- Improved existing unit tests.
 
 ### Added
 
-### Changed
-
 ### Fixed
+- Added partition mode check ups before process startup or stopping. This can prevent some errors
+where node moves to partition mode before the process starts or stops.

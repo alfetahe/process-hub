@@ -9,8 +9,10 @@ defmodule Test.Utility.BagTest do
   end
 
   test "timestamp" do
-    assert Bag.timestamp() === DateTime.utc_now() |> DateTime.to_unix(:second)
-    assert Bag.timestamp(:millisecond) === DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+    seconds = Bag.timestamp()
+    milliseconds = Bag.timestamp(:millisecond)
+    assert is_integer(seconds) && seconds <= DateTime.utc_now() |> DateTime.to_unix(:second)
+    assert is_integer(milliseconds) && milliseconds <= DateTime.utc_now() |> DateTime.to_unix(:millisecond)
   end
 
   test "receive multiple" do

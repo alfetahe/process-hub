@@ -218,7 +218,7 @@ defmodule ProcessHub do
         },
         # Configure the partition tolerance strategy.
         partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.StaticQuorum{
-          quorum_size: 3
+          quorum_size: 2
         }
       }}
     end
@@ -669,14 +669,14 @@ defmodule ProcessHub do
   @doc """
   Returns the child specification for the `ProcessHub.Initializer` supervisor.
   """
-  @spec child_spec(any()) :: %{
+  @spec child_spec(t()) :: %{
           id: ProcessHub,
           start: {ProcessHub.Initializer, :start_link, [...]},
           type: :supervisor
         }
   def child_spec(opts) do
     %{
-      id: __MODULE__,
+      id: opts.hub_id,
       start: {ProcessHub.Initializer, :start_link, [opts]},
       type: :supervisor
     }

@@ -31,27 +31,33 @@ defmodule ProcessHub.Handler.ChildrenRem do
     ]
     defstruct @enforce_keys
 
-    @spec handle(t()) :: :ok
+    @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = args) do
-      local_node = node()
+      case ProcessHub.Service.State.is_partitioned?(args.hub_id) do
+        true ->
+          {:error, :partitioned}
 
-      stopped_children =
-        Enum.map(args.children, fn child_data ->
-          terminate_result =
-            DistributedSupervisor.terminate_child(args.dist_sup, child_data.child_id)
+        false ->
+          local_node = node()
 
-          {child_data.child_id, {terminate_result, Map.get(child_data, :reply_to, [])}}
-        end)
+          stopped_children =
+            Enum.map(args.children, fn child_data ->
+              terminate_result =
+                DistributedSupervisor.terminate_child(args.dist_sup, child_data.child_id)
 
-      SynchronizationStrategy.propagate(
-        args.sync_strategy,
-        args.hub_id,
-        stopped_children,
-        local_node,
-        :rem
-      )
+              {child_data.child_id, {terminate_result, Map.get(child_data, :reply_to, [])}}
+            end)
 
-      :ok
+          SynchronizationStrategy.propagate(
+            args.sync_strategy,
+            args.hub_id,
+            stopped_children,
+            local_node,
+            :rem
+          )
+
+          :ok
+      end
     end
   end
 

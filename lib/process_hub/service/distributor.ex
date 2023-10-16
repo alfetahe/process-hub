@@ -28,7 +28,7 @@ defmodule ProcessHub.Service.Distributor do
   @doc "Initiates processes startup."
   @spec init_children(ProcessHub.hub_id(), [ProcessHub.child_spec()], keyword()) ::
           {:ok, :start_initiated}
-          | (() -> {:ok, list})
+          | (-> {:ok, list})
           | {:error,
              :child_start_timeout | :no_children | {:already_started, [ProcessHub.child_id()]}}
   def init_children(_hub_id, [], _opts), do: {:error, :no_children}
@@ -46,7 +46,7 @@ defmodule ProcessHub.Service.Distributor do
 
   @doc "Initiates processes shutdown."
   @spec stop_children(ProcessHub.hub_id(), [ProcessHub.child_id()], keyword()) ::
-          (() -> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
+          (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
   def stop_children(hub_id, child_ids, opts) do
     %{hash_ring: hr, settings: %ProcessHub{redundancy_strategy: rs}} =
       Name.coordinator(hub_id)
