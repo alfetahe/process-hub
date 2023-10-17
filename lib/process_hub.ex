@@ -48,6 +48,7 @@ defmodule ProcessHub do
   Main features include:
   - Distributing processes across a cluster of nodes.
   - Distributed and synchronized process registry for fast lookups.
+  - Process state handover.
   - Strategies for redundancy handling and process replication.
   - Strategies for handling network failures and partitions automatically.
   - Strategies for handling process migration and synchronization when nodes join/leave
@@ -259,7 +260,7 @@ defmodule ProcessHub do
   by starting the process on the new node before stopping it on the old node.
   This strategy is useful when we want to avoid any downtime. This strategy is also
   useful when the process is stateful, and we want to avoid any data loss by handing over
-  the state from the old process to the new process.
+  the state from the old process to the new process. See the module for handover examples.
 
   ### Synchronization Strategy
   `ProcessHub.Strategy.Synchronization.Base` - defines the base protocol for synchronization
