@@ -1,5 +1,6 @@
 defmodule Test.Helper.TestServer do
   use GenServer
+  use ProcessHub.Strategy.Migration.HotSwap
 
   def test() do
     :test_ok
@@ -34,22 +35,5 @@ defmodule Test.Helper.TestServer do
     # IO.puts("redundancy_signal: #{inspect(mode)}")
 
     {:noreply, Map.put(state, :redun_mode, mode)}
-  end
-
-  def handle_info({:process_hub, :handover_start, startup_resp, from}, state) do
-    case startup_resp do
-      {:ok, pid} ->
-        Process.send(pid, {:process_hub, :handover, state}, [])
-        Process.send(from, {:process_hub, :retention_handled}, [])
-
-      error ->
-        IO.puts("Handover failed: #{inspect(error)}")
-    end
-
-    {:noreply, state}
-  end
-
-  def handle_info({:process_hub, :handover, handover_state}, _state) do
-    {:noreply, handover_state}
   end
 end

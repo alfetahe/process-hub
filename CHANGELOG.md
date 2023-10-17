@@ -22,7 +22,7 @@ Includes minor bugfixes, test fixes and documentation updates.
 - Fixed test case which was failing in some cases due to async call being executed before.
 
 
-## v0.1.2-alpha - YYYY-MM-DD
+## v0.1.2-alpha - 2023-10-17
 
 Contains minor bugfixes and improvements.
 
@@ -31,6 +31,7 @@ Contains minor bugfixes and improvements.
 - Improved existing unit tests.
 
 ### Added
+- Hotswap strategy provides handover callbacks using macro.
 
 ### Fixed
 - Added partition mode check ups before process startup or stopping. This can prevent some errors

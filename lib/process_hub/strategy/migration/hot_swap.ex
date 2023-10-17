@@ -43,7 +43,16 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     {:noreply, handover_state}
   end
   ```
+
+  > #### Use HotSwap macro to provide the handover callbacks automatically.  {: .info}
+  > It's convenient to use the `HotSwap` macro to provide the handover callbacks automatically.
+  >
+  > ```elixir
+  > use ProcessHub.Strategy.Migration.HotSwap
+  > ```
   """
+
+  require Logger
 
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.DistributedSupervisor
@@ -156,6 +165,29 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           after
             strategy.retention -> nil
           end
+      end
+    end
+  end
+
+  defmacro __using__(_) do
+    quote do
+      require Logger
+
+      def handle_info({:process_hub, :handover_start, startup_resp, from}, state) do
+        case startup_resp do
+          {:ok, pid} ->
+            Process.send(pid, {:process_hub, :handover, state}, [])
+            Process.send(from, {:process_hub, :retention_handled}, [])
+
+          error ->
+            Logger.error("Handover failed: #{inspect(error)}")
+        end
+
+        {:noreply, state}
+      end
+
+      def handle_info({:process_hub, :handover, handover_state}, _state) do
+        {:noreply, handover_state}
       end
     end
   end
