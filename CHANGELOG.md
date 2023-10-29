@@ -1,6 +1,34 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.1.3-alpha - YYYY-mm-dd
+
+{INFO}
+
+### Changed
+- {something}
+
+### Added
+- Examples on how to register hooks.
+
+### Fixed
+- {something}
+
+## v0.1.2-alpha - 2023-10-17
+
+Contains minor bugfixes and improvements.
+
+### Changed
+- `ProcessHub.child_spec/1` switched static `ProcessHub` id with dynamic child id.
+- Improved existing unit tests.
+
+### Added
+- Hotswap strategy provides handover callbacks using macro.
+
+### Fixed
+- Added partition mode check ups before process startup or stopping. This can prevent some errors
+where node moves to partition mode before the process starts or stops.
+
 ## v0.1.1-alpha - 2023-10-07
 
 Elixir 1.13-1.15 support added.

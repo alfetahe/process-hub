@@ -356,7 +356,7 @@ restores it to its original value if the timeout is reached.
 
 ## Hooks
 Hooks are used to trigger events on specific actions. Hooks can be registered by passing the
-handlers to the `:hooks` option of the `%ProcessHub{}` configuration struct or by inserting them
+handlers to the `:hooks` option of the `t:t/0` configuration struct or by inserting them
 dynamically using the `ProcessHub.Service.HookManager` module.
 
 ProcessHub heavily uses hooks internally in the integration tests.
@@ -367,13 +367,42 @@ when the hook is triggered.
 It is possible to register a hook handler with a wildcard argument `:_`, which will be replaced
 with the hook data when the hook is dispatched.
 
-Example:
+Example hook registration using the `t:t/0` configuration struct:
 ```elixir
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-ProcessHub.Service.HookManager.register_hook(:my_hub, ProcessHub.Constant.Hook.cluster_join(), {MyModule, :my_function, [:something, :_]})
+defmodule MyApp.Application do
+  use Application
 
+  def start(_type, _args) do
+    children = [
+      ProcessHub.child_spec(%ProcessHub{
+        hub_id: :my_hub,
+        hooks: [
+            ProcessHub.Constant.Hook.cluster_join(), {MyModule, :my_function, [:some_data, :_]}
+        ]
+      })
+    ]
+
+    opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+end
+```
+
+Example hook registration using the `ProcessHub.Service.HookManager` module:
+```elixir
+# Register a hook handler for the `:cluster_join` event with a wildcard argument.
+ProcessHub.Service.HookManager.register_hook(:my_hub, ProcessHub.Constant.Hook.cluster_join(), {MyModule, :my_function, [:some_data, :_]})
+```
+
+Example hook handler:
+```elixir
 # The hook handler should be in the following format:
-def my_function(some_data, dynamic_hook_data), do: :ok
+defmodule MyModule do
+  def my_function(:some_data, dynamic_hook_data) do
+    # Do something with the data.
+  end
+end
 ```
 
 ### Available hooks
@@ -386,7 +415,7 @@ def my_function(some_data, dynamic_hook_data), do: :ok
 - `:pre_nodes_redistribution` - triggered before processes are redistributed.
 - `:post_nodes_redistribution` - triggered after processes are redistributed.
 
-  See `ProcessHub.Constant.Hook` module for more information.
+See `ProcessHub.Constant.Hook` module for more information.
 
 ## Contributing
 Contributions are welcome and appreciated. If you have any ideas, suggestions, or bugs to report,
