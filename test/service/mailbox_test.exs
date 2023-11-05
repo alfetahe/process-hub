@@ -40,20 +40,26 @@ defmodule Test.Service.MailboxTest do
 
   test "receive child resp" do
     assert Mailbox.receive_child_resp(
-             [{node(), [:child_id]}],
+             [{node(), ["child_id_1", :child_id_2]}],
              :child_start_resp,
              fn _, _, _ -> :ok end,
              :child_start_timeout,
              1
-           ) === [child_id: [error: {node(), :child_start_timeout}]]
+           ) === [
+             {:child_id_2, [error: {node(), :child_start_timeout}]},
+             {"child_id_1", [error: {node(), :child_start_timeout}]}
+           ]
 
     assert Mailbox.receive_child_resp(
-             [{node(), [:child_id]}],
+             [{node(), ["child_id_1", :child_id_2]}],
              :child_stop_resp,
              fn _, _, _ -> :ok end,
              :child_stop_timeout,
              1
-           ) === [child_id: [error: {node(), :child_stop_timeout}]]
+           ) === [
+             {:child_id_2, [error: {node(), :child_stop_timeout}]},
+             {"child_id_1", [error: {node(), :child_stop_timeout}]}
+           ]
 
     send(self(), {:child_start_resp, :child_id, {:ok, self()}, node()})
     send(self(), {:child_stop_resp, :child_id, :ok, node()})

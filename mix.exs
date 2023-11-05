@@ -10,7 +10,7 @@ defmodule ProcessHub.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       name: "ProcessHub",
-      description: "Distributed process management for Elixir applications",
+      description: "Distributed processes manager and global process registry",
       source_url: "https://github.com/alfetahe/process-hub",
       package: [
         files: ~w(lib .formatter.exs mix.exs README* LICENSE*),

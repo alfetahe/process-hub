@@ -3,15 +3,17 @@ defmodule ProcessHub.Constant.PriorityLevel do
   Priority levels for the local event queue.
   """
 
+  @type priority_level :: 0 | 10
+
   @doc """
   Priority level for the local event queue when it is locked.
   """
-  @spec locked() :: 10
+  @spec locked() :: priority_level()
   def locked(), do: 10
 
   @doc """
   Priority level for the local event queue when it is unlocked.
   """
-  @spec unlocked() :: 0
+  @spec unlocked() :: priority_level()
   def unlocked(), do: 0
 end

@@ -18,10 +18,18 @@ defmodule ProcessHub do
   - [Types](#types)
   - [Public API functions](#functions)
 
+
   ## Description
 
-  Library for distributing processes safely across a cluster of nodes.
-  It ships with a globally synchronized process registry that can be used for process lookups.
+  Library for building distributed systems that are scalable. It handles the distribution of
+  processes within a cluster of nodes while providing a globally synchronized process registry.
+
+  ProcessHub takes care of starting, stopping and monitoring processes in the cluster.
+  It scales automatically when cluster is updated and handles network partitions.
+
+  Building distributed systems is hard and designing one is all about trade-offs.
+  There are many things to consider and each system has its own requirements.
+  Tis library aims to be flexible and configurable to suit different use cases.
 
   ProcessHub is designed to be **decentralized** in its architecture. It does not rely on a
   single node to manage the cluster. Each node in the cluster is considered equal.
@@ -43,18 +51,20 @@ defmodule ProcessHub do
   > If the node is not started as a distributed node, starting the `ProcessHub` will fail
   > with the following error: `{:error, :local_node_not_alive}`
 
+
   ## Features
 
   Main features include:
-  - Distributing processes across a cluster of nodes.
-  - Distributed and synchronized process registry for fast lookups.
+  - Distribute processes within a cluster of nodes.
+  - Provides globally synchronized process registry.
+  - Automatic hub cluster forming and healing when nodes join or leave the cluster.
   - Process state handover.
   - Strategies for redundancy handling and process replication.
   - Strategies for handling network failures and partitions automatically.
   - Strategies for handling process migration and synchronization when nodes join/leave
   the cluster automatically.
   - Hooks for triggering events on specific actions.
-  - Automatic hub cluster forming and healing when nodes join or leave the cluster.
+
 
   ## Installation
 
@@ -86,6 +96,7 @@ defmodule ProcessHub do
       ```
     It is possible to start multiple hubs under the same supervision tree.
     Each hub must have a unique `t:hub_id/0`.
+
 
   ## Example usage
 
@@ -175,6 +186,7 @@ defmodule ProcessHub do
   ]
   ```
   <!-- tabs-close -->
+
 
   ## Configurable strategies
 
@@ -344,6 +356,7 @@ defmodule ProcessHub do
   If the process is being started on the wrong node, the initialization request will be forwarded
   to the correct node.
 
+
   ## Locking Mechanism
   ProcessHub utilizes the `:blockade` library to provide event-driven communication
   and a locking mechanism.
@@ -353,6 +366,7 @@ defmodule ProcessHub do
 
   To avoid deadlocks, the system places a timeout on the event queue priority and
   restores it to its original value if the timeout is reached.
+
 
   ## Hooks
   Hooks are used to trigger events on specific actions. Hooks can be registered by passing the
@@ -406,14 +420,16 @@ defmodule ProcessHub do
   ```
 
   ### Available hooks
-  - `:cluster_join` - triggered when a new node is registered under the ProcessHub cluster.
-  - `:cluster_leave` - triggered when a node is unregistered from the ProcessHub cluster.
-  - `:registry_pid_inserted` - triggered when a new process is registered in the ProcessHub registry.
-  - `:registry_pid_removed` - triggered when a process is unregistered from the ProcessHub registry.
-  - `:child_migrated` - triggered when a process is migrated to another node.
-  - `:priority_state_updated` - triggered when the priority level of the local event queue has been updated.
-  - `:pre_nodes_redistribution` - triggered before processes are redistributed.
-  - `:post_nodes_redistribution` - triggered after processes are redistributed.
+  | Event Key                   | Trigger                    | Data                                |
+  | ------------                | -------------              | ---------------                     |
+  | `cluster_join`              | Node joins the cluster     | `node()`                            |
+  | `cluster_leave`             | Node leaves the cluster    | `node()`                            |
+  | `registry_pid_inserted`     | Process registered         | `{child_spec(), [{node(), pid()}]}` |
+  | `registry_pid_removed`      | Process unregistered       | `child_id()`                        |
+  | `child_migrated`            | Process migrated           | `{child_id(), node()}`              |
+  | `priority_state_updated`    | Priority state updated     | `{priority_level(), list()}`        |
+  | `pre_nodes_redistribution`  | Nodes redistribution start | `{:nodeup | :nodedown, node()}`     |
+  | `post_nodes_redistribution` | Nodes redistribution end   | `{:nodeup |:nodedown, node()}`      |
 
   See `ProcessHub.Constant.Hook` module for more information.
 

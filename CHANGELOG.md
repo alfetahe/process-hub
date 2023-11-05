@@ -1,18 +1,18 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.1.3-alpha - YYYY-mm-dd
+## v0.1.3-alpha - 2023-11-05
 
-{INFO}
+Bugfixes and documentation improvements.
 
 ### Changed
-- {something}
+- Project description.
 
 ### Added
 - Examples on how to register hooks.
 
 ### Fixed
-- {something}
+- Process start/stop with binary child_id returned error when used with await/1 function.
 
 ## v0.1.2-alpha - 2023-10-17
 

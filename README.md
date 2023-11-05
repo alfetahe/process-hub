@@ -25,12 +25,22 @@
 
 ## Description
 
-Library for distributing processes safely across a cluster of nodes.
-It ships with a globally synchronized process registry that can be used for process lookups.
+Library for building distributed systems that are scalable. It handles the distribution of
+processes within a cluster of nodes while providing a globally synchronized process registry.
+
+ProcessHub takes care of starting, stopping and monitoring processes in the cluster.
+It scales automatically when cluster is updated and handles network partitions.
+
+Building distributed systems is hard and designing one is all about trade-offs.
+There are many things to consider and each system has its own requirements. 
+Tis library aims to be flexible and configurable to suit different use cases.
 
 ProcessHub is designed to be **decentralized** in its architecture. It does not rely on a
 single node to manage the cluster. Each node in the cluster is considered equal.
 Consensus is achieved by using a hash ring implementation.
+
+Documentation can be found at [https://hexdocs.pm/process_hub](https://hexdocs.pm/process_hub).
+
 
 > ProcessHub is built with scalability and availability in mind.
 > Most of the operations are asynchronous and non-blocking.
@@ -139,7 +149,7 @@ The following example shows how to start 2 elixir nodes, connect them and start 
   # Check the started processes by running the command below.
   iex> ProcessHub.which_children(:my_hub, [:global])
   [
-    node1@127.0.0.1: [
+    "node1@127.0.0.1": [
       {"the_last_child", #PID<0.250.0>, :worker, [MyProcess]},
       {:child_4, #PID<0.249.0>, :worker, [MyProcess]},
       {:child_3, #PID<0.248.0>, :worker, [MyProcess]},
@@ -365,8 +375,7 @@ ProcessHub heavily uses hooks internally in the integration tests.
 Hooks have to be in the format of an `mfa` tuple. Basically, they are functions that will be called
 when the hook is triggered.
 
-It is possible to register a hook handler with a wildcard argument `:_`, which will be replaced
-with the hook data when the hook is dispatched.
+It is possible to register a hook handler with a wildcard argument `:_`, which will be replaced with the hook data when the hook is dispatched.
 
 Example hook registration using the `t:t/0` configuration struct:
 ```elixir
@@ -407,14 +416,16 @@ end
 ```
 
 ### Available hooks
-- `:cluster_join` - triggered when a new node is registered under the ProcessHub cluster.
-- `:cluster_leave` - triggered when a node is unregistered from the ProcessHub cluster.
-- `:registry_pid_inserted` - triggered when a new process is registered in the ProcessHub registry.
-- `:registry_pid_removed` - triggered when a process is unregistered from the ProcessHub registry.
-- `:child_migrated` - triggered when a process is migrated to another node.
-- `:priority_state_updated` - triggered when the priority level of the local event queue has been updated.
-- `:pre_nodes_redistribution` - triggered before processes are redistributed.
-- `:post_nodes_redistribution` - triggered after processes are redistributed.
+| Event Key                   | Trigger                    | Data                                |
+| ------------                | -------------              | ---------------                     |
+| `cluster_join`              | Node joins the cluster     | `node()`                            |
+| `cluster_leave`             | Node leaves the cluster    | `node()`                            |
+| `registry_pid_inserted`     | Process registered         | `{child_spec(), [{node(), pid()}]}` |
+| `registry_pid_removed`      | Process unregistered       | `child_id()`                        |
+| `child_migrated`            | Process migrated           | `{child_id(), node()}`              |
+| `priority_state_updated`    | Priority state updated     | `{priority_level(), list()}`        |
+| `pre_nodes_redistribution`  | Nodes redistribution start | `{:nodeup or :nodedown, node()}`    |
+| `post_nodes_redistribution` | Nodes redistribution end   | `{:nodeup or :nodedown, node()}`    |
 
 See `ProcessHub.Constant.Hook` module for more information.
 

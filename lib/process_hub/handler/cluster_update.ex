@@ -215,7 +215,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = args) do
-      HookManager.dispatch_hook(args.hub_id, Hook.pre_nodes_redistribution(), args.removed_node)
+      HookManager.dispatch_hook(
+        args.hub_id,
+        Hook.pre_nodes_redistribution(),
+        {:nodedown, args.removed_node}
+      )
+
       distribute_processes(args)
 
       PartitionToleranceStrategy.handle_node_down(
@@ -225,7 +230,11 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         args.cluster_nodes
       )
 
-      HookManager.dispatch_hook(args.hub_id, Hook.post_nodes_redistribution(), args.removed_node)
+      HookManager.dispatch_hook(
+        args.hub_id,
+        Hook.post_nodes_redistribution(),
+        {:nodedown, args.removed_node}
+      )
 
       :ok
     end

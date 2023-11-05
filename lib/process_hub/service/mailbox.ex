@@ -96,9 +96,10 @@ defmodule ProcessHub.Service.Mailbox do
 
       children_responses ++ acc
     end)
-    |> List.foldl([], fn {child_id, responses}, acc ->
-      Keyword.put(acc, child_id, [responses | Keyword.get(acc, child_id, [])])
+    |> List.foldl(%{}, fn {child_id, responses}, acc ->
+      Map.put(acc, child_id, [responses | Map.get(acc, child_id, [])])
     end)
+    |> Map.to_list()
   end
 
   @doc "Receives a single child response message."
