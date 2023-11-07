@@ -98,7 +98,13 @@ defmodule ProcessHub.Service.ProcessRegistry do
     |> :ets.insert({child_spec.id, {child_spec, child_nodes}})
 
     unless Keyword.get(opts, :skip_hooks, false) do
-      HookManager.dispatch_hook(hub_id, Hook.registry_pid_inserted(), {child_spec, child_nodes})
+      for child_node <- child_nodes do
+        HookManager.dispatch_hook(
+          hub_id,
+          Hook.registry_pid_inserted(),
+          {child_spec.id, child_node}
+        )
+      end
     end
 
     :ok

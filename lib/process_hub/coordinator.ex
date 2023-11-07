@@ -15,6 +15,7 @@ defmodule ProcessHub.Coordinator do
   `ProcessHub` instance, such as `:ets` table cleanups, initial synchronization, propagation, etc.
   """
 
+  require Logger
   alias :blockade, as: Blockade
   alias :hash_ring, as: HashRing
   alias :hash_ring_node, as: HashRingNode
@@ -103,12 +104,21 @@ defmodule ProcessHub.Coordinator do
   def terminate(_reason, state) do
     local_node = node()
 
+    # Notify all the nodes in the cluster that this node is leaving the hub.
     Enum.each(state.cluster_nodes, fn node ->
       Node.spawn(node, fn ->
         if Process.whereis(state.managers.coordinator) do
           Process.send(state.managers.coordinator, {@event_cluster_leave, local_node}, [])
         end
       end)
+    end)
+
+    # Terminate all the running tasks before shutting down the coordinator.
+    task_sup = state.managers.task_supervisor
+
+    Task.Supervisor.children(task_sup)
+    |> Enum.each(fn pid ->
+      Task.Supervisor.terminate_child(task_sup, pid)
     end)
   end
 
@@ -288,7 +298,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({@event_children_registration, {children, _node}}, state) do
-    Task.Supervisor.async_nolink(
+    Task.Supervisor.async(
       state.managers.task_supervisor,
       ChildrenAdd.SyncHandle,
       :handle,
@@ -357,42 +367,79 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  def handle_info({:EXIT, _pid, :normal}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, :normal}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(msg, state) do
+    Logger.warning("Unhandled message: #{inspect(msg)}")
+
+    {:noreply, state}
+  end
+
   ##############################################################################
   ### Private functions
   ##############################################################################
 
   defp handle_node_down(state, down_node) do
-    cluster_nodes = Cluster.rem_cluster_node(state.cluster_nodes, down_node)
+    if Enum.member?(state.cluster_nodes, down_node) do
+      cluster_nodes = Cluster.rem_cluster_node(state.cluster_nodes, down_node)
 
-    old_hash_ring = state.hash_ring
-    new_hash_ring = Ring.remove_node(old_hash_ring, down_node)
+      old_hash_ring = state.hash_ring
+      new_hash_ring = Ring.remove_node(old_hash_ring, down_node)
 
-    state = %__MODULE__{
+      state = %__MODULE__{
+        state
+        | hash_ring: new_hash_ring,
+          cluster_nodes: cluster_nodes
+      }
+
+      # TODO: if task is started under supervisor we're not actually blocking the caller..
+      # Task.async(fn ->
+      #   ClusterUpdate.NodeDown.handle(
+      #     %ClusterUpdate.NodeDown{
+      #       hub_id: state.hub_id,
+      #       removed_node: down_node,
+      #       cluster_nodes: state.cluster_nodes,
+      #       old_hash_ring: old_hash_ring,
+      #       new_hash_ring: new_hash_ring,
+      #       partition_strat: state.settings.partition_tolerance_strategy,
+      #       redun_strategy: state.settings.redundancy_strategy
+      #     }
+      #   )
+      # end) |> Task.await()
+
+      IO.puts("SIIN ALGUSES")
+
+      Task.Supervisor.async(
+        state.managers.task_supervisor,
+        ClusterUpdate.NodeDown,
+        :handle,
+        [
+          %ClusterUpdate.NodeDown{
+            hub_id: state.hub_id,
+            removed_node: down_node,
+            cluster_nodes: state.cluster_nodes,
+            old_hash_ring: old_hash_ring,
+            new_hash_ring: new_hash_ring,
+            partition_strat: state.settings.partition_tolerance_strategy,
+            redun_strategy: state.settings.redundancy_strategy
+          }
+        ]
+      )
+      |> Task.await()
+      |> IO.inspect(label: "SUP RES")
+
+      HookManager.dispatch_hook(state.hub_id, Hook.cluster_leave(), down_node)
+
       state
-      | hash_ring: new_hash_ring,
-        cluster_nodes: cluster_nodes
-    }
-
-    Task.Supervisor.start_child(
-      state.managers.task_supervisor,
-      ClusterUpdate.NodeDown,
-      :handle,
-      [
-        %ClusterUpdate.NodeDown{
-          hub_id: state.hub_id,
-          removed_node: down_node,
-          cluster_nodes: state.cluster_nodes,
-          old_hash_ring: old_hash_ring,
-          new_hash_ring: new_hash_ring,
-          partition_strat: state.settings.partition_tolerance_strategy,
-          redun_strategy: state.settings.redundancy_strategy
-        }
-      ]
-    )
-
-    HookManager.dispatch_hook(state.hub_id, Hook.cluster_leave(), down_node)
-
-    state
+    else
+      state
+    end
   end
 
   defp cache_cleanup(ets_table) do

@@ -3,10 +3,10 @@ defmodule Test.Helper.TestNode do
     :"ex_unit@127.0.0.1"
   end
 
-  def start_nodes(prefix, amount, options \\ [])
-  def start_nodes(_, 0, _), do: []
+  def start_nodes(amount, options \\ [])
+  def start_nodes(0, _), do: []
 
-  def start_nodes(prefix, amount, options) do
+  def start_nodes(amount, options) do
     # code_paths =
     #   Enum.reduce(:code.get_path(), '', fn path, acc ->
     #     if length(path) > 0 do
@@ -20,10 +20,16 @@ defmodule Test.Helper.TestNode do
 
     nodes =
       Enum.map(1..amount, fn idx ->
+        name =
+          case Keyword.get(options, :prefix, nil) do
+            nil -> :"#{idx}"
+            prefix -> :"#{prefix}_#{idx}"
+          end
+
         {:ok, pid, name} =
           :peer.start_link(%{
             host: ~c"127.0.0.1",
-            name: :"#{prefix}#{idx}",
+            name: name,
             args: [args]
           })
 

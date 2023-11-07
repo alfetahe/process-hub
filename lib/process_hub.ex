@@ -424,7 +424,7 @@ defmodule ProcessHub do
   | ------------                | -------------              | ---------------                     |
   | `cluster_join`              | Node joins the cluster     | `node()`                            |
   | `cluster_leave`             | Node leaves the cluster    | `node()`                            |
-  | `registry_pid_inserted`     | Process registered         | `{child_spec(), [{node(), pid()}]}` |
+  | `registry_pid_inserted`     | Process registered         | `{child_id(), [{node(), pid()}]}` |
   | `registry_pid_removed`      | Process unregistered       | `child_id()`                        |
   | `child_migrated`            | Process migrated           | `{child_id(), node()}`              |
   | `priority_state_updated`    | Priority state updated     | `{priority_level(), list()}`        |

@@ -26,23 +26,35 @@ defmodule Test.Helper.Bootstrap do
   @default_quorum_threshold_time 30000
   @default_startup_quorum_confirm false
 
-  def bootstrap(%{hub_id: hub_id, listed_hooks: listed_hooks} = context) do
+  def init_nodes(nr_of_peers) do
+    peer_nodes = TestNode.start_nodes(nr_of_peers)
+
+    Enum.each(peer_nodes, fn {_, pid} ->
+      :erlang.unlink(pid)
+    end)
+
+    on_exit(:kill_nodes, fn ->
+      kill_peers(peer_nodes)
+    end)
+
+    %{
+      peer_nodes: peer_nodes
+    }
+  end
+
+  def bootstrap(%{hub_id: hub_id, listed_hooks: listed_hooks, peer_nodes: peer_nodes} = context) do
     # Flush messages
     Bag.all_messages()
 
-    peer_nodes = init_nodes(context)
     hub = gen_hub(context)
 
     start_hubs(hub, [node() | Node.list()], listed_hooks)
 
-    on_exit(:kill_main_hub, fn ->
-      ProcessHub.Initializer.stop(hub_id)
+    on_exit(:kill_hubs, fn ->
+      kill_hubs(peer_nodes, hub_id)
     end)
 
-    %{
-      peer_nodes: peer_nodes,
-      hub: hub
-    }
+    Map.put(context, :hub, hub)
   end
 
   def gen_hub(context) do
@@ -56,31 +68,24 @@ defmodule Test.Helper.Bootstrap do
     }
   end
 
-  def init_nodes(%{nodes: nodes, hub_id: hub_id} = _context) do
-    peer_nodes = TestNode.start_nodes(hub_id, nodes)
-
-    Enum.each(peer_nodes, fn {_, pid} ->
-      :erlang.unlink(pid)
-    end)
-
-    on_exit(:kill_nodes, fn ->
-      kill_peers(peer_nodes)
-    end)
-
-    peer_nodes
-  end
-
   def kill_peers(peer_nodes) do
-    Enum.each(peer_nodes, fn {_, pid} ->
+    for {_peer, pid} <- peer_nodes do
       if Process.alive?(pid) do
         :peer.stop(pid)
       end
-    end)
+    end
+  end
+
+  defp kill_hubs(peer_nodes, hub_id) do
+    for {node, _pid} <- peer_nodes do
+      :erpc.call(node, fn ->
+        ProcessHub.Initializer.stop(hub_id)
+      end)
+    end
   end
 
   def start_hubs(hub, nodes, listed_hooks, new_nodes \\ false) do
     host_pid = self()
-
     local_node = node()
 
     Enum.each(nodes, fn node ->

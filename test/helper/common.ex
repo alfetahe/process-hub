@@ -122,7 +122,7 @@ defmodule Test.Helper.Common do
       message_count =
         case Keyword.get(opts, :scope, :local) do
           :local -> length(children)
-          :global -> length(children) * length(Node.list())
+          :global -> length(children) * (length(Node.list()) + 1)
         end
 
       Bag.receive_multiple(

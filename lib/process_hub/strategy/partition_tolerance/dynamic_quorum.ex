@@ -42,9 +42,10 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
   @typedoc """
   Dynamic quorum strategy configuration.
 
-  - `quorum_size` - The quorum size is measured in percentage. For example, `50` means that
-  if we have 10 nodes in the cluster, the system will be considered to be in a network partition
-  if we lose 6 (60% of the cluster) nodes or more within the `threshold_time` period.
+  - `quorum_size` - The quorum size is measured in percentage. This is the required quorum size.
+  For example, `50` means that if we have 10 nodes in the cluster, the system will be
+  considered to be in a network partition if we lose 6 (60% of the cluster) nodes or more within
+  the `threshold_time` period.
   - `threshold_time` - The threshold time is measured in seconds. This is how long a node should be
   listed in the quorum log before it is removed from the quorum log.
   """
@@ -130,8 +131,9 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       down_nodes = length(cached_data)
 
       lost_quorum = down_nodes / (connected_nodes + down_nodes) * 100
+      quorum_left = 100 - lost_quorum
 
-      lost_quorum > strategy.quorum_size
+      quorum_left < strategy.quorum_size
     end
 
     defp node_log_func(strategy, hub_id, node, type) do

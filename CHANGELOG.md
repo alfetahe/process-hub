@@ -3,16 +3,28 @@ All notable changes to this project will be documented in this file.
 
 ## v0.1.3-alpha - 2023-11-05
 
-Bugfixes and documentation improvements.
+Fixed bugs, added more documentation, improved tests performance by reusing peer nodes
 
 ### Changed
 - Project description.
+- All integration tests start static number of nodes which will be reused
+rather than start new nodes for each test case. This improved the performance
+of the test suites.
+- Process registry dispatches `:registry_pid_insert_hook` individually for each
+node-process pair now that was supplied.
+- Process registry dispatches `:registry_pid_insert_hook` no longer adds the child_spec
+to the hook data but rather the child_id.
+- Gossip protocol synchronizes only after all the initial synchronization data is
+collected from all nodes.
 
 ### Added
 - Examples on how to register hooks.
 
 ### Fixed
 - Process start/stop with binary child_id returned error when used with await/1 function.
+- Fixed scenario where hub was shutdown but the running tasks we're trying to call
+exiting processes.
+- Dynamic quorum strategy was returning wrong quorum status in some cases.
 
 ## v0.1.2-alpha - 2023-10-17
 

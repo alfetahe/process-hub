@@ -74,7 +74,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             :add | :rem
           ) :: :ok
     def handle_propagation(strategy, hub_id, {ref, acks, child_data, update_node}, type) do
-      unless LocalStorage.exists?(hub_id, ref) do
+      if :ets.whereis(hub_id) !== :undefined and !LocalStorage.exists?(hub_id, ref) do
         handle_propagation_local(strategy, hub_id, ref, child_data, update_node, type)
 
         Cluster.nodes(hub_id)
@@ -139,7 +139,6 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     end
 
     def handle_sync_data(strategy, hub_id, ref, sync_data) do
-      sync_locally(hub_id, sync_data)
       LocalStorage.insert(hub_id, ref, sync_data, strategy.sync_interval)
       missing_nodes = missing_nodes(sync_data, hub_id)
 
@@ -150,9 +149,11 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           cond do
             length(unacked_nodes) === 0 ->
               invalidate_ref(strategy, hub_id, ref)
+
               :ok
 
             true ->
+              sync_locally(hub_id, sync_data)
               forward_data(unacked_nodes, strategy, hub_id, %{ref: ref, nodes_data: sync_data})
           end
 
@@ -297,13 +298,21 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     end
 
     defp handle_propagation_type(hub_id, children, updated_node, :add) do
-      Name.coordinator(hub_id)
-      |> send({@event_children_registration, {children, updated_node}})
+      try do
+        Name.coordinator(hub_id)
+        |> send({@event_children_registration, {children, updated_node}})
+      catch
+        _, _ -> :ok
+      end
     end
 
     defp handle_propagation_type(hub_id, children, updated_node, :rem) do
-      Name.coordinator(hub_id)
-      |> send({@event_children_unregistration, {children, updated_node}})
+      try do
+        Name.coordinator(hub_id)
+        |> send({@event_children_unregistration, {children, updated_node}})
+      catch
+        _, _ -> :ok
+      end
     end
 
     defp recipients_select(nodes, strategy) do

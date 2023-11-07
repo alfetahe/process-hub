@@ -44,8 +44,8 @@ defmodule ProcessHub.Initializer do
     children = [
       {Blockade, %{name: managers.local_event_queue}},
       {Blockade, %{name: managers.global_event_queue}},
-      {Task.Supervisor, name: managers.task_supervisor},
       {ProcessHub.DistributedSupervisor, {hub_id, managers}},
+      {Task.Supervisor, name: managers.task_supervisor},
       {ProcessHub.Coordinator, {hub_id, hub, managers}}
     ]
 
