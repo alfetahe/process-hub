@@ -10,8 +10,6 @@ Fixed bugs, added more documentation, improved tests performance by reusing peer
 - All integration tests start static number of nodes which will be reused
 rather than start new nodes for each test case. This improved the performance
 of the test suites.
-- Process registry dispatches `:registry_pid_insert_hook` individually for each
-node-process pair now that was supplied.
 - Process registry dispatches `:registry_pid_insert_hook` no longer adds the child_spec
 to the hook data but rather the child_id.
 - Gossip protocol synchronizes only after all the initial synchronization data is
@@ -25,6 +23,8 @@ collected from all nodes.
 - Fixed scenario where hub was shutdown but the running tasks we're trying to call
 exiting processes.
 - Dynamic quorum strategy was returning wrong quorum status in some cases.
+- Fixed situtation where system was caught in a locked state for a moments due to race condition in the
+state handling.
 
 ## v0.1.2-alpha - 2023-10-17
 

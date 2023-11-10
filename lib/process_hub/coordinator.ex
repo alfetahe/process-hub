@@ -22,6 +22,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
+  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Handler.ChildrenAdd
   alias ProcessHub.Handler.ChildrenRem
   alias ProcessHub.Handler.ClusterUpdate
@@ -198,6 +199,18 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  # TODO: currently only gossip is using this but not the pubsub...
+  def handle_cast({:handle_propagation, hub_id, data, type}, state) do
+    state.settings.synchronization_strategy
+    |> SynchronizationStrategy.handle_propagation(
+      hub_id,
+      Tuple.append(data, state.cluster_nodes),
+      type
+    )
+
+    {:noreply, state}
+  end
+
   def handle_call(:strategies, _from, state) do
     {:reply, state.settings, state}
   end
@@ -225,28 +238,31 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({:nodedown, node}, state) do
-    {:noreply, handle_node_down(state, node)}
+    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, node, :local)
+
+    {:noreply, state}
   end
 
   def handle_info({@event_distribute_children, node}, state) do
-    Task.Supervisor.start_child(
+    Task.Supervisor.async_nolink(
       state.managers.task_supervisor,
       ClusterUpdate.NodeUp,
       :handle,
       [
         %ClusterUpdate.NodeUp{
           hub_id: state.hub_id,
+          new_node: node,
           redun_strat: state.settings.redundancy_strategy,
           migr_strat: state.settings.migration_strategy,
           sync_strat: state.settings.synchronization_strategy,
           partition_strat: state.settings.partition_tolerance_strategy,
           hash_ring_old: Ring.remove_node(state.hash_ring, node),
           hash_ring_new: state.hash_ring,
-          new_node: node,
           cluster_nodes: state.cluster_nodes
         }
       ]
     )
+    |> Task.await()
 
     {:noreply, state}
   end
@@ -298,7 +314,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({@event_children_registration, {children, _node}}, state) do
-    Task.Supervisor.async(
+    Task.Supervisor.async_nolink(
       state.managers.task_supervisor,
       ChildrenAdd.SyncHandle,
       :handle,
@@ -367,14 +383,6 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  def handle_info({:EXIT, _pid, :normal}, state) do
-    {:noreply, state}
-  end
-
-  def handle_info({:DOWN, _ref, :process, _pid, :normal}, state) do
-    {:noreply, state}
-  end
-
   def handle_info(msg, state) do
     Logger.warning("Unhandled message: #{inspect(msg)}")
 
@@ -398,24 +406,7 @@ defmodule ProcessHub.Coordinator do
           cluster_nodes: cluster_nodes
       }
 
-      # TODO: if task is started under supervisor we're not actually blocking the caller..
-      # Task.async(fn ->
-      #   ClusterUpdate.NodeDown.handle(
-      #     %ClusterUpdate.NodeDown{
-      #       hub_id: state.hub_id,
-      #       removed_node: down_node,
-      #       cluster_nodes: state.cluster_nodes,
-      #       old_hash_ring: old_hash_ring,
-      #       new_hash_ring: new_hash_ring,
-      #       partition_strat: state.settings.partition_tolerance_strategy,
-      #       redun_strategy: state.settings.redundancy_strategy
-      #     }
-      #   )
-      # end) |> Task.await()
-
-      IO.puts("SIIN ALGUSES")
-
-      Task.Supervisor.async(
+      Task.Supervisor.async_nolink(
         state.managers.task_supervisor,
         ClusterUpdate.NodeDown,
         :handle,
@@ -432,7 +423,6 @@ defmodule ProcessHub.Coordinator do
         ]
       )
       |> Task.await()
-      |> IO.inspect(label: "SUP RES")
 
       HookManager.dispatch_hook(state.hub_id, Hook.cluster_leave(), down_node)
 
@@ -458,6 +448,7 @@ defmodule ProcessHub.Coordinator do
   defp register_handlers(%{global_event_queue: gq, local_event_queue: lq}) do
     Blockade.add_handler(lq, @event_distribute_children)
     Blockade.add_handler(gq, @event_cluster_join)
+    Blockade.add_handler(lq, @event_cluster_leave)
     Blockade.add_handler(lq, @event_sync_remote_children)
     Blockade.add_handler(gq, @event_children_registration)
     Blockade.add_handler(gq, @event_children_unregistration)

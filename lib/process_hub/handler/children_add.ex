@@ -159,8 +159,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = args) do
       children_formatted =
-        Enum.map(args.children, fn {child_id, child_spec, _} ->
-          {child_id, child_spec}
+        Enum.map(args.children, fn {child_id, {_child_spec, _child_nodes} = cn, _} ->
+          {child_id, cn}
         end)
         |> Map.new()
 

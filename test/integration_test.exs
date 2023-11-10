@@ -29,6 +29,7 @@ defmodule Test.IntegrationTest do
     child_count = 100
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
+    # TODO: this is failing sometimes
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)
 
@@ -48,35 +49,35 @@ defmodule Test.IntegrationTest do
     Common.validate_sync(context)
   end
 
-  # @tag hub_id: :pubsub_interval_test
-  # @tag sync_strategy: :pubsub
-  # @tag listed_hooks: [
-  #        {Hook.cluster_join(), :local},
-  #        {Hook.registry_pid_inserted(), :global},
-  #        {Hook.registry_pid_removed(), :global}
-  #      ]
-  # test "pubsub interval sync test", %{hub_id: hub_id} = context do
-  #   child_count = 100
-  #   child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+  @tag hub_id: :pubsub_interval_test
+  @tag sync_strategy: :pubsub
+  @tag listed_hooks: [
+         {Hook.cluster_join(), :local},
+         {Hook.registry_pid_inserted(), :global},
+         {Hook.registry_pid_removed(), :global}
+       ]
+  test "pubsub interval sync test", %{hub_id: hub_id} = context do
+    child_count = 100
+    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
-  #   # Locally start children without propagating to the rest of the cluster.
-  #   Common.periodic_sync_base(context, child_specs, :add)
+    # Locally start children without propagating to the rest of the cluster.
+    Common.periodic_sync_base(context, child_specs, :add)
 
-  #   # Manually trigger the periodic sync.
-  #   Common.trigger_periodc_sync(context, child_specs, :add)
+    # Manually trigger the periodic sync.
+    Common.trigger_periodc_sync(context, child_specs, :add)
 
-  #   # Test if data is synchronized in the cluster.
-  #   Common.validate_sync(context)
+    # Test if data is synchronized in the cluster.
+    Common.validate_sync(context)
 
-  #   # Locally stop children without propagating to the rest of the cluster.
-  #   Common.periodic_sync_base(context, child_specs, :rem)
+    # Locally stop children without propagating to the rest of the cluster.
+    Common.periodic_sync_base(context, child_specs, :rem)
 
-  #   # Manually trigger the periodic sync.
-  #   Common.trigger_periodc_sync(context, child_specs, :rem)
+    # Manually trigger the periodic sync.
+    Common.trigger_periodc_sync(context, child_specs, :rem)
 
-  #   # Test if data is synchronized in the cluster.
-  #   Common.validate_sync(context)
-  # end
+    # Test if data is synchronized in the cluster.
+    Common.validate_sync(context)
+  end
 
   # @tag hub_id: :gossip_start_rem_test
   # @tag sync_strategy: :gossip
@@ -89,22 +90,16 @@ defmodule Test.IntegrationTest do
   #   child_count = 100
   #   child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
+  #   # TODO: this is failing
   #   # Starts children on all nodes.
   #   Common.sync_base_test(context, child_specs, :add, scope: :global)
 
-  #   Process.sleep(3000)
-  #   Bag.all_messages()
-  #   |> Enum.count()
-  #   |> IO.inspect(label: "ALL MESSAGES", limit: :infinity)
-
-  #   # TODO: this one is failing sometimes
   #   # Tests if all child_specs are used for starting children.
   #   Common.validate_registry_length(context, child_specs)
 
   #   # Tests if all child_specs are started on all nodes.
   #   Common.validate_started_children(context, child_specs)
 
-  #   # TODO: this one is failing sometimes
   #   # Tests children adding and syncing.
   #   Common.validate_sync(context)
 
@@ -129,9 +124,11 @@ defmodule Test.IntegrationTest do
   #   # Locally start children without propagating to the rest of the cluster.
   #   Common.periodic_sync_base(context, child_specs, :add)
 
+  #   # TODO: this is failing sometimes
   #   # Manually trigger the periodic sync.
   #   Common.trigger_periodc_sync(context, child_specs, :add)
 
+  #   # TODO: this is failing sometimes
   #   # Test if data is synchronized in the cluster.
   #   Common.validate_sync(context)
 
@@ -168,7 +165,7 @@ defmodule Test.IntegrationTest do
   #   # Tests if all child_specs are used for starting children.
   #   Common.validate_registry_length(context, child_specs)
 
-  #   # TODO: this one is failing sometimes
+  #   # TODO: this is failing sometimes
   #   # Tests redundancy and check if started children's count matches replication factor.
   #   Common.validate_replication(context)
 
@@ -176,63 +173,66 @@ defmodule Test.IntegrationTest do
   #   Common.validate_redundancy_mode(context)
   # end
 
-  # @tag nodes: 3
-  # @tag redun_strategy: :singularity
-  # @tag hub_id: :redunc_singulary_test
-  # @tag listed_hooks: [
-  #        {Hook.cluster_join(), :local},
-  #        {Hook.registry_pid_inserted(), :local}
-  #      ]
-  # test "redundancy with singularity", %{hub_id: hub_id} = context do
-  #   child_count = 100
-  #   child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+  @tag redun_strategy: :singularity
+  @tag hub_id: :redunc_singulary_test
+  @tag listed_hooks: [
+         {Hook.cluster_join(), :local},
+         {Hook.registry_pid_inserted(), :local}
+       ]
+  test "redundancy with singularity", %{hub_id: hub_id} = context do
+    child_count = 100
+    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
-  #   # Starts children on all nodes.
-  #   Common.sync_base_test(context, child_specs, :add)
+    # Starts children on all nodes.
+    Common.sync_base_test(context, child_specs, :add)
 
-  #   # Tests if all child_specs are used for starting children.
-  #   Common.validate_registry_length(context, child_specs)
+    # Tests if all child_specs are used for starting children.
+    Common.validate_registry_length(context, child_specs)
 
-  #   # Tests if all child_specs are started on all nodes.
-  #   Common.validate_started_children(context, child_specs)
+    # Tests if all child_specs are started on all nodes.
+    Common.validate_started_children(context, child_specs)
 
-  #   # Tests redundancy and check if started children's count matches replication factor.
-  #   Common.validate_singularity(context)
-  # end
+    # Tests redundancy and check if started children's count matches replication factor.
+    Common.validate_singularity(context)
+  end
 
-  # @tag hub_id: :divergence_test
-  # @tag partition_strategy: :div
-  # @tag listed_hooks: [
-  #        {Hook.cluster_join(), :local},
-  #        {Hook.post_nodes_redistribution(), :global}
-  #      ]
-  # test "partition divergence test",
-  #      %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
-  #   :net_kernel.monitor_nodes(true)
+  @tag hub_id: :divergence_test
+  @tag partition_strategy: :div
+  @tag listed_hooks: [
+         {Hook.cluster_join(), :local},
+         {Hook.post_nodes_redistribution(), :global}
+       ]
+  test "partition divergence test",
+       %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
+    :net_kernel.monitor_nodes(true)
 
-  #   peer_to_start = 5
-  #   new_peers = TestNode.start_nodes(
-  #     peer_to_start,
-  #     prefix: :divergence_test
-  #   )
-  #   peer_names = for {peer, pid} <- new_peers, do: peer
-  #   Bootstrap.gen_hub(context)
-  #   |> Bootstrap.start_hubs(peer_names, lh, true)
+    peer_to_start = 5
 
-  #   assert ProcessHub.is_partitioned?(hub_id) === false
+    new_peers =
+      TestNode.start_nodes(
+        peer_to_start,
+        prefix: :divergence_test
+      )
 
-  #   end_num = peer_to_start - 1
+    peer_names = for {peer, pid} <- new_peers, do: peer
 
-  #   Enum.reduce(peer_to_start..end_num, new_peers, fn numb, acc ->
-  #     removed_peers = Common.stop_peers(acc, 1)
-  #     Bag.receive_multiple(numb, Hook.post_nodes_redistribution())
-  #     Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
-  #   end)
+    Bootstrap.gen_hub(context)
+    |> Bootstrap.start_hubs(peer_names, lh, true)
 
-  #   assert ProcessHub.is_partitioned?(hub_id) === false
+    assert ProcessHub.is_partitioned?(hub_id) === false
 
-  #   :net_kernel.monitor_nodes(false)
-  # end
+    end_num = peer_to_start - 1
+
+    Enum.reduce(peer_to_start..end_num, new_peers, fn numb, acc ->
+      removed_peers = Common.stop_peers(acc, 1)
+      Bag.receive_multiple(numb, Hook.post_nodes_redistribution())
+      Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
+    end)
+
+    assert ProcessHub.is_partitioned?(hub_id) === false
+
+    :net_kernel.monitor_nodes(false)
+  end
 
   # @tag hub_id: :static_quroum_test
   # @tag partition_strategy: :static
@@ -240,8 +240,8 @@ defmodule Test.IntegrationTest do
   # @tag quorum_startup_confirm: true
   # @tag listed_hooks: [
   #        {Hook.cluster_join(), :local},
-  #        {Hook.cluster_leave(), :global},
-  #      #  {Hook.post_nodes_redistribution(), :global}
+  #        {Hook.cluster_leave(), :global}
+  #        #  {Hook.post_nodes_redistribution(), :global}
   #      ]
   # test "static quorum with min of #{@nr_of_peers + 1} nodes",
   #      %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
@@ -251,17 +251,22 @@ defmodule Test.IntegrationTest do
   #   assert ProcessHub.is_partitioned?(hub_id) === true
 
   #   peer_to_start = 2
-  #   new_peers = TestNode.start_nodes(
-  #     peer_to_start,
-  #     prefix: :static_quorum_test_patch1
-  #   )
+
+  #   new_peers =
+  #     TestNode.start_nodes(
+  #       peer_to_start,
+  #       prefix: :static_quorum_test_patch1
+  #     )
+
   #   peer_names = for {peer, pid} <- new_peers, do: peer
+
   #   Bootstrap.gen_hub(context)
   #   |> Bootstrap.start_hubs(peer_names, lh, true)
 
   #   # We have added #{peer_to_start} nodes so our cluster shouldn't be partitioned anymore.
   #   assert ProcessHub.is_partitioned?(hub_id) === false
 
+  #   # TODO: this is failing sometimes
   #   removed_peers = Common.stop_peers(new_peers, 1)
   #   new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
   #   Bag.receive_multiple(@nr_of_peers + peer_to_start, Hook.cluster_leave())
@@ -299,18 +304,10 @@ defmodule Test.IntegrationTest do
     assert ProcessHub.is_partitioned?(hub_id) === false
 
     peer_to_start = 4
-
-    new_peers =
-      TestNode.start_nodes(
-        peer_to_start,
-        prefix: :static_quorum_test
-      )
-
+    new_peers = TestNode.start_nodes(peer_to_start, prefix: :dynamic_quorum_test)
     peer_names = for {peer, pid} <- new_peers, do: peer
 
-    Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(peer_names, lh, true)
-
+    Bootstrap.gen_hub(context) |> Bootstrap.start_hubs(peer_names, lh, true)
     Bag.receive_multiple(peer_to_start, Hook.post_nodes_redistribution())
 
     assert ProcessHub.is_partitioned?(hub_id) === false
@@ -330,7 +327,7 @@ defmodule Test.IntegrationTest do
     assert ProcessHub.is_partitioned?(hub_id) === false
 
     removed_peers = Common.stop_peers(new_peers, 1)
-    new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
+    _new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
     Bag.receive_multiple(1, Hook.post_nodes_redistribution())
 
     # At this point we have 70% of cluster left.
@@ -339,141 +336,141 @@ defmodule Test.IntegrationTest do
     :net_kernel.monitor_nodes(false)
   end
 
-  # @tag nodes: 3
-  # @tag migr_strategy: :cold
-  # @tag hub_id: :migration_coldswap_test
-  # @tag redun_strategy: :replication
-  # @tag replication_factor: 2
-  # @tag listed_hooks: [
-  #        {Hook.cluster_join(), :local},
-  #        {Hook.cluster_leave(), :global},
-  #        {Hook.registry_pid_inserted(), :global},
-  #        {Hook.child_migrated(), :global}
-  #      ]
-  # test "coldswap migration with replication",
-  #      %{hub_id: hub_id, nodes: nodes_count, replication_factor: rf, listed_hooks: lh} = context do
-  #   child_count = 10
-  #   child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+  @tag migr_strategy: :cold
+  @tag hub_id: :migration_coldswap_test
+  @tag redun_strategy: :replication
+  @tag replication_factor: 2
+  @tag listed_hooks: [
+         {Hook.cluster_join(), :local},
+         {Hook.cluster_leave(), :global},
+         {Hook.registry_pid_inserted(), :global},
+         {Hook.child_migrated(), :global}
+       ]
+  test "coldswap migration with replication",
+       %{hub_id: hub_id, replication_factor: rf, listed_hooks: lh} = context do
+    nodes_count = @nr_of_peers
+    child_count = 10
+    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
-  #   # Stop hubs on peer nodes before we start.
-  #   Enum.each(Node.list(), fn node ->
-  #     :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
-  #   end)
+    # Stop hubs on peer nodes before we start.
+    Enum.each(Node.list(), fn node ->
+      :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
+    end)
 
-  #   # Confirm that hubs are stopped.
-  #   Bag.receive_multiple(nodes_count, Hook.cluster_leave())
+    # Confirm that hubs are stopped.
+    Bag.receive_multiple(nodes_count, Hook.cluster_leave())
 
-  #   # Starts children.
-  #   Common.sync_base_test(context, child_specs, :add)
+    # Starts children.
+    Common.sync_base_test(context, child_specs, :add)
 
-  #   # Add custom data to children.
-  #   Enum.each(child_specs, fn child_spec ->
-  #     {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
-  #     Process.send(pid, {:set_value, :handoff_data, child_spec.id}, [])
-  #   end)
+    # Add custom data to children.
+    Enum.each(child_specs, fn child_spec ->
+      {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
+      Process.send(pid, {:set_value, :handoff_data, child_spec.id}, [])
+    end)
 
-  #   # Restart hubs on peer nodes and confirm they are up and running.
-  #   Bootstrap.gen_hub(context)
-  #   |> Bootstrap.start_hubs(Node.list(), lh, true)
+    # Restart hubs on peer nodes and confirm they are up and running.
+    Bootstrap.gen_hub(context)
+    |> Bootstrap.start_hubs(Node.list(), lh, true)
 
-  #   ring = ProcessHub.Service.Ring.get_ring(hub_id)
-  #   local_node = node()
+    ring = ProcessHub.Service.Ring.get_ring(hub_id)
+    local_node = node()
 
-  #   # Get all children that have been migrated. Meaning the old ones are killed
-  #   # and spawned on other nodes. We can check all that no longer live on the main
-  #   # node.
-  #   migrated_children =
-  #     Enum.map(child_specs, fn child_spec ->
-  #       {child_spec.id, ProcessHub.Service.Ring.key_to_nodes(ring, child_spec.id, rf)}
-  #     end)
-  #     |> Enum.filter(fn {_, nodes} ->
-  #       !Enum.member?(nodes, local_node)
-  #     end)
+    # Get all children that have been migrated. Meaning the old ones are killed
+    # and spawned on other nodes. We can check all that no longer live on the main
+    # node.
+    migrated_children =
+      Enum.map(child_specs, fn child_spec ->
+        {child_spec.id, ProcessHub.Service.Ring.key_to_nodes(ring, child_spec.id, rf)}
+      end)
+      |> Enum.filter(fn {_, nodes} ->
+        !Enum.member?(nodes, local_node)
+      end)
 
-  #   # Confirm that all migrated children have been updated.
-  #   Bag.receive_multiple(
-  #     length(migrated_children),
-  #     Hook.registry_pid_inserted(),
-  #     error_msg: "Child added timeout"
-  #   )
+    # Confirm that all migrated children have been updated.
+    Bag.receive_multiple(
+      length(migrated_children),
+      Hook.registry_pid_inserted(),
+      error_msg: "Child added timeout"
+    )
 
-  #   Bag.receive_multiple(
-  #     length(migrated_children) * rf,
-  #     Hook.registry_pid_inserted(),
-  #     error_msg: "Child added timeout"
-  #   )
-  # end
+    Bag.receive_multiple(
+      length(migrated_children) * rf,
+      Hook.registry_pid_inserted(),
+      error_msg: "Child added timeout"
+    )
+  end
 
-  # @tag nodes: 3
-  # @tag migr_strategy: :hot
-  # @tag hub_id: :migration_hotswap_test
-  # @tag migr_handover: true
-  # @tag migr_retention: 1000
-  # @tag listed_hooks: [
-  #        {Hook.cluster_join(), :local},
-  #        {Hook.cluster_leave(), :global},
-  #        {Hook.registry_pid_inserted(), :local},
-  #        {Hook.registry_pid_removed(), :local},
-  #        {Hook.post_nodes_redistribution(), :local}
-  #      ]
-  # test "hotswap migration with handoff",
-  #      %{hub_id: hub_id, nodes: nodes_count, listed_hooks: lh} = context do
-  #   child_count = 10
-  #   child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+  @tag migr_strategy: :hot
+  @tag hub_id: :migration_hotswap_test
+  @tag migr_handover: true
+  @tag migr_retention: 1000
+  @tag listed_hooks: [
+         {Hook.cluster_join(), :local},
+         {Hook.cluster_leave(), :global},
+         {Hook.registry_pid_inserted(), :local},
+         {Hook.registry_pid_removed(), :local},
+         {Hook.post_nodes_redistribution(), :local}
+       ]
+  test "hotswap migration with handoff",
+       %{hub_id: hub_id, listed_hooks: lh} = context do
+    nodes_count = @nr_of_peers
+    child_count = 10
+    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
-  #   # Stop hubs on peer nodes before we start.
-  #   Enum.each(Node.list(), fn node ->
-  #     :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
-  #   end)
+    # Stop hubs on peer nodes before we start.
+    Enum.each(Node.list(), fn node ->
+      :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
+    end)
 
-  #   # Confirm that hubs are stopped.
-  #   Bag.receive_multiple(nodes_count, Hook.cluster_leave(), error_msg: "Cluster leave timeout")
+    # Confirm that hubs are stopped.
+    Bag.receive_multiple(nodes_count, Hook.cluster_leave(), error_msg: "Cluster leave timeout")
 
-  #   # Starts children.
-  #   Common.sync_base_test(context, child_specs, :add)
+    # Starts children.
+    Common.sync_base_test(context, child_specs, :add)
 
-  #   # Add custom data to children.
-  #   Enum.each(child_specs, fn child_spec ->
-  #     {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
-  #     Process.send(pid, {:set_value, :handoff_data, child_spec.id}, [])
-  #   end)
+    # Add custom data to children.
+    Enum.each(child_specs, fn child_spec ->
+      {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
+      Process.send(pid, {:set_value, :handoff_data, child_spec.id}, [])
+    end)
 
-  #   # Restart hubs on peer nodes and confirm they are up and running.
-  #   Bootstrap.gen_hub(context)
-  #   |> Bootstrap.start_hubs(Node.list(), lh, true)
+    # Restart hubs on peer nodes and confirm they are up and running.
+    Bootstrap.gen_hub(context)
+    |> Bootstrap.start_hubs(Node.list(), lh, true)
 
-  #   Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
-  #     error_msg: "Post redistribution timeout"
-  #   )
+    Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
+      error_msg: "Post redistribution timeout"
+    )
 
-  #   ring = ProcessHub.Service.Ring.get_ring(hub_id)
-  #   local_node = node()
+    ring = ProcessHub.Service.Ring.get_ring(hub_id)
+    local_node = node()
 
-  #   # Get all children that have been migrated.
-  #   migrated_children =
-  #     Enum.map(child_specs, fn child_spec ->
-  #       {child_spec.id, ProcessHub.Service.Ring.key_to_nodes(ring, child_spec.id, 1)}
-  #     end)
-  #     |> Enum.filter(fn {_, nodes} ->
-  #       !Enum.member?(nodes, local_node)
-  #     end)
+    # Get all children that have been migrated.
+    migrated_children =
+      Enum.map(child_specs, fn child_spec ->
+        {child_spec.id, ProcessHub.Service.Ring.key_to_nodes(ring, child_spec.id, 1)}
+      end)
+      |> Enum.filter(fn {_, nodes} ->
+        !Enum.member?(nodes, local_node)
+      end)
 
-  #   mcl = length(migrated_children)
+    mcl = length(migrated_children)
 
-  #   # Confirm that all migrated children have been updated.
-  #   Bag.receive_multiple(mcl, Hook.registry_pid_removed())
+    # Confirm that all migrated children have been updated.
+    Bag.receive_multiple(mcl, Hook.registry_pid_removed())
 
-  #   # Validate the data.
-  #   Enum.each(migrated_children, fn {child_id, _nodes} ->
-  #     pid =
-  #       ProcessHub.child_lookup(hub_id, child_id)
-  #       |> elem(1)
-  #       |> Enum.at(0)
-  #       |> elem(1)
+    # Validate the data.
+    Enum.each(migrated_children, fn {child_id, _nodes} ->
+      pid =
+        ProcessHub.child_lookup(hub_id, child_id)
+        |> elem(1)
+        |> Enum.at(0)
+        |> elem(1)
 
-  #     handover_data = GenServer.call(pid, {:get_value, :handoff_data})
+      handover_data = GenServer.call(pid, {:get_value, :handoff_data})
 
-  #     assert handover_data === child_id, "Data mismatch for child #{child_id}"
-  #   end)
-  # end
+      assert handover_data === child_id, "Data mismatch for child #{child_id}"
+    end)
+  end
 end
