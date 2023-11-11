@@ -280,15 +280,16 @@ defmodule ProcessHub do
 
   Available strategies are:
   - `ProcessHub.Strategy.Synchronization.PubSub` - uses a publish/subscribe model to synchronize
-  the process registry. Each node in the cluster will subscribe to a topic and publish any changes to the topic. These changes could be events such as adding or removing a process from the registry. This is the default strategy.
+  the process registry. Each node in the cluster will subscribe to a topic and publish any changes to the topic.
+  These changes could be events such as adding or removing a process from the registry.
+  This is the default and recommended synchronization strategy for most users.
   - `ProcessHub.Strategy.Synchronization.Gossip` - uses a gossip protocol to synchronize the
-  process registry. Using this strategy is only recommended when the underlying network is not
-  reliable. The Gossip strategy selects a predefined number of nodes to gossip with and
+  process registry. Using this strategy is recommended when the number of nodes in the cluster
+  is large. The Gossip strategy selects a predefined number of nodes to gossip with and
   exchange information about the process registry.
   These selected nodes will choose other nodes to gossip with and so on until all nodes in the
-  cluster are synchronized. This strategy has higher latency than the PubSub strategy and in some
-  cases can lead to higher bandwidth usage or even decreased bandwidth usage depending on
-  the number of nodes in the cluster.
+  cluster are synchronized. It has higher latency than the PubSub strategy specially when the cluster
+  is rather small.
 
   ### Partition Tolerance Strategy
   `ProcessHub.Strategy.PartitionTolerance.Base` - defines the base protocol for partition tolerance

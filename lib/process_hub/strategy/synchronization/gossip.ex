@@ -4,9 +4,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   within the `ProcessHub` cluster. It utilizes a gossip protocol to
   synchronize the process registry across the cluster.
 
-  The Gossip strategy is most suitable for clusters where the underlying network is
-  not reliable, and messages can be lost. It has higher latency than the PubSub
-  implementation but can be more reliable and save network bandwidth in some scenarios.
+  The Gossip strategy is most suitable for clusters are large. It scales well but produces
+  higher latency than the PubSub strategy when operating in small clusters.
+  When the cluster increases in size, Gossip protocol can also save bandwidth compared to PubSub.
 
   > The Gossip strategy works as follows:
   > - The synchronization process is initiated on a single node.
@@ -15,9 +15,12 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   > - The node sends the data to the selected nodes.
   > - The nodes append their local registry data to the received data and send it to the next nodes.
   > - When all nodes have added their data to the synchronization data, the message will be sent to
-  > nodes that have not yet acknowledged the synchronization data.
+  > nodes that have not yet acknowledged the synchronization ack.
+  > - If node receives the synchronization data which contains all nodes data, it will
+  > synchronize the data with it's local process registry and forward the data to the next nodes
+  > that have not yet acknowledged the synchronization ack.
   > - When all nodes in the cluster have acknowledged the synchronization data, the synchronization
-  > process is completed.
+  > process is completed and the reference is invalidated.
 
   Each node also adds a timestamp to the synchronization data. This is used to ensure that
   the synchronization data is not older than the data that is already in the local process registry.
