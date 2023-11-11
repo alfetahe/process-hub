@@ -74,21 +74,24 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             :add | :rem
           ) :: :ok
     def handle_propagation(strategy, hub_id, {ref, acks, child_data, update_node}, type) do
-      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
-      unacked_nodes = Enum.filter(cluster_nodes, fn node -> !Enum.member?(acks, node) end)
-
-      valid_ref =
+      cached_acks =
         case LocalStorage.get(hub_id, ref) do
-          {_, :invalidated, _ttl} -> false
-          _any -> true
+          nil -> []
+          {_, :invalidated, _ttl} -> :invalidated
+          {_, cached_acks, _ttl} -> cached_acks
         end
 
-      cond do
-        !valid_ref ->
+      case cached_acks do
+        :invalidated ->
           nil
 
-        true ->
-          invalidate_ref(strategy, hub_id, ref)
+        _ ->
+          acks = Enum.uniq(acks ++ cached_acks)
+          unacked_nodes = unacked_nodes(acks, hub_id)
+
+          if (length(unacked_nodes) === 0) do
+            invalidate_ref(strategy, hub_id, ref)
+          end
 
           acks =
             if Enum.member?(unacked_nodes, node()) do
@@ -98,6 +101,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             else
               acks
             end
+
+          LocalStorage.insert(hub_id, ref, acks, strategy.sync_interval)
 
           recipients_select(unacked_nodes, strategy)
           |> propagate_data(hub_id, strategy, {ref, acks, child_data, update_node}, type)
