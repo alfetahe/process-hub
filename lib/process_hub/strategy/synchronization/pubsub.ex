@@ -63,8 +63,6 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     @spec init_sync(ProcessHub.Strategy.Synchronization.PubSub.t(), ProcessHub.hub_id(), [node()]) ::
             :ok
     def init_sync(strategy, hub_id, cluster_nodes) do
-      coordinator = Name.coordinator(hub_id)
-
       local_data = Synchronizer.local_sync_data(hub_id)
       local_node = node()
 
@@ -72,7 +70,11 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       |> Enum.filter(&(&1 !== local_node))
       |> Enum.each(fn node ->
         Node.spawn(node, fn ->
-          GenServer.cast(coordinator, {:handle_sync, strategy, local_data, local_node})
+          GenServer.cast(
+            Name.worker_queue(hub_id),
+            {:handle_work,
+             fn -> Synchronizer.exec_interval_sync(hub_id, strategy, local_data, local_node) end}
+          )
         end)
       end)
 

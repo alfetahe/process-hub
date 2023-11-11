@@ -181,25 +181,9 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  def handle_cast({:handle_sync, strategy, sync_data, remote_node}, state) do
-    Task.Supervisor.start_child(
-      state.managers.task_supervisor,
-      Synchronization.IntervalSyncHandle,
-      :handle,
-      [
-        %Synchronization.IntervalSyncHandle{
-          hub_id: state.hub_id,
-          sync_strat: strategy,
-          sync_data: sync_data,
-          remote_node: remote_node
-        }
-      ]
-    )
-
-    {:noreply, state}
-  end
-
   # TODO: currently only gossip is using this but not the pubsub...
+  # This is only used to make queue up the propagation of the events.. not
+  # not in to race conditions. Maybe move such functiosn to separate worker process.
   def handle_cast({:handle_propagation, hub_id, data, type}, state) do
     state.settings.synchronization_strategy
     |> SynchronizationStrategy.handle_propagation(

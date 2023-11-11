@@ -4,9 +4,28 @@ defmodule ProcessHub.Service.Synchronizer do
   registry data between nodes.
   """
 
+  alias ProcessHub.Handler.Synchronization
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Name
+
+  # TODO: add tests
+  def exec_interval_sync(hub_id, strategy, sync_data, remote_node) do
+    Task.Supervisor.async_nolink(
+      Name.task_supervisor(hub_id),
+      Synchronization.IntervalSyncHandle,
+      :handle,
+      [
+        %Synchronization.IntervalSyncHandle{
+          hub_id: hub_id,
+          sync_strat: strategy,
+          sync_data: sync_data,
+          remote_node: remote_node
+        }
+      ]
+    )
+    |> Task.await()
+  end
 
   @doc "Returns local node's process registry data used for synchronization."
   @spec local_sync_data(ProcessHub.hub_id()) :: [{ProcessHub.child_spec(), pid()}]

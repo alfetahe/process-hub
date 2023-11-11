@@ -148,15 +148,15 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     def handle_synchronization(
           strategy,
           hub_id,
-          %{ref: ref, nodes_data: nodes_data},
+          %{ref: ref, nodes_data: nodes_data, sync_acks: sync_acks},
           _remote_node
         ) do
-      case merge_sync_data(nodes_data, hub_id, ref) do
+      case merge_sync_data(hub_id, ref, nodes_data, sync_acks) do
         :invalidated ->
           nil
 
-        sync_data ->
-          handle_sync_data(strategy, hub_id, ref, sync_data)
+        {sync_data, sync_acks} ->
+          handle_sync_data(strategy, hub_id, ref, sync_data, sync_acks)
       end
 
       :ok
@@ -166,31 +166,42 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             ProcessHub.Strategy.Synchronization.Gossip.t(),
             ProcessHub.hub_id(),
             reference(),
-            any()
+            map(),
+            list()
           ) :: :ok
-    def handle_sync_data(strategy, hub_id, ref, sync_data) do
-      LocalStorage.insert(hub_id, ref, sync_data, strategy.sync_interval)
+    def handle_sync_data(strategy, hub_id, ref, sync_data, sync_acks) do
+      LocalStorage.insert(hub_id, ref, {sync_data, sync_acks}, strategy.sync_interval)
       missing_nodes = missing_nodes(sync_data, hub_id)
 
       cond do
         length(missing_nodes) === 0 ->
-          unacked_nodes =
-            acks_from_data(sync_data)
-            |> unacked_nodes(hub_id)
+          unacked_nodes = unacked_nodes(sync_acks, hub_id)
 
-          cond do
-            length(unacked_nodes) === 0 ->
-              invalidate_ref(strategy, hub_id, ref)
+          sync_acks =
+            if Enum.member?(unacked_nodes, node()) do
               sync_locally(hub_id, sync_data)
 
-              :ok
+              [node() | sync_acks]
+            else
+              sync_acks
+            end
 
-            true ->
-              forward_data(unacked_nodes, strategy, hub_id, %{ref: ref, nodes_data: sync_data})
+          if length(unacked_nodes) === 0 do
+            invalidate_ref(strategy, hub_id, ref)
+          else
+            forward_data(unacked_nodes, strategy, hub_id, %{
+              ref: ref,
+              nodes_data: sync_data,
+              sync_acks: sync_acks
+            })
           end
 
         length(missing_nodes) > 0 ->
-          forward_data(missing_nodes, strategy, hub_id, %{ref: ref, nodes_data: sync_data})
+          forward_data(missing_nodes, strategy, hub_id, %{
+            ref: ref,
+            nodes_data: sync_data,
+            sync_acks: sync_acks
+          })
 
         true ->
           throw("Invalid state")
@@ -205,75 +216,66 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       ref = make_ref()
 
       sync_data = %{
-        node() => {Synchronizer.local_sync_data(hub_id), [node()], Bag.timestamp(:microsecond)}
+        node() => {Synchronizer.local_sync_data(hub_id), Bag.timestamp(:microsecond)}
       }
 
-      LocalStorage.insert(hub_id, ref, sync_data, strategy.sync_interval)
+      LocalStorage.insert(hub_id, ref, {sync_data, []}, strategy.sync_interval)
 
       cluster_nodes
       |> recipients_select(strategy)
-      |> forward_data(strategy, hub_id, %{ref: ref, nodes_data: sync_data})
+      |> forward_data(strategy, hub_id, %{ref: ref, nodes_data: sync_data, sync_acks: []})
     end
 
     defp init_sync_internal(_strategy, _hub_id, _cluster_nodes, false) do
       :ok
     end
 
-    defp merge_sync_data(nodes_data, hub_id, ref) do
+    defp merge_sync_data(hub_id, ref, nodes_data, sync_acks) do
       local_timestamp = Bag.timestamp(:microsecond)
       local_data = Synchronizer.local_sync_data(hub_id)
-
-      nodes_data =
-        case Map.get(nodes_data, node(), nil) do
-          nil ->
-            Map.put(nodes_data, node(), {local_data, [node()], local_timestamp})
-
-          {_, acks, _} ->
-            Map.put(nodes_data, node(), {local_data, acks, local_timestamp})
-        end
-        |> Enum.map(fn {node, {data, acks, timestamp}} ->
-          {node, {data, Enum.uniq([node() | acks]), timestamp}}
-        end)
-        |> Map.new()
+      nodes_data = Map.put(nodes_data, node(), {local_data, local_timestamp})
 
       case LocalStorage.get(hub_id, ref) do
         nil ->
-          nodes_data
+          {nodes_data, []}
 
         {_key, :invalidated, _tt} ->
           :invalidated
 
-        {_key, cached_data, _ttl} ->
-          Map.merge(nodes_data, cached_data, fn _node_key, {ld, la, lt}, {_rd, ra, rt} ->
-            {ld, Enum.uniq(la ++ ra), max(lt, rt)}
-          end)
+        {_key, {cached_data, cached_acks}, _ttl} ->
+          merged_data =
+            Map.merge(nodes_data, cached_data, fn _node_key, {ld, lt}, {rd, rt} ->
+              cond do
+                lt > rt -> {ld, lt}
+                true -> {rd, rt}
+              end
+            end)
+
+          {merged_data, Enum.uniq(cached_acks ++ sync_acks)}
       end
     end
 
     defp sync_locally(hub_id, nodes_data) do
-      local_node = node()
-
       node_timestamps =
         case LocalStorage.get(hub_id, :gossip_node_timestamps) do
           nil -> %{}
           {_key, node_timestamps, _ttl} -> node_timestamps
         end
 
-      Enum.each(nodes_data, fn {node, {data, acks, timestamp}} ->
-        unless(node === local_node && !Enum.member?(acks, local_node)) do
-          # Make sure that we don't process data that is older than what we already have.
-          node_timestamp = Map.get(node_timestamps, node, nil)
+      Map.delete(nodes_data, node())
+      |> Enum.each(fn {node, {data, timestamp}} ->
+        # Make sure that we don't process data that is older than what we already have.
+        node_timestamp = Map.get(node_timestamps, node, nil)
 
-          cond do
-            node_timestamp === nil ->
-              sync_locally_node(hub_id, node, data, timestamp)
+        cond do
+          node_timestamp === nil ->
+            sync_locally_node(hub_id, node, data, timestamp)
 
-            node_timestamp < timestamp ->
-              sync_locally_node(hub_id, node, data, timestamp)
+          node_timestamp < timestamp ->
+            sync_locally_node(hub_id, node, data, timestamp)
 
-            true ->
-              :ok
-          end
+          true ->
+            :ok
         end
       end)
     end
@@ -296,20 +298,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       :ets.insert(hub_id, {:gossip_node_timestamps, node_timestamps, nil})
     end
 
-    defp acks_from_data(nodes_data) do
-      Enum.map(nodes_data, fn {_node, {_, acks, _}} ->
-        acks
-      end)
-    end
-
-    defp unacked_nodes(nodes_acks, hub_id) do
-      nodes = Cluster.nodes(hub_id, [:include_local])
-
-      Enum.map(nodes_acks, fn acks ->
-        Enum.filter(nodes, fn node -> !Enum.member?(acks, node) end)
-      end)
-      |> Enum.flat_map(fn nodes -> nodes end)
-      |> Enum.uniq()
+    defp unacked_nodes(sync_acks, hub_id) do
+      Cluster.nodes(hub_id, [:include_local])
+      |> Enum.filter(fn node -> !Enum.member?(sync_acks, node) end)
     end
 
     defp missing_nodes(nodes_data, hub_id) do
@@ -321,11 +312,14 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
     defp forward_data(recipients, strategy, hub_id, sync_data) do
       local_node = node()
-      coordinator = Name.coordinator(hub_id)
 
       Enum.each(recipients, fn recipient ->
         Node.spawn(recipient, fn ->
-          GenServer.cast(coordinator, {:handle_sync, strategy, sync_data, local_node})
+          GenServer.cast(
+            Name.worker_queue(hub_id),
+            {:handle_work,
+             fn -> Synchronizer.exec_interval_sync(hub_id, strategy, sync_data, local_node) end}
+          )
         end)
       end)
     end

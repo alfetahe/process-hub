@@ -42,11 +42,13 @@ defmodule ProcessHub.Initializer do
     }
 
     children = [
+      # TODO: {Cachex, name: Name.cache(hub_id)},
       {Blockade, %{name: managers.local_event_queue}},
       {Blockade, %{name: managers.global_event_queue}},
       {ProcessHub.DistributedSupervisor, {hub_id, managers}},
       {Task.Supervisor, name: managers.task_supervisor},
-      {ProcessHub.Coordinator, {hub_id, hub, managers}}
+      {ProcessHub.Coordinator, {hub_id, hub, managers}},
+      {ProcessHub.WorkerQueue, Name.worker_queue(hub_id)}
     ]
 
     opts = [strategy: :one_for_one]

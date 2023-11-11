@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 ## v0.1.3-alpha - 2023-11-05
 
-Fixed bugs, added more documentation, improved tests performance by reusing peer nodes
+Fixed bugs, code improvements, added more documentation, improved tests performance by reusing peer nodes.
 
 ### Changed
 - Project description.
@@ -17,6 +17,8 @@ collected from all nodes.
 
 ### Added
 - Examples on how to register hooks.
+- WorkerQueue process who's job is to execute jobs. It is used to prevent race conditions
+and execute jobs in order.
 
 ### Fixed
 - Process start/stop with binary child_id returned error when used with await/1 function.
@@ -25,6 +27,8 @@ exiting processes.
 - Dynamic quorum strategy was returning wrong quorum status in some cases.
 - Fixed situtation where system was caught in a locked state for a moments due to race condition in the
 state handling.
+- Gossip protocol interval synchronization was not always taking the data that had the highest
+timestamp.
 
 ## v0.1.2-alpha - 2023-10-17
 
