@@ -62,7 +62,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
       Cluster.nodes(hub_id)
       |> recipients_select(strategy)
-      |> propagate_data(hub_id, {ref, [node()], children, update_node}, type)
+      |> propagate_data(hub_id, strategy, {ref, [node()], children, update_node}, type)
 
       :ok
     end
@@ -73,12 +73,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             term(),
             :add | :rem
           ) :: :ok
-    def handle_propagation(
-          strategy,
-          hub_id,
-          {ref, acks, child_data, update_node, cluster_nodes},
-          type
-        ) do
+    def handle_propagation(strategy, hub_id, {ref, acks, child_data, update_node}, type) do
+      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
       unacked_nodes = Enum.filter(cluster_nodes, fn node -> !Enum.member?(acks, node) end)
 
       valid_ref =
@@ -104,7 +100,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             end
 
           recipients_select(unacked_nodes, strategy)
-          |> propagate_data(hub_id, {ref, acks, child_data, update_node}, type)
+          |> propagate_data(hub_id, strategy, {ref, acks, child_data, update_node}, type)
       end
 
       :ok
@@ -342,12 +338,14 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       end
     end
 
-    defp propagate_data(nodes, hub_id, data, type) do
-      coordinator = Name.coordinator(hub_id)
-
+    defp propagate_data(nodes, hub_id, strategy, data, type) do
       Enum.each(nodes, fn node ->
         Node.spawn(node, fn ->
-          GenServer.cast(coordinator, {:handle_propagation, hub_id, data, type})
+          GenServer.cast(
+            Name.worker_queue(hub_id),
+            {:handle_work,
+             fn -> SynchronizationStrategy.handle_propagation(strategy, hub_id, data, type) end}
+          )
         end)
       end)
     end

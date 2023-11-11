@@ -22,7 +22,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
-  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Handler.ChildrenAdd
   alias ProcessHub.Handler.ChildrenRem
   alias ProcessHub.Handler.ClusterUpdate
@@ -176,20 +175,6 @@ defmodule ProcessHub.Coordinator do
           sync_strategy: state.settings.synchronization_strategy
         }
       ]
-    )
-
-    {:noreply, state}
-  end
-
-  # TODO: currently only gossip is using this but not the pubsub...
-  # This is only used to make queue up the propagation of the events.. not
-  # not in to race conditions. Maybe move such functiosn to separate worker process.
-  def handle_cast({:handle_propagation, hub_id, data, type}, state) do
-    state.settings.synchronization_strategy
-    |> SynchronizationStrategy.handle_propagation(
-      hub_id,
-      Tuple.append(data, state.cluster_nodes),
-      type
     )
 
     {:noreply, state}

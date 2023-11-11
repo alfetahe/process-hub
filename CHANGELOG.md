@@ -13,7 +13,7 @@ of the test suites.
 - Process registry dispatches `:registry_pid_insert_hook` no longer adds the child_spec
 to the hook data but rather the child_id.
 - Gossip protocol synchronizes only after all the initial synchronization data is
-collected from all nodes.
+collected from all nodes. This improves the overall efficiency of the protocol.
 
 ### Added
 - Examples on how to register hooks.

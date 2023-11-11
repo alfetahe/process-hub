@@ -79,41 +79,35 @@ defmodule Test.IntegrationTest do
   #   Common.validate_sync(context)
   # end
 
-  # @tag hub_id: :gossip_start_rem_test
-  # @tag sync_strategy: :gossip
-  # @tag listed_hooks: [
-  #        {Hook.cluster_join(), :local},
-  #        {Hook.registry_pid_inserted(), :global},
-  #        {Hook.registry_pid_removed(), :global}
-  #      ]
-  # test "gossip children starting and removing", %{hub_id: hub_id} = context do
-  #   child_count = 100
-  #   child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+  @tag hub_id: :gossip_start_rem_test
+  @tag sync_strategy: :gossip
+  @tag listed_hooks: [
+         {Hook.cluster_join(), :local},
+         {Hook.registry_pid_inserted(), :global},
+         {Hook.registry_pid_removed(), :global}
+       ]
+  test "gossip children starting and removing", %{hub_id: hub_id} = context do
+    child_count = 100
+    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
-  #   # TODO: this is failing
-  #   # Starts children on all nodes.
-  #   Common.sync_base_test(context, child_specs, :add, scope: :global)
+    # Starts children on all nodes.
+    Common.sync_base_test(context, child_specs, :add, scope: :global)
 
-  #   # Tests if all child_specs are used for starting children.
-  #   Common.validate_registry_length(context, child_specs)
+    # Tests if all child_specs are used for starting children.
+    Common.validate_registry_length(context, child_specs)
 
-  #   # Tests if all child_specs are started on all nodes.
-  #   Common.validate_started_children(context, child_specs)
+    # Tests if all child_specs are started on all nodes.
+    Common.validate_started_children(context, child_specs)
 
-  #   # Tests children adding and syncing.
-  #   Common.validate_sync(context)
+    # Tests children adding and syncing.
+    Common.validate_sync(context)
 
-  #   # Process.sleep(1000)
-  #   # Bag.all_messages()
-  #   # |> IO.inspect(label: "DEBUG ALL MESSAGES")
+    # Stops children on all nodes.
+    Common.sync_base_test(context, child_specs, :rem, scope: :global)
 
-  #   # TODO: this isfailing sometimes
-  #   # Stops children on all nodes.
-  #   Common.sync_base_test(context, child_specs, :rem, scope: :global)
-
-  #   # Tests children removing and syncing.
-  #   Common.validate_sync(context)
-  # end
+    # Tests children removing and syncing.
+    Common.validate_sync(context)
+  end
 
   @tag hub_id: :gossip_interval_test
   @tag sync_strategy: :gossip
