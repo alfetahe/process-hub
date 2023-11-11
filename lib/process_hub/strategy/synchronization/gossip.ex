@@ -92,7 +92,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           acks = Enum.uniq(acks ++ cached_acks)
           unacked_nodes = unacked_nodes(acks, hub_id)
 
-          if (length(unacked_nodes) === 0) do
+          if length(unacked_nodes) === 0 do
             invalidate_ref(strategy, hub_id, ref)
           end
 

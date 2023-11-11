@@ -42,7 +42,6 @@ defmodule ProcessHub.Initializer do
     }
 
     children = [
-      # TODO: {Cachex, name: Name.cache(hub_id)},
       {Blockade, %{name: managers.local_event_queue}},
       {Blockade, %{name: managers.global_event_queue}},
       {ProcessHub.DistributedSupervisor, {hub_id, managers}},

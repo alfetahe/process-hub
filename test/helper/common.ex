@@ -154,7 +154,7 @@ defmodule Test.Helper.Common do
                    "Remote registry does not include #{inspect(node)}"
           end)
         else
-          assert false, "Remote registry does not have #{id}"
+          assert false, "Remote registry does not have #{id} on node #{inspect(node)}"
         end
       end)
     end)

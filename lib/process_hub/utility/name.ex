@@ -19,13 +19,6 @@ defmodule ProcessHub.Utility.Name do
     |> String.to_atom()
   end
 
-  # TODO: add tests
-  # @spec cache(ProcessHub.hub_id()) :: atom()
-  # def cache(hub_id) do
-  #   concat_name([hub_id, "cache"], ".")
-  # end
-
-  # TODO: add tests
   @spec worker_queue(ProcessHub.hub_id()) :: atom()
   def worker_queue(hub_id) do
     concat_name([hub_id, "worker_queue"], ".")
