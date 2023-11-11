@@ -32,4 +32,8 @@ defmodule Test.Utility.NameTest do
   test "task supervisor" do
     assert Name.task_supervisor(:test) === :"hub.test.task_supervisor"
   end
+
+  test "worker queue" do
+    assert Name.worker_queue(:test) === :"hub.test.worker_queue"
+  end
 end
