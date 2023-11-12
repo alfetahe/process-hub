@@ -29,7 +29,7 @@ defmodule ProcessHub do
 
   Building distributed systems is hard and designing one is all about trade-offs.
   There are many things to consider and each system has its own requirements.
-  Tis library aims to be flexible and configurable to suit different use cases.
+  This library aims to be flexible and configurable to suit different use cases.
 
   ProcessHub is designed to be **decentralized** in its architecture. It does not rely on a
   single node to manage the cluster. Each node in the cluster is considered equal.
@@ -73,7 +73,7 @@ defmodule ProcessHub do
       ```elixir
       def deps do
         [
-          {:process_hub, "~> 0.1.2-alpha"}
+          {:process_hub, "~> 0.1.3-alpha"}
         ]
       end
       ```
