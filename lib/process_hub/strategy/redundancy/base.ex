@@ -12,8 +12,8 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   Returns the replication factor for the given strategy struct. This is the number of replicas
   that the process will be started with.
   """
-  @spec replication_factor(strategy_struct :: struct()) :: pos_integer()
-  def replication_factor(struct)
+  @spec replication_factor(strategy_struct :: struct(), :hash_ring.ring()) :: pos_integer()
+  def replication_factor(struct, hash_ring)
 
   @doc """
   Determines the nodes that are responsible for the given `child_id` (process).

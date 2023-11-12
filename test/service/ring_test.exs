@@ -88,4 +88,10 @@ defmodule Test.Service.RingTest do
     assert Ring.key_to_node(hash_ring, 5000, 2) === first_node
     assert Ring.key_to_node(hash_ring, 5000, 3) === first_node
   end
+
+  test "nodes", %{hub_id: hub_id} = _context do
+    hash_ring = Ring.get_ring(hub_id)
+
+    assert Ring.nodes(hash_ring) === [:"ex_unit@127.0.0.1"]
+  end
 end

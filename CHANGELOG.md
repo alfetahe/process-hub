@@ -16,6 +16,8 @@ to the hook data but rather the child_id.
 collected from all nodes. This improves the overall efficiency of the protocol.
 
 ### Added
+- Redundancy strategy for replication now supports dynamic cluster size option.
+This can be used to replicate process always on all nodes.
 - Examples on how to register hooks.
 - WorkerQueue process who's job is to execute jobs. It is used to prevent race conditions
 and execute jobs in order.

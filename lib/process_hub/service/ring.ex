@@ -53,4 +53,12 @@ defmodule ProcessHub.Service.Ring do
 
     node
   end
+
+  @doc """
+  Returns a list of all nodes in the hash ring.
+  """
+  @spec key_to_node(HashRing.t(), ProcessHub.child_id(), non_neg_integer()) :: [node()]
+  def nodes(hash_ring) do
+    HashRing.get_node_list(hash_ring) |> Enum.map(fn {_, node, _, _} -> node end)
+  end
 end

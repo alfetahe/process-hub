@@ -15,8 +15,9 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
 
   defimpl RedundancyStrategy, for: ProcessHub.Strategy.Redundancy.Singularity do
     @impl true
-    @spec replication_factor(ProcessHub.Strategy.Redundancy.Singularity.t()) :: 1
-    def replication_factor(_struct), do: 1
+    @spec replication_factor(ProcessHub.Strategy.Redundancy.Singularity.t(), :hash_ring.ring()) ::
+            1
+    def replication_factor(_struct, _hash_ring), do: 1
 
     @impl true
     @spec belongs_to(

@@ -144,13 +144,14 @@ defmodule Test.IntegrationTest do
 
   @tag redun_strategy: :replication
   @tag hub_id: :redunc_activ_pass_test
+  @tag replication_model: :active_passive
   @tag replication_factor: 4
   @tag listed_hooks: [
          {Hook.cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
-  test "replication factor and mode", %{hub_id: hub_id} = context do
+  test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     child_count = 100
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
@@ -158,15 +159,44 @@ defmodule Test.IntegrationTest do
     Common.sync_base_test(context, child_specs, :add)
 
     Bag.receive_multiple(
-      # TODO: don't know why exactly 300.
-      @nr_of_peers * child_count * context.replication_factor + 300,
+      @nr_of_peers * child_count * context.replication_factor + (rf - 1) * child_count,
       {Hook.registry_pid_inserted(), Hook.registry_pid_inserted()}
     )
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
 
-    # TODO: this is failing sometimes
+    # Tests redundancy and check if started children's count matches replication factor.
+    Common.validate_replication(context)
+
+    # Tests redundancy mode and check if replicated children are in passive/active mode.
+    Common.validate_redundancy_mode(context)
+  end
+
+  @tag redun_strategy: :replication
+  @tag hub_id: :redunc_activ_activ_test
+  @tag replication_factor: :cluster_size
+  @tag replication_model: :active_active
+  @tag listed_hooks: [
+         {Hook.cluster_join(), :local},
+         {Hook.registry_pid_inserted(), :global},
+         {Hook.registry_pid_removed(), :global}
+       ]
+  test "replication cluster size with mode active passive", %{hub_id: hub_id} = context do
+    child_count = 100
+    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+
+    # Starts children on all nodes.
+    Common.sync_base_test(context, child_specs, :add)
+
+    Bag.receive_multiple(
+      @nr_of_peers * child_count * (@nr_of_peers + 1) + @nr_of_peers * child_count,
+      {Hook.registry_pid_inserted(), Hook.registry_pid_inserted()}
+    )
+
+    # Tests if all child_specs are used for starting children.
+    Common.validate_registry_length(context, child_specs)
+
     # Tests redundancy and check if started children's count matches replication factor.
     Common.validate_replication(context)
 

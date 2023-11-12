@@ -7,6 +7,7 @@ defmodule Test.Helper.Common do
   alias ProcessHub.Service.Ring
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
+  alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
 
   use ExUnit.Case, async: false
 
@@ -46,17 +47,25 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def validate_replication(%{hub_id: hub_id, replication_factor: rf} = _context) do
+  def validate_replication(%{hub_id: hub_id, replication_factor: _rf} = _context) do
     registry = ProcessHub.process_registry(hub_id)
+
+    hub_settings = GenServer.call(Name.coordinator(hub_id), :state)
+
+    replication_factor =
+      RedundancyStrategy.replication_factor(
+        hub_settings.settings.redundancy_strategy,
+        hub_settings.hash_ring
+      )
 
     Enum.each(registry, fn {child_id, {_, nodes}} ->
       ring = Ring.get_ring(hub_id)
-      ring_nodes = Ring.key_to_nodes(ring, child_id, rf)
+      ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
 
-      assert length(nodes) === rf,
-             "The child #{child_id} is started on #{length(nodes)} nodes but #{rf} is expected."
+      assert length(nodes) === replication_factor,
+             "The child #{child_id} is started on #{length(nodes)} nodes but #{replication_factor} is expected."
 
-      assert length(ring_nodes) === rf,
+      assert length(ring_nodes) === replication_factor,
              "The length of ring nodes does not match replication factor"
 
       assert Enum.all?(Keyword.keys(nodes), &Enum.member?(ring_nodes, &1)),
@@ -77,27 +86,45 @@ defmodule Test.Helper.Common do
            "The length of registry(#{registry_len}) does not match length of child specs(#{child_spec_len})"
   end
 
-  def validate_redundancy_mode(%{hub_id: hub_id, replication_factor: rf} = _context) do
+  def validate_redundancy_mode(%{hub_id: hub_id, replication_model: rm} = _context) do
     registry = ProcessHub.process_registry(hub_id)
+
+    hub_settings = GenServer.call(Name.coordinator(hub_id), :state)
+
+    replication_factor =
+      RedundancyStrategy.replication_factor(
+        hub_settings.settings.redundancy_strategy,
+        hub_settings.hash_ring
+      )
 
     Enum.each(registry, fn {child_id, {_, nodes}} ->
       for {node, pid} <- nodes do
         ring = Ring.get_ring(hub_id)
-        ring_nodes = Ring.key_to_nodes(ring, child_id, rf)
+        ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
 
         state = GenServer.call(pid, :get_state)
 
-        assert length(nodes) === rf, "The length of nodes does not match replication factor"
+        assert length(nodes) === replication_factor,
+               "The length of nodes does not match replication factor"
 
-        assert length(ring_nodes) === rf,
+        assert length(ring_nodes) === replication_factor,
                "The length of ring nodes does not match replication factor"
 
-        case state[:redun_mode] do
-          :active ->
-            assert Enum.at(ring_nodes, 0) === node, "The active node does not match ring node"
+        cond do
+          rm === :active_active ->
+            assert state[:redun_mode] === :active,
+                   "The redundancy mode does not match active active"
 
-          :passive ->
-            assert Enum.at(ring_nodes, 0) !== node, "The passive node does not match ring node"
+          rm === :active_passive ->
+            case state[:redun_mode] do
+              :active ->
+                assert Enum.at(ring_nodes, 0) === node,
+                       "The active node does not match ring node #{inspect(Enum.at(ring_nodes, 0))} and #{inspect(node)}"
+
+              :passive ->
+                assert Enum.at(ring_nodes, 0) !== node,
+                       "The passive node does not match ring node"
+            end
         end
       end
     end)

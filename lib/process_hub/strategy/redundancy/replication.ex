@@ -12,6 +12,9 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   The passive instances of the process should be ready to take over if the active instance
   fails.
 
+  This strategy also allows replication on all nodes in the cluster. This is done by setting
+  the `replication_factor` option to `:cluster_size`.
+
   `ProcessHub` can notify the process when it is active or passive by sending a `:redundancy_signal`.
 
   > #### `Using the :redundancy_signal option` {: .info}
@@ -35,6 +38,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   Replication strategy options.
 
   - `replication_factor` - The number of instances of a single process across the cluster.
+  This option can be positive integer or `cluster_size` atom to replicate process on all nodes.
   Default value is `2`.
   - `replication_model` - This option determines the mode in which the instances of processes are started.
   Default value is `:active_active`.
@@ -49,7 +53,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     - `:all` - All processes are notified.
   """
   @type t :: %__MODULE__{
-          replication_factor: pos_integer(),
+          replication_factor: pos_integer() | :cluster_size,
           replication_model: :active_active | :active_passive,
           redundancy_signal: :none | :active | :passive | :all
         }
@@ -58,9 +62,18 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   defimpl RedundancyStrategy, for: ProcessHub.Strategy.Redundancy.Replication do
     @impl true
-    @spec replication_factor(ProcessHub.Strategy.Redundancy.Replication.t()) :: 1
-    def replication_factor(strategy) do
-      strategy.replication_factor
+    @spec replication_factor(
+            ProcessHub.Strategy.Redundancy.Replication.t(),
+            :hash_ring.ring()
+          ) :: pos_integer() | :cluster_size
+    def replication_factor(strategy, hash_ring) do
+      case strategy.replication_factor do
+        :cluster_size ->
+          Ring.nodes(hash_ring) |> Enum.count()
+
+        _ ->
+          strategy.replication_factor
+      end
     end
 
     @impl true
@@ -70,7 +83,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
             atom() | binary()
           ) :: [atom]
     def belongs_to(strategy, hash_ring, child_id) do
-      Ring.key_to_nodes(hash_ring, child_id, replication_factor(strategy))
+      Ring.key_to_nodes(hash_ring, child_id, replication_factor(strategy, hash_ring))
     end
 
     @impl true
@@ -105,7 +118,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           child_id,
           {hash_ring, old_hash_ring}
         ) do
-      replication_factor = replication_factor(strategy)
+      replication_factor = replication_factor(strategy, hash_ring)
       old_mode = process_rdm_mode(strategy, child_id, old_hash_ring, replication_factor)
       new_mode = process_rdm_mode(strategy, child_id, hash_ring, replication_factor)
 
