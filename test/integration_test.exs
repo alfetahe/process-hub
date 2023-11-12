@@ -65,14 +65,12 @@ defmodule Test.IntegrationTest do
     # Manually trigger the periodic sync.
     Common.trigger_periodc_sync(context, child_specs, :add)
 
-    # TODO: this is failing sometimes
     # Test if data is synchronized in the cluster.
     Common.validate_sync(context)
 
     # Locally stop children without propagating to the rest of the cluster.
     Common.periodic_sync_base(context, child_specs, :rem)
 
-    # TODO: this is failing sometimes
     # Manually trigger the periodic sync.
     Common.trigger_periodc_sync(context, child_specs, :rem)
 
@@ -94,14 +92,12 @@ defmodule Test.IntegrationTest do
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)
 
-    # TODO: this is failing sometimes
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
 
     # Tests if all child_specs are started on all nodes.
     Common.validate_started_children(context, child_specs)
 
-    # TODO: this is failing sometimes
     # Tests children adding and syncing.
     Common.validate_sync(context)
 
