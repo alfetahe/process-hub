@@ -271,10 +271,10 @@ defmodule Test.IntegrationTest do
   @tag quorum_startup_confirm: true
   @tag listed_hooks: [
          {Hook.cluster_join(), :local},
-         {Hook.cluster_leave(), :global},
+         {Hook.cluster_leave(), :local},
          {Hook.post_nodes_redistribution(), :local}
        ]
-  test "static quorum with min of #{@nr_of_peers + 1} nodes",
+  test "static quorum with min of #{@nr_of_peers + 2} nodes",
        %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
     :net_kernel.monitor_nodes(true)
 
@@ -282,33 +282,25 @@ defmodule Test.IntegrationTest do
     assert ProcessHub.is_partitioned?(hub_id) === true
 
     peer_to_start = 2
-
-    new_peers =
-      TestNode.start_nodes(
-        peer_to_start,
-        prefix: :static_quorum_test_patch1
-      )
-
+    new_peers = TestNode.start_nodes(peer_to_start, prefix: :static_quorum_test_patch1)
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
-    Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(peer_names, lh, true)
-
-    Bag.receive_multiple(peer_to_start + @nr_of_peers, Hook.post_nodes_redistribution())
+    Bootstrap.gen_hub(context) |> Bootstrap.start_hubs(peer_names, lh, true)
+    Bag.receive_multiple(peer_to_start, Hook.post_nodes_redistribution())
 
     # We have added #{peer_to_start} nodes so our cluster shouldn't be partitioned anymore.
     assert ProcessHub.is_partitioned?(hub_id) === false
 
     removed_peers = Common.stop_peers(new_peers, 1)
     new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
-    Bag.receive_multiple(@nr_of_peers + peer_to_start, Hook.cluster_leave())
+    Bag.receive_multiple(1, Hook.cluster_leave())
 
     # We still achive quorum
     assert ProcessHub.is_partitioned?(hub_id) === false
 
     removed_peers = Common.stop_peers(new_peers, 1)
     _new_peers = Enum.filter(peers, fn node -> !Enum.member?(removed_peers, node) end)
-    Bag.receive_multiple(@nr_of_peers + peer_to_start - 1, Hook.cluster_leave())
+    Bag.receive_multiple(1, Hook.cluster_leave())
 
     # Quorum not achieved
     assert ProcessHub.is_partitioned?(hub_id) === true
