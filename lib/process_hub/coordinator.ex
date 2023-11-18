@@ -35,7 +35,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Utility.Name
 
   @propagation_interval 10000
-  @children_distribution_timeout 15000
 
   use Event
   use GenServer
@@ -212,7 +211,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({@event_distribute_children, node}, state) do
-    Task.Supervisor.async_nolink(
+    Task.Supervisor.start_child(
       state.managers.task_supervisor,
       ClusterUpdate.NodeUp,
       :handle,
@@ -230,7 +229,6 @@ defmodule ProcessHub.Coordinator do
         }
       ]
     )
-    |> Task.await(@children_distribution_timeout)
 
     {:noreply, state}
   end
@@ -282,7 +280,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({@event_children_registration, {children, _node}}, state) do
-    Task.Supervisor.async_nolink(
+    Task.Supervisor.start_child(
       state.managers.task_supervisor,
       ChildrenAdd.SyncHandle,
       :handle,
@@ -293,7 +291,6 @@ defmodule ProcessHub.Coordinator do
         }
       ]
     )
-    |> Task.await()
 
     {:noreply, state}
   end
@@ -356,6 +353,8 @@ defmodule ProcessHub.Coordinator do
 
   defp handle_node_down(state, down_node) do
     if Enum.member?(state.cluster_nodes, down_node) do
+      State.lock_local_event_handler(state.hub_id)
+
       cluster_nodes = Cluster.rem_cluster_node(state.cluster_nodes, down_node)
 
       old_hash_ring = state.hash_ring
@@ -367,7 +366,7 @@ defmodule ProcessHub.Coordinator do
           cluster_nodes: cluster_nodes
       }
 
-      Task.Supervisor.async_nolink(
+      Task.Supervisor.start_child(
         state.managers.task_supervisor,
         ClusterUpdate.NodeDown,
         :handle,
@@ -383,9 +382,6 @@ defmodule ProcessHub.Coordinator do
           }
         ]
       )
-      |> Task.await()
-
-      HookManager.dispatch_hook(state.hub_id, Hook.cluster_leave(), down_node)
 
       state
     else

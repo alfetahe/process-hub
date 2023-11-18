@@ -223,6 +223,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
       distribute_processes(args)
 
+      State.unlock_local_event_handler(args.hub_id)
+
       PartitionToleranceStrategy.handle_node_down(
         args.partition_strat,
         args.hub_id,
@@ -235,6 +237,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         Hook.post_nodes_redistribution(),
         {:nodedown, args.removed_node}
       )
+
+      HookManager.dispatch_hook(args.hub_id, Hook.cluster_leave(), args)
 
       :ok
     end

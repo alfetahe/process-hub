@@ -23,7 +23,7 @@ defmodule Test.Service.ProcessRegistryTest do
       {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}]}},
       {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}]}},
       {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}]}}
-    ]
+    ] |> Map.new()
 
     ProcessRegistry.bulk_insert(hub_id, insert_data)
 
@@ -52,7 +52,7 @@ defmodule Test.Service.ProcessRegistryTest do
       {:child4, {%{id: :child4, start: :mfa}, [{:node7, :pid1}, {:node8, :pid2}]}}
     ]
 
-    ProcessRegistry.bulk_insert(hub_id, insert_data)
+    ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data))
 
     Enum.each(1..length(insert_data), fn _ ->
       assert_receive :bulk_insert_test
@@ -76,9 +76,9 @@ defmodule Test.Service.ProcessRegistryTest do
     del_data =
       Enum.map(insert_data, fn {child_id, {_, child_nodes}} ->
         {child_id, Enum.map(child_nodes, fn {node, _pid} -> node end)}
-      end)
+      end) |> Map.new()
 
-    ProcessRegistry.bulk_insert(hub_id, insert_data)
+    ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data))
     ProcessRegistry.bulk_delete(hub_id, del_data)
 
     Enum.each(1..length(insert_data), fn _ ->
@@ -93,7 +93,7 @@ defmodule Test.Service.ProcessRegistryTest do
       {:child1, {%{id: :child1, start: :mfa}, :child_nodes1}},
       {:child2, {%{id: :child2, start: :mfa}, :child_nodes2}},
       {:child3, {%{id: :child3, start: :mfa}, :child_nodes3}}
-    ]
+    ] |> Map.new()
 
     ProcessRegistry.bulk_insert(hub_id, some_data)
     ProcessRegistry.clear_all(hub_id)

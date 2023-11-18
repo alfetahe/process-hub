@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Replaced vanilla :ets with cachex for local storage. This improved the reliability of the system
 by preventing race conditions in some scenarios.
+- Locking process registry when doing bulk operations to prevent overwriting of the data.
+- Node up and down handlers are no longer blocking operations for coordinator to avoid
+timeout errors when handling large amount of processes.
 
 ## v0.1.3-alpha - 2023-11-05
 

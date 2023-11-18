@@ -9,6 +9,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Constant.Event
+  alias ProcessHub.Constant.PriorityLevel
   alias :blockade, as: Blockade
 
   @typedoc """
@@ -36,7 +37,8 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       Blockade.dispatch_sync(
         Name.global_event_queue(hub_id),
         @event_children_registration,
-        {children, node}
+        {children, node},
+        %{priority: PriorityLevel.locked()}
       )
 
       :ok
@@ -46,7 +48,8 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       Blockade.dispatch_sync(
         Name.global_event_queue(hub_id),
         @event_children_unregistration,
-        {child_ids, node}
+        {child_ids, node},
+        %{priority: PriorityLevel.locked()}
       )
 
       :ok

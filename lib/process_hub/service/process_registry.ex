@@ -67,11 +67,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @doc "Return the child_spec, nodes, and pids for the given child_id."
-  @spec lookup(ProcessHub.hub_id(), ProcessHub.child_id()) ::
+  @spec lookup(ProcessHub.hub_id(), ProcessHub.child_id(), [table: atom()] | nil) ::
           nil | {ProcessHub.child_spec(), [{node(), pid()}]}
-  def lookup(hub_id, child_id) do
+  def lookup(hub_id, child_id, opts) do
     {:ok, result} =
-      Name.registry(hub_id)
+      Keyword.get(opts, :table, Name.registry(hub_id))
       |> Cachex.get(child_id)
 
     case result do
@@ -81,6 +81,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
       {_child_spec, _nodes} ->
         result
     end
+  end
+
+  def lookup(hub_id, child_id) do
+    lookup(hub_id, child_id, table: Name.registry(hub_id))
   end
 
   @doc """
@@ -131,24 +135,23 @@ defmodule ProcessHub.Service.ProcessRegistry do
           ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
         }) :: :ok
   def bulk_insert(hub_id, children) do
-    registry_table = Name.registry(hub_id)
-    process_registry = registry(hub_id)
+    {:ok, hooks} =
+      Cachex.transaction(Name.registry(hub_id), Map.keys(children), fn worker ->
+        Enum.map(children, fn {child_id, {child_spec, child_nodes}} ->
+          inserted =
+            case lookup(hub_id, child_id, table: worker) do
+              nil ->
+                insert(hub_id, child_spec, child_nodes, skip_hooks: true, table: worker)
+                child_nodes
 
-    hooks =
-      Enum.map(children, fn {child_id, {child_spec, child_nodes}} ->
-        inserted =
-          case process_registry[child_id] do
-            nil ->
-              insert(hub_id, child_spec, child_nodes, skip_hooks: true, table: registry_table)
-              child_nodes
+              {_child_spec, nodes} ->
+                new_nodes = Enum.uniq(nodes ++ child_nodes)
+                insert(hub_id, child_spec, new_nodes, skip_hooks: true, table: worker)
+                new_nodes
+            end
 
-            {_child_spec, nodes} ->
-              new_nodes = Enum.uniq(nodes ++ child_nodes)
-              insert(hub_id, child_spec, new_nodes, skip_hooks: true, table: registry_table)
-              new_nodes
-          end
-
-        {Hook.registry_pid_inserted(), {child_spec.id, inserted}}
+          {Hook.registry_pid_inserted(), {child_spec.id, inserted}}
+        end)
       end)
 
     HookManager.dispatch_hooks(hub_id, hooks)
@@ -166,31 +169,30 @@ defmodule ProcessHub.Service.ProcessRegistry do
           ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
         }) :: :ok
   def bulk_delete(hub_id, children) do
-    registry_table = Name.registry(hub_id)
-    process_registry = registry(hub_id)
+    {:ok, hooks} =
+      Cachex.transaction(Name.registry(hub_id), Map.keys(children), fn worker ->
+        Enum.map(children, fn {child_id, rem_nodes} ->
+          case lookup(hub_id, child_id, table: worker) do
+            nil ->
+              nil
 
-    hooks =
-      Enum.map(children, fn {child_id, rem_nodes} ->
-        case process_registry[child_id] do
-          nil ->
-            nil
+            {child_spec, nodes} ->
+              new_nodes =
+                Enum.filter(nodes, fn {node, _pid} ->
+                  !Enum.member?(rem_nodes, node)
+                end)
 
-          {child_spec, nodes} ->
-            new_nodes =
-              Enum.filter(nodes, fn {node, _pid} ->
-                !Enum.member?(rem_nodes, node)
-              end)
+              if length(new_nodes) > 0 do
+                insert(hub_id, child_spec, new_nodes, skip_hooks: true, table: worker)
+              else
+                delete(hub_id, child_id, skip_hooks: true, table: worker)
+              end
 
-            if length(new_nodes) > 0 do
-              insert(hub_id, child_spec, new_nodes, skip_hooks: true, table: registry_table)
-            else
-              delete(hub_id, child_id, skip_hooks: true, table: registry_table)
-            end
-
-            {Hook.registry_pid_removed(), {child_id, rem_nodes}}
-        end
+              {Hook.registry_pid_removed(), {child_id, rem_nodes}}
+          end
+        end)
+        |> Enum.reject(&is_nil/1)
       end)
-      |> Enum.reject(&is_nil/1)
 
     HookManager.dispatch_hooks(hub_id, hooks)
   end
