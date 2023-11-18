@@ -36,4 +36,8 @@ defmodule Test.Utility.NameTest do
   test "worker queue" do
     assert Name.worker_queue(:test) === :"hub.test.worker_queue"
   end
+
+  test "registry name" do
+    assert Name.registry(:test) === :"hub.test.process_registry"
+  end
 end

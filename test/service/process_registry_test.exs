@@ -18,10 +18,6 @@ defmodule Test.Service.ProcessRegistryTest do
     context
   end
 
-  test "registry name", %{hub_id: hub_id} = _context do
-    assert ProcessRegistry.registry_name(hub_id) === :"hub.children_reg_test.process_registry"
-  end
-
   test "contains children", %{hub_id: hub_id} = _context do
     insert_data = [
       {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}]}},
@@ -42,6 +38,8 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "bulk insert", %{hub_id: hub_id} = _context do
+    Cachex.purge(ProcessHub.Utility.Name.registry(hub_id))
+
     hook = {:erlang, :send, [self(), :bulk_insert_test]}
     HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), hook)
 

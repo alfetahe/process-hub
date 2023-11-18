@@ -41,7 +41,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def clear_all(hub_id) do
     {:ok, number_of_rows} =
       Name.registry(hub_id)
-      |> Cachex.purge()
+      |> Cachex.clear()
 
     number_of_rows
   end

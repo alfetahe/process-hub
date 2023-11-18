@@ -21,13 +21,11 @@ defmodule Test.Service.LocalStorageTest do
     LocalStorage.insert(hub_id, :test_insert, :test_value)
     LocalStorage.insert(hub_id, :test_insert2, :test_value2, 5000)
 
-    assert LocalStorage.get(hub_id, :test_insert) === {:test_insert, :test_value, nil}
+    assert LocalStorage.get(hub_id, :test_insert) === :test_value
 
-    {key, value, ttl_timestamp} = LocalStorage.get(hub_id, :test_insert2)
+    value = LocalStorage.get(hub_id, :test_insert2)
 
-    assert key === :test_insert2
     assert value === value
-    assert is_number(ttl_timestamp)
   end
 
   test "get", %{hub_id: hub_id} = _context do
@@ -36,7 +34,8 @@ defmodule Test.Service.LocalStorageTest do
     LocalStorage.insert(hub_id, :test, :test_value)
     LocalStorage.insert(hub_id, :test2, :test_value2)
 
-    assert LocalStorage.get(hub_id, :test) === {:test, :test_value, nil}
-    assert LocalStorage.get(hub_id, :test2) === {:test2, :test_value2, nil}
+    assert LocalStorage.get(hub_id, :test) === :test_value
+    assert LocalStorage.get(hub_id, :test2) === :test_value2
+    assert LocalStorage.get(hub_id, :non_exist) === nil
   end
 end

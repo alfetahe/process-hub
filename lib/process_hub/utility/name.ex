@@ -19,7 +19,6 @@ defmodule ProcessHub.Utility.Name do
     |> String.to_atom()
   end
 
-  # TODO: move test from process registry to name.
   @doc "Returns the process registry table identifier."
   @spec registry(ProcessHub.hub_id()) :: atom()
   def registry(hub_id) do
