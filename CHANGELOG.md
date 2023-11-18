@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Increased the timeout value for children redistribution task.
+- Increased integration tests load by 10x to improve the reliability of the tests.
 
 ### Added
 - Added custom identifier for local storage table.

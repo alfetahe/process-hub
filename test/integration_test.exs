@@ -26,7 +26,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "pubsub children starting and removing", %{hub_id: hub_id} = context do
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Starts children on all nodes.
@@ -56,7 +56,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "pubsub interval sync test", %{hub_id: hub_id} = context do
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Locally start children without propagating to the rest of the cluster.
@@ -86,7 +86,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "gossip children starting and removing", %{hub_id: hub_id} = context do
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Starts children on all nodes.
@@ -116,7 +116,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "gossip interval sync test", %{hub_id: hub_id} = context do
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Locally start children without propagating to the rest of the cluster.
@@ -148,7 +148,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Starts children on all nodes.
@@ -179,7 +179,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "replication cluster size with mode active passive", %{hub_id: hub_id} = context do
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Starts children on all nodes.
@@ -207,7 +207,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_inserted(), :local}
        ]
   test "redundancy with singularity", %{hub_id: hub_id} = context do
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Starts children on all nodes.
@@ -368,7 +368,7 @@ defmodule Test.IntegrationTest do
   test "coldswap migration with replication",
        %{hub_id: hub_id, replication_factor: rf, listed_hooks: lh} = context do
     nodes_count = @nr_of_peers
-    child_count = 10
+    child_count = 100
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Stop hubs on peer nodes before we start.
@@ -423,7 +423,7 @@ defmodule Test.IntegrationTest do
   @tag migr_strategy: :hot
   @tag hub_id: :migration_hotswap_test
   @tag migr_handover: true
-  @tag migr_retention: 1000
+  @tag migr_retention: 10000
   @tag listed_hooks: [
          {Hook.cluster_join(), :local},
          {Hook.cluster_leave(), :global},
@@ -434,7 +434,7 @@ defmodule Test.IntegrationTest do
   test "hotswap migration with handoff",
        %{hub_id: hub_id, listed_hooks: lh} = context do
     nodes_count = @nr_of_peers
-    child_count = 10
+    child_count = 100
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Stop hubs on peer nodes before we start.
@@ -478,6 +478,7 @@ defmodule Test.IntegrationTest do
 
     # Confirm that all migrated children have been updated.
     Bag.receive_multiple(mcl, Hook.registry_pid_removed())
+    Bag.receive_multiple(@nr_of_peers * 2, Hook.post_nodes_redistribution())
 
     # Validate the data.
     Enum.each(migrated_children, fn {child_id, _nodes} ->
