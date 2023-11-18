@@ -1,6 +1,18 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.1.4-alpha - YYYY-MM-DD
+
+### Changed
+- Replaced vanilla :ets with cachex for local storage. This improved the reliability of the system
+by preventing race conditions in some scenarios.
+
+### Added
+
+
+### Fixed
+
+
 ## v0.1.3-alpha - 2023-11-05
 
 Fixed bugs, code improvements, added more documentation, improved tests performance by reusing peer nodes.

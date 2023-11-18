@@ -59,8 +59,28 @@ defmodule ProcessHub.Initializer do
 
   defp storage(hub_id) do
     [
-      %{id: :process_registry, start: {Cachex, :start_link, [[name: Name.registry(hub_id)]]}},
-      %{id: :local_storage, start: {Cachex, :start_link, [[name: hub_id]]}}
+      %{
+        id: :process_registry,
+        start:
+          {Cachex, :start_link,
+           [
+             [
+               name: Name.registry(hub_id),
+               interval: nil
+             ]
+           ]}
+      },
+      %{
+        id: :local_storage,
+        start:
+          {Cachex, :start_link,
+           [
+             [
+               name: hub_id,
+               interval: 15_000
+             ]
+           ]}
+      }
     ]
   end
 end
