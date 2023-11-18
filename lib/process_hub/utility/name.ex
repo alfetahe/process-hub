@@ -25,6 +25,12 @@ defmodule ProcessHub.Utility.Name do
     concat_name([hub_id, :process_registry], ".")
   end
 
+  @doc "Returns the localstorage identifier."
+  @spec local_storage(ProcessHub.hub_id()) :: atom()
+  def local_storage(hub_id) do
+    concat_name([hub_id, :local_storage], ".")
+  end
+
   @spec worker_queue(ProcessHub.hub_id()) :: atom()
   def worker_queue(hub_id) do
     concat_name([hub_id, "worker_queue"], ".")

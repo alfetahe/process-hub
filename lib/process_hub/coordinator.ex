@@ -35,6 +35,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Utility.Name
 
   @propagation_interval 10000
+  @children_distribution_timeout 15000
 
   use Event
   use GenServer
@@ -229,7 +230,7 @@ defmodule ProcessHub.Coordinator do
         }
       ]
     )
-    |> Task.await()
+    |> Task.await(@children_distribution_timeout)
 
     {:noreply, state}
   end

@@ -4,14 +4,14 @@ All notable changes to this project will be documented in this file.
 ## v0.1.4-alpha - YYYY-MM-DD
 
 ### Changed
-- Replaced vanilla :ets with cachex for local storage. This improved the reliability of the system
-by preventing race conditions in some scenarios.
+- Increased the timeout value for children redistribution task.
 
 ### Added
-
+- Added custom identifier for local storage table.
 
 ### Fixed
-
+- Replaced vanilla :ets with cachex for local storage. This improved the reliability of the system
+by preventing race conditions in some scenarios.
 
 ## v0.1.3-alpha - 2023-11-05
 

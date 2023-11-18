@@ -6,10 +6,12 @@ defmodule ProcessHub.Service.LocalStorage do
   Local storage is implemented using ETS tables and is cleared periodically.
   """
 
+  alias ProcessHub.Utility.Name
+
   @doc "Returns a boolean indicating whether the key exists in local storage."
   @spec exists?(ProcessHub.hub_id(), term()) :: boolean()
   def exists?(hub_id, key) do
-    {:ok, result} = Cachex.exists?(hub_id, key)
+    {:ok, result} = Cachex.exists?(Name.local_storage(hub_id), key)
 
     result
   end
@@ -22,7 +24,7 @@ defmodule ProcessHub.Service.LocalStorage do
   """
   @spec get(ProcessHub.hub_id(), term()) :: term()
   def get(hub_id, key) do
-    {:ok, value} = Cachex.get(hub_id, key)
+    {:ok, value} = Cachex.get(Name.local_storage(hub_id), key)
 
     value
   end
@@ -37,12 +39,14 @@ defmodule ProcessHub.Service.LocalStorage do
   """
   @spec insert(ProcessHub.hub_id(), term(), term(), pos_integer() | nil) :: boolean()
   def insert(hub_id, key, value, ttl) do
-    {:ok, res} = Cachex.put(hub_id, key, value, ttl: ttl)
+    {:ok, res} = Cachex.put(Name.local_storage(hub_id), key, value, ttl: ttl)
 
     res
   end
 
   def insert(hub_id, key, value) do
-    Cachex.put(hub_id, key, value)
+    {:ok, res} = Cachex.put(Name.local_storage(hub_id), key, value)
+
+    res
   end
 end
