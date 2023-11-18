@@ -12,7 +12,7 @@ defmodule ProcessHub.Coordinator do
   The coordinator stores state about the `ProcessHub` instance, such as the cluster nodes.
 
   Additionally, the coordinator takes care of any periodic tasks required by the
-  `ProcessHub` instance, such as `:ets` table cleanups, initial synchronization, propagation, etc.
+  `ProcessHub` instance, such as initial synchronization, propagation, etc.
   """
 
   require Logger
@@ -31,10 +31,9 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Service.Ring
-  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
+  alias ProcessHub.Utility.Name
 
-  @cleanup_interval 10000
   @propagation_interval 10000
 
   use Event
@@ -89,7 +88,7 @@ defmodule ProcessHub.Coordinator do
     state = %__MODULE__{
       hub
       | storage: %{
-          process_registry: ProcessRegistry.registry_name(hub.hub_id),
+          process_registry: Name.registry(hub.hub_id),
           local: hub.hub_id
         },
         hash_ring: HashRing.make([HashRingNode.make(node())])
@@ -129,7 +128,6 @@ defmodule ProcessHub.Coordinator do
       state.cluster_nodes
     )
 
-    schedule_cleanup()
     schedule_propagation()
     schedule_sync(state.settings.synchronization_strategy)
 
@@ -337,13 +335,6 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  def handle_info(:local_storage_cleanup, state) do
-    cache_cleanup(state.storage.local)
-    schedule_cleanup()
-
-    {:noreply, state}
-  end
-
   def handle_info(:propagate, state) do
     schedule_propagation()
 
@@ -401,19 +392,6 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
-  defp cache_cleanup(ets_table) do
-    table_data = :ets.tab2list(ets_table)
-    timestamp = DateTime.to_unix(DateTime.utc_now())
-
-    Enum.filter(table_data, fn
-      {_, _, nil} -> false
-      {_, _, ttl} -> is_number(ttl) && ttl < timestamp
-    end)
-    |> Enum.each(fn {key, _, _} ->
-      :ets.delete(ets_table, key)
-    end)
-  end
-
   defp register_handlers(%{global_event_queue: gq, local_event_queue: lq}) do
     Blockade.add_handler(lq, @event_distribute_children)
     Blockade.add_handler(gq, @event_cluster_join)
@@ -433,10 +411,6 @@ defmodule ProcessHub.Coordinator do
 
   defp schedule_sync(sync_strat) do
     Process.send_after(self(), :sync_processes, sync_strat.sync_interval)
-  end
-
-  defp schedule_cleanup() do
-    Process.send_after(self(), :local_storage_cleanup, @cleanup_interval)
   end
 
   defp schedule_propagation() do

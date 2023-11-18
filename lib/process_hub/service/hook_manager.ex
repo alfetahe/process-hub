@@ -21,9 +21,13 @@ defmodule ProcessHub.Service.HookManager do
   end
 
   @doc "Registers a new hook handler."
-  @spec register_handler(ProcessHub.hub_id() | :ets.tid(), hook_key(), hook()) :: true
+  @spec register_handler(ProcessHub.hub_id(), hook_key(), hook()) :: true
   def register_handler(hub_id, hook_key, hook) do
-    [{_cache_key, hooks, nil}] = :ets.lookup(hub_id, cache_key())
+    hooks =
+      case LocalStorage.get(hub_id, cache_key()) do
+        nil -> %{}
+        hooks -> hooks
+      end
 
     handlers = hooks[hook_key] || []
     new_handlers = [hook | handlers]
@@ -33,20 +37,20 @@ defmodule ProcessHub.Service.HookManager do
   end
 
   @doc "Returns all registered hook handlers sorted by hook key."
-  @spec registered_handlers(ProcessHub.hub_id() | :ets.tid()) :: hooks()
+  @spec registered_handlers(ProcessHub.hub_id()) :: hooks()
   def registered_handlers(hub_id) do
     cache_key = cache_key()
 
     LocalStorage.get(hub_id, cache_key)
     |> case do
-      {^cache_key, hooks, _ttl} ->
+      nil ->
+        %{}
+
+      hooks ->
         case is_map(hooks) do
           true -> hooks
           false -> %{}
         end
-
-      _ ->
-        %{}
     end
   end
 
@@ -74,7 +78,7 @@ defmodule ProcessHub.Service.HookManager do
   It is possible to register a hook handler with a wildcard argument `:_` which
   will be replaced with the hook data when the hook is dispatched.
   """
-  @spec dispatch_hook(ProcessHub.hub_id() | :ets.tid(), hook_key(), any()) :: {:ok, pid}
+  @spec dispatch_hook(ProcessHub.hub_id(), hook_key(), any()) :: {:ok, pid}
   def dispatch_hook(hub_id, hook_key, hook_data) do
     registered_handlers = registered_handlers(hub_id)
 

@@ -6,7 +6,6 @@ defmodule ProcessHub.Initializer do
   """
 
   alias ProcessHub.Utility.Name
-  alias ProcessHub.Service.ProcessRegistry
   alias :blockade, as: Blockade
 
   use Supervisor
@@ -31,8 +30,6 @@ defmodule ProcessHub.Initializer do
 
   @impl true
   def init(%ProcessHub{hub_id: hub_id} = hub) do
-    setup_tables(hub_id)
-
     managers = %{
       coordinator: Name.coordinator(hub_id),
       local_event_queue: Name.local_event_queue(hub_id),
@@ -41,14 +38,16 @@ defmodule ProcessHub.Initializer do
       task_supervisor: Name.task_supervisor(hub_id)
     }
 
-    children = [
-      {Blockade, %{name: managers.local_event_queue}},
-      {Blockade, %{name: managers.global_event_queue}},
-      {ProcessHub.DistributedSupervisor, {hub_id, managers}},
-      {Task.Supervisor, name: managers.task_supervisor},
-      {ProcessHub.Coordinator, {hub_id, hub, managers}},
-      {ProcessHub.WorkerQueue, Name.worker_queue(hub_id)}
-    ]
+    children =
+      storage(hub_id) ++
+        [
+          {Blockade, %{name: managers.local_event_queue}},
+          {Blockade, %{name: managers.global_event_queue}},
+          {ProcessHub.DistributedSupervisor, {hub_id, managers}},
+          {Task.Supervisor, name: managers.task_supervisor},
+          {ProcessHub.Coordinator, {hub_id, hub, managers}},
+          {ProcessHub.WorkerQueue, Name.worker_queue(hub_id)}
+        ]
 
     opts = [strategy: :one_for_one]
 
@@ -58,8 +57,10 @@ defmodule ProcessHub.Initializer do
     end
   end
 
-  defp setup_tables(hub_id) do
-    :ets.new(ProcessRegistry.registry_name(hub_id), [:set, :public, :named_table])
-    :ets.new(hub_id, [:set, :public, :named_table])
+  defp storage(hub_id) do
+    [
+      %{id: :process_registry, start: {Cachex, :start_link, [[name: Name.registry(hub_id)]]}},
+      %{id: :local_storage, start: {Cachex, :start_link, [[name: hub_id]]}}
+    ]
   end
 end

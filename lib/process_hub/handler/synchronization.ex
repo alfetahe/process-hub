@@ -95,7 +95,7 @@ defmodule ProcessHub.Handler.Synchronization do
       updated_data =
         Enum.reduce(args.remote_children, [], fn {child_spec, child_pid}, acc ->
           append_mismatches(
-            local_data[child_spec.id],
+            Map.get(local_data, child_spec.id),
             {child_spec.id, {child_spec, [{args.remote_node, child_pid}]}},
             acc
           )

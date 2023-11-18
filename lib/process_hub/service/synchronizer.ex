@@ -39,16 +39,16 @@ defmodule ProcessHub.Service.Synchronizer do
   """
   @spec append_data(ProcessHub.hub_id(), %{node() => [{ProcessHub.child_spec(), pid()}]}) :: :ok
   def append_data(hub_id, remote_data) do
-    local_registry =
-      ProcessRegistry.registry(hub_id)
-      |> Map.new()
+    local_registry = ProcessRegistry.registry(hub_id)
 
     Enum.each(remote_data, fn {remote_node, remote_children} ->
       Enum.each(remote_children, fn {remote_cs, remote_pid} ->
         # Check if local children contain remote node data.
-        if local_registry[remote_cs.id] do
+        local_child_data = Map.get(local_registry, remote_cs.id, nil)
+
+        if local_child_data do
           # Check if local child contains remote node.
-          local_child_nodes = elem(local_registry[remote_cs.id], 1)
+          local_child_nodes = elem(local_child_data, 1)
 
           # Check if local data is missing remote node.
           unless Keyword.has_key?(local_child_nodes, remote_node) do

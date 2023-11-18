@@ -14,25 +14,20 @@ defmodule ProcessHub.Service.ProcessRegistry do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
 
-  @doc "Returns the process registry table identifier."
-  @spec registry_name(ProcessHub.hub_id()) :: atom()
-  def registry_name(hub_id) do
-    Name.concat_name([hub_id, :process_registry], ".")
-  end
-
   @doc "Returns information about all registered processes."
   @spec registry(ProcessHub.hub_id()) :: registry()
   def registry(hub_id) do
-    registry_name(hub_id)
-    |> :ets.tab2list()
+    Name.registry(hub_id)
+    |> Cachex.export()
+    |> elem(1)
+    |> Enum.map(fn {:entry, key, _, _, value} -> {key, value} end)
     |> Map.new()
   end
 
   @spec contains_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
   @doc "Returns a list of child_ids that match the given `child_ids` variable."
   def contains_children(hub_id, child_ids) do
-    registry(hub_id)
-    |> Enum.reduce([], fn {child_id, _}, acc ->
+    Enum.reduce(registry(hub_id), [], fn {child_id, _}, acc ->
       case Enum.member?(child_ids, child_id) do
         true -> [child_id | acc]
         false -> acc
@@ -42,10 +37,13 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @doc "Deletes all objects from the process registry."
-  @spec clear_all(ProcessHub.hub_id()) :: true
+  @spec clear_all(ProcessHub.hub_id()) :: integer()
   def clear_all(hub_id) do
-    registry_name(hub_id)
-    |> :ets.delete_all_objects()
+    {:ok, number_of_rows} =
+      Name.registry(hub_id)
+      |> Cachex.purge()
+
+    number_of_rows
   end
 
   @doc "Returns information about processes registered under the local node."
@@ -72,17 +70,16 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec lookup(ProcessHub.hub_id(), ProcessHub.child_id()) ::
           nil | {ProcessHub.child_spec(), [{node(), pid()}]}
   def lookup(hub_id, child_id) do
-    res =
-      registry_name(hub_id)
-      |> :ets.lookup(child_id)
-      |> List.first()
+    {:ok, result} =
+      Name.registry(hub_id)
+      |> Cachex.get(child_id)
 
-    case res do
+    case result do
       nil ->
         nil
 
-      {^child_id, {child_spec, nodes}} ->
-        {child_spec, nodes}
+      {_child_spec, _nodes} ->
+        result
     end
   end
 
@@ -94,8 +91,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec insert(ProcessHub.hub_id(), ProcessHub.child_spec(), [{node(), pid()}], keyword() | nil) ::
           :ok
   def insert(hub_id, child_spec, child_nodes, opts \\ []) do
-    Keyword.get(opts, :table, registry_name(hub_id))
-    |> :ets.insert({child_spec.id, {child_spec, child_nodes}})
+    Keyword.get(opts, :table, Name.registry(hub_id))
+    |> Cachex.put(child_spec.id, {child_spec, child_nodes})
 
     unless Keyword.get(opts, :skip_hooks, false) do
       HookManager.dispatch_hook(
@@ -115,8 +112,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
   @spec delete(ProcessHub.hub_id(), ProcessHub.child_id(), keyword() | nil) :: :ok
   def delete(hub_id, child_id, opts \\ []) do
-    Keyword.get(opts, :table, registry_name(hub_id))
-    |> :ets.delete(child_id)
+    Keyword.get(opts, :table, Name.registry(hub_id))
+    |> Cachex.del(child_id)
 
     unless Keyword.get(opts, :skip_hooks, false) do
       HookManager.dispatch_hook(hub_id, Hook.registry_pid_removed(), child_id)
@@ -134,7 +131,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
         }) :: :ok
   def bulk_insert(hub_id, children) do
-    registry_table = registry_name(hub_id)
+    registry_table = Name.registry(hub_id)
     process_registry = registry(hub_id)
 
     hooks =
@@ -169,7 +166,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
         }) :: :ok
   def bulk_delete(hub_id, children) do
-    registry_table = registry_name(hub_id)
+    registry_table = Name.registry(hub_id)
     process_registry = registry(hub_id)
 
     hooks =

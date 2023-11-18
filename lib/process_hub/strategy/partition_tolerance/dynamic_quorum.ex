@@ -108,14 +108,17 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     end
 
     defp propagate_quorum_log(hub_id, node) do
-      {_key, local_log, _ttl} = LocalStorage.get(hub_id, @quorum_cache_key)
+      local_log =
+        case LocalStorage.get(hub_id, @quorum_cache_key) do
+          nil -> []
+          data -> data
+        end
 
       Node.spawn(node, fn ->
         remote_log =
           case LocalStorage.get(hub_id, @quorum_cache_key) do
-            {_key, remote_log, _ttl} -> remote_log
-            [] -> []
             nil -> []
+            remote_log -> remote_log
           end
 
         if length(local_log) > length(remote_log) do
@@ -127,7 +130,13 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
 
     defp quorum_failure?(hub_id, strategy, cluster_nodes) do
       connected_nodes = length(cluster_nodes)
-      {_key, cached_data, _ttl} = LocalStorage.get(hub_id, @quorum_cache_key)
+
+      cached_data =
+        case LocalStorage.get(hub_id, @quorum_cache_key) do
+          nil -> []
+          data -> data
+        end
+
       down_nodes = length(cached_data)
 
       lost_quorum = down_nodes / (connected_nodes + down_nodes) * 100
@@ -139,28 +148,22 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     defp node_log_func(strategy, hub_id, node, type) do
       new_data = node_log_data(hub_id, node, strategy.threshold_time, type)
 
-      :ets.insert(hub_id, new_data)
+      LocalStorage.insert(hub_id, @quorum_cache_key, new_data)
     end
 
-    defp node_log_data(ets_table, node, threshold_time, :up) do
+    defp node_log_data(cache, node, threshold_time, :up) do
       timestamp = DateTime.utc_now() |> DateTime.to_unix(:second)
       threshold_time = timestamp - threshold_time
 
-      case :ets.lookup(ets_table, @quorum_cache_key) do
-        [] ->
-          {@quorum_cache_key, [], nil}
+      case LocalStorage.get(cache, @quorum_cache_key) do
+        nil ->
+          []
 
-        [{@quorum_cache_key, data, ttl}] ->
+        data ->
           # Remove rows older than threshold_time and the same node
-          filtered_data =
-            Enum.filter(data, fn {cache_node, time} ->
-              time > threshold_time && cache_node != node
-            end)
-
-          {@quorum_cache_key, filtered_data, ttl}
-
-        any ->
-          raise "Unexpected data: #{inspect(any)}"
+          Enum.filter(data, fn {cache_node, time} ->
+            time > threshold_time && cache_node != node
+          end)
       end
     end
 
@@ -168,11 +171,11 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       timestamp = DateTime.utc_now() |> DateTime.to_unix(:second)
       threshold_time = timestamp - threshold_time
 
-      case :ets.lookup(ets_table, @quorum_cache_key) do
-        [] ->
-          {@quorum_cache_key, [{node, timestamp}], nil}
+      case LocalStorage.get(ets_table, @quorum_cache_key) do
+        nil ->
+          [{node, timestamp}]
 
-        [{@quorum_cache_key, data, ttl}] ->
+        data ->
           # Remove rows older than threshold_time and the same node
           filtered_data =
             Enum.filter(data, fn {cache_node, time} ->
@@ -180,10 +183,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
             end)
 
           # Add a new row.
-          {@quorum_cache_key, [{node, timestamp} | filtered_data], ttl}
-
-        any ->
-          raise "Unexpected data: #{inspect(any)}"
+          [{node, timestamp} | filtered_data]
       end
     end
   end

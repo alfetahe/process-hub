@@ -80,8 +80,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       cached_acks =
         case LocalStorage.get(hub_id, ref) do
           nil -> []
-          {_, :invalidated, _ttl} -> :invalidated
-          {_, cached_acks, _ttl} -> cached_acks
+          :invalidated -> :invalidated
+          cached_acks -> cached_acks
         end
 
       case cached_acks do
@@ -243,10 +243,10 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         nil ->
           {nodes_data, []}
 
-        {_key, :invalidated, _tt} ->
+        :invalidated ->
           :invalidated
 
-        {_key, {cached_data, cached_acks}, _ttl} ->
+        {cached_data, cached_acks} ->
           merged_data =
             Map.merge(nodes_data, cached_data, fn _node_key, {ld, lt}, {rd, rt} ->
               cond do
@@ -263,7 +263,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       node_timestamps =
         case LocalStorage.get(hub_id, :gossip_node_timestamps) do
           nil -> %{}
-          {_key, node_timestamps, _ttl} -> node_timestamps
+          node_timestamps -> node_timestamps
         end
 
       Map.delete(nodes_data, node())
@@ -293,13 +293,13 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
     defp update_node_timestamps(hub_id, node, timestamp) do
       node_timestamps =
-        case :ets.lookup(hub_id, :gossip_node_timestamps) do
-          [] -> %{}
-          [{_, node_timestamps, _}] -> node_timestamps || %{}
+        case LocalStorage.get(hub_id, :gossip_node_timestamps) do
+          nil -> %{}
+          node_timestamps -> node_timestamps || %{}
         end
         |> Map.put(node, timestamp)
 
-      :ets.insert(hub_id, {:gossip_node_timestamps, node_timestamps, nil})
+      LocalStorage.insert(hub_id, :gossip_node_timestamps, node_timestamps)
     end
 
     defp unacked_nodes(sync_acks, hub_id) do

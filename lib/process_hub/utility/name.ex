@@ -19,6 +19,13 @@ defmodule ProcessHub.Utility.Name do
     |> String.to_atom()
   end
 
+  # TODO: move test from process registry to name.
+  @doc "Returns the process registry table identifier."
+  @spec registry(ProcessHub.hub_id()) :: atom()
+  def registry(hub_id) do
+    concat_name([hub_id, :process_registry], ".")
+  end
+
   @spec worker_queue(ProcessHub.hub_id()) :: atom()
   def worker_queue(hub_id) do
     concat_name([hub_id, "worker_queue"], ".")
