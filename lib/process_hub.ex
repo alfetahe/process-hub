@@ -551,7 +551,7 @@ defmodule ProcessHub do
   alias ProcessHub.Utility.Name
 
   # 5 seconds
-  @timeout 5000
+  @timeout 10000
 
   @doc """
   Starts a child process that will be distributed across the cluster.

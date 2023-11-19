@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Increased integration tests load by 10x to improve the reliability of the tests.
 - Replaced vanilla :ets with cachex for local storage. This improved the reliability of the system
 by preventing race conditions in some scenarios.
+- Increased the default process sync start timeout from 5000 -> 10000 ms.
 
 ### Added
 - Added custom identifier for local storage table.
