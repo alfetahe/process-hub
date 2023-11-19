@@ -213,8 +213,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       migration = Keyword.get(opts, :migration, false)
 
       if migration do
-        # TODO: replace with the new hook migration forwards
-        HookManager.dispatch_hook(hub_id, Hook.child_migrated(), {child_id, local_node})
+        HookManager.dispatch_hook(hub_id, Hook.forwarded_migration(), {child_id, local_node})
       end
     end
   end

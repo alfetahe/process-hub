@@ -34,6 +34,12 @@ defmodule ProcessHub.Constant.Hook do
   def child_migrated(), do: :child_migrated_hook
 
   @doc """
+  Hook triggered when a process is migrated to another node.
+  """
+  @spec forwarded_migration() :: :forwarded_migration_hook
+  def forwarded_migration(), do: :forwarded_migration_hook
+
+  @doc """
   Hook triggered when the priority level of the local event queue has been updated.
   """
   @spec priority_state_updated() :: :priority_state_updated_hook

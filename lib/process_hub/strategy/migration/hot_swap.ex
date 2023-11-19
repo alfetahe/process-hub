@@ -132,16 +132,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       |> elem(1)
     end
 
-    # TODO: this matches all and returns the same..
     defp receive_handler() do
       fn _child_id, resp, _node ->
-        case resp do
-          {:ok, _child_pid} ->
-            resp
-
-          any ->
-            any
-        end
+        resp
       end
     end
 

@@ -23,6 +23,10 @@ defmodule Test.Constant.HookTest do
     assert Hook.child_migrated() === :child_migrated_hook
   end
 
+  test "migration forwarded" do
+    assert Hook.forwarded_migration() === :forwarded_migration_hook
+  end
+
   test "priority state updated" do
     assert Hook.priority_state_updated() === :priority_state_updated_hook
   end

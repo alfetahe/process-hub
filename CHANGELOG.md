@@ -14,6 +14,8 @@ by preventing race conditions in some scenarios.
 - Transactions for synchronization append function to reduce possibility of
 multiple processes writing to the same table keys at the same time.
 - Locking process registry when doing bulk operations to prevent overwriting of the data.
+- New hook `forwarded_migration` which is called when a process is migrated to another node
+and the migration is forwarded to the new node where the startup is handled.
 
 ### Fixed
 - Synchronization caused multiple nodes to reply to the caller. This caused anomalies in
@@ -21,6 +23,7 @@ integration tests.
 - Node up and down handlers are no longer blocking operations for coordinator to avoid
 timeout errors when handling large amount of processes.
 - The child start responses we're in reverse order when single child was started on multiple nodes.
+- Documentation hook keys were not correct and missing the `_hook` suffix.
 
 ## v0.1.3-alpha - 2023-11-05
 

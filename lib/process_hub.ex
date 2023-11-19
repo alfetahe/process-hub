@@ -421,16 +421,17 @@ defmodule ProcessHub do
   ```
 
   ### Available hooks
-  | Event Key                   | Trigger                    | Data                                |
-  | ------------                | -------------              | ---------------                     |
-  | `cluster_join`              | Node joins the cluster     | `node()`                            |
-  | `cluster_leave`             | Node leaves the cluster    | `node()`                            |
-  | `registry_pid_inserted`     | Process registered         | `{child_id(), [{node(), pid()}]}` |
-  | `registry_pid_removed`      | Process unregistered       | `child_id()`                        |
-  | `child_migrated`            | Process migrated           | `{child_id(), node()}`              |
-  | `priority_state_updated`    | Priority state updated     | `{priority_level(), list()}`        |
-  | `pre_nodes_redistribution`  | Nodes redistribution start | `{:nodeup | :nodedown, node()}`     |
-  | `post_nodes_redistribution` | Nodes redistribution end   | `{:nodeup |:nodedown, node()}`      |
+  | Event Key                        | Trigger                             | Data                                |
+  | -------------------------------- | ----------------------------------- | ----------------------------------- |
+  | `cluster_join_hook`              | Node joins the cluster              | `node()`                            |
+  | `cluster_leave_hook`             | Node leaves the cluster             | `node()`                            |
+  | `registry_pid_inserted_hook`     | Process registered                  | `{child_id(), [{node(), pid()}]}`   |
+  | `registry_pid_removed_hook`      | Process unregistered                | `child_id()`                        |
+  | `child_migrated_hook`            | Process migrated                    | `{child_id(), node()}`              |
+  | `priority_state_updated_hook`    | Priority state updated              | `{priority_level(), list()}`        |
+  | `pre_nodes_redistribution_hook`  | Nodes redistribution start          | `{:nodeup or :nodedown, node()}`    |
+  | `post_nodes_redistribution_hook` | Nodes redistribution end            | `{:nodeup or :nodedown, node()}`    |
+  | `forwarded_migration_hook`       | Migration was forwarded and handled |  `{child_id(), node()}`             |
 
   See `ProcessHub.Constant.Hook` module for more information.
 
