@@ -19,11 +19,13 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "contains children", %{hub_id: hub_id} = _context do
-    insert_data = [
-      {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}]}},
-      {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}]}},
-      {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}]}}
-    ] |> Map.new()
+    insert_data =
+      [
+        {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}]}},
+        {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}]}},
+        {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}]}}
+      ]
+      |> Map.new()
 
     ProcessRegistry.bulk_insert(hub_id, insert_data)
 
@@ -76,7 +78,8 @@ defmodule Test.Service.ProcessRegistryTest do
     del_data =
       Enum.map(insert_data, fn {child_id, {_, child_nodes}} ->
         {child_id, Enum.map(child_nodes, fn {node, _pid} -> node end)}
-      end) |> Map.new()
+      end)
+      |> Map.new()
 
     ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data))
     ProcessRegistry.bulk_delete(hub_id, del_data)
@@ -89,11 +92,13 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "clear all", %{hub_id: hub_id} = _context do
-    some_data = [
-      {:child1, {%{id: :child1, start: :mfa}, :child_nodes1}},
-      {:child2, {%{id: :child2, start: :mfa}, :child_nodes2}},
-      {:child3, {%{id: :child3, start: :mfa}, :child_nodes3}}
-    ] |> Map.new()
+    some_data =
+      [
+        {:child1, {%{id: :child1, start: :mfa}, :child_nodes1}},
+        {:child2, {%{id: :child2, start: :mfa}, :child_nodes2}},
+        {:child3, {%{id: :child3, start: :mfa}, :child_nodes3}}
+      ]
+      |> Map.new()
 
     ProcessRegistry.bulk_insert(hub_id, some_data)
     ProcessRegistry.clear_all(hub_id)
