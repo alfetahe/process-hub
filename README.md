@@ -78,7 +78,7 @@ the cluster automatically.
     ```elixir
     def deps do
       [
-        {:process_hub, "~> 0.1.3-alpha"}
+        {:process_hub, "~> 0.1.4-alpha"}
       ]
     end
     ```

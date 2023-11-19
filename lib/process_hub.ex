@@ -8,8 +8,8 @@ defmodule ProcessHub do
   - [Features](#module-features)
   - [Installation](#module-installation)
   - [Example usage](#module-example-usage)
-  - [Configurable strategies](#module-configuration)
-  - [Distribution strategy](#module-default-distribution-strategy)
+  - [Configurable strategies](#module-configurable-strategies)
+  - [Distribution strategy](#module-distribution-strategy)
   - [Cluster discovery and formation](#module-cluster-discovery-and-formation)
   - [Resilience and reliability](#module-resilience-and-reliability)
   - [Locking mechanism](#module-locking-mechanism)
@@ -73,7 +73,7 @@ defmodule ProcessHub do
       ```elixir
       def deps do
         [
-          {:process_hub, "~> 0.1.3-alpha"}
+          {:process_hub, "~> 0.1.4-alpha"}
         ]
       end
       ```

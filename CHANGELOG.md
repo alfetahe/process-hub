@@ -2,6 +2,13 @@
 All notable changes to this project will be documented in this file.
 
 ## v0.1.4-alpha - YYYY-MM-DD
+Replaced :ets with Cachex for local storage to improve reliability of the system and avoid
+potential race conditions.
+
+Includes minor bugfixes and code improvements.
+
+Introduced new hook `forwarded_migration`.
+
 
 ### Changed
 - Increased the timeout value for children redistribution task.
