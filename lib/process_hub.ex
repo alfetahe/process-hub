@@ -431,7 +431,7 @@ defmodule ProcessHub do
   | `priority_state_updated_hook`    | Priority state updated              | `{priority_level(), list()}`        |
   | `pre_nodes_redistribution_hook`  | Nodes redistribution start          | `{:nodeup or :nodedown, node()}`    |
   | `post_nodes_redistribution_hook` | Nodes redistribution end            | `{:nodeup or :nodedown, node()}`    |
-  | `forwarded_migration_hook`       | Migration was forwarded and handled |  `{child_id(), node()}`             |
+  | `forwarded_migration_hook`       | Migration was forwarded and handled | `{child_id(), node()}`              |
 
   See `ProcessHub.Constant.Hook` module for more information.
 
