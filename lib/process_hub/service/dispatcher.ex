@@ -25,9 +25,9 @@ defmodule ProcessHub.Service.Dispatcher do
   def children_start(hub_id, children_nodes) do
     coordinator = Name.coordinator(hub_id)
 
-    Enum.each(children_nodes, fn {child_node, children} ->
+    Enum.each(children_nodes, fn {child_node, children_data} ->
       Node.spawn(child_node, fn ->
-        GenServer.cast(coordinator, {:start_children, children})
+        GenServer.cast(coordinator, {:start_children, children_data})
       end)
     end)
   end

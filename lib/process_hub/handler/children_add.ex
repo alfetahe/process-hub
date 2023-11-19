@@ -44,10 +44,12 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           {:error, :partitioned}
 
         false ->
+          start_results = start_children(args)
+
           SynchronizationStrategy.propagate(
             args.sync_strategy,
             args.hub_id,
-            start_children(args),
+            start_results,
             node(),
             :add
           )
@@ -65,17 +67,29 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
         case startup_result do
           {:ok, pid} ->
-            {
-              child_data.child_spec.id,
-              {child_data.child_spec, [{local_node, pid}]},
-              {Map.get(child_data, :reply_to, []), startup_result}
-            }
+            format_start_resp(child_data, local_node, pid, startup_result)
+
+          {:error, {:already_started, pid}} ->
+            format_start_resp(child_data, local_node, pid, startup_result)
 
           _ ->
             nil
         end
       end)
       |> Enum.filter(&(&1 !== nil))
+    end
+
+    defp format_start_resp(child_data, local_node, pid, startup_result) do
+      {
+        child_data.child_spec.id,
+        {child_data.child_spec, [{local_node, pid}]},
+        startup_result,
+        {:for_node, local_node,
+         [
+           {:reply_to, Map.get(child_data, :reply_to, [])},
+           {:migration, Map.get(child_data, :migration, false)}
+         ]}
+      }
     end
 
     defp child_start_result(args, child_data, local_node) do
@@ -91,6 +105,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           )
 
           {:ok, pid}
+
+        {:error, {:already_started, pid}} ->
+          {:error, {:already_started, pid}}
 
         any ->
           Map.get(child_data, :reply_to, [])
@@ -133,6 +150,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     """
 
     alias ProcessHub.Service.ProcessRegistry
+    alias ProcessHub.Service.HookManager
+    alias ProcessHub.Constant.Hook
 
     @type process_startup_result() :: {:ok, pid()} | {:error, any()} | term()
 
@@ -159,7 +178,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = args) do
       children_formatted =
-        Enum.map(args.children, fn {child_id, {_child_spec, _child_nodes} = cn, _} ->
+        Enum.map(args.children, fn {child_id, {_child_spec, _child_nodes} = cn, _, _} ->
           {child_id, cn}
         end)
         |> Map.new()
@@ -168,7 +187,18 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
       local_node = node()
 
-      Enum.each(args.children, fn {child_id, _, {reply_to, startup_res}} ->
+      Enum.each(args.children, fn {child_id, _, startup_res, {:for_node, for_node, opts}} ->
+        if for_node === local_node do
+          handle_reply_to(opts, child_id, startup_res, for_node)
+          handle_migration(opts, args.hub_id, child_id, for_node)
+        end
+      end)
+    end
+
+    defp handle_reply_to(opts, child_id, startup_res, local_node) do
+      reply_to = Keyword.get(opts, :reply_to, nil)
+
+      if is_list(reply_to) and length(reply_to) > 0 do
         Dispatcher.reply_respondents(
           reply_to,
           :child_start_resp,
@@ -176,7 +206,16 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           startup_res,
           local_node
         )
-      end)
+      end
+    end
+
+    defp handle_migration(opts, hub_id, child_id, local_node) do
+      migration = Keyword.get(opts, :migration, false)
+
+      if migration do
+        # TODO: replace with the new hook migration forwards
+        HookManager.dispatch_hook(hub_id, Hook.child_migrated(), {child_id, local_node})
+      end
     end
   end
 end

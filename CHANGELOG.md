@@ -6,16 +6,21 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Increased the timeout value for children redistribution task.
 - Increased integration tests load by 10x to improve the reliability of the tests.
+- Replaced vanilla :ets with cachex for local storage. This improved the reliability of the system
+by preventing race conditions in some scenarios.
 
 ### Added
 - Added custom identifier for local storage table.
+- Transactions for synchronization append function to reduce possibility of
+multiple processes writing to the same table keys at the same time.
+- Locking process registry when doing bulk operations to prevent overwriting of the data.
 
 ### Fixed
-- Replaced vanilla :ets with cachex for local storage. This improved the reliability of the system
-by preventing race conditions in some scenarios.
-- Locking process registry when doing bulk operations to prevent overwriting of the data.
+- Synchronization caused multiple nodes to reply to the caller. This caused anomalies in
+integration tests.
 - Node up and down handlers are no longer blocking operations for coordinator to avoid
 timeout errors when handling large amount of processes.
+- The child start responses we're in reverse order when single child was started on multiple nodes.
 
 ## v0.1.3-alpha - 2023-11-05
 

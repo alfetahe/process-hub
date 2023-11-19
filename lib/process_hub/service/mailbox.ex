@@ -97,7 +97,7 @@ defmodule ProcessHub.Service.Mailbox do
       children_responses ++ acc
     end)
     |> List.foldl(%{}, fn {child_id, responses}, acc ->
-      Map.put(acc, child_id, [responses | Map.get(acc, child_id, [])])
+      Map.put(acc, child_id, Map.get(acc, child_id, []) ++ [responses])
     end)
     |> Map.to_list()
   end
@@ -105,7 +105,7 @@ defmodule ProcessHub.Service.Mailbox do
   @doc "Receives a single child response message."
   def receive_response(type, child_id, node, handler, timeout, error) do
     receive do
-      {^type, ^child_id, resp, ^node} -> {child_id, handler.(child_id, resp, node)}
+      {^type, ^child_id, resp, receive_node} -> {child_id, handler.(child_id, resp, receive_node)}
     after
       timeout -> {child_id, {:error, {node, error}}}
     end

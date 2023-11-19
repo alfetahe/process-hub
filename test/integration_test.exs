@@ -423,16 +423,16 @@ defmodule Test.IntegrationTest do
   @tag migr_strategy: :hot
   @tag hub_id: :migration_hotswap_test
   @tag migr_handover: true
-  @tag migr_retention: 10000
+  @tag migr_retention: 5000
   @tag listed_hooks: [
          {Hook.cluster_join(), :local},
-         {Hook.cluster_leave(), :global},
+         {Hook.cluster_leave(), :local},
          {Hook.registry_pid_inserted(), :local},
          {Hook.registry_pid_removed(), :local},
-         {Hook.post_nodes_redistribution(), :local}
+         {Hook.post_nodes_redistribution(), :local},
+         {Hook.child_migrated(), :local}
        ]
-  test "hotswap migration with handoff",
-       %{hub_id: hub_id, listed_hooks: lh} = context do
+  test "hotswap migration with handoff", %{hub_id: hub_id, listed_hooks: lh} = context do
     nodes_count = @nr_of_peers
     child_count = 100
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
@@ -441,6 +441,11 @@ defmodule Test.IntegrationTest do
     Enum.each(Node.list(), fn node ->
       :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
     end)
+
+    # Node downs
+    Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
+      error_msg: "Post redistribution timeout"
+    )
 
     # Confirm that hubs are stopped.
     Bag.receive_multiple(nodes_count, Hook.cluster_leave(), error_msg: "Cluster leave timeout")
@@ -458,6 +463,7 @@ defmodule Test.IntegrationTest do
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(Node.list(), lh, true)
 
+    # Node ups
     Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
       error_msg: "Post redistribution timeout"
     )
@@ -468,29 +474,28 @@ defmodule Test.IntegrationTest do
     # Get all children that have been migrated.
     migrated_children =
       Enum.map(child_specs, fn child_spec ->
-        {child_spec.id, ProcessHub.Service.Ring.key_to_nodes(ring, child_spec.id, 1)}
+        {child_spec.id, ProcessHub.Service.Ring.key_to_node(ring, child_spec.id, 1)}
       end)
-      |> Enum.filter(fn {_, nodes} ->
-        !Enum.member?(nodes, local_node)
+      |> Enum.filter(fn {_, node} ->
+        local_node !== node
       end)
-
-    mcl = length(migrated_children)
 
     # Confirm that all migrated children have been updated.
-    Bag.receive_multiple(mcl, Hook.registry_pid_removed())
-    Bag.receive_multiple(@nr_of_peers * 2, Hook.post_nodes_redistribution())
+    mcl = length(migrated_children)
+    Bag.receive_multiple(mcl, Hook.child_migrated(), error_msg: "Child migration timeout")
 
     # Validate the data.
-    Enum.each(migrated_children, fn {child_id, _nodes} ->
+    Enum.each(migrated_children, fn {child_id, _node} ->
       pid =
         ProcessHub.child_lookup(hub_id, child_id)
         |> elem(1)
-        |> Enum.at(0)
+        |> List.first()
         |> elem(1)
 
       handover_data = GenServer.call(pid, {:get_value, :handoff_data})
 
-      assert handover_data === child_id, "Data mismatch for child #{child_id}"
+      assert handover_data === child_id,
+             "Data mismatch for child #{child_id} received: #{inspect(handover_data)}"
     end)
   end
 end

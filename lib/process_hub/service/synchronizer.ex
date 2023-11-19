@@ -43,19 +43,21 @@ defmodule ProcessHub.Service.Synchronizer do
       remote_cids = Enum.map(remote_children, fn {cs, _pid} -> cs.id end)
 
       # We lock the rows so no other process can write to them.
-      Cachex.transaction(Name.registry(hub_id), remote_cids, fn(worker) ->
+      Cachex.transaction(Name.registry(hub_id), remote_cids, fn worker ->
         Enum.each(remote_children, fn {remote_cs, remote_pid} ->
-
           # Check if local children contain remote node data.
           case ProcessRegistry.lookup(hub_id, remote_cs.id, table: worker) do
             nil ->
               # We don't have data locally so add it.
-              ProcessRegistry.insert(hub_id, remote_cs, [{remote_node, remote_pid}], table: worker)
+              ProcessRegistry.insert(hub_id, remote_cs, [{remote_node, remote_pid}],
+                table: worker
+              )
 
             {_, local_child_nodes} ->
-              {_current, updated} = Keyword.get_and_update(local_child_nodes, remote_node, fn current_value ->
-                {current_value, remote_pid}
-              end)
+              {_current, updated} =
+                Keyword.get_and_update(local_child_nodes, remote_node, fn current_value ->
+                  {current_value, remote_pid}
+                end)
 
               # We have data locally, update the pid that is associated with the remote node.
               ProcessRegistry.insert(hub_id, remote_cs, updated, table: worker)

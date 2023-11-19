@@ -97,7 +97,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             :ok
     def handle_migration(strategy, hub_id, child_spec, added_node, sync_strategy) do
       # Start redistribution for the child.
-      Distributor.child_redist_init(hub_id, child_spec, added_node, reply_to: [self()])
+      Distributor.child_redist_init(hub_id, child_spec, added_node,
+        reply_to: [self()],
+        migration: true
+      )
 
       # Wait for confirmation of the started child process.
       result = receive_child_resp(child_spec.id, added_node)
@@ -117,11 +120,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       :ok
     end
 
-    defp receive_child_resp(child_id, node) do
+    defp receive_child_resp(child_id, added_node) do
       Mailbox.receive_response(
         :child_start_resp,
         child_id,
-        node,
+        added_node,
         receive_handler(),
         @migration_timeout,
         :child_start_timeout
@@ -129,11 +132,15 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       |> elem(1)
     end
 
+    # TODO: this matches all and returns the same..
     defp receive_handler() do
       fn _child_id, resp, _node ->
         case resp do
-          {:ok, _child_pid} -> resp
-          any -> any
+          {:ok, _child_pid} ->
+            resp
+
+          any ->
+            any
         end
       end
     end
@@ -175,9 +182,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
       def handle_info({:process_hub, :handover_start, startup_resp, from}, state) do
         case startup_resp do
+          {:error, {:already_started, pid}} ->
+            send_handover_start(pid, from, state)
+
           {:ok, pid} ->
-            Process.send(pid, {:process_hub, :handover, state}, [])
-            Process.send(from, {:process_hub, :retention_handled}, [])
+            send_handover_start(pid, from, state)
 
           error ->
             Logger.error("Handover failed: #{inspect(error)}")
@@ -188,6 +197,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
       def handle_info({:process_hub, :handover, handover_state}, _state) do
         {:noreply, handover_state}
+      end
+
+      defp send_handover_start(pid, from, state) do
+        Process.send(pid, {:process_hub, :handover, state}, [])
+        Process.send(from, {:process_hub, :retention_handled}, [])
       end
     end
   end
