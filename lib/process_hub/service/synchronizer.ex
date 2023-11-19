@@ -39,31 +39,33 @@ defmodule ProcessHub.Service.Synchronizer do
   """
   @spec append_data(ProcessHub.hub_id(), %{node() => [{ProcessHub.child_spec(), pid()}]}) :: :ok
   def append_data(hub_id, remote_data) do
-    local_registry = ProcessRegistry.registry(hub_id)
-
     Enum.each(remote_data, fn {remote_node, remote_children} ->
-      Enum.each(remote_children, fn {remote_cs, remote_pid} ->
-        # Check if local children contain remote node data.
-        local_child_data = Map.get(local_registry, remote_cs.id, nil)
+      remote_cids = Enum.map(remote_children, fn {cs, _pid} -> cs.id end)
 
-        if local_child_data do
-          # Check if local child contains remote node.
-          local_child_nodes = elem(local_child_data, 1)
+      # We lock the rows so no other process can write to them.
+      Cachex.transaction(Name.registry(hub_id), remote_cids, fn(worker) ->
+        Enum.each(remote_children, fn {remote_cs, remote_pid} ->
 
-          # Check if local data is missing remote node.
-          unless Keyword.has_key?(local_child_nodes, remote_node) do
-            ProcessRegistry.insert(hub_id, remote_cs, [
-              {remote_node, remote_pid} | local_child_nodes
-            ])
+          # Check if local children contain remote node data.
+          case ProcessRegistry.lookup(hub_id, remote_cs.id, table: worker) do
+            nil ->
+              # We don't have data locally so add it.
+              ProcessRegistry.insert(hub_id, remote_cs, [{remote_node, remote_pid}], table: worker)
+
+            {_, local_child_nodes} ->
+              {_current, updated} = Keyword.get_and_update(local_child_nodes, remote_node, fn current_value ->
+                {current_value, remote_pid}
+              end)
+
+              # We have data locally, update the pid that is associated with the remote node.
+              ProcessRegistry.insert(hub_id, remote_cs, updated, table: worker)
           end
-        else
-          # We don't have this child_spec, so add it.
-          ProcessRegistry.insert(hub_id, remote_cs, [{remote_node, remote_pid}])
-        end
+        end)
       end)
     end)
   end
 
+  # TODO: this can be improved with transactions similary we have done with the append function above.
   @doc """
   Detaches remote data from the local process registry.
   """
