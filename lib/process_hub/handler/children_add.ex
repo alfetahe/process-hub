@@ -123,6 +123,11 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         nodes =
           ProcessHub.Strategy.Redundancy.Base.belongs_to(redun_strategy, hash_ring, child_id)
 
+        # Recheck if the node that is supposed to be started on local node is
+        # assigned to this node or not. If not then forward to the correct node.
+        #
+        # These cases can happen when multiple nodes are added to the cluster
+        # at the same time.
         case Enum.member?(nodes, local_node) do
           true ->
             [child_data | acc]
