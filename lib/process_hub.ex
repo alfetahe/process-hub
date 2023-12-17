@@ -531,7 +531,8 @@ defmodule ProcessHub do
           partition_tolerance_strategy:
             ProcessHub.Strategy.PartitionTolerance.Divergence.t()
             | ProcessHub.Strategy.PartitionTolerance.StaticQuorum.t()
-            | ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t()
+            | ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
+          distribution_strategy: ProcessHub.Strategy.Distribution.ConsistentHashing.t()
         }
 
   @enforce_keys [:hub_id]

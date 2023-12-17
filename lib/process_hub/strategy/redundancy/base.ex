@@ -6,20 +6,12 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   It is possible to start the same process on multiple nodes in the cluster.
   """
 
-  alias :hash_ring, as: HashRing
-
   @doc """
   Returns the replication factor for the given strategy struct. This is the number of replicas
   that the process will be started with.
   """
   @spec replication_factor(struct()) :: pos_integer()
   def replication_factor(strategy)
-
-  @doc """
-  Determines the nodes that are responsible for the given `child_id` (process).
-  """
-  @spec belongs_to(struct(), HashRing.t(), atom() | binary()) :: [node()]
-  def belongs_to(strategy, hash_ring, child_id)
 
   @doc """
   This function is called when `ProcessHub.DistributedSupervisor` has started a new

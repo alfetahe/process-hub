@@ -33,7 +33,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   alias ProcessHub.Service.Ring
   alias ProcessHub.Utility.Name
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-  alias ProcessHub.Strategy.Distribution, as: DistributionStrategy
+  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
   @typedoc """
   Replication strategy options.
@@ -79,7 +79,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     @impl true
     @spec handle_post_start(
             ProcessHub.Strategy.Redundancy.Replication.t(),
-            ProcessHub.Strategy.Distribution.HashRing.t(),
+            struct(),
             atom() | binary(),
             pid()
           ) :: :ok

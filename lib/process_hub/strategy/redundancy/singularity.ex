@@ -21,7 +21,7 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     @impl true
     @spec handle_post_start(
             ProcessHub.Strategy.Redundancy.Singularity.t(),
-            ProcessHub.Strategy.Distribution.HashRing.t(),
+            struct(),
             atom() | binary(),
             pid()
           ) :: :ok

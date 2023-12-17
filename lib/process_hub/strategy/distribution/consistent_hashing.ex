@@ -1,4 +1,4 @@
-defmodule ProcessHub.Strategy.Distribution.HashRing do
+defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Service.Ring
@@ -13,10 +13,10 @@ defmodule ProcessHub.Strategy.Distribution.HashRing do
 
   defstruct @enforce_keys
 
-  defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.HashRing do
+  defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.ConsistentHashing do
     @impl true
     @spec belongs_to(
-            ProcessHub.Strategy.Distribution.HashRing.t(),
+            ProcessHub.Strategy.Distribution.ConsistentHashing.t(),
             atom() | binary()
           ) :: [atom]
     def belongs_to(strategy, child_id) do
