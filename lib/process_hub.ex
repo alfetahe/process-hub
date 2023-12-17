@@ -1,4 +1,5 @@
 defmodule ProcessHub do
+  # TODO: add documentation about distribution strategy.
   @moduledoc """
   This is the main public API module for the `ProcessHub` library.
 
@@ -542,9 +543,11 @@ defmodule ProcessHub do
     redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
     migration_strategy: %ProcessHub.Strategy.Migration.ColdSwap{},
     synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
-    partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{}
+    partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
+    distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{}
   ]
 
+  alias ProcessHub.Strategy.Distribution.ConsistentHashing
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State

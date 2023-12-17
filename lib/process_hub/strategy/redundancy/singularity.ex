@@ -5,7 +5,6 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
   """
 
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-  alias ProcessHub.Service.Ring
 
   @typedoc """
   No options are available.

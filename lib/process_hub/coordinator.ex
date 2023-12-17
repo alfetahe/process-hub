@@ -43,7 +43,6 @@ defmodule ProcessHub.Coordinator do
           hub_id: atom(),
           settings: ProcessHub.t(),
           cluster_nodes: [node()],
-          hash_ring: HashRing.ring(),
           managers: %{
             coordinator: atom(),
             distributed_supervisor: atom(),
@@ -61,7 +60,6 @@ defmodule ProcessHub.Coordinator do
     :hub_id,
     :settings,
     :cluster_nodes,
-    :hash_ring,
     :managers,
     :storage
   ]
@@ -152,7 +150,8 @@ defmodule ProcessHub.Coordinator do
           hash_ring: state.hash_ring,
           dist_sup: state.managers.distributed_supervisor,
           sync_strategy: state.settings.synchronization_strategy,
-          redun_strategy: state.settings.redundancy_strategy
+          redun_strategy: state.settings.redundancy_strategy,
+          dist_strategy: state.settings.distribution_strategy
         }
       ]
     )
