@@ -33,6 +33,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   alias ProcessHub.Service.Ring
   alias ProcessHub.Utility.Name
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Strategy.Distribution, as: DistributionStrategy
 
   @typedoc """
   Replication strategy options.
@@ -62,14 +63,13 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   defimpl RedundancyStrategy, for: ProcessHub.Strategy.Redundancy.Replication do
     @impl true
-    @spec replication_factor(
-            ProcessHub.Strategy.Redundancy.Replication.t(),
-            :hash_ring.ring()
-          ) :: pos_integer() | :cluster_size
-    def replication_factor(strategy, hash_ring) do
+    @spec replication_factor(ProcessHub.Strategy.Redundancy.Replication.t()) ::
+            pos_integer() | :cluster_size
+    def replication_factor(strategy) do
       case strategy.replication_factor do
         :cluster_size ->
-          Ring.nodes(hash_ring) |> Enum.count()
+          # TODO: find out how many nodes are in the hub
+          :ok
 
         _ ->
           strategy.replication_factor
@@ -77,24 +77,14 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
 
     @impl true
-    @spec belongs_to(
-            ProcessHub.Strategy.Redundancy.Replication.t(),
-            :hash_ring.ring(),
-            atom() | binary()
-          ) :: [atom]
-    def belongs_to(strategy, hash_ring, child_id) do
-      Ring.key_to_nodes(hash_ring, child_id, replication_factor(strategy, hash_ring))
-    end
-
-    @impl true
     @spec handle_post_start(
             ProcessHub.Strategy.Redundancy.Replication.t(),
-            :hash_ring.ring(),
+            ProcessHub.Strategy.Distribution.HashRing.t(),
             atom() | binary(),
             pid()
           ) :: :ok
-    def handle_post_start(strategy, hash_ring, child_id, child_pid) do
-      nodes = belongs_to(strategy, hash_ring, child_id)
+    def handle_post_start(strategy, distribution_strategy, child_id, child_pid) do
+      nodes = DistributionStrategy.belongs_to(distribution_strategy, child_id)
       child_mode = child_mode(strategy, nodes)
       notify = redundancy_signal?(strategy.redundancy_signal, child_mode)
 
@@ -118,7 +108,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           child_id,
           {hash_ring, old_hash_ring}
         ) do
-      replication_factor = replication_factor(strategy, hash_ring)
+      replication_factor = replication_factor(strategy)
       old_mode = process_rdm_mode(strategy, child_id, old_hash_ring, replication_factor)
       new_mode = process_rdm_mode(strategy, child_id, hash_ring, replication_factor)
 

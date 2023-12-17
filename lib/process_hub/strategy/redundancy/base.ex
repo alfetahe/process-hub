@@ -12,26 +12,26 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   Returns the replication factor for the given strategy struct. This is the number of replicas
   that the process will be started with.
   """
-  @spec replication_factor(strategy_struct :: struct(), :hash_ring.ring()) :: pos_integer()
-  def replication_factor(struct, hash_ring)
+  @spec replication_factor(struct()) :: pos_integer()
+  def replication_factor(strategy)
 
   @doc """
   Determines the nodes that are responsible for the given `child_id` (process).
   """
   @spec belongs_to(struct(), HashRing.t(), atom() | binary()) :: [node()]
-  def belongs_to(struct, hash_ring, child_id)
+  def belongs_to(strategy, hash_ring, child_id)
 
   @doc """
   This function is called when `ProcessHub.DistributedSupervisor` has started a new
   child process, and the strategy can perform any post-start actions.
   """
-  @spec handle_post_start(struct(), HashRing.t(), atom() | binary(), pid()) :: :ok
-  def handle_post_start(struct, hash_ring, child_id, child_pid)
+  @spec handle_post_start(struct(), struct(), atom() | binary(), pid()) :: :ok
+  def handle_post_start(strategy, distribution_strategy, child_id, child_pid)
 
   @doc """
   This function is called when `ProcessHub.DistributedSupervisor` has started a
   replica of a child process, and the strategy can perform any post-update actions.
   """
   @spec handle_post_update(struct(), atom(), atom() | binary(), any()) :: :ok
-  def handle_post_update(struct, hub_id, child_id, data)
+  def handle_post_update(strategy, hub_id, child_id, data)
 end

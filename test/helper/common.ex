@@ -53,10 +53,7 @@ defmodule Test.Helper.Common do
     hub_settings = GenServer.call(Name.coordinator(hub_id), :state)
 
     replication_factor =
-      RedundancyStrategy.replication_factor(
-        hub_settings.settings.redundancy_strategy,
-        hub_settings.hash_ring
-      )
+      RedundancyStrategy.replication_factor(hub_settings.settings.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes}} ->
       ring = Ring.get_ring(hub_id)
@@ -92,10 +89,7 @@ defmodule Test.Helper.Common do
     hub_settings = GenServer.call(Name.coordinator(hub_id), :state)
 
     replication_factor =
-      RedundancyStrategy.replication_factor(
-        hub_settings.settings.redundancy_strategy,
-        hub_settings.hash_ring
-      )
+      RedundancyStrategy.replication_factor(hub_settings.settings.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes}} ->
       for {node, pid} <- nodes do

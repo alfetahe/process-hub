@@ -4,6 +4,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.Dispatcher
 
   use Task
@@ -21,18 +22,18 @@ defmodule ProcessHub.Handler.ChildrenAdd do
                 reply_to: ProcessHub.reply_to()
               }
             ],
-            hash_ring: :hash_ring.ring(),
             dist_sup: ProcessHub.DistributedSupervisor.pname(),
             sync_strategy: SynchronizationStrategy.t(),
-            redun_strategy: RedundancyStrategy.t()
+            redun_strategy: RedundancyStrategy.t(),
+            dist_strategy: DistributionStrategy.t()
           }
 
     @enforce_keys [
       :hub_id,
       :children,
-      :hash_ring,
       :dist_sup,
       :sync_strategy,
+      :dist_strategy,
       :redun_strategy
     ]
     defstruct @enforce_keys
@@ -61,7 +62,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     defp start_children(args) do
       local_node = node()
 
-      validate_children(args.hub_id, args.children, args.redun_strategy, args.hash_ring)
+      validate_children(args.hub_id, args.children, args.dist_strategy)
       |> Enum.map(fn child_data ->
         startup_result = child_start_result(args, child_data, local_node)
 
@@ -99,7 +100,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         {:ok, pid} ->
           RedundancyStrategy.handle_post_start(
             args.redun_strategy,
-            args.hash_ring,
+            args.dist_strategy,
             cid,
             pid
           )
@@ -115,13 +116,12 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp validate_children(hub_id, children, redun_strategy, hash_ring) do
+    defp validate_children(hub_id, children, dist_strategy) do
       # Check if the child belongs to this node.
       local_node = node()
 
       Enum.reduce(children, [], fn %{child_id: child_id} = child_data, acc ->
-        nodes =
-          ProcessHub.Strategy.Redundancy.Base.belongs_to(redun_strategy, hash_ring, child_id)
+        nodes = DistributionStrategy.belongs_to(dist_strategy, child_id)
 
         # Recheck if the node that is supposed to be started on local node is
         # assigned to this node or not. If not then forward to the correct node.

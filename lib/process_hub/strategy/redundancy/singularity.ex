@@ -15,28 +15,17 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
 
   defimpl RedundancyStrategy, for: ProcessHub.Strategy.Redundancy.Singularity do
     @impl true
-    @spec replication_factor(ProcessHub.Strategy.Redundancy.Singularity.t(), :hash_ring.ring()) ::
-            1
-    def replication_factor(_struct, _hash_ring), do: 1
-
-    @impl true
-    @spec belongs_to(
-            ProcessHub.Strategy.Redundancy.Singularity.t(),
-            :hash_ring.ring(),
-            atom() | binary()
-          ) :: [atom]
-    def belongs_to(_struct, hash_ring, child_id) do
-      Ring.key_to_nodes(hash_ring, child_id, 1)
-    end
+    @spec replication_factor(ProcessHub.Strategy.Redundancy.Singularity.t()) :: 1
+    def replication_factor(_struct), do: 1
 
     @impl true
     @spec handle_post_start(
             ProcessHub.Strategy.Redundancy.Singularity.t(),
-            :hash_ring.ring(),
+            ProcessHub.Strategy.Distribution.HashRing.t(),
             atom() | binary(),
             pid()
           ) :: :ok
-    def handle_post_start(_struct, _hash_ring, _child_id, _child_pid), do: :ok
+    def handle_post_start(_struct, _dist_strategy, _child_id, _child_pid), do: :ok
 
     @impl true
     @spec handle_post_update(
