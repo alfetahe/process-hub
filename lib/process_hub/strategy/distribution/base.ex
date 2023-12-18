@@ -6,7 +6,8 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   @callback belongs_to(
               distribution_striategy :: struct(),
               child_id :: atom() | binary(),
+              hub_nodes :: [node()],
               replication_factor :: pos_integer()
-            ) :: [atom]
-  def belongs_to(strategy, child_id, replication_factor)
+            ) :: [node()]
+  def belongs_to(strategy, child_id, hub_nodes, replication_factor)
 end

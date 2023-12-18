@@ -22,9 +22,10 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
             ProcessHub.Strategy.Redundancy.Singularity.t(),
             struct(),
             atom() | binary(),
-            pid()
+            pid(),
+            [node()]
           ) :: :ok
-    def handle_post_start(_struct, _dist_strategy, _child_id, _child_pid), do: :ok
+    def handle_post_start(_struct, _dist_strategy, _child_id, _child_pid, _hub_nodes), do: :ok
 
     @impl true
     @spec handle_post_update(

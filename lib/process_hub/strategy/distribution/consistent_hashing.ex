@@ -13,9 +13,11 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
     @impl true
     @spec belongs_to(
             ProcessHub.Strategy.Distribution.ConsistentHashing.t(),
-            atom() | binary()
+            atom() | binary(),
+            [node()],
+            pos_integer()
           ) :: [atom]
-    def belongs_to(strategy, child_id, replication_factor) do
+    def belongs_to(strategy, child_id, _hub_nodes, replication_factor) do
       Ring.key_to_nodes(strategy.hash_ring, child_id, replication_factor)
     end
   end

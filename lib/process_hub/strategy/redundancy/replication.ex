@@ -68,8 +68,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     def replication_factor(strategy) do
       case strategy.replication_factor do
         :cluster_size ->
-          # TODO: find out how many nodes are in the hub
-          :ok
+          Node.list() |> Enum.count()
 
         _ ->
           strategy.replication_factor
@@ -81,10 +80,18 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
             ProcessHub.Strategy.Redundancy.Replication.t(),
             struct(),
             atom() | binary(),
-            pid()
+            pid(),
+            [node()]
           ) :: :ok
-    def handle_post_start(strategy, distribution_strategy, child_id, child_pid) do
-      nodes = DistributionStrategy.belongs_to(distribution_strategy, child_id)
+    def handle_post_start(strategy, distribution_strategy, child_id, child_pid, hub_nodes) do
+      nodes =
+        DistributionStrategy.belongs_to(
+          distribution_strategy,
+          child_id,
+          hub_nodes,
+          replication_factor(strategy)
+        )
+
       child_mode = child_mode(strategy, nodes)
       notify = redundancy_signal?(strategy.redundancy_signal, child_mode)
 
@@ -95,6 +102,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       :ok
     end
 
+    # TODO: hash ring needs to be taken out
     @impl true
     @spec handle_post_update(
             ProcessHub.Strategy.Redundancy.Replication.t(),
@@ -109,8 +117,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           {hash_ring, old_hash_ring}
         ) do
       replication_factor = replication_factor(strategy)
-      old_mode = process_rdm_mode(strategy, child_id, old_hash_ring, replication_factor)
-      new_mode = process_rdm_mode(strategy, child_id, hash_ring, replication_factor)
+      old_mode = process_redun_mode(strategy, child_id, old_hash_ring, replication_factor)
+      new_mode = process_redun_mode(strategy, child_id, hash_ring, replication_factor)
 
       child_pid = DistributedSupervisor.local_pid(Name.distributed_supervisor(hub_id), child_id)
       notify = redundancy_signal?(strategy.redundancy_signal, new_mode)
@@ -122,7 +130,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       :ok
     end
 
-    defp process_rdm_mode(strategy, child_id, hash_ring, replication_factor) do
+    defp process_redun_mode(strategy, child_id, hash_ring, replication_factor) do
       child_nodes = Ring.key_to_nodes(hash_ring, child_id, replication_factor)
       child_mode(strategy, child_nodes)
     end

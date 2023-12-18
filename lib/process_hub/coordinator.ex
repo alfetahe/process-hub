@@ -224,7 +224,7 @@ defmodule ProcessHub.Coordinator do
           partition_strat: state.settings.partition_tolerance_strategy,
           hash_ring_old: Ring.remove_node(state.hash_ring, node),
           hash_ring_new: state.hash_ring,
-          cluster_nodes: state.cluster_nodes
+          hub_nodes: state.cluster_nodes
         }
       ]
     )
@@ -373,7 +373,7 @@ defmodule ProcessHub.Coordinator do
           %ClusterUpdate.NodeDown{
             hub_id: state.hub_id,
             removed_node: down_node,
-            cluster_nodes: state.cluster_nodes,
+            hub_nodes: state.cluster_nodes,
             old_hash_ring: old_hash_ring,
             new_hash_ring: new_hash_ring,
             partition_strat: state.settings.partition_tolerance_strategy,

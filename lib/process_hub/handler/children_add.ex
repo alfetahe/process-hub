@@ -25,7 +25,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             dist_sup: ProcessHub.DistributedSupervisor.pname(),
             sync_strategy: SynchronizationStrategy.t(),
             redun_strategy: RedundancyStrategy.t(),
-            dist_strategy: DistributionStrategy.t()
+            dist_strategy: DistributionStrategy.t(),
+            hub_nodes: [node()]
           }
 
     @enforce_keys [
@@ -34,7 +35,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       :dist_sup,
       :sync_strategy,
       :dist_strategy,
-      :redun_strategy
+      :redun_strategy,
+      :hub_nodes
     ]
     defstruct @enforce_keys
 
@@ -62,7 +64,13 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     defp start_children(args) do
       local_node = node()
 
-      validate_children(args.hub_id, args.children, args.dist_strategy)
+      validate_children(
+        args.hub_id,
+        args.children,
+        args.dist_strategy,
+        args.redun_strategy,
+        args.hub_nodes
+      )
       |> Enum.map(fn child_data ->
         startup_result = child_start_result(args, child_data, local_node)
 
@@ -102,7 +110,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             args.redun_strategy,
             args.dist_strategy,
             cid,
-            pid
+            pid,
+            args.hub_nodes
           )
 
           {:ok, pid}
@@ -116,12 +125,15 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp validate_children(hub_id, children, dist_strategy) do
+    defp validate_children(hub_id, children, dist_strat, redun_strat, hub_nodes) do
       # Check if the child belongs to this node.
       local_node = node()
 
+      replication_factor = RedundancyStrategy.replication_factor(redun_strat)
+
       Enum.reduce(children, [], fn %{child_id: child_id} = child_data, acc ->
-        nodes = DistributionStrategy.belongs_to(dist_strategy, child_id)
+        nodes =
+          DistributionStrategy.belongs_to(dist_strat, child_id, hub_nodes, replication_factor)
 
         # Recheck if the node that is supposed to be started on local node is
         # assigned to this node or not. If not then forward to the correct node.
