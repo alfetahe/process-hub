@@ -31,8 +31,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             migr_strat: MigrationStrategy.t(),
             partition_strat: PartitionToleranceStrategy.t(),
             dist_strat: DistributionStrategy.t(),
-            hash_ring_old: :hash_ring.ring(),
-            hash_ring_new: :hash_ring.ring(),
+            # TODO: hash_ring_old: :hash_ring.ring(),
+            # TODO: hash_ring_new: :hash_ring.ring(),
             new_node: node(),
             hub_nodes: [node()]
           }
@@ -57,16 +57,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         {:nodeup, arg.new_node}
       )
 
-      distribute_processes(
-        arg.hub_id,
-        arg.new_node,
-        arg.dist_strat,
-        arg.redun_strat,
-        arg.sync_strat,
-        arg.migr_strat,
-        arg.hub_nodes
-      )
-      |> Task.await_many(migration_timeout(arg.migr_strat))
+      distribute_processes(arg) |> Task.await_many(migration_timeout(arg.migr_strat))
 
       propagate_local_children(arg.hub_id, arg.new_node)
 
@@ -126,8 +117,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             RedundancyStrategy.handle_post_update(
               arg.redun_strat,
               arg.hub_id,
-              child_spec.id,
-              {hash_ring, old_hash_ring}
+              child_spec.id
+              # {hash_ring, old_hash_ring}
             )
 
             # Will initiate the start of the child on the new node.

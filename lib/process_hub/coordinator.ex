@@ -89,7 +89,7 @@ defmodule ProcessHub.Coordinator do
           process_registry: Name.registry(hub.hub_id),
           local: hub.hub_id
         },
-        hash_ring: HashRing.make([HashRingNode.make(node())])
+        # TODO: hash_ring: HashRing.make([HashRingNode.make(node())])
     }
 
     register_handlers(hub.managers)
@@ -147,11 +147,12 @@ defmodule ProcessHub.Coordinator do
         %ChildrenAdd.StartHandle{
           hub_id: state.hub_id,
           children: children,
-          hash_ring: state.hash_ring,
+          # TODO: hash_ring: state.hash_ring,
           dist_sup: state.managers.distributed_supervisor,
           sync_strategy: state.settings.synchronization_strategy,
           redun_strategy: state.settings.redundancy_strategy,
-          dist_strategy: state.settings.distribution_strategy
+          dist_strategy: state.settings.distribution_strategy,
+          hub_nodes: state.cluster_nodes
         }
       ]
     )
@@ -222,8 +223,9 @@ defmodule ProcessHub.Coordinator do
           migr_strat: state.settings.migration_strategy,
           sync_strat: state.settings.synchronization_strategy,
           partition_strat: state.settings.partition_tolerance_strategy,
-          hash_ring_old: Ring.remove_node(state.hash_ring, node),
-          hash_ring_new: state.hash_ring,
+          dist_strat: state.settings.distribution_strategy,
+          # TODO: hash_ring_old: Ring.remove_node(state.hash_ring, node),
+          # TODO: hash_ring_new: state.hash_ring,
           hub_nodes: state.cluster_nodes
         }
       ]
@@ -235,11 +237,10 @@ defmodule ProcessHub.Coordinator do
   def handle_info({@event_cluster_join, node}, state) do
     state =
       if Cluster.new_node?(state.cluster_nodes, node) do
-        state = %__MODULE__{
-          state
-          | hash_ring: Ring.add_node(state.hash_ring, node),
-            cluster_nodes: Cluster.add_cluster_node(state.cluster_nodes, node)
-        }
+        # TODO: we should keep the hub settings in cache and also update the dist strat hash ring here.
+        # state = %__MODULE__{state | cluster_nodes: Cluster.add_cluster_node(state.cluster_nodes, node)
+        #   | hash_ring: Ring.add_node(state.hash_ring, node),
+        #   }
 
         PartitionToleranceStrategy.handle_node_up(
           state.settings.partition_tolerance_strategy,
@@ -361,8 +362,8 @@ defmodule ProcessHub.Coordinator do
 
       state = %__MODULE__{
         state
-        | hash_ring: new_hash_ring,
-          cluster_nodes: cluster_nodes
+        # TODO:| hash_ring: new_hash_ring,
+        |  cluster_nodes: cluster_nodes
       }
 
       Task.Supervisor.start_child(
