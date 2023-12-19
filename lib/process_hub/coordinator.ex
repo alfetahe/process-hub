@@ -88,7 +88,7 @@ defmodule ProcessHub.Coordinator do
       | storage: %{
           process_registry: Name.registry(hub.hub_id),
           local: hub.hub_id
-        },
+        }
         # TODO: hash_ring: HashRing.make([HashRingNode.make(node())])
     }
 
@@ -362,8 +362,8 @@ defmodule ProcessHub.Coordinator do
 
       state = %__MODULE__{
         state
-        # TODO:| hash_ring: new_hash_ring,
-        |  cluster_nodes: cluster_nodes
+        | # TODO:| hash_ring: new_hash_ring,
+          cluster_nodes: cluster_nodes
       }
 
       Task.Supervisor.start_child(

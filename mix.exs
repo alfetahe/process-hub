@@ -41,7 +41,8 @@ defmodule ProcessHub.MixProject do
       {:blockade, "~> 0.1.0"},
       {:hash_ring, "~> 0.4.2"},
       {:cachex, "~> 3.6"},
-      {:ex_doc, "~> 0.30.6", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.30.6", only: :dev, runtime: false},
+      {:benchee, "~> 1.2", only: :dev}
     ]
   end
 
