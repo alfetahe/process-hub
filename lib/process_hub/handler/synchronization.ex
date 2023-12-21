@@ -11,28 +11,25 @@ defmodule ProcessHub.Handler.Synchronization do
     @moduledoc """
     Handler for initializing synchronization.
     """
+    alias ProcessHub.Service.Cluster
 
     @type t() :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
-            sync_strat: SynchronizationStrategy.t(),
-            cluster_nodes: [node()]
+            sync_strat: SynchronizationStrategy.t()
           }
 
     @enforce_keys [
       :hub_id,
-      :sync_strat,
-      :cluster_nodes
+      :sync_strat
     ]
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = args) do
       unless State.is_locked?(args.hub_id) do
-        SynchronizationStrategy.init_sync(
-          args.sync_strat,
-          args.hub_id,
-          args.cluster_nodes
-        )
+        hub_nodes = Cluster.nodes(args.hub_id, [:include_local])
+
+        SynchronizationStrategy.init_sync(args.sync_strat, args.hub_id, hub_nodes)
       end
 
       :ok

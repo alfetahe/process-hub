@@ -3,7 +3,7 @@ defmodule ProcessHub.Service.Ring do
   The Ring service provides API functions for managing the hash ring.
   """
 
-  alias ProcessHub.Utility.Name
+  alias ProcessHub.Service.LocalStorage
   alias :hash_ring, as: HashRing
   alias :hash_ring_node, as: HashRingNode
 
@@ -12,8 +12,7 @@ defmodule ProcessHub.Service.Ring do
   """
   @spec get_ring(ProcessHub.hub_id()) :: HashRing.t()
   def get_ring(hub_id) do
-    Name.coordinator(hub_id)
-    |> GenServer.call(:get_ring)
+    LocalStorage.get(hub_id, :hash_ring)
   end
 
   @doc """

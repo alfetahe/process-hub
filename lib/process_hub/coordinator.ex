@@ -17,11 +17,10 @@ defmodule ProcessHub.Coordinator do
 
   require Logger
   alias :blockade, as: Blockade
-  alias :hash_ring, as: HashRing
-  alias :hash_ring_node, as: HashRingNode
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
+  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Handler.ChildrenAdd
   alias ProcessHub.Handler.ChildrenRem
   alias ProcessHub.Handler.ClusterUpdate
@@ -30,7 +29,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.LocalStorage
-  alias ProcessHub.Service.Ring
   alias ProcessHub.Service.State
   alias ProcessHub.Utility.Name
 
@@ -42,7 +40,6 @@ defmodule ProcessHub.Coordinator do
   @type t() :: %__MODULE__{
           hub_id: atom(),
           settings: ProcessHub.t(),
-          cluster_nodes: [node()],
           managers: %{
             coordinator: atom(),
             distributed_supervisor: atom(),
@@ -59,7 +56,6 @@ defmodule ProcessHub.Coordinator do
   defstruct [
     :hub_id,
     :settings,
-    :cluster_nodes,
     :managers,
     :storage
   ]
@@ -67,7 +63,6 @@ defmodule ProcessHub.Coordinator do
   def start_link({hub_id, settings, managers}) do
     hub = %__MODULE__{
       hub_id: hub_id,
-      cluster_nodes: [node()],
       settings: settings,
       managers: managers
     }
@@ -87,11 +82,11 @@ defmodule ProcessHub.Coordinator do
       hub
       | storage: %{
           process_registry: Name.registry(hub.hub_id),
-          local: hub.hub_id
+          local: Name.local_storage(hub.hub_id)
         }
-        # TODO: hash_ring: HashRing.make([HashRingNode.make(node())])
     }
 
+    init_distribution(hub)
     register_handlers(hub.managers)
     register_hooks(hub.hub_id, hub.settings.hooks)
 
@@ -102,7 +97,7 @@ defmodule ProcessHub.Coordinator do
     local_node = node()
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
-    Enum.each(state.cluster_nodes, fn node ->
+    Enum.each(Cluster.nodes(state.hub_id), fn node ->
       Node.spawn(node, fn ->
         if Process.whereis(state.managers.coordinator) do
           Process.send(state.managers.coordinator, {@event_cluster_leave, local_node}, [])
@@ -123,7 +118,7 @@ defmodule ProcessHub.Coordinator do
     PartitionToleranceStrategy.handle_startup(
       state.settings.partition_tolerance_strategy,
       state.hub_id,
-      state.cluster_nodes
+      Cluster.nodes(state.hub_id)
     )
 
     schedule_propagation()
@@ -147,12 +142,10 @@ defmodule ProcessHub.Coordinator do
         %ChildrenAdd.StartHandle{
           hub_id: state.hub_id,
           children: children,
-          # TODO: hash_ring: state.hash_ring,
           dist_sup: state.managers.distributed_supervisor,
           sync_strategy: state.settings.synchronization_strategy,
           redun_strategy: state.settings.redundancy_strategy,
-          dist_strategy: state.settings.distribution_strategy,
-          hub_nodes: state.cluster_nodes
+          dist_strategy: state.settings.distribution_strategy
         }
       ]
     )
@@ -186,14 +179,6 @@ defmodule ProcessHub.Coordinator do
     {:reply, state, state}
   end
 
-  def handle_call(:cluster_nodes, _from, state) do
-    {:reply, state.cluster_nodes, state}
-  end
-
-  def handle_call(:get_ring, _from, state) do
-    {:reply, state.hash_ring, state}
-  end
-
   def handle_info({@event_cluster_leave, node}, state) do
     {:noreply, handle_node_down(state, node)}
   end
@@ -223,10 +208,7 @@ defmodule ProcessHub.Coordinator do
           migr_strat: state.settings.migration_strategy,
           sync_strat: state.settings.synchronization_strategy,
           partition_strat: state.settings.partition_tolerance_strategy,
-          dist_strat: state.settings.distribution_strategy,
-          # TODO: hash_ring_old: Ring.remove_node(state.hash_ring, node),
-          # TODO: hash_ring_new: state.hash_ring,
-          hub_nodes: state.cluster_nodes
+          dist_strat: state.settings.distribution_strategy
         }
       ]
     )
@@ -235,12 +217,11 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({@event_cluster_join, node}, state) do
+    hub_nodes = Cluster.nodes(state.hub_id)
+
     state =
-      if Cluster.new_node?(state.cluster_nodes, node) do
-        # TODO: we should keep the hub settings in cache and also update the dist strat hash ring here.
-        # state = %__MODULE__{state | cluster_nodes: Cluster.add_cluster_node(state.cluster_nodes, node)
-        #   | hash_ring: Ring.add_node(state.hash_ring, node),
-        #   }
+      if Cluster.new_node?(hub_nodes, node) do
+        Cluster.add_hub_node(state.hub_id, node)
 
         PartitionToleranceStrategy.handle_node_up(
           state.settings.partition_tolerance_strategy,
@@ -313,8 +294,6 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info(:sync_processes, state) do
-    sync_strategy = state.settings.synchronization_strategy
-
     Task.Supervisor.start_child(
       state.managers.task_supervisor,
       Synchronization.IntervalSyncInit,
@@ -322,13 +301,12 @@ defmodule ProcessHub.Coordinator do
       [
         %Synchronization.IntervalSyncInit{
           hub_id: state.hub_id,
-          sync_strat: sync_strategy,
-          cluster_nodes: state.cluster_nodes
+          sync_strat: state.settings.synchronization_strategy
         }
       ]
     )
 
-    schedule_sync(sync_strategy)
+    schedule_sync(state.settings.synchronization_strategy)
 
     {:noreply, state}
   end
@@ -352,19 +330,11 @@ defmodule ProcessHub.Coordinator do
   ##############################################################################
 
   defp handle_node_down(state, down_node) do
-    if Enum.member?(state.cluster_nodes, down_node) do
+    hub_nodes = Cluster.nodes(state.hub_id)
+
+    if Enum.member?(hub_nodes, down_node) do
       State.lock_local_event_handler(state.hub_id)
-
-      cluster_nodes = Cluster.rem_cluster_node(state.cluster_nodes, down_node)
-
-      old_hash_ring = state.hash_ring
-      new_hash_ring = Ring.remove_node(old_hash_ring, down_node)
-
-      state = %__MODULE__{
-        state
-        | # TODO:| hash_ring: new_hash_ring,
-          cluster_nodes: cluster_nodes
-      }
+      Cluster.rem_hub_node(state.hub_id, down_node)
 
       Task.Supervisor.start_child(
         state.managers.task_supervisor,
@@ -374,9 +344,6 @@ defmodule ProcessHub.Coordinator do
           %ClusterUpdate.NodeDown{
             hub_id: state.hub_id,
             removed_node: down_node,
-            hub_nodes: state.cluster_nodes,
-            old_hash_ring: old_hash_ring,
-            new_hash_ring: new_hash_ring,
             partition_strat: state.settings.partition_tolerance_strategy,
             redun_strategy: state.settings.redundancy_strategy
           }
@@ -387,6 +354,22 @@ defmodule ProcessHub.Coordinator do
     else
       state
     end
+  end
+
+  defp init_distribution(hub) do
+    hub_nodes =
+      case Cluster.nodes(hub.hub_id, [:include_local]) do
+        [] -> [node()]
+        nodes -> nodes
+      end
+
+    LocalStorage.insert(Name.local_storage(hub.hub_id), :hub_nodes, hub_nodes)
+
+    DistributionStrategy.init(
+      hub.settings.distribution_strategy,
+      hub.hub_id,
+      hub_nodes
+    )
   end
 
   defp register_handlers(%{global_event_queue: gq, local_event_queue: lq}) do

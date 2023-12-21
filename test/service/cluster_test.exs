@@ -14,18 +14,20 @@ defmodule Test.Service.ClusterTest do
     assert Cluster.nodes(hub_id, [:include_local]) === [node()]
   end
 
+  # TODO: also check the cache
   test "add confirmed node", _context do
-    assert Cluster.add_cluster_node([], :new) === [:new]
-    assert Cluster.add_cluster_node([:dupl], :dupl) === [:dupl]
-    assert Cluster.add_cluster_node([:one, :two, :three], :three) === [:one, :two, :three]
-    assert Cluster.add_cluster_node([:one, :two, :three], :four) === [:one, :two, :three, :four]
+    assert Cluster.add_hub_node([], :new) === [:new]
+    assert Cluster.add_hub_node([:dupl], :dupl) === [:dupl]
+    assert Cluster.add_hub_node([:one, :two, :three], :three) === [:one, :two, :three]
+    assert Cluster.add_hub_node([:one, :two, :three], :four) === [:one, :two, :three, :four]
   end
 
+  # TODO: also check the cache
   test "rem confirmed node", _context do
-    assert Cluster.rem_cluster_node([], :new) === []
-    assert Cluster.rem_cluster_node([:dupl], :dupl) === []
-    assert Cluster.rem_cluster_node([:one, :two, :three], :three) === [:one, :two]
-    assert Cluster.rem_cluster_node([:one, :two, :three], :four) === [:one, :two, :three]
+    assert Cluster.rem_hub_node([], :new) === []
+    assert Cluster.rem_hub_node([:dupl], :dupl) === []
+    assert Cluster.rem_hub_node([:one, :two, :three], :three) === [:one, :two]
+    assert Cluster.rem_hub_node([:one, :two, :three], :four) === [:one, :two, :three]
   end
 
   test "is new node", _context do

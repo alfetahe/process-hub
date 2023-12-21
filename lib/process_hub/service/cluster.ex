@@ -4,27 +4,39 @@ defmodule ProcessHub.Service.Cluster do
   The cluster service provides API functions for managing the cluster.
   """
 
+  alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Constant.Event
   alias ProcessHub.Utility.Name
 
   use Event
 
-  @doc "Adds a new node to the cluster and returns the new list of nodes."
-  @spec add_cluster_node([node()], node()) :: [node()]
-  def add_cluster_node(nodes, node) do
-    case Enum.member?(nodes, node) do
-      true ->
-        nodes
+  @doc "Adds a new node to the hub cluster and returns new list of nodes."
+  @spec add_hub_node(atom(), node()) :: [node()]
+  def add_hub_node(hub_id, node) do
+    hub_nodes = LocalStorage.get(hub_id, :hub_nodes)
 
-      false ->
-        nodes ++ [node]
-    end
+    hub_nodes =
+      case Enum.member?(hub_nodes, node) do
+        true ->
+          hub_nodes
+
+        false ->
+          hub_nodes ++ [node]
+      end
+
+    LocalStorage.insert(hub_id, :hub_nodes, hub_nodes)
+
+    hub_nodes
   end
 
-  @doc "Removes a node from the cluster and returns the new list of nodes."
-  @spec rem_cluster_node([node()], node()) :: [node()]
-  def rem_cluster_node(nodes, node) do
-    Enum.filter(nodes, fn n -> n != node end)
+  @doc "Removes a node from the cluster and returns new list of nodes."
+  @spec rem_hub_node(atom(), node()) :: [node()]
+  def rem_hub_node(hub_id, node) do
+    hub_nodes = LocalStorage.get(hub_id, :hub_nodes)
+    hub_nodes = Enum.filter(hub_nodes, fn n -> n != node end)
+    LocalStorage.insert(hub_id, :hub_nodes, hub_nodes)
+
+    hub_nodes
   end
 
   @doc "Returns a boolean indicating whether the node exists in the cluster."
@@ -36,7 +48,7 @@ defmodule ProcessHub.Service.Cluster do
   @doc "Returns a list of nodes in the cluster."
   @spec nodes(ProcessHub.hub_id(), [:include_local] | nil) :: [node()]
   def nodes(hub_id, opts \\ []) do
-    nodes = GenServer.call(Name.coordinator(hub_id), :cluster_nodes)
+    nodes = LocalStorage.get(hub_id, :hub_nodes)
 
     case Enum.member?(opts, :include_local) do
       false -> Enum.filter(nodes, &(&1 !== node()))
