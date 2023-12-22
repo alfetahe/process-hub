@@ -107,18 +107,17 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     @spec handle_post_update(
             ProcessHub.Strategy.Redundancy.Replication.t(),
             ProcessHub.hub_id(),
-            atom() | binary(),
-            term()
+            atom() | binary()
           ) :: :ok
     def handle_post_update(
           strategy,
           hub_id,
-          child_id,
-          {hash_ring, old_hash_ring}
+          child_id
         ) do
       replication_factor = replication_factor(strategy)
-      old_mode = process_redun_mode(strategy, child_id, old_hash_ring, replication_factor)
-      new_mode = process_redun_mode(strategy, child_id, hash_ring, replication_factor)
+      # TODO: check from local registry the order and do not use the hash ring at all
+      # old_mode = process_redun_mode(strategy, child_id, old_hash_ring, replication_factor)
+      # new_mode = process_redun_mode(strategy, child_id, hash_ring, replication_factor)
 
       child_pid = DistributedSupervisor.local_pid(Name.distributed_supervisor(hub_id), child_id)
       notify = redundancy_signal?(strategy.redundancy_signal, new_mode)

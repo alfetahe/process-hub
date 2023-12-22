@@ -31,9 +31,8 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     @spec handle_post_update(
             ProcessHub.Strategy.Redundancy.Singularity.t(),
             ProcessHub.hub_id(),
-            atom() | binary(),
-            term()
+            atom() | binary()
           ) :: :ok
-    def handle_post_update(_struct, _hub_id, _child_id, _data), do: :ok
+    def handle_post_update(_struct, _hub_id, _child_id), do: :ok
   end
 end

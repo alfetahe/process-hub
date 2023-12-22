@@ -14,4 +14,7 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
 
   @spec init(distribution_strategy :: struct(), hub_id :: atom(), hub_nodes :: [node()]) :: term()
   def init(strategy, hub_id, hub_nodes)
+
+  def node_join(strategy, hub_id, hub_nodes, node)
+  def node_leave(strategy, hub_id, hub_nodes, node)
 end

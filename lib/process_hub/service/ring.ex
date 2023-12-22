@@ -7,12 +7,24 @@ defmodule ProcessHub.Service.Ring do
   alias :hash_ring, as: HashRing
   alias :hash_ring_node, as: HashRingNode
 
+  @hash_ring :hash_ring_storage
+
+  # TODO: add tests and documentation
+  def storage_key() do
+    @hash_ring
+  end
+
+  # TODO: add tests and documentation
+  def create_ring(hub_nodes) do
+    HashRing.make(hub_nodes)
+  end
+
   @doc """
   Returns the hash ring instance belonging to the given `hub_id`.
   """
   @spec get_ring(ProcessHub.hub_id()) :: HashRing.t()
   def get_ring(hub_id) do
-    LocalStorage.get(hub_id, :hash_ring)
+    LocalStorage.get(hub_id, @hash_ring)
   end
 
   @doc """

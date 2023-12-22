@@ -24,6 +24,6 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   This function is called when `ProcessHub.DistributedSupervisor` has started a
   replica of a child process, and the strategy can perform any post-update actions.
   """
-  @spec handle_post_update(struct(), atom(), atom() | binary(), any()) :: :ok
-  def handle_post_update(strategy, hub_id, child_id, data)
+  @spec handle_post_update(struct(), atom(), atom() | binary()) :: :ok
+  def handle_post_update(strategy, hub_id, child_id)
 end

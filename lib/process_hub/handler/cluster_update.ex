@@ -112,12 +112,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           true ->
             # TODO: continue from here, check the belongs_to call and see what all needs to be changed.
             # Sends redundancy mode update message to the running process.
-            RedundancyStrategy.handle_post_update(
-              arg.redun_strat,
-              arg.hub_id,
-              child_spec.id
-              # {hash_ring, old_hash_ring}
-            )
+            RedundancyStrategy.handle_post_update(arg.redun_strat, arg.hub_id, child_spec.id)
 
             # Will initiate the start of the child on the new node.
             Distributor.child_redist_init(arg.hub_id, child_spec, arg.new_node)
@@ -139,9 +134,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp distributed_child_specs(
            [],
            _hub_id,
-           _hash_ring,
-           _redun_strat,
+           _dist_strat,
            _node,
+           _hub_nodes,
            _replication_factor,
            acc
          ) do
