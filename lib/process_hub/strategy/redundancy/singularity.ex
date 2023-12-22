@@ -15,24 +15,26 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
   defimpl RedundancyStrategy, for: ProcessHub.Strategy.Redundancy.Singularity do
     @impl true
     @spec replication_factor(ProcessHub.Strategy.Redundancy.Singularity.t()) :: 1
-    def replication_factor(_struct), do: 1
+    def replication_factor(_strategy), do: 1
 
     @impl true
     @spec handle_post_start(
             ProcessHub.Strategy.Redundancy.Singularity.t(),
-            struct(),
+            atom(),
             atom() | binary(),
             pid(),
             [node()]
           ) :: :ok
-    def handle_post_start(_struct, _dist_strategy, _child_id, _child_pid, _hub_nodes), do: :ok
+    def handle_post_start(_strategy, _hub_id, _child_id, _child_pid, _hub_nodes), do: :ok
 
     @impl true
     @spec handle_post_update(
             ProcessHub.Strategy.Redundancy.Singularity.t(),
             ProcessHub.hub_id(),
-            atom() | binary()
+            atom() | binary(),
+            [node()],
+            {:up | :down, node()}
           ) :: :ok
-    def handle_post_update(_struct, _hub_id, _child_id), do: :ok
+    def handle_post_update(_strategy, _hub_id, _child_id, _hub_nodes, _action_node), do: :ok
   end
 end

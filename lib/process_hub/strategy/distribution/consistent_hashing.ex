@@ -37,7 +37,7 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
 
     # TODO: add documentation
     @impl DistributionStrategy
-    def node_leave(strategy, hub_id, hub_nodes, node) do
+    def node_leave(_strategy, hub_id, _hub_nodes, node) do
       Ring.get_ring(hub_id)
       |> Ring.remove_node(node)
       |> LocalStorage.insert(Ring.storage_key())

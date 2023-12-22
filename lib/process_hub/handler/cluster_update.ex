@@ -260,7 +260,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp distribute_processes(%__MODULE__{} = args) do
       children = ProcessRegistry.registry(args.hub_id)
-
       replication_factor = RedundancyStrategy.replication_factor(args.redun_strategy)
 
       removed_node_processes(children, args.removed_node)

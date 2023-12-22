@@ -86,7 +86,9 @@ defmodule ProcessHub.Coordinator do
         }
     }
 
-    init_distribution(hub)
+    hub_nodes = get_hub_nodes(hub.hub_id)
+    setup_local_storage(hub, hub_nodes)
+    init_distribution(hub, hub_nodes)
     register_handlers(hub.managers)
     register_hooks(hub.hub_id, hub.settings.hooks)
 
@@ -370,19 +372,39 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
-  defp init_distribution(hub) do
-    hub_nodes =
-      case Cluster.nodes(hub.hub_id, [:include_local]) do
-        [] -> [node()]
-        nodes -> nodes
-      end
+  defp get_hub_nodes(hub_id) do
+    case Cluster.nodes(hub_id, [:include_local]) do
+      [] -> [node()]
+      nodes -> nodes
+    end
+  end
 
-    LocalStorage.insert(Name.local_storage(hub.hub_id), :hub_nodes, hub_nodes)
-
+  defp init_distribution(hub, hub_nodes) do
     DistributionStrategy.init(
       hub.settings.distribution_strategy,
       hub.hub_id,
       hub_nodes
+    )
+  end
+
+  defp setup_local_storage(hub, hub_nodes) do
+    local_storage = Name.local_storage(hub.hub_id)
+    strategies = hub.settings
+
+    LocalStorage.insert(local_storage, :hub_nodes, hub_nodes)
+    LocalStorage.insert(local_storage, :redundancy_strategy, strategies.redundancy_strategy)
+    LocalStorage.insert(local_storage, :distribution_strategy, strategies.distribution_strategy)
+
+    LocalStorage.insert(
+      local_storage,
+      :synchronization_strategy,
+      strategies.synchronization_strategy
+    )
+
+    LocalStorage.insert(
+      local_storage,
+      :partition_tolerance_strategy,
+      strategies.partition_tolerance_strategy
     )
   end
 
