@@ -157,11 +157,11 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           %Replication{replication_model: :active_passive} = strategy,
           hub_id,
           child_id,
-          [active_node | _] = nodes,
-          {:down, node}
+          [active_node | _] = _nodes,
+          {:down, _node}
         ) do
       local_node = node()
-      prev_active = prev_mode(hub_id, child_id, [node | nodes], strategy)
+      prev_active = prev_mode(hub_id, child_id, strategy)
 
       cond do
         prev_active === local_node && active_node !== local_node ->
@@ -185,10 +185,10 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       |> DistributedSupervisor.local_pid(child_id)
     end
 
-    defp prev_mode(hub_id, child_id, nodes, strategy) do
+    defp prev_mode(hub_id, child_id, strategy) do
       Name.local_storage(hub_id)
       |> LocalStorage.get(:distribution_strategy)
-      |> DistributionStrategy.belongs_to(hub_id, child_id, nodes, replication_factor(strategy))
+      |> DistributionStrategy.belongs_to(hub_id, child_id, replication_factor(strategy))
       |> List.first()
     end
 

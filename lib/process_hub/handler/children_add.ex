@@ -68,8 +68,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         args.hub_id,
         args.children,
         args.dist_strategy,
-        args.redun_strategy,
-        hub_nodes
+        args.redun_strategy
       )
       |> Enum.map(fn child_data ->
         startup_result = child_start_result(args, child_data, local_node, hub_nodes)
@@ -125,21 +124,14 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp validate_children(hub_id, children, dist_strat, redun_strat, hub_nodes) do
+    defp validate_children(hub_id, children, dist_strat, redun_strat) do
       # Check if the child belongs to this node.
       local_node = node()
 
       replication_factor = RedundancyStrategy.replication_factor(redun_strat)
 
       Enum.reduce(children, [], fn %{child_id: child_id} = child_data, acc ->
-        nodes =
-          DistributionStrategy.belongs_to(
-            dist_strat,
-            hub_id,
-            child_id,
-            hub_nodes,
-            replication_factor
-          )
+        nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, replication_factor)
 
         # Recheck if the node that is supposed to be started on local node is
         # assigned to this node or not. If not then forward to the correct node.
