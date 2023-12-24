@@ -9,7 +9,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
-  alias ProcessHub.Service.Cluster
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -30,7 +29,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             migr_strat: MigrationStrategy.t(),
             partition_strat: PartitionToleranceStrategy.t(),
             dist_strat: DistributionStrategy.t(),
-            new_node: node()
+            node: node(),
+            repl_fact: pos_integer(),
+            local_children: list()
           }
 
     @enforce_keys [
@@ -40,38 +41,35 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :migr_strat,
       :partition_strat,
       :dist_strat,
-      :new_node
+      :node
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [:repl_fact, :local_children]
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = arg) do
-      HookManager.dispatch_hook(
-        arg.hub_id,
-        Hook.pre_nodes_redistribution(),
-        {:nodeup, arg.new_node}
-      )
+      # Dispatch the nodes pre redistribution event.
+      HookManager.dispatch_hook(arg.hub_id, Hook.pre_nodes_redistribution(), {:nodeup, arg.node})
 
+      # Handle the redistribution of processes.
       distribute_processes(arg) |> Task.await_many(migration_timeout(arg.migr_strat))
 
-      propagate_local_children(arg.hub_id, arg.new_node)
+      # Propagate the local children to the new node.
+      propagate_local_children(arg.hub_id, arg.node)
 
-      HookManager.dispatch_hook(
-        arg.hub_id,
-        Hook.post_nodes_redistribution(),
-        {:nodeup, arg.new_node}
-      )
+      # Dispatch the nodes post redistribution event.
+      HookManager.dispatch_hook(arg.hub_id, Hook.post_nodes_redistribution(), {:nodeup, arg.node})
 
+      # Unlock the local event handler.
       State.unlock_local_event_handler(arg.hub_id)
 
       :ok
     end
 
-    defp propagate_local_children(hub_id, new_node) do
+    defp propagate_local_children(hub_id, node) do
       local_processes = Synchronizer.local_sync_data(hub_id)
       local_node = node()
 
-      :erpc.cast(new_node, fn ->
+      :erpc.cast(node, fn ->
         Dispatcher.propagate_event(
           hub_id,
           @event_sync_remote_children,
@@ -82,118 +80,84 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       end)
     end
 
-    defp distribute_processes(arg) do
-      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
-      hub_nodes = Cluster.nodes(arg.hub_id, [:include_local])
-
-      local_children(arg.hub_id)
-      |> distributed_child_specs(
-        arg.hub_id,
-        arg.dist_strat,
-        arg.new_node,
-        hub_nodes,
-        repl_fact,
-        []
-      )
+    defp distribute_processes(
+           %__MODULE__{
+             node: node,
+             hub_id: hub_id,
+             redun_strat: redun_strat,
+             migr_strat: migr_strat,
+             sync_strat: sync_strat
+           } = arg
+         ) do
+      arg
+      |> Map.put(:repl_fact, RedundancyStrategy.replication_factor(arg.redun_strat))
+      |> local_children()
+      |> distributed_child_specs([])
       |> Enum.map(fn %{child_spec: child_spec, keep_local: keep_local, child_nodes: child_nodes} ->
         case keep_local do
           false ->
             Task.async(fn ->
-              MigrationStrategy.handle_migration(
-                arg.migr_strat,
-                arg.hub_id,
-                child_spec,
-                arg.added_node,
-                arg.sync_strat
-              )
+              MigrationStrategy.handle_migration(migr_strat, hub_id, child_spec, node, sync_strat)
             end)
 
           true ->
             RedundancyStrategy.handle_post_update(
-              arg.redun_strat,
-              arg.hub_id,
+              redun_strat,
+              hub_id,
               child_spec.id,
               child_nodes,
-              {:up, arg.added_node}
+              {:up, arg.node}
             )
 
             # Will initiate the start of the child on the new node.
-            Distributor.child_redist_init(arg.hub_id, child_spec, arg.new_node)
+            Distributor.child_redist_init(hub_id, child_spec, node)
 
             Task.completed(:ok)
         end
       end)
     end
 
-    defp local_children(hub_id) do
+    defp local_children(%__MODULE__{hub_id: hub_id} = arg) do
       local_node = node()
 
-      ProcessRegistry.registry(hub_id)
-      |> Enum.filter(fn {_child_id, {_child_spec, child_nodes}} ->
-        Enum.member?(Keyword.keys(child_nodes), local_node)
-      end)
+      local_children =
+        ProcessRegistry.registry(hub_id)
+        |> Enum.filter(fn {_child_id, {_child_spec, child_nodes}} ->
+          Enum.member?(Keyword.keys(child_nodes), local_node)
+        end)
+
+      %__MODULE__{arg | local_children: local_children}
     end
 
     defp distributed_child_specs(
-           [],
-           _hub_id,
-           _dist_strat,
-           _node,
-           _hub_nodes,
-           _replication_factor,
+           %__MODULE__{
+             local_children: [{child_id, {child_spec, _child_nodes_old}} | childs],
+             dist_strat: dist_strat,
+             hub_id: hub_id,
+             repl_fact: rp,
+             node: node
+           } = arg,
            acc
          ) do
-      acc
-    end
-
-    defp distributed_child_specs(
-           [{child_id, {child_spec, _child_nodes_old}} | childs],
-           hub_id,
-           dist_strat,
-           node,
-           hub_nodes,
-           replication_factor,
-           acc
-         ) do
-      child_nodes =
-        DistributionStrategy.belongs_to(
-          dist_strat,
-          hub_id,
-          child_id,
-          hub_nodes,
-          replication_factor
-        )
-
+      child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, rp)
       local_node = node()
 
       cond do
         Enum.member?(child_nodes, node) ->
           keep_local = Enum.member?(child_nodes, local_node)
 
-          distributed_child_specs(
-            childs,
-            hub_id,
-            dist_strat,
-            node,
-            hub_nodes,
-            replication_factor,
-            [
-              %{child_spec: child_spec, keep_local: keep_local, child_nodes: child_nodes} | acc
-            ]
-          )
+          acc = [
+            %{child_spec: child_spec, keep_local: keep_local, child_nodes: child_nodes} | acc
+          ]
+
+          distributed_child_specs(%__MODULE__{arg | local_children: childs}, acc)
 
         true ->
-          distributed_child_specs(
-            childs,
-            hub_id,
-            dist_strat,
-            node,
-            hub_nodes,
-            replication_factor,
-            acc
-          )
+          distributed_child_specs(arg, acc)
       end
     end
+
+    defp distributed_child_specs(_arg, acc), do: acc
 
     defp migration_timeout(migr_strategy) do
       default_timeout = 5000
@@ -234,33 +198,31 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{} = args) do
+    def handle(%__MODULE__{} = arg) do
       HookManager.dispatch_hook(
-        args.hub_id,
+        arg.hub_id,
         Hook.pre_nodes_redistribution(),
-        {:nodedown, args.removed_node}
+        {:nodedown, arg.removed_node}
       )
 
-      distribute_processes(args)
+      distribute_processes(arg)
 
-      State.unlock_local_event_handler(args.hub_id)
-
-      hub_nodes = Cluster.nodes(args.hub_id, [:include_local])
+      State.unlock_local_event_handler(arg.hub_id)
 
       PartitionToleranceStrategy.handle_node_down(
-        args.partition_strat,
-        args.hub_id,
-        args.removed_node,
-        hub_nodes
+        arg.partition_strat,
+        arg.hub_id,
+        arg.removed_node,
+        arg.hub_nodes
       )
 
       HookManager.dispatch_hook(
-        args.hub_id,
+        arg.hub_id,
         Hook.post_nodes_redistribution(),
-        {:nodedown, args.removed_node}
+        {:nodedown, arg.removed_node}
       )
 
-      HookManager.dispatch_hook(args.hub_id, Hook.cluster_leave(), args)
+      HookManager.dispatch_hook(arg.hub_id, Hook.cluster_leave(), arg)
 
       :ok
     end
@@ -273,7 +235,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         children,
         arg.removed_node,
         arg.hub_id,
-        arg.hub_nodes,
         arg.dist_strat,
         repl_fact
       )
@@ -294,11 +255,11 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       end)
     end
 
-    defp removed_node_processes(children, removed_node, hub_id, hub_nodes, dist_strat, repl_fact) do
+    defp removed_node_processes(children, removed_node, hub_id, dist_strat, repl_fact) do
       Enum.reduce(children, [], fn {child_id, {child_spec, nodes_old}}, acc ->
         if Enum.member?(Keyword.keys(nodes_old), removed_node) do
           nodes_new =
-            DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, hub_nodes, repl_fact)
+            DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, repl_fact)
 
           [{child_id, child_spec, nodes_new, nodes_old} | acc]
         else

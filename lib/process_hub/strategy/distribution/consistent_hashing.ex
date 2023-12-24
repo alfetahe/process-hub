@@ -13,10 +13,9 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
             ProcessHub.Strategy.Distribution.ConsistentHashing.t(),
             atom(),
             atom() | binary(),
-            [node()],
             pos_integer()
           ) :: [atom]
-    def belongs_to(_strategy, hub_id, child_id, _hub_nodes, replication_factor) do
+    def belongs_to(_strategy, hub_id, child_id, replication_factor) do
       Ring.get_ring(hub_id) |> Ring.key_to_nodes(child_id, replication_factor)
     end
 
@@ -30,17 +29,19 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
     # TODO: add documentation
     @impl DistributionStrategy
     def node_join(_strategy, hub_id, _hub_nodes, node) do
-      Ring.get_ring(hub_id)
-      |> Ring.add_node(node)
-      |> LocalStorage.insert(Ring.storage_key())
+      hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
+
+      Name.local_storage(hub_id)
+      |> LocalStorage.insert(Ring.storage_key(), hash_ring)
     end
 
     # TODO: add documentation
     @impl DistributionStrategy
     def node_leave(_strategy, hub_id, _hub_nodes, node) do
-      Ring.get_ring(hub_id)
-      |> Ring.remove_node(node)
-      |> LocalStorage.insert(Ring.storage_key())
+      hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
+
+      Name.local_storage(hub_id)
+      |> LocalStorage.insert(Ring.storage_key(), hash_ring)
     end
   end
 end

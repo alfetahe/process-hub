@@ -205,7 +205,7 @@ defmodule ProcessHub.Coordinator do
       [
         %ClusterUpdate.NodeUp{
           hub_id: state.hub_id,
-          new_node: node,
+          node: node,
           redun_strat: state.settings.redundancy_strategy,
           migr_strat: state.settings.migration_strategy,
           sync_strat: state.settings.synchronization_strategy,
