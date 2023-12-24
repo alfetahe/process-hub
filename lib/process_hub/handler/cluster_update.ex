@@ -5,7 +5,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Constant.Event
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
-  alias ProcessHub.Service.Ring
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.ProcessRegistry
@@ -84,7 +83,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp distribute_processes(arg) do
-      replication_factor = RedundancyStrategy.replication_factor(arg.redun_strat)
+      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
       hub_nodes = Cluster.nodes(arg.hub_id, [:include_local])
 
       local_children(arg.hub_id)
@@ -93,10 +92,10 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         arg.dist_strat,
         arg.new_node,
         hub_nodes,
-        replication_factor,
+        repl_fact,
         []
       )
-      |> Enum.map(fn %{child_spec: child_spec, keep_local: keep_local} ->
+      |> Enum.map(fn %{child_spec: child_spec, keep_local: keep_local, child_nodes: child_nodes} ->
         case keep_local do
           false ->
             Task.async(fn ->
@@ -110,9 +109,13 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             end)
 
           true ->
-            # TODO: continue from here, check the belongs_to call and see what all needs to be changed.
-            # Sends redundancy mode update message to the running process.
-            RedundancyStrategy.handle_post_update(arg.redun_strat, arg.hub_id, child_spec.id)
+            RedundancyStrategy.handle_post_update(
+              arg.redun_strat,
+              arg.hub_id,
+              child_spec.id,
+              child_nodes,
+              {:up, arg.added_node}
+            )
 
             # Will initiate the start of the child on the new node.
             Distributor.child_redist_init(arg.hub_id, child_spec, arg.new_node)
@@ -175,7 +178,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             hub_nodes,
             replication_factor,
             [
-              %{child_spec: child_spec, keep_local: keep_local} | acc
+              %{child_spec: child_spec, keep_local: keep_local, child_nodes: child_nodes} | acc
             ]
           )
 
@@ -215,14 +218,18 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             hub_id: ProcessHub.hub_id(),
             removed_node: node(),
             partition_strat: PartitionToleranceStrategy.t(),
-            redun_strategy: RedundancyStrategy.t()
+            redun_strategy: RedundancyStrategy.t(),
+            dist_strat: DistributionStrategy.t(),
+            hub_nodes: [node()]
           }
 
     @enforce_keys [
       :hub_id,
       :removed_node,
       :partition_strat,
-      :redun_strategy
+      :redun_strategy,
+      :dist_strat,
+      :hub_nodes
     ]
     defstruct @enforce_keys
 
@@ -258,26 +265,45 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :ok
     end
 
-    defp distribute_processes(%__MODULE__{} = args) do
-      children = ProcessRegistry.registry(args.hub_id)
-      replication_factor = RedundancyStrategy.replication_factor(args.redun_strategy)
+    defp distribute_processes(%__MODULE__{} = arg) do
+      children = ProcessRegistry.registry(arg.hub_id)
+      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strategy)
 
-      removed_node_processes(children, args.removed_node)
-      |> Enum.each(fn {_, {child_spec, _}} ->
-        # TODO: updates needed here
-        RedundancyStrategy.handle_post_update(args.redun_strategy, args.hub_id, child_spec.id)
+      removed_node_processes(
+        children,
+        arg.removed_node,
+        arg.hub_id,
+        arg.hub_nodes,
+        arg.dist_strat,
+        repl_fact
+      )
+      |> Enum.each(fn {child_id, child_spec, nodes_new, nodes_old} ->
+        RedundancyStrategy.handle_post_update(
+          arg.redun_strategy,
+          arg.hub_id,
+          child_id,
+          nodes_new,
+          {:down, arg.removed_node}
+        )
 
+        local_node = node()
         # Check if removed nodes procsses should be started on the local node.
-        if Ring.key_to_nodes(args.new_hash_ring, child_spec.id, replication_factor)
-           |> Enum.member?(node()) do
-          Distributor.child_redist_init(args.hub_id, child_spec, node())
+        if !Enum.member?(nodes_old, local_node) && Enum.member?(nodes_new, local_node) do
+          Distributor.child_redist_init(arg.hub_id, child_spec, local_node)
         end
       end)
     end
 
-    defp removed_node_processes(children, removed_node) do
-      Enum.filter(children, fn {_child_id, {_child_spec, child_nodes}} ->
-        Enum.member?(Keyword.keys(child_nodes), removed_node)
+    defp removed_node_processes(children, removed_node, hub_id, hub_nodes, dist_strat, repl_fact) do
+      Enum.reduce(children, [], fn {child_id, {child_spec, nodes_old}}, acc ->
+        if Enum.member?(Keyword.keys(nodes_old), removed_node) do
+          nodes_new =
+            DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, hub_nodes, repl_fact)
+
+          [{child_id, child_spec, nodes_new, nodes_old} | acc]
+        else
+          acc
+        end
       end)
     end
   end

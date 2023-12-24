@@ -547,7 +547,6 @@ defmodule ProcessHub do
     distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{}
   ]
 
-  alias ProcessHub.Strategy.Distribution.ConsistentHashing
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
@@ -739,7 +738,7 @@ defmodule ProcessHub do
 
   It is recommended to start the `ProcessHub` under a supervision tree.
   """
-  @spec start_link(ProcessHub.t()) :: {:error, term()} | {:ok, pid()}
+  @spec start_link(ProcessHub.t()) :: {:ok, pid()} | {:error, term()}
   defdelegate start_link(hub_settings), to: ProcessHub.Initializer, as: :start_link
 
   @doc """

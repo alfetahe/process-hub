@@ -350,7 +350,7 @@ defmodule ProcessHub.Coordinator do
       )
 
       State.lock_local_event_handler(state.hub_id)
-      Cluster.rem_hub_node(state.hub_id, down_node)
+      hub_nodes = Cluster.rem_hub_node(state.hub_id, down_node)
 
       Task.Supervisor.start_child(
         state.managers.task_supervisor,
@@ -361,7 +361,9 @@ defmodule ProcessHub.Coordinator do
             hub_id: state.hub_id,
             removed_node: down_node,
             partition_strat: state.settings.partition_tolerance_strategy,
-            redun_strategy: state.settings.redundancy_strategy
+            redun_strategy: state.settings.redundancy_strategy,
+            dist_strat: state.settings.distribution_strategy,
+            hub_nodes: hub_nodes
           }
         ]
       )
