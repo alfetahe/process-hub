@@ -13,6 +13,7 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   @spec replication_factor(struct()) :: pos_integer()
   def replication_factor(strategy)
 
+  # TODO: add docs
   @spec master_node(struct(), atom(), atom() | binary(), [node()]) :: node()
   def master_node(strategy, hub_id, child_id, child_nodes)
 

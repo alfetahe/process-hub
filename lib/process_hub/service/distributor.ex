@@ -3,6 +3,7 @@ defmodule ProcessHub.Service.Distributor do
   The distributor service provides API functions for distributing child processes.
   """
 
+  alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Dispatcher
@@ -11,6 +12,7 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
   @doc "Initiates process redistribution."
   @spec child_redist_init(ProcessHub.hub_id(), ProcessHub.child_spec(), node(), keyword() | nil) ::
@@ -48,13 +50,12 @@ defmodule ProcessHub.Service.Distributor do
   @spec stop_children(ProcessHub.hub_id(), [ProcessHub.child_id()], keyword()) ::
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
   def stop_children(hub_id, child_ids, opts) do
-    %{hash_ring: hr, settings: %ProcessHub{redundancy_strategy: rs}} =
-      Name.coordinator(hub_id)
-      |> GenServer.call(:state)
+    redun_strat = LocalStorage.get(hub_id, :redundancy_strategy)
+    dist_strat = LocalStorage.get(hub_id, :distribution_strategy)
+    repl_fact = RedundancyStrategy.replication_factor(redun_strat)
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
-      child_nodes = RedundancyStrategy.belongs_to(rs, hr, child_id)
-
+      child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, repl_fact)
       child_data = %{nodes: child_nodes, child_id: child_id}
 
       child_data =
@@ -199,13 +200,13 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp init_attach_nodes(hub_id, child_specs) do
-    %{hash_ring: hr, settings: %ProcessHub{redundancy_strategy: rs}} =
-      Name.coordinator(hub_id)
-      |> GenServer.call(:state)
+    redun_strat = LocalStorage.get(hub_id, :redundancy_strategy)
+    dist_strat = LocalStorage.get(hub_id, :distribution_strategy)
+    repl_fact = RedundancyStrategy.replication_factor(redun_strat)
 
     {:ok,
      Enum.map(child_specs, fn child_spec ->
-       {child_spec, RedundancyStrategy.belongs_to(rs, hr, child_spec.id)}
+       {child_spec, DistributionStrategy.belongs_to(dist_strat, hub_id, child_spec.id, repl_fact)}
      end)}
   end
 
