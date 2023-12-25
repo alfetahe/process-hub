@@ -18,6 +18,12 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     def replication_factor(_strategy), do: 1
 
     @impl true
+    @spec master_node(struct(), atom(), atom() | binary(), [node()]) :: node()
+    def master_node(_strategy, _hub_id, _child_id, child_nodes) do
+      List.first(child_nodes)
+    end
+
+    @impl true
     @spec handle_post_start(
             ProcessHub.Strategy.Redundancy.Singularity.t(),
             atom(),

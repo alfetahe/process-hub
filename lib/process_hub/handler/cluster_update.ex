@@ -177,7 +177,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     @moduledoc """
     Handler for the node down event.
     """
-
     @type t() :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
             removed_node: node(),
@@ -229,15 +228,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp distribute_processes(%__MODULE__{} = arg) do
       children = ProcessRegistry.registry(arg.hub_id)
-      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strategy)
 
-      removed_node_processes(
-        children,
-        arg.removed_node,
-        arg.hub_id,
-        arg.dist_strat,
-        repl_fact
-      )
+      removed_node_processes(children, arg.removed_node)
       |> Enum.each(fn {child_id, child_spec, nodes_new, nodes_old} ->
         RedundancyStrategy.handle_post_update(
           arg.redun_strategy,
@@ -255,11 +247,10 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       end)
     end
 
-    defp removed_node_processes(children, removed_node, hub_id, dist_strat, repl_fact) do
+    defp removed_node_processes(children, removed_node) do
       Enum.reduce(children, [], fn {child_id, {child_spec, nodes_old}}, acc ->
         if Enum.member?(Keyword.keys(nodes_old), removed_node) do
-          nodes_new =
-            DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, repl_fact)
+          nodes_new = Enum.filter(nodes_old, fn node -> node !== removed_node end)
 
           [{child_id, child_spec, nodes_new, nodes_old} | acc]
         else

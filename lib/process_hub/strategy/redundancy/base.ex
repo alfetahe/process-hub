@@ -13,6 +13,9 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   @spec replication_factor(struct()) :: pos_integer()
   def replication_factor(strategy)
 
+  @spec master_node(struct(), atom(), atom() | binary(), [node()]) :: node()
+  def master_node(strategy, hub_id, child_id, child_nodes)
+
   @doc """
   This function is called when `ProcessHub.DistributedSupervisor` has started a new
   child process, and the strategy can perform any post-start actions.
