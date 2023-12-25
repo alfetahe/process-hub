@@ -9,12 +9,19 @@ defmodule ProcessHub.Service.Ring do
 
   @hash_ring :hash_ring_storage
 
-  # TODO: add tests and documentation
+  @doc """
+  Returns the storage key for the hash ring.
+  """
+  @spec storage_key() :: :hash_ring_storage
   def storage_key() do
     @hash_ring
   end
 
-  # TODO: add tests and documentation
+  @doc """
+  Creates a new hash ring instance from the given `hub_nodes`
+  and returns the new hash ring.
+  """
+  @spec create_ring(any()) :: :hash_ring.ring(any(), any())
   def create_ring(hub_nodes) do
     Enum.map(hub_nodes, fn node -> HashRingNode.make(node) end)
     |> HashRing.make()
