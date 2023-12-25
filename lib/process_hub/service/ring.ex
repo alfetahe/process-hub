@@ -16,7 +16,8 @@ defmodule ProcessHub.Service.Ring do
 
   # TODO: add tests and documentation
   def create_ring(hub_nodes) do
-    HashRing.make(hub_nodes)
+    Enum.map(hub_nodes, fn node -> HashRingNode.make(node) end)
+    |> HashRing.make()
   end
 
   @doc """

@@ -2,7 +2,6 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Service.Ring
-  alias ProcessHub.Utility.Name
 
   @type t() :: %__MODULE__{}
   defstruct []
@@ -19,29 +18,25 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
       Ring.get_ring(hub_id) |> Ring.key_to_nodes(child_id, replication_factor)
     end
 
-    # TODO: check if impl needs spec or not.
-    @impl DistributionStrategy
+    @impl true
     def init(_strategy, hub_id, hub_nodes) do
-      Name.local_storage(hub_id)
-      |> LocalStorage.insert(Ring.storage_key(), Ring.create_ring(hub_nodes))
+      LocalStorage.insert(hub_id, Ring.storage_key(), Ring.create_ring(hub_nodes))
     end
 
-    # TODO: add documentation
-    @impl DistributionStrategy
+    @impl true
+    @spec node_join(struct(), atom(), [node()], node()) :: any()
     def node_join(_strategy, hub_id, _hub_nodes, node) do
       hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
 
-      Name.local_storage(hub_id)
-      |> LocalStorage.insert(Ring.storage_key(), hash_ring)
+      LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
     end
 
-    # TODO: add documentation
-    @impl DistributionStrategy
+    @impl true
+    @spec node_leave(struct(), atom(), [node()], node()) :: any()
     def node_leave(_strategy, hub_id, _hub_nodes, node) do
       hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
 
-      Name.local_storage(hub_id)
-      |> LocalStorage.insert(Ring.storage_key(), hash_ring)
+      LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
     end
   end
 end

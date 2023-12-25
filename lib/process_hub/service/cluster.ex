@@ -48,7 +48,7 @@ defmodule ProcessHub.Service.Cluster do
   @doc "Returns a list of nodes in the cluster."
   @spec nodes(ProcessHub.hub_id(), [:include_local] | nil) :: [node()]
   def nodes(hub_id, opts \\ []) do
-    nodes = LocalStorage.get(hub_id, :hub_nodes)
+    nodes = LocalStorage.get(hub_id, :hub_nodes) || []
 
     case Enum.member?(opts, :include_local) do
       false -> Enum.filter(nodes, &(&1 !== node()))

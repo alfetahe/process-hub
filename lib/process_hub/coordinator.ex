@@ -236,7 +236,7 @@ defmodule ProcessHub.Coordinator do
           state.settings.partition_tolerance_strategy,
           state.hub_id,
           node,
-          state.cluster_nodes
+          hub_nodes
         )
 
         Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, :local)
@@ -390,21 +390,20 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp setup_local_storage(hub, hub_nodes) do
-    local_storage = Name.local_storage(hub.hub_id)
     strategies = hub.settings
 
-    LocalStorage.insert(local_storage, :hub_nodes, hub_nodes)
-    LocalStorage.insert(local_storage, :redundancy_strategy, strategies.redundancy_strategy)
-    LocalStorage.insert(local_storage, :distribution_strategy, strategies.distribution_strategy)
+    LocalStorage.insert(hub.hub_id, :hub_nodes, hub_nodes)
+    LocalStorage.insert(hub.hub_id, :redundancy_strategy, strategies.redundancy_strategy)
+    LocalStorage.insert(hub.hub_id, :distribution_strategy, strategies.distribution_strategy)
 
     LocalStorage.insert(
-      local_storage,
+      hub.hub_id,
       :synchronization_strategy,
       strategies.synchronization_strategy
     )
 
     LocalStorage.insert(
-      local_storage,
+      hub.hub_id,
       :partition_tolerance_strategy,
       strategies.partition_tolerance_strategy
     )

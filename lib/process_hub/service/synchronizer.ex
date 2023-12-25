@@ -67,7 +67,6 @@ defmodule ProcessHub.Service.Synchronizer do
     end)
   end
 
-  # TODO: this can be improved with transactions similary we have done with the append function above.
   @doc """
   Detaches remote data from the local process registry.
   """
