@@ -64,6 +64,7 @@ defmodule Test.Helper.Bootstrap do
       redundancy_strategy: redun_strategy(context),
       migration_strategy: migr_strategy(context),
       partition_tolerance_strategy: partition_strategy(context),
+      distribution_strategy: distribution_strategy(context),
       hooks: []
     }
   end
@@ -209,6 +210,19 @@ defmodule Test.Helper.Bootstrap do
 
       _ ->
         %ProcessHub.Strategy.PartitionTolerance.Divergence{}
+    end
+  end
+
+  defp distribution_strategy(context) do
+    case context[:dist_strategy] do
+      # TODO:
+      # :guided -> %ProcessHub.Strategy.Distribution.Guided{}
+
+      :consistent_hashing ->
+        %ProcessHub.Strategy.Distribution.ConsistentHashing{}
+
+      _ ->
+        %ProcessHub.Strategy.Distribution.ConsistentHashing{}
     end
   end
 end

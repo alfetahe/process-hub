@@ -153,7 +153,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           distributed_child_specs(%__MODULE__{arg | local_children: childs}, acc)
 
         true ->
-          distributed_child_specs(arg, acc)
+          distributed_child_specs(%__MODULE__{arg | local_children: childs}, acc)
       end
     end
 

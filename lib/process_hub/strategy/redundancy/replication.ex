@@ -115,6 +115,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       )
     end
 
+    def handle_post_start(_, _, _, _, _), do: :ok
+
     @impl true
     @spec handle_post_update(
             ProcessHub.Strategy.Redundancy.Replication.t(),
@@ -143,12 +145,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       prev_master =
         case node_action do
           :up ->
-            RedundancyStrategy.master_node(
-              strategy,
-              hub_id,
-              child_id,
-              Enum.filter(nodes, &(&1 !== node))
-            )
+            RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)
 
           :down ->
             [node | nodes]

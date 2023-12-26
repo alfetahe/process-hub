@@ -14,7 +14,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @moduledoc """
     Handler for starting child processes.
     """
-
     @type t :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
             children: [
@@ -127,7 +126,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     defp validate_children(hub_id, children, dist_strat, redun_strat) do
       # Check if the child belongs to this node.
       local_node = node()
-
       replication_factor = RedundancyStrategy.replication_factor(redun_strat)
 
       Enum.reduce(children, [], fn %{child_id: child_id} = child_data, acc ->
