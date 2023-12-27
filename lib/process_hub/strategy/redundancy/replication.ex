@@ -104,30 +104,36 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     def handle_post_start(%Replication{redundancy_signal: :none}, _, _, _, _), do: :ok
 
     def handle_post_start(
-          %Replication{replication_model: :active_passive} = strategy,
+          strategy,
           hub_id,
           child_id,
           child_pid,
           child_nodes
         ) do
-      handle_redundancy_signal(strategy, hub_id, child_id, child_nodes, {:up, node()},
-        pid: child_pid
-      )
-    end
+      IO.inspect(child_nodes)
 
-    def handle_post_start(
-      %Replication{replication_model: :active_active} = strategy,
-      _hub_id,
-      _child_id,
-      child_pid,
-      _child_nodes
-    ) do
-      if Enum.member?([:all, :active], strategy.redundancy_signal) do
-        send_redundancy_signal(child_pid, :active)
+      master_node = RedundancyStrategy.master_node(strategy, hub_id, child_id, child_nodes)
+
+      mode =
+        cond do
+          master_node === node() ->
+            :active
+
+          true ->
+            :passive
+        end
+
+      cond do
+        strategy.redundancy_signal === :all ->
+          send_redundancy_signal(child_pid, mode)
+
+        mode === strategy.redundancy_signal ->
+          send_redundancy_signal(child_pid, mode)
+
+        true ->
+          :ok
       end
     end
-
-    def handle_post_start(_, _, _, _, _), do: :ok
 
     @impl true
     @spec handle_post_update(

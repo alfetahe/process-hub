@@ -61,7 +61,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     defp start_children(args) do
       local_node = node()
-      hub_nodes = Cluster.nodes(args.hub_id, [:include_local])
 
       validate_children(
         args.hub_id,
@@ -70,7 +69,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         args.redun_strategy
       )
       |> Enum.map(fn child_data ->
-        startup_result = child_start_result(args, child_data, local_node, hub_nodes)
+        startup_result = child_start_result(args, child_data, local_node)
 
         case startup_result do
           {:ok, pid} ->
@@ -99,7 +98,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       }
     end
 
-    defp child_start_result(args, child_data, local_node, hub_nodes) do
+    defp child_start_result(args, child_data, local_node) do
       cid = child_data.child_spec.id
 
       case DistributedSupervisor.start_child(args.dist_sup, child_data.child_spec) do
@@ -109,7 +108,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             args.dist_strategy,
             cid,
             pid,
-            hub_nodes
+            child_data.nodes
           )
 
           {:ok, pid}

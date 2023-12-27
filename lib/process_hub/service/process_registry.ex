@@ -135,24 +135,32 @@ defmodule ProcessHub.Service.ProcessRegistry do
           ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
         }) :: :ok
   def bulk_insert(hub_id, children) do
-    {:ok, hooks} =
+    res =
       Cachex.transaction(Name.registry(hub_id), Map.keys(children), fn worker ->
         Enum.map(children, fn {child_id, {child_spec, child_nodes}} ->
-          inserted =
+          diff =
             case lookup(hub_id, child_id, table: worker) do
               nil ->
                 insert(hub_id, child_spec, child_nodes, skip_hooks: true, table: worker)
                 child_nodes
 
-              {_child_spec, nodes} ->
-                new_nodes = Enum.uniq(nodes ++ child_nodes)
-                insert(hub_id, child_spec, new_nodes, skip_hooks: true, table: worker)
-                new_nodes
+              {_child_spec, existing_nodes} ->
+                merge_insert(child_nodes, existing_nodes, hub_id, child_spec, worker)
             end
 
-          {Hook.registry_pid_inserted(), {child_spec.id, inserted}}
+          if is_list(diff) && length(diff) > 0 do
+            {Hook.registry_pid_inserted(), {child_spec.id, diff}}
+          end
         end)
+        |> Enum.filter(&is_tuple/1)
       end)
+
+    # TODO:
+    hooks =
+      case res do
+        {:ok, hooks} -> hooks
+        {:error, reason} -> raise reason
+      end
 
     HookManager.dispatch_hooks(hub_id, hooks)
 
@@ -195,5 +203,33 @@ defmodule ProcessHub.Service.ProcessRegistry do
       end)
 
     HookManager.dispatch_hooks(hub_id, hooks)
+  end
+
+  defp merge_insert(nodes_new, nodes_existing, hub_id, child_spec, worker) do
+    cond do
+      Enum.sort(nodes_new) !== Enum.sort(nodes_existing) ->
+        merged_data = Keyword.merge(nodes_existing, nodes_new)
+        insert(hub_id, child_spec, merged_data, skip_hooks: true, table: worker)
+        insert_diff(nodes_new, nodes_existing)
+
+      true ->
+        nil
+    end
+  end
+
+  defp insert_diff(nodes_new, nodes_existing) do
+    Enum.reduce(nodes_new, [], fn {node, pid}, acc ->
+      case nodes_existing[node] do
+        nil ->
+          [{node, pid} | acc]
+
+        {_existing_node, existing_pid} ->
+          if pid !== existing_pid do
+            [{node, pid} | acc]
+          else
+            acc
+          end
+      end
+    end)
   end
 end

@@ -1,14 +1,32 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.1.4-alpha - YYYY-MM-DD
+## v0.1.5-alpha - YYYY-MM-DD
+Added support for configurable distribution strategy.
+
+### Changed
+- `Hook.registry_pid_inserted/0` no longer returns all node-pid pairs that are
+inserted but only the ones that are different from the previous state.
+This gives better overview of the changes that are made to the registry.
+- Integration tests now take into account the replication factor when waiting
+for the hook messages.
+- Moved `belongs_to`function from redundancy to distribution strategy.
+- Replication strategy is now selecting the active nodes with different algorithm.
+
+### Added
+- Support for configurable distribution strategy. This allows the user to
+switch between predefined strategies or implement their own.
+
+### Fixed
+- Replication strategy `:cluster_size` option was not couting the local node.
+- Documentation fixes.
+
+## v0.1.4-alpha - 2023-11-19
 Replaced :ets with Cachex for local storage to improve reliability of the system and avoid
 potential race conditions.
 
 Includes minor bugfixes and code improvements.
-
 Introduced new hook `forwarded_migration`.
-
 
 ### Changed
 - Increased the timeout value for children redistribution task.

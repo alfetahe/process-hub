@@ -47,13 +47,9 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def validate_replication(%{hub_id: hub_id, replication_factor: _rf} = _context) do
+  def validate_replication(%{hub_id: hub_id, hub: hub, replication_factor: _rf} = _context) do
     registry = ProcessHub.process_registry(hub_id)
-
-    hub_settings = GenServer.call(Name.coordinator(hub_id), :state)
-
-    replication_factor =
-      RedundancyStrategy.replication_factor(hub_settings.settings.redundancy_strategy)
+    replication_factor = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes}} ->
       ring = Ring.get_ring(hub_id)
@@ -83,26 +79,30 @@ defmodule Test.Helper.Common do
            "The length of registry(#{registry_len}) does not match length of child specs(#{child_spec_len})"
   end
 
-  def validate_redundancy_mode(%{hub_id: hub_id, replication_model: rm} = _context) do
+  def validate_redundancy_mode(%{hub_id: hub_id, replication_model: rm, hub: hub} = _context) do
     registry = ProcessHub.process_registry(hub_id)
-
-    hub_settings = GenServer.call(Name.coordinator(hub_id), :state)
-
-    replication_factor =
-      RedundancyStrategy.replication_factor(hub_settings.settings.redundancy_strategy)
+    dist_strat = hub.distribution_strategy
+    redun_strat = hub.redundancy_strategy
+    repl_fact = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes}} ->
       for {node, pid} <- nodes do
-        ring = Ring.get_ring(hub_id)
-        ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
+        child_nodes =
+          ProcessHub.Strategy.Distribution.Base.belongs_to(
+            dist_strat,
+            hub_id,
+            child_id,
+            repl_fact
+          )
 
-        state = GenServer.call(pid, :get_state)
+        master_node = RedundancyStrategy.master_node(redun_strat, hub_id, child_id, child_nodes)
+        state = GenServer.call(pid, :get_state) |> IO.inspect(label: "STATE")
 
-        assert length(nodes) === replication_factor,
+        assert length(nodes) === repl_fact,
                "The length of nodes does not match replication factor"
 
-        assert length(ring_nodes) === replication_factor,
-               "The length of ring nodes does not match replication factor"
+        assert length(child_nodes) === repl_fact,
+               "The length of belongs_to call does not match replication factor"
 
         cond do
           rm === :active_active ->
@@ -112,12 +112,10 @@ defmodule Test.Helper.Common do
           rm === :active_passive ->
             case state[:redun_mode] do
               :active ->
-                assert Enum.at(ring_nodes, 0) === node,
-                       "The active node does not match ring node #{inspect(Enum.at(ring_nodes, 0))} and #{inspect(node)}"
+                assert master_node === node, "Exptected #{node} to match #{master_node}"
 
               :passive ->
-                assert Enum.at(ring_nodes, 0) !== node,
-                       "The passive node does not match ring node"
+                assert master_node !== node, "Exptected #{node} to not match #{master_node}"
             end
         end
       end
@@ -144,7 +142,7 @@ defmodule Test.Helper.Common do
         case Keyword.get(opts, :scope, :local) do
           :local -> length(children)
           :global -> length(children) * (length(Node.list()) + 1)
-        end
+        end * Keyword.get(opts, :replication_factor, 1)
 
       Bag.receive_multiple(
         message_count,
