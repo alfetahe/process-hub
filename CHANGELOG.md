@@ -3,6 +3,7 @@ All notable changes to this project will be documented in this file.
 
 ## v0.1.5-alpha - YYYY-MM-DD
 Added support for configurable distribution strategy.
+Improved integration tests by making them more reliable.
 
 ### Changed
 - `Hook.registry_pid_inserted/0` no longer returns all node-pid pairs that are
