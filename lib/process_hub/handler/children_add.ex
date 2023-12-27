@@ -6,7 +6,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Service.Cluster
 
   use Task
 
