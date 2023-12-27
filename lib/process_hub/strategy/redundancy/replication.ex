@@ -103,25 +103,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           ) :: :ok
     def handle_post_start(%Replication{redundancy_signal: :none}, _, _, _, _), do: :ok
 
-    def handle_post_start(
-          strategy,
-          hub_id,
-          child_id,
-          child_pid,
-          child_nodes
-        ) do
-      IO.inspect(child_nodes)
-
-      master_node = RedundancyStrategy.master_node(strategy, hub_id, child_id, child_nodes)
-
-      mode =
-        cond do
-          master_node === node() ->
-            :active
-
-          true ->
-            :passive
-        end
+    def handle_post_start(strategy, hub_id, child_id, child_pid, child_nodes) do
+      mode = process_mode(strategy, hub_id, child_id, child_nodes)
 
       cond do
         strategy.redundancy_signal === :all ->
@@ -132,6 +115,21 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
         true ->
           :ok
+      end
+    end
+
+    defp process_mode(%Replication{replication_model: rp} = strat, hub_id, child_id, child_nodes) do
+      master_node = RedundancyStrategy.master_node(strat, hub_id, child_id, child_nodes)
+
+      cond do
+        rp === :active_active ->
+          :active
+
+        master_node === node() ->
+          :active
+
+        true ->
+          :passive
       end
     end
 

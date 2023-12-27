@@ -150,6 +150,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
           if is_list(diff) && length(diff) > 0 do
             {Hook.registry_pid_inserted(), {child_spec.id, diff}}
+          else
+            nil
           end
         end)
         |> Enum.filter(&is_tuple/1)

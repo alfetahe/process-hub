@@ -96,7 +96,7 @@ defmodule Test.Helper.Common do
           )
 
         master_node = RedundancyStrategy.master_node(redun_strat, hub_id, child_id, child_nodes)
-        state = GenServer.call(pid, :get_state) |> IO.inspect(label: "STATE")
+        state = GenServer.call(pid, :get_state)
 
         assert length(nodes) === repl_fact,
                "The length of nodes does not match replication factor"
@@ -106,8 +106,7 @@ defmodule Test.Helper.Common do
 
         cond do
           rm === :active_active ->
-            assert state[:redun_mode] === :active,
-                   "The redundancy mode does not match active active"
+            assert state[:redun_mode] === :active, "Expected active recived #{state[:redun_mode]}"
 
           rm === :active_passive ->
             case state[:redun_mode] do
