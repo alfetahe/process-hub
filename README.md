@@ -179,7 +179,7 @@ The following example shows how to start 2 elixir nodes, connect them and start 
   [
     "node2@127.0.0.1": [
       {:child_3, #PID<0.261.0>, :worker, [MyProcess]},
-      {:some_id1, #PID<21674.247.0>, :worker, [MyProcess]}
+      {:some_id1, #PID<0.246.0>, :worker, [MyProcess]}
     ],
     "node1@127.0.0.1": [
       {"the_last_child", #PID<21674.251.0>, :worker, [MyProcess]},
