@@ -69,7 +69,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     def replication_factor(strategy) do
       case strategy.replication_factor do
         :cluster_size ->
-          Node.list() |> Enum.count()
+          (Node.list() |> Enum.count()) + 1
 
         _ ->
           strategy.replication_factor
@@ -113,6 +113,18 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       handle_redundancy_signal(strategy, hub_id, child_id, child_nodes, {:up, node()},
         pid: child_pid
       )
+    end
+
+    def handle_post_start(
+      %Replication{replication_model: :active_active} = strategy,
+      _hub_id,
+      _child_id,
+      child_pid,
+      _child_nodes
+    ) do
+      if Enum.member?([:all, :active], strategy.redundancy_signal) do
+        send_redundancy_signal(child_pid, :active)
+      end
     end
 
     def handle_post_start(_, _, _, _, _), do: :ok
