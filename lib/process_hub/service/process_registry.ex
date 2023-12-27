@@ -150,18 +150,18 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
           if is_list(diff) && length(diff) > 0 do
             {Hook.registry_pid_inserted(), {child_spec.id, diff}}
-          else
-            nil
           end
         end)
         |> Enum.filter(&is_tuple/1)
       end)
 
-    # TODO:
     hooks =
       case res do
-        {:ok, hooks} -> hooks
-        {:error, reason} -> raise reason
+        {:ok, hooks} ->
+          hooks
+
+        {:error, reason} ->
+          raise reason
       end
 
     HookManager.dispatch_hooks(hub_id, hooks)
@@ -225,7 +225,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
         nil ->
           [{node, pid} | acc]
 
-        {_existing_node, existing_pid} ->
+        existing_pid ->
           if pid !== existing_pid do
             [{node, pid} | acc]
           else
