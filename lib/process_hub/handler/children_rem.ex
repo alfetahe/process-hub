@@ -42,10 +42,9 @@ defmodule ProcessHub.Handler.ChildrenRem do
 
           stopped_children =
             Enum.map(args.children, fn child_data ->
-              terminate_result =
-                DistributedSupervisor.terminate_child(args.dist_sup, child_data.child_id)
+              result = DistributedSupervisor.terminate_child(args.dist_sup, child_data.child_id)
 
-              {child_data.child_id, {terminate_result, Map.get(child_data, :reply_to, [])}}
+              {child_data.child_id, {result, Map.get(child_data, :reply_to, [])}}
             end)
 
           SynchronizationStrategy.propagate(

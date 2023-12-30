@@ -431,7 +431,7 @@ defmodule Test.IntegrationTest do
   test "hotswap migration with handoff",
        %{hub_id: hub_id, listed_hooks: lh, hub: hub} = context do
     nodes_count = @nr_of_peers
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     # Stop hubs on peer nodes before we start.
@@ -486,11 +486,11 @@ defmodule Test.IntegrationTest do
     Bag.receive_multiple(mcl, Hook.child_migrated(), error_msg: "Child migration timeout")
 
     # Validate the data.
-    Enum.each(migrated_children, fn {child_id, _node} ->
+    Enum.each(migrated_children, fn {child_id, node} ->
       pid =
         ProcessHub.child_lookup(hub_id, child_id)
         |> elem(1)
-        |> List.first()
+        |> Enum.find(fn {child_node, _pid} -> child_node === node end)
         |> elem(1)
 
       handover_data = GenServer.call(pid, {:get_value, :handoff_data})

@@ -77,7 +77,8 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   @doc """
-  Terminates a child process and propagates the termination to rest of the cluster.
+  Terminates child process locally and propagates all nodes in the cluster
+  to remove the child process from their registry.
   """
   @spec child_terminate(
           ProcessHub.hub_id(),
