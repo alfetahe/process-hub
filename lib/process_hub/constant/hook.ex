@@ -1,6 +1,6 @@
 defmodule ProcessHub.Constant.Hook do
   @moduledoc """
-  Available hooks for ProcessHub.
+  Defines the list of hooks that can be used to extend the functionality of ProcessHub.
   """
 
   @doc """

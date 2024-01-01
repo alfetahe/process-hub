@@ -22,13 +22,11 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     @impl true
     @spec node_join(struct(), atom(), [node()], node()) :: any()
     def node_join(_strategy, hub_id, _hub_nodes, node) do
-
     end
 
     @impl true
     @spec node_leave(struct(), atom(), [node()], node()) :: any()
     def node_leave(_strategy, hub_id, _hub_nodes, node) do
-
     end
   end
 end

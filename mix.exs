@@ -4,7 +4,7 @@ defmodule ProcessHub.MixProject do
   def project do
     [
       app: :process_hub,
-      version: "0.1.4-alpha",
+      version: "0.2.0-alpha",
       elixir: "~> 1.13",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -21,8 +21,13 @@ defmodule ProcessHub.MixProject do
         }
       ],
       docs: [
-        main: "ProcessHub",
-        extras: ["README.md"],
+        main: "readme",
+        extras: [
+          "README.md",
+          "guides/Introduction.md",
+          "guides/Configuration.md",
+          "guides/Hooks.cheatmd"
+        ],
         authors: ["Anuar Alfetahe"]
       ]
     ]

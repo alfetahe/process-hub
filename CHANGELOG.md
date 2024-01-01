@@ -1,9 +1,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.1.5-alpha - YYYY-MM-DD
+## v0.2.0-alpha - YYYY-MM-DD
 Added support for configurable distribution strategy.
 Improved integration tests by making them more reliable.
+Improved documentation by adding guides.
 
 ### Changed
 - `Hook.registry_pid_inserted/0` no longer returns all node-pid pairs that are
@@ -17,6 +18,7 @@ for the hook messages.
 ### Added
 - Support for configurable distribution strategy. This allows the user to
 switch between predefined strategies or implement their own.
+- Created guides.
 
 ### Fixed
 - Replication strategy `:cluster_size` option was not couting the local node.
