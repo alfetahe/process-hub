@@ -1,7 +1,11 @@
 defmodule ProcessHub do
-  # TODO: add documentation about distribution strategy.
   @moduledoc """
-  This is the main public API module for the `ProcessHub` library.
+  This is the main public API module for the `ProcessHub` library and it is recommended to use
+  only the functions defined in this module to interact with the `ProcessHub` library.
+
+  ProcessHub is a library that distributes processes within the BEAM cluster. It is designed to
+  be used as a building block for distributed applications that require process distribution
+  and synchronization.
   """
 
   @typedoc """
@@ -116,7 +120,7 @@ defmodule ProcessHub do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Utility.Name
 
-  # 5 seconds
+  # 10 seconds
   @timeout 10000
 
   @doc """
@@ -162,6 +166,7 @@ defmodule ProcessHub do
   >
   > Using `start_children/3` with `async_wait: true` can lead to timeout errors,
   > especially when the number of children is large.
+  > When `async_wait: true`, you **must await** the response from the function.
   """
   @spec start_children(hub_id(), [child_spec()], init_opts()) ::
           (-> {:ok, list})

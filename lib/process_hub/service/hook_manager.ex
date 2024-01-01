@@ -6,8 +6,19 @@ defmodule ProcessHub.Service.HookManager do
 
   alias ProcessHub.Service.LocalStorage
 
-  @type hook_key() :: atom()
+  @type hook_key() ::
+          :cluster_join_hook
+          | :cluster_leave_hook
+          | :registry_pid_insert_hook
+          | :registry_pid_remove_hook
+          | :child_migrated_hook
+          | :forwarded_migration_hook
+          | :priority_state_updated_hook
+          | :pre_nodes_redistribution_hook
+          | :post_nodes_redistribution_hook
+
   @type hook() :: {module(), atom(), [any()]}
+
   @type hooks() :: %{
           hook_key() => [
             hook()

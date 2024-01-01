@@ -7,7 +7,7 @@
 * [Description](#description)
 * [Features](#features)
 * [Installation](#installation)
-* [Distribution Strategy](#distribution-strategy)
+* [Distribution Strategy](#distribution-strategy)   # TODO: add documentation about distribution strategy.
 * [Cluster Discovery and Formation](#cluster-discovery-and-formation)
 * [Resilience and Reliability](#resilience-and-reliability)
 * [Locking Mechanism](#locking-mechanism)
