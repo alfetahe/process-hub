@@ -38,7 +38,8 @@ defmodule ProcessHub.Service.State do
         _ -> %{reset_after: @prio_reset}
       end
 
-    Blockade.set_priority(Name.local_event_queue(hub_id), PriorityLevel.locked(), options)
+    Name.local_event_queue(hub_id)
+    |> Blockade.set_priority(PriorityLevel.locked(), options)
 
     HookManager.dispatch_hook(
       hub_id,

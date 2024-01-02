@@ -219,7 +219,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({@event_cluster_join, node}, state) do
-    hub_nodes = Cluster.nodes(state.hub_id)
+    hub_nodes = Cluster.nodes(state.hub_id, [:include_local])
 
     state =
       if Cluster.new_node?(hub_nodes, node) do
@@ -339,7 +339,7 @@ defmodule ProcessHub.Coordinator do
   ##############################################################################
 
   defp handle_node_down(state, down_node) do
-    hub_nodes = Cluster.nodes(state.hub_id)
+    hub_nodes = Cluster.nodes(state.hub_id, [:include_local])
 
     if Enum.member?(hub_nodes, down_node) do
       DistributionStrategy.node_leave(
