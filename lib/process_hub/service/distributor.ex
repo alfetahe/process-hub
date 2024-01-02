@@ -32,12 +32,17 @@ defmodule ProcessHub.Service.Distributor do
           {:ok, :start_initiated}
           | (-> {:ok, list})
           | {:error,
-             :child_start_timeout | :no_children | {:already_started, [ProcessHub.child_id()]}}
+             :child_start_timeout
+             | :no_children
+             | {:already_started, [ProcessHub.child_id()]}
+             | any()}
   def init_children(_hub_id, [], _opts), do: {:error, :no_children}
 
   def init_children(hub_id, child_specs, opts) do
-    with :ok <- init_registry_check(hub_id, child_specs, opts),
-         {:ok, children_nodes} <- init_attach_nodes(hub_id, child_specs),
+    with {:ok, strategies} <- init_strategies(hub_id),
+         :ok <- init_distribution(hub_id, child_specs, opts, strategies),
+         :ok <- init_registry_check(hub_id, child_specs, opts),
+         {:ok, children_nodes} <- init_attach_nodes(hub_id, child_specs, strategies),
          :ok <- init_mailbox_cleanup(children_nodes, opts),
          {:ok, composed_data} <- init_compose_data(hub_id, children_nodes, opts) do
       pre_start_children(composed_data, hub_id, opts)
@@ -141,6 +146,18 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
+  defp init_distribution(hub_id, child_specs, opts, %{distribution: strategy}) do
+    DistributionStrategy.children_init(strategy, hub_id, child_specs, opts)
+  end
+
+  defp init_strategies(hub_id) do
+    {:ok,
+     %{
+       distribution: LocalStorage.get(hub_id, :distribution_strategy),
+       redundancy: LocalStorage.get(hub_id, :redundancy_strategy)
+     }}
+  end
+
   defp pre_stop_children(stop_children, hub_id, opts) do
     Dispatcher.children_stop(hub_id, stop_children)
 
@@ -200,14 +217,12 @@ defmodule ProcessHub.Service.Distributor do
      end)}
   end
 
-  defp init_attach_nodes(hub_id, child_specs) do
-    redun_strat = LocalStorage.get(hub_id, :redundancy_strategy)
-    dist_strat = LocalStorage.get(hub_id, :distribution_strategy)
-    repl_fact = RedundancyStrategy.replication_factor(redun_strat)
+  defp init_attach_nodes(hub_id, child_specs, %{distribution: dist, redundancy: redun}) do
+    repl_fact = RedundancyStrategy.replication_factor(redun)
 
     {:ok,
      Enum.map(child_specs, fn child_spec ->
-       {child_spec, DistributionStrategy.belongs_to(dist_strat, hub_id, child_spec.id, repl_fact)}
+       {child_spec, DistributionStrategy.belongs_to(dist, hub_id, child_spec.id, repl_fact)}
      end)}
   end
 

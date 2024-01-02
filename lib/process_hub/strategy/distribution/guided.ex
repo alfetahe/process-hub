@@ -6,6 +6,10 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.Guided do
     @impl true
+    @spec children_init(struct(), atom(), [map()], keyword()) :: :ok | {:error, any()}
+    def children_init(_strategy, _hub_id, _child_specs, _opts), do: :ok
+
+    @impl true
     @spec belongs_to(
             ProcessHub.Strategy.Distribution.Guided.t(),
             atom(),

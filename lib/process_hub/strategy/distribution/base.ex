@@ -4,7 +4,7 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   """
 
   @spec belongs_to(
-          distribution_strategy :: struct(),
+          strategy :: struct(),
           hub_id :: atom(),
           child_id :: atom() | binary(),
           replication_factor :: pos_integer()
@@ -14,8 +14,14 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   @doc """
   Triggered when coordinator is initialized and lets the strategy update it's state.
   """
-  @spec init(distribution_strategy :: struct(), hub_id :: atom(), hub_nodes :: [node()]) :: any()
+  @spec init(strategy :: struct(), hub_id :: atom(), hub_nodes :: [node()]) :: any()
   def init(strategy, hub_id, hub_nodes)
+
+  @doc """
+  Triggered when children are started and lets the strategy
+  """
+  @spec children_init(struct(), atom(), [map()], keyword()) :: :ok | {:error, any()}
+  def children_init(strategy, hub_id, child_specs, opts)
 
   @doc """
   Triggered when node joins the cluster and lets the strategy update it's state.

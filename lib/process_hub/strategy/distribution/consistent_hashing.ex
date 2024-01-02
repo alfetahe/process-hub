@@ -8,6 +8,10 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.ConsistentHashing do
     @impl true
+    @spec children_init(struct(), atom(), [map()], keyword()) :: :ok | {:error, any()}
+    def children_init(_strategy, _hub_id, _child_specs, _opts), do: :ok
+
+    @impl true
     @spec belongs_to(
             ProcessHub.Strategy.Distribution.ConsistentHashing.t(),
             atom(),
