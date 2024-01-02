@@ -52,7 +52,7 @@ defmodule Test.Service.HookManagerTest do
     HookManager.dispatch_hook(hub_id, :test_1, :hook_data)
 
     HookManager.register_handler(hub_id, :test_2, {:erlang, :send, [self(), :_]})
-    {:ok, _} = HookManager.dispatch_hook(hub_id, :test_2, :dispatch_hook_test_2)
+    :ok = HookManager.dispatch_hook(hub_id, :test_2, :dispatch_hook_test_2)
 
     assert_receive :dispatch_hook_test_1
     assert_receive :dispatch_hook_test_2

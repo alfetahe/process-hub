@@ -14,6 +14,8 @@ This gives better overview of the changes that are made to the registry.
 for the hook messages.
 - Moved `belongs_to`function from redundancy to distribution strategy.
 - Replication strategy is now selecting the active nodes with different algorithm.
+- Hooks are no longer spawing new processes and are executed in the context of
+the caller.
 
 ### Added
 - Support for configurable distribution strategy. This allows the user to

@@ -66,21 +66,21 @@ defmodule ProcessHub.Service.HookManager do
   end
 
   @doc "Dispatches multiple hooks to the registered handlers."
-  @spec dispatch_hooks(ProcessHub.hub_id(), [hook()]) :: :ok | {:ok, pid}
+  @spec dispatch_hooks(ProcessHub.hub_id(), [hook()]) :: :ok
   def dispatch_hooks(_hub_id, %{}), do: :ok
 
   def dispatch_hooks(hub_id, hooks) do
     registered_handlers = registered_handlers(hub_id)
 
-    Task.start(fn ->
-      Enum.each(hooks, fn {hook_key, hook_data} ->
-        key_hooks = registered_handlers[hook_key] || []
+    Enum.each(hooks, fn {hook_key, hook_data} ->
+      key_hooks = registered_handlers[hook_key] || []
 
-        Enum.each(key_hooks, fn hook ->
-          exec_hook(hook, hook_data)
-        end)
+      Enum.each(key_hooks, fn hook ->
+        exec_hook(hook, hook_data)
       end)
     end)
+
+    :ok
   end
 
   @doc """
@@ -89,17 +89,17 @@ defmodule ProcessHub.Service.HookManager do
   It is possible to register a hook handler with a wildcard argument `:_` which
   will be replaced with the hook data when the hook is dispatched.
   """
-  @spec dispatch_hook(ProcessHub.hub_id(), hook_key(), any()) :: {:ok, pid}
+  @spec dispatch_hook(ProcessHub.hub_id(), hook_key(), any()) :: :ok
   def dispatch_hook(hub_id, hook_key, hook_data) do
     registered_handlers = registered_handlers(hub_id)
 
     key_hooks = registered_handlers[hook_key] || []
 
-    Task.start(fn ->
-      Enum.each(key_hooks, fn hook ->
-        exec_hook(hook, hook_data)
-      end)
+    Enum.each(key_hooks, fn hook ->
+      exec_hook(hook, hook_data)
     end)
+
+    :ok
   end
 
   defp exec_hook({m, f, a}, hook_data) do
