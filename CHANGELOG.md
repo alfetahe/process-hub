@@ -16,6 +16,8 @@ for the hook messages.
 - Replication strategy is now selecting the active nodes with different algorithm.
 - Hooks are no longer spawing new processes and are executed in the context of
 the caller.
+- Removed `cluster_nodes` parameter from `ProcessHub.Strategy.PartitionTolerance.Base.handle_startup`
+function because the strategy can access the nodes from the `Cluster` module itself when needed.
 
 ### Added
 - Support for configurable distribution strategy. This allows the user to
