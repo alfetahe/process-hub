@@ -87,7 +87,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
       end
     end
 
-    def validate_mappings_type(mappings) do
+    defp validate_mappings_type(mappings) do
       case is_map(mappings) do
         true -> :ok
         false -> {:error, :invalid_child_mapping}
