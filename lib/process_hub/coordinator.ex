@@ -119,8 +119,7 @@ defmodule ProcessHub.Coordinator do
   def handle_continue(:additional_setup, state) do
     PartitionToleranceStrategy.handle_startup(
       state.settings.partition_tolerance_strategy,
-      state.hub_id,
-      Cluster.nodes(state.hub_id)
+      state.hub_id
     )
 
     schedule_propagation()

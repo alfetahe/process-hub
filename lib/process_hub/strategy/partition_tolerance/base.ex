@@ -19,6 +19,6 @@ defprotocol ProcessHub.Strategy.PartitionTolerance.Base do
   @doc """
   This function is called when `ProcessHub` is starting up.
   """
-  @spec handle_startup(__MODULE__.t(), ProcessHub.hub_id(), [node()]) :: :ok
-  def handle_startup(strategy, hub_id, cluster_nodes)
+  @spec handle_startup(__MODULE__.t(), ProcessHub.hub_id()) :: :ok
+  def handle_startup(strategy, hub_id)
 end

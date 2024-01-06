@@ -61,10 +61,9 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
 
     @spec handle_startup(
             ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
-            ProcessHub.hub_id(),
-            [node()]
+            ProcessHub.hub_id()
           ) :: :ok
-    def handle_startup(_strategy, _hub_id, _cluster_nodes), do: :ok
+    def handle_startup(_strategy, _hub_id), do: :ok
 
     @spec handle_node_up(
             ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),

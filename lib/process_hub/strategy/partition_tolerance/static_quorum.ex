@@ -11,6 +11,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
 
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Service.State
+  alias PrcoessHub.Service.Cluster
 
   @typedoc """
   Static quorum strategy configuration.
@@ -29,12 +30,15 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
   defstruct [:quorum_size, startup_confirm: false]
 
   defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
+    alias ProcessHub.Service.Cluster
+
     @spec handle_startup(
             ProcessHub.Strategy.PartitionTolerance.StaticQuorum.t(),
-            ProcessHub.hub_id(),
-            [node()]
+            ProcessHub.hub_id()
           ) :: :ok
-    def handle_startup(strategy, hub_id, cluster_nodes) do
+    def handle_startup(strategy, hub_id) do
+      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+
       if strategy.startup_confirm do
         unless quorum_present?(strategy, cluster_nodes) do
           State.toggle_quorum_failure(hub_id)
