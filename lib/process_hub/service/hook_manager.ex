@@ -4,6 +4,7 @@ defmodule ProcessHub.Service.HookManager do
   registration, and lookup.
   """
 
+  alias ProcessHub.Utility.Name
   alias ProcessHub.Service.LocalStorage
 
   @type hook_key() ::
@@ -17,67 +18,42 @@ defmodule ProcessHub.Service.HookManager do
           | :pre_nodes_redistribution_hook
           | :post_nodes_redistribution_hook
 
-  @type hook() :: {module(), atom(), [any()]}
+  # TODO: add all new hooks here.
 
-  @type hooks() :: %{
+  @type hook_handler() :: {module(), atom(), [any()]}
+
+  @type hook_handlers() :: %{
           hook_key() => [
-            hook()
+            hook_handler()
           ]
         }
 
-  @doc "Returns the cache key for the hook manager."
-  @spec cache_key :: :hooks
-  def cache_key() do
-    :hooks
-  end
-
   @doc "Registers a new hook handler."
-  @spec register_handler(ProcessHub.hub_id(), hook_key(), hook()) :: true
-  def register_handler(hub_id, hook_key, hook) do
-    hooks =
-      case LocalStorage.get(hub_id, cache_key()) do
-        nil -> %{}
-        hooks -> hooks
-      end
+  @spec register_hook_handlers(ProcessHub.hub_id(), hook_key(), [hook_handler()]) :: true
+  def register_hook_handlers(hub_id, hook_key, hook_handlers) do
+    hook_handlers = registered_handlers(hub_id, hook_key) ++ hook_handlers
 
-    handlers = hooks[hook_key] || []
-    new_handlers = [hook | handlers]
-    new_hooks = Map.put(hooks, hook_key, new_handlers)
-
-    LocalStorage.insert(hub_id, cache_key(), new_hooks)
+    Name.hook_registry(hub_id) |> Cachex.put(hook_key, hook_handlers)
   end
 
-  @doc "Returns all registered hook handlers sorted by hook key."
-  @spec registered_handlers(ProcessHub.hub_id()) :: hooks()
-  def registered_handlers(hub_id) do
-    cache_key = cache_key()
+  @doc "Returns all registered hook handlers for the given hook key"
+  @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: hook_handlers()
+  def registered_handlers(hub_id, hook_key) do
+    {:ok, res} = Name.hook_registry(hub_id) |> Cachex.get(hook_key)
 
-    LocalStorage.get(hub_id, cache_key)
-    |> case do
-      nil ->
-        %{}
-
-      hooks ->
-        case is_map(hooks) do
-          true -> hooks
-          false -> %{}
-        end
+    case res do
+      nil -> []
+      handlers -> handlers
     end
   end
 
   @doc "Dispatches multiple hooks to the registered handlers."
-  @spec dispatch_hooks(ProcessHub.hub_id(), [hook()]) :: :ok
+  @spec dispatch_hooks(ProcessHub.hub_id(), [hook_handler()]) :: :ok
   def dispatch_hooks(_hub_id, %{}), do: :ok
 
   def dispatch_hooks(hub_id, hooks) do
-    registered_handlers = registered_handlers(hub_id)
-
     Enum.each(hooks, fn {hook_key, hook_data} ->
-      key_hooks = registered_handlers[hook_key] || []
-
-      Enum.each(key_hooks, fn hook ->
-        exec_hook(hook, hook_data)
-      end)
+      dispatch_hook(hub_id, hook_key, hook_data)
     end)
 
     :ok
@@ -91,12 +67,9 @@ defmodule ProcessHub.Service.HookManager do
   """
   @spec dispatch_hook(ProcessHub.hub_id(), hook_key(), any()) :: :ok
   def dispatch_hook(hub_id, hook_key, hook_data) do
-    registered_handlers = registered_handlers(hub_id)
-
-    key_hooks = registered_handlers[hook_key] || []
-
-    Enum.each(key_hooks, fn hook ->
-      exec_hook(hook, hook_data)
+    registered_handlers(hub_id, hook_key)
+    |> Enum.each(fn hook_handler ->
+      exec_hook(hook_handler, hook_data)
     end)
 
     :ok

@@ -22,7 +22,7 @@ defmodule ProcessHub.Service.Distributor do
       init_data([node], hub_id, child_spec)
       |> Map.merge(Map.new(opts))
 
-    Dispatcher.children_start(hub_id, [{node, [redist_child]}])
+    Dispatcher.children_start(hub_id, [{node, [redist_child]}], opts)
 
     {:ok, :redistribution_initiated}
   end
@@ -47,7 +47,7 @@ defmodule ProcessHub.Service.Distributor do
          {:ok, composed_data} <- init_compose_data(hub_id, children_nodes, opts) do
       pre_start_children(composed_data, hub_id, opts)
     else
-      error -> error
+      err -> err
     end
   end
 
@@ -132,7 +132,7 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp pre_start_children(startup_children, hub_id, opts) do
-    Dispatcher.children_start(hub_id, startup_children)
+    Dispatcher.children_start(hub_id, startup_children, opts)
 
     case Keyword.get(opts, :async_wait, false) do
       false ->

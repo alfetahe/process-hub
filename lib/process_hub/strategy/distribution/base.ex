@@ -14,8 +14,8 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   @doc """
   Triggered when coordinator is initialized and lets the strategy update it's state.
   """
-  @spec init(strategy :: struct(), hub_id :: atom(), hub_nodes :: [node()]) :: any()
-  def init(strategy, hub_id, hub_nodes)
+  @spec init(strategy :: struct(), hub_id :: atom()) :: any()
+  def init(strategy, hub_id)
 
   @doc """
   Triggered when children are started and lets the strategy

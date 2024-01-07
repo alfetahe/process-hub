@@ -58,7 +58,7 @@ defmodule Test.Service.DispatcherTest do
        ]}
     ]
 
-    Dispatcher.children_start(hub_id, event_data)
+    Dispatcher.children_start(hub_id, event_data, [])
 
     assert_receive {:child_start_resp, :propagate_init_test, _, _}, 100
   end

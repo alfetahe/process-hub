@@ -188,17 +188,6 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def start_sync(hub_id, children, opts \\ []) do
-    test_nodes = ProcessHub.Service.Cluster.nodes(hub_id, [:include_local])
-
-    actions = [
-      {:start_child, :child_added, :child_add_timeout, children,
-       Enum.member?(opts, :compare_started)}
-    ]
-
-    sync_type_exec(actions, test_nodes, hub_id, opts)
-  end
-
   def trigger_periodc_sync(%{hub_id: hub_id, peer_nodes: nodes} = context, child_specs, :add) do
     SynchronizationStrategy.init_sync(
       context.hub.synchronization_strategy,
@@ -264,23 +253,5 @@ defmodule Test.Helper.Common do
       Hook.registry_pid_inserted(),
       error_msg: "Child add timeout."
     )
-  end
-
-  defp sync_type_exec(actions, test_nodes, hub_id, _opts) do
-    Enum.each(actions, fn {function_name, hook_key, error_msg, children, compare_started} ->
-      Enum.each(children, fn child_data ->
-        apply(ProcessHub, function_name, [hub_id, child_data])
-      end)
-
-      Bag.receive_multiple(
-        length(test_nodes) * length(children),
-        hook_key,
-        error_msg: error_msg
-      )
-
-      if compare_started do
-        Test.Helper.Common.compare_started_children(children, hub_id)
-      end
-    end)
   end
 end

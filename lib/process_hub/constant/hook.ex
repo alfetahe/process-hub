@@ -56,4 +56,7 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec post_nodes_redistribution() :: :post_nodes_redistribution_hook
   def post_nodes_redistribution(), do: :post_nodes_redistribution_hook
+
+  # TODO: add tests and document the hooks.
+  def pre_children_start(), do: :pre_children_start_hook
 end

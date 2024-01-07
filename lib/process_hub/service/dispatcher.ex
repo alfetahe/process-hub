@@ -21,13 +21,13 @@ defmodule ProcessHub.Service.Dispatcher do
   @doc """
   Sends the coordinator process a message to start the child processes passed in.
   """
-  @spec children_start(ProcessHub.hub_id(), [{node(), [map()]}]) :: :ok
-  def children_start(hub_id, children_nodes) do
+  @spec children_start(ProcessHub.hub_id(), [{node(), [map()]}], keyword()) :: :ok
+  def children_start(hub_id, children_nodes, opts) do
     coordinator = Name.coordinator(hub_id)
 
     Enum.each(children_nodes, fn {child_node, children_data} ->
       Node.spawn(child_node, fn ->
-        GenServer.cast(coordinator, {:start_children, children_data})
+        GenServer.cast(coordinator, {:start_children, children_data, opts})
       end)
     end)
   end

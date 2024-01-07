@@ -215,8 +215,8 @@ defmodule Test.Helper.Bootstrap do
 
   defp distribution_strategy(context) do
     case context[:dist_strategy] do
-      # TODO:
-      # :guided -> %ProcessHub.Strategy.Distribution.Guided{}
+      :guided ->
+        %ProcessHub.Strategy.Distribution.Guided{}
 
       :consistent_hashing ->
         %ProcessHub.Strategy.Distribution.ConsistentHashing{}

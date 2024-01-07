@@ -5,7 +5,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.HookManager
+  alias ProcessHub.Constant.Hook
 
   use Task
 
@@ -13,6 +16,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @moduledoc """
     Handler for starting child processes.
     """
+
     @type t :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
             children: [
@@ -24,7 +28,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             dist_sup: ProcessHub.DistributedSupervisor.pname(),
             sync_strategy: SynchronizationStrategy.t(),
             redun_strategy: RedundancyStrategy.t(),
-            dist_strategy: DistributionStrategy.t()
+            dist_strategy: DistributionStrategy.t(),
+            start_opts: keyword()
           }
 
     @enforce_keys [
@@ -33,22 +38,23 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       :dist_sup,
       :sync_strategy,
       :dist_strategy,
-      :redun_strategy
+      :redun_strategy,
+      :start_opts
     ]
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
-    def handle(%__MODULE__{} = args) do
-      case ProcessHub.Service.State.is_partitioned?(args.hub_id) do
+    def handle(%__MODULE__{} = arg) do
+      case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
         true ->
           {:error, :partitioned}
 
         false ->
-          start_results = start_children(args)
+          start_results = start_children(arg)
 
           SynchronizationStrategy.propagate(
-            args.sync_strategy,
-            args.hub_id,
+            arg.sync_strategy,
+            arg.hub_id,
             start_results,
             node(),
             :add
@@ -58,17 +64,14 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp start_children(args) do
+    defp start_children(arg) do
+      HookManager.dispatch_hook(arg.hub_id, Hook.pre_children_start(), arg)
+
       local_node = node()
 
-      validate_children(
-        args.hub_id,
-        args.children,
-        args.dist_strategy,
-        args.redun_strategy
-      )
+      validate_children(arg)
       |> Enum.map(fn child_data ->
-        startup_result = child_start_result(args, child_data, local_node)
+        startup_result = child_start_result(arg, child_data, local_node)
 
         case startup_result do
           {:ok, pid} ->
@@ -97,14 +100,14 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       }
     end
 
-    defp child_start_result(args, child_data, local_node) do
+    defp child_start_result(arg, child_data, local_node) do
       cid = child_data.child_spec.id
 
-      case DistributedSupervisor.start_child(args.dist_sup, child_data.child_spec) do
+      case DistributedSupervisor.start_child(arg.dist_sup, child_data.child_spec) do
         {:ok, pid} ->
           RedundancyStrategy.handle_post_start(
-            args.redun_strategy,
-            args.dist_strategy,
+            arg.redun_strategy,
+            arg.dist_strategy,
             cid,
             pid,
             child_data.nodes
@@ -121,7 +124,13 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp validate_children(hub_id, children, dist_strat, redun_strat) do
+    defp validate_children(%__MODULE__{
+           hub_id: hub_id,
+           children: children,
+           dist_strategy: dist_strat,
+           redun_strategy: redun_strat,
+           start_opts: start_opts
+         }) do
       # Check if the child belongs to this node.
       local_node = node()
       replication_factor = RedundancyStrategy.replication_factor(redun_strat)
@@ -139,17 +148,17 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             [child_data | acc]
 
           false ->
-            forward_child(hub_id, child_data, nodes)
+            forward_child(hub_id, child_data, nodes, start_opts)
             acc
         end
       end)
     end
 
-    defp forward_child(hub_id, child_data, parent_nodes) do
+    defp forward_child(hub_id, child_data, parent_nodes, start_opts) do
       parent_node = Enum.at(parent_nodes, 0)
 
       case is_atom(parent_node) do
-        true -> Dispatcher.children_start(hub_id, [{parent_node, [child_data]}])
+        true -> Dispatcher.children_start(hub_id, [{parent_node, [child_data]}], start_opts)
         false -> nil
       end
     end
@@ -159,10 +168,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @moduledoc """
     Handler for synchronizing added child processes.
     """
-
-    alias ProcessHub.Service.ProcessRegistry
-    alias ProcessHub.Service.HookManager
-    alias ProcessHub.Constant.Hook
 
     @type process_startup_result() :: {:ok, pid()} | {:error, any()} | term()
 
@@ -187,21 +192,21 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{} = args) do
+    def handle(%__MODULE__{} = arg) do
       children_formatted =
-        Enum.map(args.children, fn {child_id, {_child_spec, _child_nodes} = cn, _, _} ->
+        Enum.map(arg.children, fn {child_id, {_child_spec, _child_nodes} = cn, _, _} ->
           {child_id, cn}
         end)
         |> Map.new()
 
-      ProcessRegistry.bulk_insert(args.hub_id, children_formatted)
+      ProcessRegistry.bulk_insert(arg.hub_id, children_formatted)
 
       local_node = node()
 
-      Enum.each(args.children, fn {child_id, _, startup_res, {:for_node, for_node, opts}} ->
+      Enum.each(arg.children, fn {child_id, _, startup_res, {:for_node, for_node, opts}} ->
         if for_node === local_node do
           handle_reply_to(opts, child_id, startup_res, for_node)
-          handle_migration(opts, args.hub_id, child_id, for_node)
+          handle_migration(opts, arg.hub_id, child_id, for_node)
         end
       end)
     end

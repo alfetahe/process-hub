@@ -71,4 +71,9 @@ defmodule ProcessHub.Utility.Name do
   def task_supervisor(hub_id) do
     concat_name([hub_id, "task_supervisor"], ".")
   end
+
+  # TODO: add tests and documentation
+  def hook_registry(hub_id) do
+    concat_name([hub_id, "hook_registry"], ".")
+  end
 end

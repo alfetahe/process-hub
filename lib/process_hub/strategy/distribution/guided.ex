@@ -5,16 +5,39 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
   @type t() :: %__MODULE__{}
   defstruct []
 
+  @cache_key :guided_distribution_cache
+
+  def cache_key(), do: @cache_key
+
+  def handle_children_start(hub_id, %{start_opts: start_opts}) do
+    insert_child_mappings(hub_id, Keyword.get(start_opts, :child_mapping, %{}))
+  end
+
+  def insert_child_mappings(hub_id, child_mappings) do
+    case LocalStorage.get(hub_id, @cache_key) do
+      nil ->
+        LocalStorage.insert(hub_id, @cache_key, child_mappings)
+
+      existing_mappings ->
+        new_mappings = Map.merge(existing_mappings, child_mappings)
+        LocalStorage.insert(hub_id, @cache_key, new_mappings)
+    end
+
+    :ok
+  end
+
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.Guided do
     alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-
-    @cache_key :guided_distribution_cache
+    alias ProcessHub.Service.HookManager
+    alias ProcessHub.Constant.Hook
+    alias ProcessHub.Strategy.Distribution.Guided, as: GuidedStrategy
 
     @impl true
     @spec children_init(struct(), atom(), [map()], keyword()) :: :ok | {:error, any()}
     def children_init(_strategy, hub_id, child_specs, opts) do
       with {:ok, child_mappings} <- validate_child_init(hub_id, opts, child_specs),
-           :ok <- insert_child_mappings(hub_id, child_mappings) do
+           :ok <- GuidedStrategy.insert_child_mappings(hub_id, child_mappings) do
+        LocalStorage.get(hub_id, GuidedStrategy.cache_key())
         :ok
       else
         err -> err
@@ -29,7 +52,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
             pos_integer()
           ) :: [atom]
     def belongs_to(_strategy, hub_id, child_id, replication_factor) do
-      with child_mappings <- LocalStorage.get(hub_id, @cache_key),
+      with child_mappings <- LocalStorage.get(hub_id, GuidedStrategy.cache_key()),
            child_nodes <- Map.get(child_mappings, child_id),
            nodes <- Enum.take(child_nodes, replication_factor) do
         nodes
@@ -39,7 +62,14 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     end
 
     @impl true
-    def init(_strategy, _hub_id, _hub_nodes) do
+    def init(_strategy, hub_id) do
+      hook = {
+        ProcessHub.Strategy.Distribution.Guided,
+        :handle_children_start,
+        [hub_id, :_]
+      }
+
+      HookManager.register_hook_handlers(hub_id, Hook.pre_children_start(), [hook])
     end
 
     @impl true
@@ -50,19 +80,6 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     @impl true
     @spec node_leave(struct(), atom(), [node()], node()) :: any()
     def node_leave(_strategy, _hub_id, _hub_nodes, _node) do
-    end
-
-    defp insert_child_mappings(hub_id, child_mappings) do
-      case LocalStorage.get(hub_id, @cache_key) do
-        nil ->
-          LocalStorage.insert(hub_id, @cache_key, child_mappings)
-
-        existing_mappings ->
-          new_mappings = Map.merge(existing_mappings, child_mappings)
-          LocalStorage.insert(hub_id, @cache_key, new_mappings)
-
-          :ok
-      end
     end
 
     defp validate_child_init(hub_id, opts, child_specs) do

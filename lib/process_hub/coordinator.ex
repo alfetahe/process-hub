@@ -88,9 +88,9 @@ defmodule ProcessHub.Coordinator do
 
     hub_nodes = get_hub_nodes(hub.hub_id)
     setup_local_storage(hub, hub_nodes)
-    init_distribution(hub, hub_nodes)
+    init_distribution(hub)
     register_handlers(hub.managers)
-    register_hooks(hub.hub_id, hub.settings.hooks)
+    register_hook_handlers(hub.hub_id, hub.settings.hooks)
 
     {:ok, state, {:continue, :additional_setup}}
   end
@@ -134,7 +134,7 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  def handle_cast({:start_children, children}, state) do
+  def handle_cast({:start_children, children, start_opts}, state) do
     Task.Supervisor.start_child(
       state.managers.task_supervisor,
       ChildrenAdd.StartHandle,
@@ -146,7 +146,8 @@ defmodule ProcessHub.Coordinator do
           dist_sup: state.managers.distributed_supervisor,
           sync_strategy: state.settings.synchronization_strategy,
           redun_strategy: state.settings.redundancy_strategy,
-          dist_strategy: state.settings.distribution_strategy
+          dist_strategy: state.settings.distribution_strategy,
+          start_opts: start_opts
         }
       ]
     )
@@ -380,11 +381,10 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
-  defp init_distribution(hub, hub_nodes) do
+  defp init_distribution(hub) do
     DistributionStrategy.init(
       hub.settings.distribution_strategy,
-      hub.hub_id,
-      hub_nodes
+      hub.hub_id
     )
   end
 
@@ -417,12 +417,14 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(gq, @event_children_unregistration)
   end
 
-  defp register_hooks(hub_id, hooks) when is_map(hooks) do
-    LocalStorage.insert(hub_id, HookManager.cache_key(), hooks)
+  defp register_hook_handlers(hub_id, hooks) when is_map(hooks) do
+    for {hook_key, hook_handlers} <- hooks do
+      HookManager.register_hook_handlers(hub_id, hook_key, hook_handlers)
+    end
   end
 
-  defp register_hooks(hub_id, _hooks) do
-    register_hooks(hub_id, %{})
+  defp register_hook_handlers(hub_id, _hooks) do
+    register_hook_handlers(hub_id, %{})
   end
 
   defp schedule_sync(sync_strat) do

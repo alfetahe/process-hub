@@ -23,7 +23,9 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
     end
 
     @impl true
-    def init(_strategy, hub_id, hub_nodes) do
+    def init(_strategy, hub_id) do
+      hub_nodes = LocalStorage.get(hub_id, :hub_nodes)
+
       LocalStorage.insert(hub_id, Ring.storage_key(), Ring.create_ring(hub_nodes))
     end
 
