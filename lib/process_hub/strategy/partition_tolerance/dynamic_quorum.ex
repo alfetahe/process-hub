@@ -37,6 +37,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
 
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.State
 
   @typedoc """
@@ -68,10 +69,11 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     @spec handle_node_up(
             ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
             ProcessHub.hub_id(),
-            node(),
-            [node()]
+            node()
           ) :: :ok
-    def handle_node_up(strategy, hub_id, node, cluster_nodes) do
+    def handle_node_up(strategy, hub_id, node) do
+      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+
       node_log_func(strategy, hub_id, node, :up)
 
       with false <- quorum_failure?(hub_id, strategy, cluster_nodes) do
@@ -89,10 +91,11 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     @spec handle_node_down(
             ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
             ProcessHub.hub_id(),
-            node(),
-            [node()]
+            node()
           ) :: :ok
-    def handle_node_down(strategy, hub_id, node, cluster_nodes) do
+    def handle_node_down(strategy, hub_id, node) do
+      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+
       node_log_func(strategy, hub_id, node, :down)
 
       case quorum_failure?(hub_id, strategy, cluster_nodes) do

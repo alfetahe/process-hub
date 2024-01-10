@@ -1,10 +1,26 @@
 defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Ring
+  alias ProcessHub.Constant.Hook
 
   @type t() :: %__MODULE__{}
   defstruct []
+
+  @spec handle_node_join(atom(), node()) :: any()
+  def handle_node_join(hub_id, node) do
+    hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
+
+    LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
+  end
+
+  @spec handle_node_leave(atom(), node()) :: any()
+  def handle_node_leave(hub_id, node) do
+    hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
+
+    LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
+  end
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.ConsistentHashing do
     @impl true
@@ -27,22 +43,21 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
       hub_nodes = LocalStorage.get(hub_id, :hub_nodes)
 
       LocalStorage.insert(hub_id, Ring.storage_key(), Ring.create_ring(hub_nodes))
-    end
 
-    @impl true
-    @spec node_join(struct(), atom(), [node()], node()) :: any()
-    def node_join(_strategy, hub_id, _hub_nodes, node) do
-      hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
+      join_handler = {
+        ProcessHub.Strategy.Distribution.ConsistentHashing,
+        :handle_node_join,
+        [hub_id, :_]
+      }
 
-      LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
-    end
+      leave_handler = {
+        ProcessHub.Strategy.Distribution.ConsistentHashing,
+        :handle_node_leave,
+        [hub_id, :_]
+      }
 
-    @impl true
-    @spec node_leave(struct(), atom(), [node()], node()) :: any()
-    def node_leave(_strategy, hub_id, _hub_nodes, node) do
-      hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
-
-      LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
+      HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
+      HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
     end
   end
 end

@@ -22,7 +22,7 @@ defmodule Test.IntegrationTest do
   @tag sync_strategy: :pubsub
   @tag dist_strategy: :guided
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
@@ -70,7 +70,7 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :pubsub_start_rem_test
   @tag sync_strategy: :pubsub
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
@@ -100,7 +100,7 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :pubsub_interval_test
   @tag sync_strategy: :pubsub
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
@@ -130,7 +130,7 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :gossip_start_rem_test
   @tag sync_strategy: :gossip
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
@@ -160,7 +160,7 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :gossip_interval_test
   @tag sync_strategy: :gossip
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
@@ -192,7 +192,7 @@ defmodule Test.IntegrationTest do
   @tag replication_model: :active_passive
   @tag replication_factor: 4
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
@@ -218,7 +218,7 @@ defmodule Test.IntegrationTest do
   @tag replication_factor: :cluster_size
   @tag replication_model: :active_active
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
@@ -247,7 +247,7 @@ defmodule Test.IntegrationTest do
   @tag redun_strategy: :singularity
   @tag hub_id: :redunc_singulary_test
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :local}
        ]
   test "redundancy with singularity", %{hub_id: hub_id} = context do
@@ -270,7 +270,7 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :divergence_test
   @tag partition_strategy: :div
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
+         {Hook.post_cluster_join(), :local},
          {Hook.post_nodes_redistribution(), :global}
        ]
   test "partition divergence test",
@@ -310,8 +310,8 @@ defmodule Test.IntegrationTest do
   @tag quorum_size: @nr_of_peers + 2
   @tag quorum_startup_confirm: true
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
-         {Hook.cluster_leave(), :local},
+         {Hook.post_cluster_join(), :local},
+         {Hook.post_cluster_leave(), :local},
          {Hook.post_nodes_redistribution(), :local}
        ]
   test "static quorum with min of #{@nr_of_peers + 2} nodes",
@@ -333,14 +333,14 @@ defmodule Test.IntegrationTest do
 
     removed_peers = Common.stop_peers(new_peers, 1)
     new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
-    Bag.receive_multiple(1, Hook.cluster_leave())
+    Bag.receive_multiple(1, Hook.post_cluster_leave())
 
     # We still achive quorum
     assert ProcessHub.is_partitioned?(hub_id) === false
 
     removed_peers = Common.stop_peers(new_peers, 1)
     _new_peers = Enum.filter(peers, fn node -> !Enum.member?(removed_peers, node) end)
-    Bag.receive_multiple(1, Hook.cluster_leave())
+    Bag.receive_multiple(1, Hook.post_cluster_leave())
 
     # Quorum not achieved
     assert ProcessHub.is_partitioned?(hub_id) === true
@@ -354,8 +354,8 @@ defmodule Test.IntegrationTest do
   # 1 hour
   @tag quorum_threshold_time: 3600
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
-         {Hook.cluster_leave(), :local},
+         {Hook.post_cluster_join(), :local},
+         {Hook.post_cluster_leave(), :local},
          {Hook.post_nodes_redistribution(), :local}
        ]
   test "dynamic quorum with min of 70% of cluster",
@@ -404,8 +404,8 @@ defmodule Test.IntegrationTest do
   @tag redun_strategy: :replication
   @tag replication_factor: 2
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
-         {Hook.cluster_leave(), :global},
+         {Hook.post_cluster_join(), :local},
+         {Hook.post_cluster_leave(), :global},
          {Hook.registry_pid_inserted(), :global},
          {Hook.child_migrated(), :global}
        ]
@@ -421,7 +421,7 @@ defmodule Test.IntegrationTest do
     end)
 
     # Confirm that hubs are stopped.
-    Bag.receive_multiple(nodes_count, Hook.cluster_leave())
+    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave())
 
     # Starts children.
     Common.sync_base_test(context, child_specs, :add)
@@ -470,8 +470,8 @@ defmodule Test.IntegrationTest do
   @tag migr_handover: true
   @tag migr_retention: 5000
   @tag listed_hooks: [
-         {Hook.cluster_join(), :local},
-         {Hook.cluster_leave(), :local},
+         {Hook.post_cluster_join(), :local},
+         {Hook.post_cluster_leave(), :local},
          {Hook.registry_pid_inserted(), :local},
          {Hook.registry_pid_removed(), :local},
          {Hook.post_nodes_redistribution(), :local},
@@ -494,7 +494,9 @@ defmodule Test.IntegrationTest do
     )
 
     # Confirm that hubs are stopped.
-    Bag.receive_multiple(nodes_count, Hook.cluster_leave(), error_msg: "Cluster leave timeout")
+    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave(),
+      error_msg: "Cluster leave timeout"
+    )
 
     # Starts children.
     Common.sync_base_test(context, child_specs, :add)

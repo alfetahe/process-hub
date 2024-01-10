@@ -3,12 +3,20 @@ defmodule Test.Constant.HookTest do
 
   alias ProcessHub.Constant.Hook
 
-  test "cluster_join" do
-    assert Hook.cluster_join() === :cluster_join_hook
+  test "pre_cluster_join" do
+    assert Hook.pre_cluster_join() === :pre_cluster_join_hook
   end
 
-  test "cluster_leave" do
-    assert Hook.cluster_leave() === :cluster_leave_hook
+  test "post_cluster_join" do
+    assert Hook.post_cluster_join() === :post_cluster_join_hook
+  end
+
+  test "pre_cluster_leave" do
+    assert Hook.pre_cluster_leave() === :pre_cluster_leave_hook
+  end
+
+  test "post_cluster_leave" do
+    assert Hook.post_cluster_leave() === :post_cluster_leave_hook
   end
 
   test "registry pid inserted" do
@@ -37,5 +45,9 @@ defmodule Test.Constant.HookTest do
 
   test "post nodes redistribution" do
     assert Hook.post_nodes_redistribution() === :post_nodes_redistribution_hook
+  end
+
+  test "pre children start" do
+    assert Hook.pre_children_start() === :pre_children_start_hook
   end
 end

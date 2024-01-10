@@ -131,7 +131,7 @@ defmodule Test.Helper.Bootstrap do
 
     Bag.receive_multiple(
       msg_count,
-      Hook.cluster_join(),
+      Hook.post_cluster_join(),
       error_msg: "Bootstrap timeout."
     )
   end

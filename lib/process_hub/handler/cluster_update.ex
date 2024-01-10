@@ -211,8 +211,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       PartitionToleranceStrategy.handle_node_down(
         arg.partition_strat,
         arg.hub_id,
-        arg.removed_node,
-        arg.hub_nodes
+        arg.removed_node
       )
 
       HookManager.dispatch_hook(
@@ -221,7 +220,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         {:nodedown, arg.removed_node}
       )
 
-      HookManager.dispatch_hook(arg.hub_id, Hook.cluster_leave(), arg)
+      HookManager.dispatch_hook(arg.hub_id, Hook.post_cluster_leave(), arg)
 
       :ok
     end

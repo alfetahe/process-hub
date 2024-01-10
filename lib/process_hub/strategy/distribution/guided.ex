@@ -1,6 +1,9 @@
 defmodule ProcessHub.Strategy.Distribution.Guided do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.HookManager
+  alias ProcessHub.Constant.Hook
 
   @type t() :: %__MODULE__{}
   defstruct []
@@ -27,9 +30,6 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
   end
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.Guided do
-    alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-    alias ProcessHub.Service.HookManager
-    alias ProcessHub.Constant.Hook
     alias ProcessHub.Strategy.Distribution.Guided, as: GuidedStrategy
 
     @impl true
@@ -70,16 +70,6 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
       }
 
       HookManager.register_hook_handlers(hub_id, Hook.pre_children_start(), [hook])
-    end
-
-    @impl true
-    @spec node_join(struct(), atom(), [node()], node()) :: any()
-    def node_join(_strategy, _hub_id, _hub_nodes, _node) do
-    end
-
-    @impl true
-    @spec node_leave(struct(), atom(), [node()], node()) :: any()
-    def node_leave(_strategy, _hub_id, _hub_nodes, _node) do
     end
 
     defp validate_child_init(hub_id, opts, child_specs) do

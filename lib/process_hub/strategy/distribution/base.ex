@@ -5,7 +5,6 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
 
   # TODO: add documetation for the module and functions.
 
-
   @spec belongs_to(
           strategy :: struct(),
           hub_id :: atom(),
@@ -25,20 +24,4 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   """
   @spec children_init(struct(), atom(), [map()], keyword()) :: :ok | {:error, any()}
   def children_init(strategy, hub_id, child_specs, opts)
-
-  @doc """
-  Triggered when node joins the cluster and lets the strategy update it's state.
-
-  Do not start/stop any processes here.
-  """
-  @spec node_join(struct(), atom(), [node()], node()) :: any()
-  def node_join(strategy, hub_id, hub_nodes, node)
-
-  @doc """
-  Triggered when node leaves the cluster and lets the strategy update it's state.
-
-  Do not start/stop any processes here.
-  """
-  @spec node_leave(struct(), atom(), [node()], node()) :: any()
-  def node_leave(strategy, hub_id, hub_nodes, node)
 end

@@ -4,16 +4,32 @@ defmodule ProcessHub.Constant.Hook do
   """
 
   @doc """
-  Hook triggered when a new node is registered under the ProcessHub cluster.
+  Hook triggered when a new node has joined the hub cluster and before handling
+  the node join event.
   """
-  @spec cluster_join() :: :cluster_join_hook
-  def cluster_join(), do: :cluster_join_hook
+  @spec pre_cluster_join() :: :pre_cluster_join_hook
+  def pre_cluster_join(), do: :pre_cluster_join_hook
 
   @doc """
-  Hook triggered when a node is unregistered from the ProcessHub cluster.
+  Hook triggered when a new node has joined the hub cluster and after handling
+  the node join event.
   """
-  @spec cluster_leave() :: :cluster_leave_hook
-  def cluster_leave(), do: :cluster_leave_hook
+  @spec post_cluster_join() :: :post_cluster_join_hook
+  def post_cluster_join(), do: :post_cluster_join_hook
+
+  @doc """
+  Hook triggered when a node has left the hub cluster and before handling
+  the node leave event.
+  """
+  @spec pre_cluster_leave() :: :pre_cluster_leave_hook
+  def pre_cluster_leave(), do: :pre_cluster_leave_hook
+
+  @doc """
+  Hook triggered when a node has left the hub cluster and before handling
+  the node leave event.
+  """
+  @spec post_cluster_leave() :: :post_cluster_leave_hook
+  def post_cluster_leave(), do: :post_cluster_leave_hook
 
   @doc """
   Hook triggered when a new process is registered in the ProcessHub registry.
@@ -57,6 +73,6 @@ defmodule ProcessHub.Constant.Hook do
   @spec post_nodes_redistribution() :: :post_nodes_redistribution_hook
   def post_nodes_redistribution(), do: :post_nodes_redistribution_hook
 
-  # TODO: add tests and document the hooks.
+  @spec pre_children_start() :: :pre_children_start_hook
   def pre_children_start(), do: :pre_children_start_hook
 end

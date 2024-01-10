@@ -16,7 +16,7 @@ defmodule ProcessHub.Constant.Event do
   @typedoc """
   Event used when a node leaves the ProcessHub cluster.
   """
-  @type event_cluster_leave() :: :cluster_leave_event
+  @type event_post_cluster_leave() :: :cluster_leave_event
 
   @typedoc """
   Event used when a process has been registered in the ProcessHub registry.

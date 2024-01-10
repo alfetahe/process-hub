@@ -7,8 +7,10 @@ defmodule ProcessHub.Service.HookManager do
   alias ProcessHub.Utility.Name
 
   @type hook_key() ::
-          :cluster_join_hook
-          | :cluster_leave_hook
+          :pre_cluster_join_hook
+          | :post_cluster_join_hook
+          | :pre_cluster_leave_hook
+          | :post_cluster_leave_hook
           | :registry_pid_insert_hook
           | :registry_pid_remove_hook
           | :child_migrated_hook
@@ -16,8 +18,7 @@ defmodule ProcessHub.Service.HookManager do
           | :priority_state_updated_hook
           | :pre_nodes_redistribution_hook
           | :post_nodes_redistribution_hook
-
-  # TODO: add all new hooks here.
+          | :pre_children_start_hook
 
   @type hook_handler() :: {module(), atom(), [any()]}
 

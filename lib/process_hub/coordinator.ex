@@ -223,26 +223,20 @@ defmodule ProcessHub.Coordinator do
 
     state =
       if Cluster.new_node?(hub_nodes, node) do
-        hub_nodes = Cluster.add_hub_node(state.hub_id, node)
+        Cluster.add_hub_node(state.hub_id, node)
 
-        DistributionStrategy.node_join(
-          state.settings.distribution_strategy,
-          state.hub_id,
-          hub_nodes,
-          node
-        )
+        HookManager.dispatch_hook(state.hub_id, Hook.pre_cluster_join(), node)
 
         PartitionToleranceStrategy.handle_node_up(
           state.settings.partition_tolerance_strategy,
           state.hub_id,
-          node,
-          hub_nodes
+          node
         )
 
         Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, :local)
         State.lock_local_event_handler(state.hub_id)
         Cluster.propagate_self(state.hub_id, node)
-        HookManager.dispatch_hook(state.hub_id, Hook.cluster_join(), node)
+        HookManager.dispatch_hook(state.hub_id, Hook.post_cluster_join(), node)
 
         state
       else
@@ -342,12 +336,7 @@ defmodule ProcessHub.Coordinator do
     hub_nodes = Cluster.nodes(state.hub_id, [:include_local])
 
     if Enum.member?(hub_nodes, down_node) do
-      DistributionStrategy.node_leave(
-        state.settings.distribution_strategy,
-        state.hub_id,
-        hub_nodes,
-        down_node
-      )
+      HookManager.dispatch_hook(state.hub_id, Hook.pre_cluster_leave(), down_node)
 
       State.lock_local_event_handler(state.hub_id)
       hub_nodes = Cluster.rem_hub_node(state.hub_id, down_node)

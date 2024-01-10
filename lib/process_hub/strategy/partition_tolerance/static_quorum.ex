@@ -51,10 +51,11 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
     @spec handle_node_down(
             ProcessHub.Strategy.PartitionTolerance.StaticQuorum.t(),
             ProcessHub.hub_id(),
-            node(),
-            [node()]
+            node()
           ) :: :ok
-    def handle_node_down(strategy, hub_id, _node, cluster_nodes) do
+    def handle_node_down(strategy, hub_id, _node) do
+      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+
       unless quorum_present?(strategy, cluster_nodes) do
         State.toggle_quorum_failure(hub_id)
       end
@@ -65,10 +66,11 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
     @spec handle_node_up(
             ProcessHub.Strategy.PartitionTolerance.StaticQuorum.t(),
             ProcessHub.hub_id(),
-            node(),
-            [node()]
+            node()
           ) :: :ok
-    def handle_node_up(strategy, hub_id, _node, cluster_nodes) do
+    def handle_node_up(strategy, hub_id, _node) do
+      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+
       with true <- quorum_present?(strategy, cluster_nodes) do
         State.toggle_quorum_success(hub_id)
       else

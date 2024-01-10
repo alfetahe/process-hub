@@ -24,7 +24,7 @@ defmodule MyApp.Application do
       ProcessHub.child_spec(%ProcessHub{
         hub_id: :my_hub,
         hooks: [
-            ProcessHub.Constant.Hook.cluster_join(), {MyModule, :my_function, [:some_data, :_]}
+            ProcessHub.Constant.Hook.post_cluster_join(), {MyModule, :my_function, [:some_data, :_]}
         ]
       })
     ]
@@ -38,7 +38,7 @@ end
 Example hook registration using the `ProcessHub.Service.HookManager` module:
 ```elixir
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-ProcessHub.Service.HookManager.register_hook(:my_hub, ProcessHub.Constant.Hook.cluster_join(), {MyModule, :my_function, [:some_data, :_]})
+ProcessHub.Service.HookManager.register_hook(:my_hub, ProcessHub.Constant.Hook.post_cluster_join(), {MyModule, :my_function, [:some_data, :_]})
 ```
 
 ## Hook handler examples

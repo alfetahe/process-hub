@@ -25,18 +25,16 @@ defmodule ProcessHub.Strategy.PartitionTolerance.Divergence do
     @spec handle_node_down(
             ProcessHub.Strategy.PartitionTolerance.Divergence.t(),
             ProcessHub.hub_id(),
-            node(),
-            [node()]
+            node()
           ) :: :ok
-    def handle_node_down(_strategy, _hub_id, _node, _cluster_nodes), do: :ok
+    def handle_node_down(_strategy, _hub_id, _node), do: :ok
 
     @spec handle_node_up(
             ProcessHub.Strategy.PartitionTolerance.Divergence.t(),
             ProcessHub.hub_id(),
-            node(),
-            [node()]
+            node()
           ) :: :ok
-    def handle_node_up(_strategy, _hub_id, _node, _cluster_nodes), do: :ok
+    def handle_node_up(_strategy, _hub_id, _node), do: :ok
 
     @spec handle_startup(
             ProcessHub.Strategy.PartitionTolerance.Divergence.t(),
