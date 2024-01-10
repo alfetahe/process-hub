@@ -5,7 +5,6 @@ defmodule ProcessHub.Service.HookManager do
   """
 
   alias ProcessHub.Utility.Name
-  alias ProcessHub.Service.LocalStorage
 
   @type hook_key() ::
           :cluster_join_hook

@@ -135,7 +135,7 @@ defmodule Test.Helper.Common do
 
   def sync_type_exec(actions, hub_id, opts) do
     Enum.each(actions, fn {function_name, hook_key, timeout_msg, children} ->
-      apply(ProcessHub, function_name, [hub_id, children])
+      apply(ProcessHub, function_name, [hub_id, children, Keyword.get(opts, :start_opts, [])])
 
       message_count =
         case Keyword.get(opts, :scope, :local) do

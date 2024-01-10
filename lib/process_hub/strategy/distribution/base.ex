@@ -3,6 +3,9 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   The distribution strategy protocol provides API functions for distributing child processes.
   """
 
+  # TODO: add documetation for the module and functions.
+
+
   @spec belongs_to(
           strategy :: struct(),
           hub_id :: atom(),
