@@ -18,11 +18,18 @@ for the hook messages.
 the caller.
 - Removed `cluster_nodes` parameter from `ProcessHub.Strategy.PartitionTolerance.Base.handle_startup`
 function because the strategy can access the nodes from the `Cluster` module itself when needed.
+- Changed `:cluster_join` -> `:post_cluster_join` and `:cluster_leave` -> `:post_cluster_leave`
 
 ### Added
 - Support for configurable distribution strategy. This allows the user to
 switch between predefined strategies or implement their own.
+- Added `ProcessHub.Strategy.Distribution.Guided` strategy which requires manual guidance
+from the user to decide which nodes should be used for process distribution.
 - Created guides.
+- Added new hooks: `:pre_children_start_hook`, `:pre_cluster_join`, `:pre_cluster_leave`
+
+### Removed
+- Reduced parameters on some strategy callbacks.
 
 ### Fixed
 - Replication strategy `:cluster_size` option was not couting the local node.
