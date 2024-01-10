@@ -72,7 +72,8 @@ defmodule ProcessHub.Utility.Name do
     concat_name([hub_id, "task_supervisor"], ".")
   end
 
-  # TODO: add tests and documentation
+  @doc "The name of the hook registry process."
+  @spec hook_registry(ProcessHub.hub_id()) :: atom()
   def hook_registry(hub_id) do
     concat_name([hub_id, "hook_registry"], ".")
   end

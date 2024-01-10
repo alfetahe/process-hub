@@ -40,4 +40,8 @@ defmodule Test.Utility.NameTest do
   test "registry name" do
     assert Name.registry(:test) === :"hub.test.process_registry"
   end
+
+  test "hook registry" do
+    assert Name.hook_registry(:test) === :"hub.test.hook_registry"
+  end
 end
