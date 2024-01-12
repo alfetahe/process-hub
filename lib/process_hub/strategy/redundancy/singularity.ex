@@ -18,7 +18,7 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     def replication_factor(_strategy), do: 1
 
     @impl true
-    @spec master_node(struct(), atom(), atom() | binary(), [node()]) :: node()
+    @spec master_node(struct(), ProcessHub.hub_id(), ProcessHub.child_id(), [node()]) :: node()
     def master_node(_strategy, _hub_id, _child_id, child_nodes) do
       List.first(child_nodes)
     end
@@ -26,8 +26,8 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     @impl true
     @spec handle_post_start(
             ProcessHub.Strategy.Redundancy.Singularity.t(),
-            atom(),
-            atom() | binary(),
+            ProcessHub.hub_id(),
+            ProcessHub.child_id(),
             pid(),
             [node()]
           ) :: :ok
@@ -37,7 +37,7 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     @spec handle_post_update(
             ProcessHub.Strategy.Redundancy.Singularity.t(),
             ProcessHub.hub_id(),
-            atom() | binary(),
+            ProcessHub.child_id(),
             [node()],
             {:up | :down, node()}
           ) :: :ok

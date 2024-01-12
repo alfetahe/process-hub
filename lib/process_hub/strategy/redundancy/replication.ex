@@ -12,6 +12,12 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   The passive instances of the process should be ready to take over if the active instance
   fails.
 
+  > Replication strategy selects the master/active node based on the `child_id` and
+  > `child_nodes` arguments. The `child_id` is converted to a charlist and summed up.
+  > The sum is then used to calculate the index of the master node in the `child_nodes` list.
+  > This ensures that the same master node is selected for the same `child_id` and `child_nodes`
+  > arguments.
+
   This strategy also allows replication on all nodes in the cluster. This is done by setting
   the `replication_factor` option to `:cluster_size`.
 
@@ -77,7 +83,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
 
     @impl true
-    @spec master_node(struct(), atom(), atom() | binary(), [node()]) :: node()
+    @spec master_node(struct(), ProcessHub.hub_id(), ProcessHub.child_id(), [node()]) :: node()
     def master_node(_strategy, _hub_id, child_id, child_nodes) do
       child_total =
         cond do
@@ -96,8 +102,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     @impl true
     @spec handle_post_start(
             ProcessHub.Strategy.Redundancy.Replication.t(),
-            atom(),
-            atom() | binary(),
+            ProcessHub.hub_id(),
+            ProcessHub.child_id(),
             pid(),
             [node()]
           ) :: :ok
@@ -118,26 +124,11 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       end
     end
 
-    defp process_mode(%Replication{replication_model: rp} = strat, hub_id, child_id, child_nodes) do
-      master_node = RedundancyStrategy.master_node(strat, hub_id, child_id, child_nodes)
-
-      cond do
-        rp === :active_active ->
-          :active
-
-        master_node === node() ->
-          :active
-
-        true ->
-          :passive
-      end
-    end
-
     @impl true
     @spec handle_post_update(
             ProcessHub.Strategy.Redundancy.Replication.t(),
             ProcessHub.hub_id(),
-            atom() | binary(),
+            ProcessHub.child_id(),
             [node()],
             {:up | :down, node()}
           ) :: :ok
@@ -195,6 +186,21 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
         true ->
           :ok
+      end
+    end
+
+    defp process_mode(%Replication{replication_model: rp} = strat, hub_id, child_id, child_nodes) do
+      master_node = RedundancyStrategy.master_node(strat, hub_id, child_id, child_nodes)
+
+      cond do
+        rp === :active_active ->
+          :active
+
+        master_node === node() ->
+          :active
+
+        true ->
+          :passive
       end
     end
 

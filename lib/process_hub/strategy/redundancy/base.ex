@@ -16,14 +16,15 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   @doc """
   Returns the master node that the given `child_id` belongs to.
   """
-  @spec master_node(struct(), atom(), atom() | binary(), [node()]) :: node()
+  @spec master_node(struct(), ProcessHub.hub_id(), ProcessHub.child_id(), [node()]) :: node()
   def master_node(strategy, hub_id, child_id, child_nodes)
 
   @doc """
   This function is called when `ProcessHub.DistributedSupervisor` has started a new
   child process, and the strategy can perform any post-start actions.
   """
-  @spec handle_post_start(struct(), atom(), atom() | binary(), pid(), [node()]) :: :ok
+  @spec handle_post_start(struct(), ProcessHub.hub_id(), ProcessHub.child_id(), pid(), [node()]) ::
+          :ok
   def handle_post_start(strategy, hub_id, child_id, child_pid, child_nodes)
 
   @doc """
@@ -32,8 +33,8 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   """
   @spec handle_post_update(
           struct(),
-          atom(),
-          atom() | binary(),
+          ProcessHub.hub_id(),
+          ProcessHub.child_id(),
           [node()],
           {:up | :down, node()}
         ) :: :ok
