@@ -1,27 +1,36 @@
 defprotocol ProcessHub.Strategy.Distribution.Base do
   @moduledoc """
-  The distribution strategy protocol provides API functions for distributing child processes.
+  The distribution strategy protocol defines behaviour to identify the nodes
+  which are responsible for a child process.
   """
 
-  # TODO: add documetation for the module and functions.
+  @doc """
+  Returns the list of nodes where the child process belongs to.
 
+  The list of nodes is used to determine where the child process should be started
+  or migrated to.
+  """
   @spec belongs_to(
           strategy :: struct(),
-          hub_id :: atom(),
+          hub_id :: ProcessHub.hub_id(),
           child_id :: atom() | binary(),
           replication_factor :: pos_integer()
         ) :: [node()]
   def belongs_to(strategy, hub_id, child_id, replication_factor)
 
   @doc """
-  Triggered when coordinator is initialized and lets the strategy update it's state.
+  Triggered when coordinator is initialized.
+
+  Could be used to perform initialization.
   """
-  @spec init(strategy :: struct(), hub_id :: atom()) :: any()
+  @spec init(struct(), ProcessHub.hub_id()) :: any()
   def init(strategy, hub_id)
 
   @doc """
-  Triggered when children are started and lets the strategy
+  Triggered when children are started.
+
+  Could be used to perform validation.
   """
-  @spec children_init(struct(), atom(), [map()], keyword()) :: :ok | {:error, any()}
+  @spec children_init(struct(), ProcessHub.hub_id(), [map()], keyword()) :: :ok | {:error, any()}
   def children_init(strategy, hub_id, child_specs, opts)
 end

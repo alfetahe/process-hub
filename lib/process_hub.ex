@@ -87,7 +87,7 @@ defmodule ProcessHub do
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
-          hooks: ProcessHub.Service.HookManager.hooks(),
+          hooks: ProcessHub.Service.HookManager.hook_handlers(),
           redundancy_strategy:
             ProcessHub.Strategy.Redundancy.Singularity.t()
             | ProcessHub.Strategy.Redundancy.Replication.t(),
