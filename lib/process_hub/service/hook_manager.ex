@@ -29,7 +29,8 @@ defmodule ProcessHub.Service.HookManager do
         }
 
   @doc "Registers a new hook handler."
-  @spec register_hook_handlers(ProcessHub.hub_id(), hook_key(), [hook_handler()]) :: true
+  @spec register_hook_handlers(ProcessHub.hub_id(), hook_key(), [hook_handler()]) ::
+          {atom(), boolean()}
   def register_hook_handlers(hub_id, hook_key, hook_handlers) do
     hook_handlers = registered_handlers(hub_id, hook_key) ++ hook_handlers
 
@@ -37,7 +38,7 @@ defmodule ProcessHub.Service.HookManager do
   end
 
   @doc "Returns all registered hook handlers for the given hook key"
-  @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: hook_handlers()
+  @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: [hook_handler()]
   def registered_handlers(hub_id, hook_key) do
     {:ok, res} = Name.hook_registry(hub_id) |> Cachex.get(hook_key)
 
