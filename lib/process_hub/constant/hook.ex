@@ -73,6 +73,9 @@ defmodule ProcessHub.Constant.Hook do
   @spec post_nodes_redistribution() :: :post_nodes_redistribution_hook
   def post_nodes_redistribution(), do: :post_nodes_redistribution_hook
 
+  @doc """
+  Hook triggered before the children of a process are started.
+  """
   @spec pre_children_start() :: :pre_children_start_hook
   def pre_children_start(), do: :pre_children_start_hook
 end

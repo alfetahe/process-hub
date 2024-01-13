@@ -4,7 +4,7 @@ Hooks are used to trigger events on specific actions. Hooks can be registered by
 handlers to the `:hooks` option of the `t:ProcessHub.t/0` configuration struct or by inserting them
 dynamically using the `ProcessHub.Service.HookManager` module.
 
-ProcessHub heavily uses hooks internally in the integration tests.
+ProcessHub heavily uses hooks internally in the integration tests and strategy implementations.
 
 Hooks have to be in the format of an `mfa` tuple. Basically, they are functions that will be called
 when the hook is triggered.
@@ -15,7 +15,7 @@ It is possible to register a hook handler with a wildcard argument `:_`, which w
 
 Example dynamic hook registration using the `t:ProcessHub.t/0` configuration struct:
 ```elixir
-# Register a hook handler for the `:cluster_join` event with a wildcard argument.
+# Register a hook handler for the `:pre_cluster_join_hook` event with a wildcard argument.
 defmodule MyApp.Application do
   use Application
 
@@ -24,7 +24,7 @@ defmodule MyApp.Application do
       ProcessHub.child_spec(%ProcessHub{
         hub_id: :my_hub,
         hooks: [
-            ProcessHub.Constant.Hook.post_cluster_join(), {MyModule, :my_function, [:some_data, :_]}
+            ProcessHub.Constant.Hook.pre_cluster_join(), {MyModule, :my_function, [:some_data, :_]}
         ]
       })
     ]
@@ -38,7 +38,7 @@ end
 Example hook registration using the `ProcessHub.Service.HookManager` module:
 ```elixir
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-ProcessHub.Service.HookManager.register_hook(:my_hub, ProcessHub.Constant.Hook.post_cluster_join(), {MyModule, :my_function, [:some_data, :_]})
+ProcessHub.Service.HookManager.register_hook_handlers(:my_hub, ProcessHub.Constant.Hook.post_cluster_join(), [{MyModule, :my_function, [:some_data, :_]}])
 ```
 
 ## Hook handler examples
@@ -51,19 +51,100 @@ defmodule MyModule do
 end
 ```
 
+## Hooks in custom strategy implementations
+
+Hooks can be used in custom strategy implementations to trigger events on specific actions and
+extend the functionality of the strategy.
+
+Here's an example of ProcessHub using hooks internally in the 
+`ProcessHub.Strategy.Distribution.ConsistentHashing` strategy implementation:
+```elixir
+# Register hook handlers to update the hash ring when node joins or leaves the cluster.
+def init(_strategy, hub_id) do
+  hub_nodes = LocalStorage.get(hub_id, :hub_nodes)
+
+  LocalStorage.insert(hub_id, Ring.storage_key(), Ring.create_ring(hub_nodes))
+
+  join_handler = {
+    ProcessHub.Strategy.Distribution.ConsistentHashing,
+    :handle_node_join,
+    [hub_id, :_]
+  }
+
+  leave_handler = {
+    ProcessHub.Strategy.Distribution.ConsistentHashing,
+    :handle_node_leave,
+    [hub_id, :_]
+  }
+
+  HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
+  HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
+end
+
+
+# Handler functions that will be called when the hooks are triggered.
+def handle_node_join(hub_id, node) do
+  hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
+
+  LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
+end
+
+def handle_node_leave(hub_id, node) do
+  hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
+
+  LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
+end
+```
+
+## Using hooks to react and handle asynchronous events
+
+Sometimes when starting a child process, it is necessary to know when the child process has been
+started and is ready to receive messages. We sure could use the `:async_wait` option but that would
+block the process that is starting the child process. Instead, we can use hooks to react to the
+`:pre_children_start` event asynchronously.
+
+Example:
+```elixir 
+# Register hook handler
+alias ProcessHub.Service.HookManager
+...
+hook_handler = {
+  MyModule,
+  :handle_child_start,
+  [hub_id, :_]
+}
+
+# We're triggering the hook when child process has been registered under the process registry.
+HookManager.register_hook_handlers(hub_id, Hook.registry_pid_inserted(), [join_handler])
+...
+
+# The hook handler
+defmodule MyModule do
+  def handle_child_start(hub_id, {child_id, node_pids}) do
+    # Send message to all started child processes.
+    Enum.each(node_pids, fn {_node, pid} ->
+      Process.send(pid, :hello_world, [])
+    end)
+  end
+end
+```
+
 ## Available hooks
 {: .width-100}
 
-| Event Key                        | Trigger                             | Data                                |
-| ------------                     | -------------                       | ---------------                     |
-| `cluster_join_hook`              | Node joins the cluster              | `node()`                            |
-| `cluster_leave_hook`             | Node leaves the cluster             | `node()`                            |
-| `registry_pid_inserted_hook`     | Process registered                  | `{child_id(), [{node(), pid()}]}`   |
-| `registry_pid_removed_hook`      | Process unregistered                | `child_id()`                        |
-| `child_migrated_hook`            | Process migrated                    | `{child_id(), node()}`              |
-| `priority_state_updated_hook`    | Priority state updated              | `{priority_level(), list()}`        |
-| `pre_nodes_redistribution_hook`  | Nodes redistribution start          | `{:nodeup or :nodedown, node()}`    |
-| `post_nodes_redistribution_hook` | Nodes redistribution end            | `{:nodeup or :nodedown, node()}`    |
-| `forwarded_migration_hook`       | Migration was forwarded and handled |  `{child_id(), node()}`             |
+| Event Key                        | Trigger                                 | Data                                             |
+| -------------------------------- | --------------------------------------- | ------------------------------------------------ |
+| `:pre_cluster_join_hook`         | Node joins hub cluster, not handled     | `node()`                                         |
+| `:post_cluster_join_hook`        | Node joins hub cluster, handled         | `node()`                                         |
+| `:pre_cluster_leave_hook`        | Node leaves hub cluster, not handled    | `node()`                                         |
+| `:post_cluster_leave_hook`       | Node leaves hub cluster, handled        | `node()`                                         |
+| `:registry_pid_inserted_hook`    | Process registered                      | `{child_id(), [{node(), pid()}]}`                |
+| `:registry_pid_removed_hook`     | Process unregistered                    | `child_id()`                                     |
+| `:child_migrated_hook`           | Process migrated                        | `{child_id(), node()}`                           |
+| `:priority_state_updated_hook`   | Priority state updated                  | `{priority_level(), list()}`                     |
+| `:pre_nodes_redistribution_hook` | Nodes redistribution start              | `{:nodeup or :nodedown, node()}`                 |
+| `:post_nodes_redistribution_hook`| Nodes redistribution end                | `{:nodeup or :nodedown, node()}`                 |
+| `:forwarded_migration_hook`      | Migration was forwarded and handled     | `{child_id(), node()}`                           |
+| `:pre_children_start`            | Before child process is started         | `ProcessHub.Handler.ChildrenAdd.StartHandle.t()` |
 
 See `ProcessHub.Constant.Hook` module for more information.
