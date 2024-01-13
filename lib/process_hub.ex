@@ -84,6 +84,8 @@ defmodule ProcessHub do
   The default is `ProcessHub.Strategy.Synchronization.PubSub`.
   - `:partition_tolerance_strategy` is optional and is used to define the strategy for partition tolerance.
   The default is `ProcessHub.Strategy.PartitionTolerance.Divergence`.
+  - `:distribution_strategy` is optional and is used to define the strategy for process distribution.
+  The default is `ProcessHub.Strategy.Distribution.ConsistentHashing`.
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -100,7 +102,9 @@ defmodule ProcessHub do
             ProcessHub.Strategy.PartitionTolerance.Divergence.t()
             | ProcessHub.Strategy.PartitionTolerance.StaticQuorum.t()
             | ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
-          distribution_strategy: ProcessHub.Strategy.Distribution.ConsistentHashing.t()
+          distribution_strategy:
+            ProcessHub.Strategy.Distribution.ConsistentHashing.t()
+            | ProcessHub.Strategy.Distribution.Guided.t()
         }
 
   @enforce_keys [:hub_id]

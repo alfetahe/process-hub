@@ -44,11 +44,15 @@ defmodule MyApp.Application do
       # Configure the partition tolerance strategy.
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.StaticQuorum{
         quorum_size: 3
-      }
+      },
+      # Configure the distribution strategy.
+      distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{}
     }}
   end
 end
 ```
+
+Each strategy module has additional documentation on how to configure it.
 
 ### Redundancy Strategy
 `ProcessHub.Strategy.Redundancy.Base` - defines the base protocol for redundancy strategies.
@@ -126,3 +130,14 @@ will terminate along with its children.
   > When scaling down too many nodes at once, the system may consider itself to be in a
   > network partition. Read the documentation for the
   >`ProcessHub.Strategy.PartitionTolerance.DynamicQuorum` strategy for more information.
+
+### Distribution Strategy:
+`ProcessHub.Strategy.Distribution.Base` - defines the base protocol for distribution
+strategies which define the method to determine the node/process mapping.
+
+ProcessHub currently supports 2 distribution strategies:
+- `ProcessHub.Strategy.Distribution.ConsistentHashing` - uses a consistent hash ring to determine
+the node/process mapping. This strategy is the default strategy.
+- `ProcessHub.Strategy.Distribution.Guided` - uses a predefined mapping to determine the
+node/process mapping. This strategy is useful when we want to control the mapping of
+processes to nodes.
