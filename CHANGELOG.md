@@ -19,6 +19,8 @@ the caller.
 - Removed `cluster_nodes` parameter from `ProcessHub.Strategy.PartitionTolerance.Base.handle_startup`
 function because the strategy can access the nodes from the `Cluster` module itself when needed.
 - Changed `:cluster_join` -> `:post_cluster_join` and `:cluster_leave` -> `:post_cluster_leave`
+- Changed `:child_migrated_hook` -> `:children_migrated_hook` and the hook data to `{node(), [child_spec()]}`
+- Improved hot swap migration performance by replacing multiple single operations with bulk operations.
 
 ### Added
 - Support for configurable distribution strategy. This allows the user to
