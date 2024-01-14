@@ -28,7 +28,7 @@ defmodule Test.Constant.HookTest do
   end
 
   test "child migrated" do
-    assert Hook.child_migrated() === :child_migrated_hook
+    assert Hook.children_migrated() === :children_migrated_hook
   end
 
   test "migration forwarded" do

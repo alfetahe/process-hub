@@ -93,48 +93,53 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     @migration_timeout 5000
 
     @impl true
-    @spec handle_migration(struct(), ProcessHub.hub_id(), ProcessHub.child_spec(), node(), term()) ::
+    @spec handle_migration(
+            struct(),
+            ProcessHub.hub_id(),
+            [ProcessHub.child_spec()],
+            node(),
+            term()
+          ) ::
             :ok
-    def handle_migration(strategy, hub_id, child_spec, added_node, sync_strategy) do
+    def handle_migration(strategy, hub_id, child_specs, added_node, sync_strategy) do
       # Start redistribution for the child.
-      Distributor.child_redist_init(hub_id, child_spec, added_node,
+      Distributor.child_redist_init(hub_id, child_specs, added_node,
         reply_to: [self()],
         migration: true
       )
 
-      # Wait for confirmation of the started child process.
-      result = receive_child_resp(child_spec.id, added_node)
+      Enum.each(1..length(child_specs), fn _x_ ->
+        case Mailbox.receive_response(
+               :child_start_resp,
+               receive_handler(),
+               @migration_timeout,
+               nil
+             ) do
+          {:error, _} ->
+            Logger.error("Child process migration failed to start on node #{inspect(added_node)}")
+            nil
 
-      # Notify the peer process about the migration.
-      start_handover(strategy, hub_id, child_spec.id, result)
+          {child_id, result} ->
+            # Notify the peer process about the migration.
+            start_handover(strategy, hub_id, child_id, result)
 
-      # Wait for response from the peer process.
-      handle_retention(strategy)
+            # Wait for response from the peer process.
+            handle_retention(strategy)
 
-      # Terminate the child from local node.
-      Distributor.child_terminate(hub_id, child_spec.id, sync_strategy)
+            # Terminate the child from local node.
+            Distributor.child_terminate(hub_id, child_id, sync_strategy)
+        end
+      end)
 
       # Dispatch hook.
-      HookManager.dispatch_hook(hub_id, Hook.child_migrated(), {child_spec.id, added_node})
+      HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})
 
       :ok
     end
 
-    defp receive_child_resp(child_id, added_node) do
-      Mailbox.receive_response(
-        :child_start_resp,
-        child_id,
-        added_node,
-        receive_handler(),
-        @migration_timeout,
-        :child_start_timeout
-      )
-      |> elem(1)
-    end
-
     defp receive_handler() do
-      fn _child_id, resp, _node ->
-        resp
+      fn child_id, resp, _node ->
+        {child_id, resp}
       end
     end
 

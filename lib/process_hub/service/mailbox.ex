@@ -111,6 +111,16 @@ defmodule ProcessHub.Service.Mailbox do
     end
   end
 
+  # TODO: add tests
+  @doc "Receives a single child response message."
+  def receive_response(type, handler, timeout, error) do
+    receive do
+      {^type, child_id, resp, receive_node} -> {child_id, handler.(child_id, resp, receive_node)}
+    after
+      timeout -> {:error, error}
+    end
+  end
+
   defp extract_first(results, opts) do
     case Keyword.get(opts, :return_first, false) do
       false -> results

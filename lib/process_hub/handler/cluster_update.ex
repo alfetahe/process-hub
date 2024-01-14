@@ -31,7 +31,10 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             dist_strat: DistributionStrategy.t(),
             node: node(),
             repl_fact: pos_integer(),
-            local_children: list()
+            local_children: list(),
+            keep: list(),
+            migrate: list(),
+            async_tasks: list()
           }
 
     @enforce_keys [
@@ -43,7 +46,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :dist_strat,
       :node
     ]
-    defstruct @enforce_keys ++ [:repl_fact, :local_children]
+    defstruct @enforce_keys ++ [:repl_fact, :local_children, :keep, :migrate, async_tasks: []]
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = arg) do
@@ -51,7 +54,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       HookManager.dispatch_hook(arg.hub_id, Hook.pre_nodes_redistribution(), {:nodeup, arg.node})
 
       # Handle the redistribution of processes.
-      distribute_processes(arg) |> Task.await_many(migration_timeout(arg.migr_strat))
+      distribute_processes(arg)
 
       # Propagate the local children to the new node.
       propagate_local_children(arg.hub_id, arg.node)
@@ -80,41 +83,73 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       end)
     end
 
-    defp distribute_processes(
-           %__MODULE__{
-             node: node,
-             hub_id: hub_id,
-             redun_strat: redun_strat,
-             migr_strat: migr_strat,
-             sync_strat: sync_strat
-           } = arg
-         ) do
+    defp distribute_processes(arg) do
       arg
       |> Map.put(:repl_fact, RedundancyStrategy.replication_factor(arg.redun_strat))
       |> local_children()
-      |> distributed_child_specs([])
-      |> Enum.map(fn %{child_spec: child_spec, keep_local: keep_local, child_nodes: child_nodes} ->
-        case keep_local do
-          false ->
-            Task.async(fn ->
-              MigrationStrategy.handle_migration(migr_strat, hub_id, child_spec, node, sync_strat)
+      |> dist_children()
+      |> handle_migrate()
+      |> handle_keep()
+      |> wait_for_tasks()
+    end
+
+    defp wait_for_tasks(%__MODULE__{async_tasks: async_tasks, migr_strat: migr_strat} = arg) do
+      Task.await_many(async_tasks, migration_timeout(migr_strat))
+
+      %__MODULE__{arg | async_tasks: []}
+    end
+
+    defp handle_migrate(
+           %__MODULE__{
+             hub_id: hub_id,
+             migrate: data,
+             async_tasks: async_tasks,
+             migr_strat: migr_strat,
+             sync_strat: sync_strat,
+             node: node
+           } = arg
+         ) do
+      task =
+        Task.async(fn ->
+          child_specs =
+            Enum.map(data, fn %{child_spec: child_spec} ->
+              child_spec
             end)
 
-          true ->
-            RedundancyStrategy.handle_post_update(
-              redun_strat,
-              hub_id,
-              child_spec.id,
-              child_nodes,
-              {:up, arg.node}
-            )
+          MigrationStrategy.handle_migration(migr_strat, hub_id, child_specs, node, sync_strat)
+        end)
 
-            # Will initiate the start of the child on the new node.
-            Distributor.child_redist_init(hub_id, child_spec, node)
+      %__MODULE__{arg | async_tasks: [task | async_tasks]}
+    end
 
-            Task.completed(:ok)
-        end
-      end)
+    defp handle_keep(
+           %__MODULE__{
+             hub_id: hub_id,
+             keep: keep,
+             redun_strat: redun_strat,
+             async_tasks: async_tasks,
+             node: node
+           } = arg
+         ) do
+      task =
+        Task.async(fn ->
+          child_specs =
+            Enum.map(keep, fn %{child_spec: child_spec, child_nodes: child_nodes} ->
+              RedundancyStrategy.handle_post_update(
+                redun_strat,
+                hub_id,
+                child_spec.id,
+                child_nodes,
+                {:up, arg.node}
+              )
+
+              child_spec
+            end)
+
+          Distributor.child_redist_init(hub_id, child_specs, node)
+        end)
+
+      %__MODULE__{arg | async_tasks: [task | async_tasks]}
     end
 
     defp local_children(%__MODULE__{hub_id: hub_id} = arg) do
@@ -129,36 +164,40 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       %__MODULE__{arg | local_children: local_children}
     end
 
-    defp distributed_child_specs(
+    defp dist_children(
            %__MODULE__{
-             local_children: [{child_id, {child_spec, _child_nodes_old}} | childs],
+             local_children: local_children,
              dist_strat: dist_strat,
              hub_id: hub_id,
              repl_fact: rp,
              node: node
-           } = arg,
-           acc
+           } = arg
          ) do
-      child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, rp)
-      local_node = node()
+      {keep, migrate} =
+        Enum.reduce(local_children, {[], []}, fn {child_id, {child_spec, _}},
+                                                 {keep, migrate} = acc ->
+          child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, rp)
+          local_node = node()
 
-      cond do
-        Enum.member?(child_nodes, node) ->
-          keep_local = Enum.member?(child_nodes, local_node)
+          cond do
+            Enum.member?(child_nodes, node) ->
+              case Enum.member?(child_nodes, local_node) do
+                true ->
+                  {[%{child_spec: child_spec, child_nodes: child_nodes} | keep], migrate}
 
-          acc = [
-            %{child_spec: child_spec, keep_local: keep_local, child_nodes: child_nodes} | acc
-          ]
+                false ->
+                  {keep, [%{child_spec: child_spec, child_nodes: child_nodes} | migrate]}
+              end
 
-          distributed_child_specs(%__MODULE__{arg | local_children: childs}, acc)
+            true ->
+              acc
+          end
+        end)
 
-        true ->
-          distributed_child_specs(%__MODULE__{arg | local_children: childs}, acc)
-      end
+      %__MODULE__{arg | keep: keep, migrate: migrate}
     end
 
-    defp distributed_child_specs(_arg, acc), do: acc
-
+    # TODO: maybe we can use it some where.
     defp migration_timeout(migr_strategy) do
       default_timeout = 5000
 
@@ -241,7 +280,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         local_node = node()
         # Check if removed nodes procsses should be started on the local node.
         if !Enum.member?(nodes_old, local_node) && Enum.member?(nodes_new, local_node) do
-          Distributor.child_redist_init(arg.hub_id, child_spec, local_node)
+          # TODO: here we should also pass all children not one by one!
+          Distributor.child_redist_init(arg.hub_id, [child_spec], local_node)
         end
       end)
     end

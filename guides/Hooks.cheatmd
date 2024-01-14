@@ -140,7 +140,7 @@ end
 | `:post_cluster_leave_hook`       | Node leaves hub cluster, handled        | `node()`                                         |
 | `:registry_pid_inserted_hook`    | Process registered                      | `{child_id(), [{node(), pid()}]}`                |
 | `:registry_pid_removed_hook`     | Process unregistered                    | `child_id()`                                     |
-| `:child_migrated_hook`           | Process migrated                        | `{child_id(), node()}`                           |
+| `:children_migrated_hook`        | Processes migrated                      | `{node(), [child_spec()]}`                       |
 | `:priority_state_updated_hook`   | Priority state updated                  | `{priority_level(), list()}`                     |
 | `:pre_nodes_redistribution_hook` | Nodes redistribution start              | `{:nodeup or :nodedown, node()}`                 |
 | `:post_nodes_redistribution_hook`| Nodes redistribution end                | `{:nodeup or :nodedown, node()}`                 |

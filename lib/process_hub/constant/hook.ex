@@ -46,8 +46,8 @@ defmodule ProcessHub.Constant.Hook do
   @doc """
   Hook triggered when a process is migrated to another node.
   """
-  @spec child_migrated() :: :child_migrated_hook
-  def child_migrated(), do: :child_migrated_hook
+  @spec children_migrated() :: :children_migrated_hook
+  def children_migrated(), do: :children_migrated_hook
 
   @doc """
   Hook triggered when a process is migrated to another node.

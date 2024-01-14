@@ -407,7 +407,7 @@ defmodule Test.IntegrationTest do
          {Hook.post_cluster_join(), :local},
          {Hook.post_cluster_leave(), :global},
          {Hook.registry_pid_inserted(), :global},
-         {Hook.child_migrated(), :global}
+         {Hook.children_migrated(), :global}
        ]
   test "coldswap migration with replication",
        %{hub_id: hub_id, replication_factor: rf, listed_hooks: lh} = context do
@@ -475,7 +475,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_inserted(), :local},
          {Hook.registry_pid_removed(), :local},
          {Hook.post_nodes_redistribution(), :local},
-         {Hook.child_migrated(), :local}
+         {Hook.children_migrated(), :local}
        ]
   test "hotswap migration with handoff",
        %{hub_id: hub_id, listed_hooks: lh, hub: hub} = context do
@@ -534,7 +534,7 @@ defmodule Test.IntegrationTest do
 
     # Confirm that all migrated children have been updated.
     mcl = length(migrated_children)
-    Bag.receive_multiple(mcl, Hook.child_migrated(), error_msg: "Child migration timeout")
+    Bag.receive_multiple(mcl, Hook.children_migrated(), error_msg: "Child migration timeout")
 
     # Validate the data.
     Enum.each(migrated_children, fn {child_id, node} ->

@@ -15,14 +15,16 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
   @doc "Initiates process redistribution."
-  @spec child_redist_init(ProcessHub.hub_id(), ProcessHub.child_spec(), node(), keyword() | nil) ::
+  @spec child_redist_init(ProcessHub.hub_id(), [ProcessHub.child_spec()], node(), keyword() | nil) ::
           {:ok, :redistribution_initiated}
-  def child_redist_init(hub_id, child_spec, node, opts \\ []) do
-    redist_child =
-      init_data([node], hub_id, child_spec)
-      |> Map.merge(Map.new(opts))
+  def child_redist_init(hub_id, child_specs, node, opts \\ []) do
+    redist_children =
+      Enum.map(child_specs, fn child_spec ->
+        init_data([node], hub_id, child_spec)
+        |> Map.merge(Map.new(opts))
+      end)
 
-    Dispatcher.children_start(hub_id, [{node, [redist_child]}], opts)
+    Dispatcher.children_start(hub_id, [{node, redist_children}], opts)
 
     {:ok, :redistribution_initiated}
   end
