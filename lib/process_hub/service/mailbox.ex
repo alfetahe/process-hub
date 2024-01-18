@@ -103,7 +103,7 @@ defmodule ProcessHub.Service.Mailbox do
   end
 
   @doc "Receives a single child response message."
-  def receive_response(type, child_id, node, handler, timeout, error) do
+  def receive_response(type, child_id, node, handler, timeout, error \\ nil) do
     receive do
       {^type, ^child_id, resp, receive_node} -> {child_id, handler.(child_id, resp, receive_node)}
     after
@@ -113,11 +113,11 @@ defmodule ProcessHub.Service.Mailbox do
 
   # TODO: add tests
   @doc "Receives a single child response message."
-  def receive_response(type, handler, timeout, error) do
+  def receive_response(type, handler, timeout) do
     receive do
       {^type, child_id, resp, receive_node} -> {child_id, handler.(child_id, resp, receive_node)}
     after
-      timeout -> {:error, error}
+      timeout -> {:error, :receive_timeout}
     end
   end
 

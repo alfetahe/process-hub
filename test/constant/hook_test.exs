@@ -27,7 +27,7 @@ defmodule Test.Constant.HookTest do
     assert Hook.registry_pid_removed() === :registry_pid_remove_hook
   end
 
-  test "child migrated" do
+  test "children migrated" do
     assert Hook.children_migrated() === :children_migrated_hook
   end
 

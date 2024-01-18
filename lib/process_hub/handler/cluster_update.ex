@@ -53,6 +53,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       # Dispatch the nodes pre redistribution event.
       HookManager.dispatch_hook(arg.hub_id, Hook.pre_nodes_redistribution(), {:nodeup, arg.node})
 
+      IO.puts("CLUSTER UPDATE START ON NODE #{node()} FOR NODE #{arg.node}")
+
       # Handle the redistribution of processes.
       distribute_processes(arg)
 
@@ -64,6 +66,10 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
       # Unlock the local event handler.
       State.unlock_local_event_handler(arg.hub_id)
+
+      IO.puts(
+        "-------------------- CLUSTER UPDATE END ON NODE #{node()} FOR NODE #{arg.node} -------------------"
+      )
 
       :ok
     end
@@ -166,21 +172,21 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp dist_children(
            %__MODULE__{
-             local_children: local_children,
+             local_children: lc,
              dist_strat: dist_strat,
              hub_id: hub_id,
              repl_fact: rp,
              node: node
            } = arg
          ) do
-      {keep, migrate} =
-        Enum.reduce(local_children, {[], []}, fn {child_id, {child_spec, _}},
-                                                 {keep, migrate} = acc ->
-          child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, rp)
-          local_node = node()
+      local_node = node()
 
-          cond do
-            Enum.member?(child_nodes, node) ->
+      {keep, migrate} =
+        Enum.reduce(lc, {[], []}, fn {child_id, {child_spec, _}}, {keep, migrate} = acc ->
+          child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, rp)
+
+          case Enum.member?(child_nodes, node) do
+            true ->
               case Enum.member?(child_nodes, local_node) do
                 true ->
                   {[%{child_spec: child_spec, child_nodes: child_nodes} | keep], migrate}
@@ -189,7 +195,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                   {keep, [%{child_spec: child_spec, child_nodes: child_nodes} | migrate]}
               end
 
-            true ->
+            false ->
               acc
           end
         end)
@@ -197,9 +203,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       %__MODULE__{arg | keep: keep, migrate: migrate}
     end
 
-    # TODO: maybe we can use it some where.
     defp migration_timeout(migr_strategy) do
-      default_timeout = 5000
+      default_timeout = 10000
 
       if Map.has_key?(migr_strategy, :retention) do
         case Map.get(migr_strategy, :retention, :none) do
@@ -216,6 +221,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     @moduledoc """
     Handler for the node down event.
     """
+
     @type t() :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
             removed_node: node(),

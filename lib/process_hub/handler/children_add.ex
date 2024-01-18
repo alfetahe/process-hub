@@ -135,32 +135,44 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       local_node = node()
       replication_factor = RedundancyStrategy.replication_factor(redun_strat)
 
-      Enum.reduce(children, [], fn %{child_id: child_id} = child_data, acc ->
-        nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, replication_factor)
+      {valid, forw} =
+        Enum.reduce(children, {[], []}, fn %{child_id: cid, nodes: n_orig} = cdata,
+                                           {valid, forw} ->
+          nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, replication_factor)
 
-        # Recheck if the node that is supposed to be started on local node is
-        # assigned to this node or not. If not then forward to the correct node.
-        #
-        # These cases can happen when multiple nodes are added to the cluster
-        # at the same time.
-        case Enum.member?(nodes, local_node) do
-          true ->
-            [child_data | acc]
+          # Recheck if the child processes that are supposed to be started current node are
+          # still assigned to current node or not. If not then forward to the correct node.
+          #
+          # These cases can happen when multiple nodes are added to the cluster simultaneously.
+          case Enum.member?(nodes, local_node) do
+            true ->
+              {[cdata | valid], forw}
 
-          false ->
-            forward_child(hub_id, child_data, nodes, start_opts)
-            acc
-        end
-      end)
+            false ->
+              # Find out which nodes are not mentioned in the original list of nodes.
+              # These are the nodes that need to be forwarded to.
+              {valid, populate_forward(forw, nodes, n_orig, cdata)}
+          end
+        end)
+
+      if length(forw) > 0 do
+        Dispatcher.children_start(hub_id, forw, start_opts)
+        HookManager.dispatch_hook(hub_id, Hook.forwarded_migration(), forw)
+      end
+
+      # Return the filtered list of valid children for this node.
+      valid
     end
 
-    defp forward_child(hub_id, child_data, parent_nodes, start_opts) do
-      parent_node = Enum.at(parent_nodes, 0)
+    defp populate_forward(forw_data, nodes_valid, nodes_invalid, child_data) do
+      forw_nodes = Enum.filter(nodes_valid, fn node -> !Enum.member?(nodes_invalid, node) end)
 
-      case is_atom(parent_node) do
-        true -> Dispatcher.children_start(hub_id, [{parent_node, [child_data]}], start_opts)
-        false -> nil
-      end
+      updated_forw =
+        Enum.map(forw_nodes, fn forw_node ->
+          {forw_node, [child_data | Keyword.get(forw_data, forw_node, [])]}
+        end)
+
+      Keyword.merge(forw_data, updated_forw)
     end
   end
 
@@ -203,10 +215,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
       local_node = node()
 
+      # Not all nodes should handle the reply_to options or we will end up with multiple replies.
       Enum.each(arg.children, fn {child_id, _, startup_res, {:for_node, for_node, opts}} ->
         if for_node === local_node do
           handle_reply_to(opts, child_id, startup_res, for_node)
-          handle_migration(opts, arg.hub_id, child_id, for_node)
         end
       end)
     end
@@ -222,14 +234,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           startup_res,
           local_node
         )
-      end
-    end
-
-    defp handle_migration(opts, hub_id, child_id, local_node) do
-      migration = Keyword.get(opts, :migration, false)
-
-      if migration do
-        HookManager.dispatch_hook(hub_id, Hook.forwarded_migration(), {child_id, local_node})
       end
     end
   end

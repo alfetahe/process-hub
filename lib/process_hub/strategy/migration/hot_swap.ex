@@ -23,14 +23,14 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   Example migration with handover using `GenServer`:
 
   ```elixir
-  def handle_info({:process_hub, :handover_start, startup_resp, from}, state) do
+  def handle_info({:process_hub, :handover_start, startup_resp, child_id, from}, state) do
     case startup_resp do
       {:ok, pid} ->
         # Send the state to the remote process.
         Process.send(pid, {:process_hub, :handover, state}, [])
 
         # Signal the handler process that the state handover has been handled.
-        Process.send(from, {:process_hub, :retention_handled}, [])
+        Process.send(from, {:process_hub, :retention_handled, child_id}, [])
 
       _ ->
         nil
@@ -90,7 +90,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defstruct retention: :none, handover: false
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
-    @migration_timeout 5000
+    @migration_timeout 15000
 
     @impl true
     @spec handle_migration(
@@ -102,56 +102,88 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           ) ::
             :ok
     def handle_migration(strategy, hub_id, child_specs, added_node, sync_strategy) do
-      # Start redistribution for the child.
-      Distributor.child_redist_init(hub_id, child_specs, added_node,
-        reply_to: [self()],
-        migration: true
+      # Start redistribution of the child processes.
+      Distributor.child_redist_init(hub_id, child_specs, added_node, reply_to: [self()])
+
+      # TODO: refactor this code..
+
+      IO.puts(
+        "MIGRA STARTED ON NODE #{node()} FOR NODE: #{added_node} CHILDREN: #{inspect(Enum.map(child_specs, & &1[:id]))}"
       )
 
-      Enum.each(1..length(child_specs), fn _x_ ->
-        case Mailbox.receive_response(
-               :child_start_resp,
-               receive_handler(),
-               @migration_timeout,
-               nil
-             ) do
-          {:error, _} ->
-            Logger.error("Child process migration failed to start on node #{inspect(added_node)}")
-            nil
+      if length(child_specs) > 0 do
+        dist_sup = Name.distributed_supervisor(hub_id)
 
-          {child_id, result} ->
-            # Notify the peer process about the migration.
-            start_handover(strategy, hub_id, child_id, result)
+        migration_cids =
+          Enum.map(1..length(child_specs), fn _x ->
+            case Mailbox.receive_response(
+                   :child_start_resp,
+                   receive_handler(),
+                   @migration_timeout
+                 ) do
+              {:error, _reason} ->
+                Logger.error("Migration failed to start on node #{inspect(added_node)}")
+                nil
 
-            # Wait for response from the peer process.
-            handle_retention(strategy)
+              {child_id, result} ->
+                # Notify the peer process about the migration.
+                case start_handover(strategy, child_id, dist_sup, result) do
+                  nil -> nil
+                  _ -> child_id
+                end
+            end
+          end)
+          |> Enum.filter(&(&1 != nil))
+          |> retention_switch(strategy)
 
-            # Terminate the child from local node.
+        Enum.reduce(migration_cids, :continue, fn
+          child_id, :continue ->
+            # Wait for response from the peer process and then terminate the child from local node.
+            retention_signal = handle_retention(strategy, child_id)
             Distributor.child_terminate(hub_id, child_id, sync_strategy)
-        end
-      end)
+            retention_signal
 
-      # Dispatch hook.
-      HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})
+          child_id, :kill ->
+            # Terminate the local child immediately.
+            Distributor.child_terminate(hub_id, child_id, sync_strategy)
+            :kill
+        end)
+
+        IO.puts(
+          "MIGRA ENDED ON NODE: #{node()} FOR NODE: #{added_node} FOR CHILDREN #{inspect(migration_cids)}"
+        )
+
+        if length(migration_cids) > 0 do
+          # Dispatch hook.
+          HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})
+        end
+      end
 
       :ok
     end
 
+    defp retention_switch(child_ids, strategy) do
+      Process.send_after(self(), {:process_hub, :retention_over}, retention_time(strategy))
+
+      child_ids
+    end
+
     defp receive_handler() do
-      fn child_id, resp, _node ->
-        {child_id, resp}
+      fn _child_id, resp, _node ->
+        resp
       end
     end
 
-    defp start_handover(strategy, hub_id, child_id, result) do
+    defp start_handover(strategy, child_id, dist_sup, result) do
       case strategy.handover do
         true ->
-          pid =
-            Name.distributed_supervisor(hub_id)
-            |> DistributedSupervisor.local_pid(child_id)
+          # |> IO.inspect(label: "PID")
+          pid = DistributedSupervisor.local_pid(dist_sup, child_id)
 
           if is_pid(pid) do
-            send(pid, {:process_hub, :handover_start, result, self()})
+            # IO.inspect result, label: "RES"
+
+            send(pid, {:process_hub, :handover_start, result, child_id, self()})
           end
 
         false ->
@@ -159,16 +191,37 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
     end
 
-    defp handle_retention(strategy) do
+    defp retention_time(strategy) do
       case strategy.retention do
         :none ->
-          nil
+          0
+
+        retention ->
+          retention
+      end
+    end
+
+    defp handle_retention(strategy, child_id) do
+      retention_time = retention_time(strategy)
+
+      case strategy.retention do
+        :none ->
+          # IO.puts " NO RETENITION #{node()}"
+
+          :kill
 
         _ ->
           receive do
-            {:process_hub, :retention_handled} -> nil
+            {:process_hub, :retention_over} ->
+              #  IO.puts " RETENTION KILL MSG RECEIVED #{node()}"
+              :kill
+
+            {:process_hub, :retention_handled, ^child_id} ->
+              :continue
           after
-            strategy.retention -> nil
+            retention_time ->
+              #  IO.puts " OVERTIME #{node()}"
+              :kill
           end
       end
     end
@@ -178,13 +231,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     quote do
       require Logger
 
-      def handle_info({:process_hub, :handover_start, startup_resp, from}, state) do
+      def handle_info({:process_hub, :handover_start, startup_resp, cid, from}, state) do
         case startup_resp do
           {:error, {:already_started, pid}} ->
-            send_handover_start(pid, from, state)
+            send_handover_start(pid, cid, from, state)
 
           {:ok, pid} ->
-            send_handover_start(pid, from, state)
+            send_handover_start(pid, cid, from, state)
 
           error ->
             Logger.error("Handover failed: #{inspect(error)}")
@@ -197,9 +250,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         {:noreply, handover_state}
       end
 
-      defp send_handover_start(pid, from, state) do
+      defp send_handover_start(pid, cid, from, state) do
         Process.send(pid, {:process_hub, :handover, state}, [])
-        Process.send(from, {:process_hub, :retention_handled}, [])
+        Process.send(from, {:process_hub, :retention_handled, cid}, [])
       end
     end
   end

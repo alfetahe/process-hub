@@ -127,6 +127,7 @@ defmodule ProcessHub.Coordinator do
 
     # TODO: handlers are not registered in some cases thats why dispatching may fail..
     # Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), :global)
+    # Make sure it's okay to dispatch all nodes
     Enum.each(Node.list(), fn node ->
       :erlang.send({state.managers.coordinator, node}, {@event_cluster_join, node()}, [])
     end)
@@ -222,7 +223,7 @@ defmodule ProcessHub.Coordinator do
     hub_nodes = Cluster.nodes(state.hub_id, [:include_local])
 
     state =
-      if Cluster.new_node?(hub_nodes, node) do
+      if Cluster.new_node?(hub_nodes, node) and node() !== node do
         Cluster.add_hub_node(state.hub_id, node)
 
         HookManager.dispatch_hook(state.hub_id, Hook.pre_cluster_join(), node)
@@ -399,7 +400,9 @@ defmodule ProcessHub.Coordinator do
 
   defp register_handlers(%{global_event_queue: gq, local_event_queue: lq}) do
     Blockade.add_handler(lq, @event_distribute_children)
+    # TODO: we're not even dispatching it but calling directly..
     Blockade.add_handler(gq, @event_cluster_join)
+    # maybe same as above, we don't need to register the handlers then but call them directly..
     Blockade.add_handler(lq, @event_cluster_leave)
     Blockade.add_handler(lq, @event_sync_remote_children)
     Blockade.add_handler(gq, @event_children_registration)
