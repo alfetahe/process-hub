@@ -217,7 +217,9 @@ defmodule Test.Service.ProcessRegistryTest do
 
     formatted_data =
       Map.merge(local, local_n_remote)
-      |> Enum.map(fn {child_id, {child_spec, nodes}} -> {child_id, {child_spec, nodes}} end)
+      |> Enum.map(fn {child_id, {_child_spec, nodes}} ->
+        {child_id, List.first(nodes) |> elem(1)}
+      end)
       |> Enum.sort()
 
     assert Enum.sort(ProcessRegistry.local_children(hub_id)) === formatted_data
@@ -254,7 +256,7 @@ defmodule Test.Service.ProcessRegistryTest do
 
     formatted_data =
       Map.merge(local, local_n_remote)
-      |> Enum.map(fn {_key, {child_spec, _nodes}} -> child_spec end)
+      |> Enum.map(fn {_cid, {child_spec, _nodes}} -> child_spec end)
       |> Enum.sort()
 
     assert Enum.sort(ProcessRegistry.local_child_specs(hub_id)) === formatted_data

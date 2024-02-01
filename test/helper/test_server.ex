@@ -12,8 +12,14 @@ defmodule Test.Helper.TestServer do
   end
 
   def init(args) do
+    # Process.flag(:trap_exit, true)
+
     {:ok, args}
   end
+
+  # def terminate(reason, state) do
+  #   :ok
+  # end
 
   def handle_call(:get_state, _from, state) do
     {:reply, state, state}

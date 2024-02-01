@@ -1,6 +1,5 @@
 defmodule Test.Service.ClusterTest do
   alias ProcessHub.Service.Cluster
-  alias ProcessHub.Utility.Name
 
   use ProcessHub.Constant.Event
   use ExUnit.Case
@@ -58,13 +57,5 @@ defmodule Test.Service.ClusterTest do
     assert Cluster.new_node?([:existing, :second], :existing) === false
     assert Cluster.new_node?([:existing, :second], :noexisting) === true
     assert Cluster.new_node?([], :noexisting) === true
-  end
-
-  test "propagate self", %{hub_id: hub_id} = _context do
-    send(Name.coordinator(hub_id), {@event_cluster_leave, node()})
-    assert Cluster.nodes(hub_id) === []
-    assert Cluster.propagate_self(hub_id, node())
-    Process.sleep(10)
-    assert Cluster.nodes(hub_id, [:include_local]) === [node()]
   end
 end

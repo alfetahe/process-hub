@@ -65,12 +65,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   @typedoc """
   Hot-swap migration strategy configuration.
   Available options:
-  - `:retention` - An integer value in milliseconds or the `:none` atom is used to specify how long
+  - `:retention` - An integer value in milliseconds is used to specify how long
     the peer process should be kept alive after a new child process has been started on the remote node.
     This option is used to ensure that the peer process has had enough time to perform any cleanup
-    or state synchronization before the local process is terminated. It is **strongly recommended**
-    to use this option.
-    The default value is `:none`.
+    or state synchronization before the local process is terminated.
+    Keep in mind that process will be terminated before the retention time has passed if the peer process
+    has notified the handler process that the state transfer has been handled.
+    The default value is `5000`.
 
   - `:handover` - A boolean value. If set to `true`, the processes involved in the migration
     must handle the following message: `{:process_hub, :handover_start, startup_resp, from}`.
@@ -79,15 +80,15 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     successful, it will be `{:ok, pid}`. The PID can be used to send the state of the process to the
     remote process.
     If the `retention` option is used, then the peer process has to signal the handler process
-    that the state has been handled; otherwise, the handler will wait until the retention time has passed.
+    that the state has been handled; otherwise, the handler will wait until the default retention time has passed.
     The handler PID is passed in the `from` variable.
     The default value is `false`.
   """
   @type t() :: %__MODULE__{
-          retention: :none | pos_integer(),
+          retention: pos_integer(),
           handover: boolean()
         }
-  defstruct retention: :none, handover: false
+  defstruct retention: 5000, handover: false
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
     @migration_timeout 15000
@@ -103,31 +104,35 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             :ok
     def handle_migration(strategy, hub_id, child_specs, added_node, sync_strategy) do
       # Start redistribution of the child processes.
-      Distributor.child_redist_init(hub_id, child_specs, added_node, reply_to: [self()])
+      Distributor.children_redist_init(hub_id, child_specs, added_node,
+        reply_to: [self()],
+        migration_add: true
+      )
 
       # TODO: refactor this code..
-
-      IO.puts(
-        "MIGRA STARTED ON NODE #{node()} FOR NODE: #{added_node} CHILDREN: #{inspect(Enum.map(child_specs, & &1[:id]))}"
-      )
 
       if length(child_specs) > 0 do
         dist_sup = Name.distributed_supervisor(hub_id)
 
+        local_pids = DistributedSupervisor.local_children(dist_sup)
+
         migration_cids =
           Enum.map(1..length(child_specs), fn _x ->
-            case Mailbox.receive_response(
-                   :child_start_resp,
-                   receive_handler(),
-                   @migration_timeout
-                 ) do
+            start_resp =
+              Mailbox.receive_response(
+                :child_start_resp,
+                receive_handler(),
+                @migration_timeout
+              )
+
+            case start_resp do
               {:error, _reason} ->
                 Logger.error("Migration failed to start on node #{inspect(added_node)}")
                 nil
 
               {child_id, result} ->
                 # Notify the peer process about the migration.
-                case start_handover(strategy, child_id, dist_sup, result) do
+                case start_handover(strategy, child_id, local_pids, result) do
                   nil -> nil
                   _ -> child_id
                 end
@@ -149,10 +154,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             :kill
         end)
 
-        IO.puts(
-          "MIGRA ENDED ON NODE: #{node()} FOR NODE: #{added_node} FOR CHILDREN #{inspect(migration_cids)}"
-        )
-
         if length(migration_cids) > 0 do
           # Dispatch hook.
           HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})
@@ -163,7 +164,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     defp retention_switch(child_ids, strategy) do
-      Process.send_after(self(), {:process_hub, :retention_over}, retention_time(strategy))
+      Process.send_after(self(), {:process_hub, :retention_over}, strategy.retention)
 
       child_ids
     end
@@ -174,15 +175,12 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
     end
 
-    defp start_handover(strategy, child_id, dist_sup, result) do
+    defp start_handover(strategy, child_id, local_pids, result) do
       case strategy.handover do
         true ->
-          # |> IO.inspect(label: "PID")
-          pid = DistributedSupervisor.local_pid(dist_sup, child_id)
+          pid = Map.get(local_pids, child_id)
 
           if is_pid(pid) do
-            # IO.inspect result, label: "RES"
-
             send(pid, {:process_hub, :handover_start, result, child_id, self()})
           end
 
@@ -191,38 +189,16 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
     end
 
-    defp retention_time(strategy) do
-      case strategy.retention do
-        :none ->
-          0
-
-        retention ->
-          retention
-      end
-    end
-
     defp handle_retention(strategy, child_id) do
-      retention_time = retention_time(strategy)
-
-      case strategy.retention do
-        :none ->
-          # IO.puts " NO RETENITION #{node()}"
-
+      receive do
+        {:process_hub, :retention_over} ->
           :kill
 
-        _ ->
-          receive do
-            {:process_hub, :retention_over} ->
-              #  IO.puts " RETENTION KILL MSG RECEIVED #{node()}"
-              :kill
-
-            {:process_hub, :retention_handled, ^child_id} ->
-              :continue
-          after
-            retention_time ->
-              #  IO.puts " OVERTIME #{node()}"
-              :kill
-          end
+        {:process_hub, :retention_handled, ^child_id} ->
+          :continue
+      after
+        strategy.retention ->
+          :kill
       end
     end
   end

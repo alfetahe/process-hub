@@ -38,7 +38,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         Distributor.child_terminate(hub_id, child_spec.id, sync_strategy)
       end)
 
-      Distributor.child_redist_init(hub_id, child_specs, added_node, [])
+      Distributor.children_redist_init(hub_id, child_specs, added_node, [])
 
       HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})
 

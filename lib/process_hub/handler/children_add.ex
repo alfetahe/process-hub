@@ -9,6 +9,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.TaskManager
+  alias ProcessHub.Service.State
 
   use Task
 
@@ -52,13 +54,23 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         false ->
           start_results = start_children(arg)
 
+          TaskManager.local_reg_insert(arg.hub_id, start_results)
+
           SynchronizationStrategy.propagate(
             arg.sync_strategy,
             arg.hub_id,
             start_results,
             node(),
-            :add
+            :add,
+            members: :external
           )
+
+          # Release the event queue lock when migrating processes.
+          if Keyword.get(arg.start_opts, :migration_add, false) === true do
+            # IO.puts( "RELEASe CHILDRENADD ON NODE #{node()} FOR #{inspect(arg.children)}")
+
+            State.unlock_local_event_handler(arg.hub_id)
+          end
 
           :ok
       end
@@ -156,6 +168,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         end)
 
       if length(forw) > 0 do
+        # IO.puts "FORWARDING ON NODE #{node()} FOR CHILDREN #{inspect(forw)}"
+
         Dispatcher.children_start(hub_id, forw, start_opts)
         HookManager.dispatch_hook(hub_id, Hook.forwarded_migration(), forw)
       end

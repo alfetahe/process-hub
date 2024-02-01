@@ -111,7 +111,6 @@ defmodule ProcessHub.Service.Mailbox do
     end
   end
 
-  # TODO: add tests
   @doc "Receives a single child response message."
   def receive_response(type, handler, timeout) do
     receive do

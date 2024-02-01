@@ -29,6 +29,11 @@ defmodule ProcessHub.Constant.Event do
   @type event_children_unregistration() :: :children_unregistration_event
 
   @typedoc """
+  Event used when external node sends migration event.
+  """
+  @type migration_add_event() :: :migration_add_event
+
+  @typedoc """
   Event indicating that a remote node is trying to sync its processes.
   """
   @type event_sync_remote_children() :: :sync_remote_children_event
@@ -41,6 +46,7 @@ defmodule ProcessHub.Constant.Event do
       @event_children_registration :children_registration_event
       @event_children_unregistration :children_unregistration_event
       @event_sync_remote_children :sync_remote_children_event
+      @event_migration_add :migration_add_event
     end
   end
 end

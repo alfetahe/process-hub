@@ -25,46 +25,39 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.PubSub do
     use Event
 
-    @spec propagate(
-            ProcessHub.Strategy.Synchronization.PubSub.t(),
-            ProcessHub.hub_id(),
-            term(),
-            node(),
-            :add | :rem
-          ) ::
-            :ok
-    def propagate(_strategy, hub_id, children, node, :add) do
+    @impl SynchronizationStrategy
+    def propagate(_strategy, hub_id, children, node, :add, opts) do
       Blockade.dispatch_sync(
         Name.global_event_queue(hub_id),
         @event_children_registration,
         {children, node},
-        %{priority: PriorityLevel.locked()}
+        %{
+          priority: PriorityLevel.locked(),
+          members: Keyword.get(opts, :members, :global)
+        }
       )
 
       :ok
     end
 
-    def propagate(_strategy, hub_id, child_ids, node, :rem) do
+    def propagate(_strategy, hub_id, child_ids, node, :rem, opts) do
       Blockade.dispatch_sync(
         Name.global_event_queue(hub_id),
         @event_children_unregistration,
         {child_ids, node},
-        %{priority: PriorityLevel.locked()}
+        %{
+          priority: PriorityLevel.locked(),
+          members: Keyword.get(opts, :members, :global)
+        }
       )
 
       :ok
     end
 
-    @spec handle_propagation(
-            ProcessHub.Strategy.Synchronization.PubSub.t(),
-            ProcessHub.hub_id(),
-            term(),
-            :rem | :add
-          ) :: :ok
+    @impl SynchronizationStrategy
     def handle_propagation(_strategy, _hub_id, _propagation_data, _type), do: :ok
 
-    @spec init_sync(ProcessHub.Strategy.Synchronization.PubSub.t(), ProcessHub.hub_id(), [node()]) ::
-            :ok
+    @impl SynchronizationStrategy
     def init_sync(strategy, hub_id, cluster_nodes) do
       local_data = Synchronizer.local_sync_data(hub_id)
       local_node = node()
@@ -84,13 +77,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       :ok
     end
 
-    @spec handle_synchronization(
-            ProcessHub.Strategy.Synchronization.PubSub.t(),
-            ProcessHub.hub_id(),
-            term(),
-            node()
-          ) ::
-            :ok
+    @impl SynchronizationStrategy
     def handle_synchronization(_strategy, hub_id, remote_data, remote_node) do
       Synchronizer.append_data(hub_id, %{remote_node => remote_data})
       Synchronizer.detach_data(hub_id, %{remote_node => remote_data})

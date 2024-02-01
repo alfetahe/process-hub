@@ -25,4 +25,8 @@ defmodule Test.Constant.EventTest do
   test "event distribute children" do
     assert @event_distribute_children === :distribute_children_event
   end
+
+  test "event migration add" do
+    assert @event_migration_add === :migration_add_event
+  end
 end

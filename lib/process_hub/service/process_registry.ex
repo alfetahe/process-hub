@@ -53,17 +53,19 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def local_children(hub_id) do
     local_node = node()
 
-    registry(hub_id)
-    |> Enum.filter(fn {_, {_, nodes}} ->
-      Enum.member?(Keyword.keys(nodes), local_node)
+    local_data(hub_id)
+    |> Enum.map(fn {child_id, {_child_spec, child_nodes}} ->
+      {child_id, Keyword.get(child_nodes, local_node)}
     end)
   end
 
   @doc "Returns a list of child specs registered under the local node."
   @spec local_child_specs(ProcessHub.hub_id()) :: [ProcessHub.child_spec()]
   def local_child_specs(hub_id) do
-    local_children(hub_id)
-    |> Enum.map(fn {_, {child_spec, _}} -> child_spec end)
+    local_data(hub_id)
+    |> Enum.map(fn
+      {_, {child_spec, _}} -> child_spec
+    end)
   end
 
   @doc "Return the child_spec, nodes, and pids for the given child_id."
@@ -232,6 +234,15 @@ defmodule ProcessHub.Service.ProcessRegistry do
             acc
           end
       end
+    end)
+  end
+
+  defp local_data(hub_id) do
+    local_node = node()
+
+    registry(hub_id)
+    |> Enum.filter(fn {_, {_, nodes}} ->
+      Enum.member?(Keyword.keys(nodes), local_node)
     end)
   end
 end

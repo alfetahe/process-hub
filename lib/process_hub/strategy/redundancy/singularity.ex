@@ -39,8 +39,10 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
             ProcessHub.hub_id(),
             ProcessHub.child_id(),
             [node()],
-            {:up | :down, node()}
+            {:up | :down, node()},
+            keyword()
           ) :: :ok
-    def handle_post_update(_strategy, _hub_id, _child_id, _hub_nodes, _action_node), do: :ok
+    def handle_post_update(_strategy, _hub_id, _child_id, _hub_nodes, _action_node, _opts),
+      do: :ok
   end
 end

@@ -18,7 +18,7 @@ defmodule Test.Helper.Bootstrap do
 
   # Migration options
   @default_migr_handover false
-  @default_migr_retention :none
+  @default_migr_retention 5000
 
   # Partition tolerance options
   @default_quorum_size_static 4

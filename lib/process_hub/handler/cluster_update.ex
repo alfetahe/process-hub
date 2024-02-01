@@ -18,9 +18,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     @moduledoc """
     Handler for the node up event.
     """
+    alias ProcessHub.Constant.PriorityLevel
     use Event
-
-    @handle_node_sync_prio 1
 
     @type t() :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
@@ -53,7 +52,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       # Dispatch the nodes pre redistribution event.
       HookManager.dispatch_hook(arg.hub_id, Hook.pre_nodes_redistribution(), {:nodeup, arg.node})
 
-      IO.puts("CLUSTER UPDATE START ON NODE #{node()} FOR NODE #{arg.node}")
+      # IO.puts("CLUSTER UPDATE START ON NODE #{node()} FOR NODE #{arg.node}")
 
       # Handle the redistribution of processes.
       distribute_processes(arg)
@@ -64,12 +63,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       # Dispatch the nodes post redistribution event.
       HookManager.dispatch_hook(arg.hub_id, Hook.post_nodes_redistribution(), {:nodeup, arg.node})
 
+      # IO.puts("MA RELEASING NODEUP ON NODE #{node()} FOR NODE #{arg.node}")
+
       # Unlock the local event handler.
       State.unlock_local_event_handler(arg.hub_id)
 
-      IO.puts(
-        "-------------------- CLUSTER UPDATE END ON NODE #{node()} FOR NODE #{arg.node} -------------------"
-      )
+      # IO.puts( "---------- CLUSTER UPDATE END ON NODE #{node()} FOR NODE #{arg.node} ----------")
 
       :ok
     end
@@ -84,7 +83,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           @event_sync_remote_children,
           {local_processes, local_node},
           :local,
-          %{members: :local, priority: @handle_node_sync_prio}
+          %{members: :local, priority: PriorityLevel.locked()}
         )
       end)
     end
@@ -99,10 +98,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       |> wait_for_tasks()
     end
 
-    defp wait_for_tasks(%__MODULE__{async_tasks: async_tasks, migr_strat: migr_strat} = arg) do
+    defp wait_for_tasks(%__MODULE__{async_tasks: async_tasks, migr_strat: migr_strat} = _arg) do
       Task.await_many(async_tasks, migration_timeout(migr_strat))
 
-      %__MODULE__{arg | async_tasks: []}
+      #  %__MODULE__{arg | async_tasks: []}
+
+      :ok
     end
 
     defp handle_migrate(
@@ -139,6 +140,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
          ) do
       task =
         Task.async(fn ->
+          children_pids = ProcessRegistry.local_children(hub_id)
+
           child_specs =
             Enum.map(keep, fn %{child_spec: child_spec, child_nodes: child_nodes} ->
               RedundancyStrategy.handle_post_update(
@@ -146,13 +149,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                 hub_id,
                 child_spec.id,
                 child_nodes,
-                {:up, arg.node}
+                {:up, arg.node},
+                pid: children_pids[child_spec.id]
               )
 
               child_spec
             end)
 
-          Distributor.child_redist_init(hub_id, child_specs, node)
+          Distributor.children_redist_init(hub_id, child_specs, node)
         end)
 
       %__MODULE__{arg | async_tasks: [task | async_tasks]}
@@ -204,7 +208,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp migration_timeout(migr_strategy) do
-      default_timeout = 10000
+      default_timeout = 15000
 
       if Map.has_key?(migr_strategy, :retention) do
         case Map.get(migr_strategy, :retention, :none) do
@@ -251,6 +255,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
       distribute_processes(arg)
 
+      # IO.puts("%%% NODE DOWN UNLOCK ON NODE #{node()} FOR NODE #{arg.removed_node}")
       State.unlock_local_event_handler(arg.hub_id)
 
       PartitionToleranceStrategy.handle_node_down(
@@ -280,14 +285,15 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           arg.hub_id,
           child_id,
           nodes_new,
-          {:down, arg.removed_node}
+          {:down, arg.removed_node},
+          []
         )
 
         local_node = node()
         # Check if removed nodes procsses should be started on the local node.
         if !Enum.member?(nodes_old, local_node) && Enum.member?(nodes_new, local_node) do
-          # TODO: here we should also pass all children not one by one!
-          Distributor.child_redist_init(arg.hub_id, [child_spec], local_node)
+          # TODO: We should also pass all children not one by one.
+          Distributor.children_redist_init(arg.hub_id, [child_spec], local_node)
         end
       end)
     end

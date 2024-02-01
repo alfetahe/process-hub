@@ -52,7 +52,8 @@ defmodule ProcessHub.Handler.ChildrenRem do
             args.hub_id,
             stopped_children,
             local_node,
-            :rem
+            :rem,
+            []
           )
 
           :ok

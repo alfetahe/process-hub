@@ -130,23 +130,25 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
             ProcessHub.hub_id(),
             ProcessHub.child_id(),
             [node()],
-            {:up | :down, node()}
+            {:up | :down, node()},
+            keyword()
           ) :: :ok
-    def handle_post_update(%Replication{redundancy_signal: :none}, _, _, _, _), do: :ok
+    def handle_post_update(%Replication{redundancy_signal: :none}, _, _, _, _, _), do: :ok
 
     def handle_post_update(
           %Replication{replication_model: :active_passive} = strategy,
           hub_id,
           child_id,
           nodes,
-          {node_action, node}
+          {node_action, node},
+          opts
         ) do
-      handle_redundancy_signal(strategy, hub_id, child_id, nodes, {node_action, node}, [])
+      handle_redundancy_signal(strategy, hub_id, child_id, nodes, {node_action, node}, opts)
     end
 
-    def handle_post_update(_, _, _, _, _), do: :ok
+    def handle_post_update(_, _, _, _, _, _), do: :ok
 
-    def node_modes(strategy, hub_id, node_action, child_id, nodes, node) do
+    defp node_modes(strategy, hub_id, node_action, child_id, nodes, node) do
       curr_master = RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)
 
       prev_master =
@@ -161,7 +163,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       {prev_master, curr_master}
     end
 
-    def handle_redundancy_signal(strategy, hub_id, child_id, nodes, {node_action, node}, opts) do
+    defp handle_redundancy_signal(strategy, hub_id, child_id, nodes, {node_action, node}, opts) do
       local_node = node()
 
       {prev_master, curr_master} =

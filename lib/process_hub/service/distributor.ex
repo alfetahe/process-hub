@@ -15,18 +15,33 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
   @doc "Initiates process redistribution."
-  @spec child_redist_init(ProcessHub.hub_id(), [ProcessHub.child_spec()], node(), keyword() | nil) ::
-          {:ok, :redistribution_initiated}
-  def child_redist_init(hub_id, child_specs, node, opts \\ []) do
+  @spec children_redist_init(
+          ProcessHub.hub_id(),
+          [ProcessHub.child_spec()],
+          node(),
+          keyword() | nil
+        ) ::
+          {:ok, :redistribution_initiated} | {:ok, :no_children_to_redistribute}
+  def children_redist_init(hub_id, child_specs, node, opts \\ []) do
     redist_children =
       Enum.map(child_specs, fn child_spec ->
         init_data([node], hub_id, child_spec)
         |> Map.merge(Map.new(opts))
       end)
 
-    Dispatcher.children_start(hub_id, [{node, redist_children}], opts)
+    if Keyword.get(opts, :migration_add) === true do
+      #   IO.puts "THE REDIST CHILDREN ON NODE #{node()} FOR ADDED NODE #{node} ARE: #{inspect(redist_children)}"
+    end
 
-    {:ok, :redistribution_initiated}
+    case length(redist_children) > 0 do
+      true ->
+        Dispatcher.children_migrate(hub_id, [{node, redist_children}], opts)
+
+        {:ok, :redistribution_initiated}
+
+      false ->
+        {:ok, :no_children_to_redistribute}
+    end
   end
 
   @doc "Initiates processes startup."
@@ -102,7 +117,8 @@ defmodule ProcessHub.Service.Distributor do
       hub_id,
       [{child_id, {supervisor_resp, []}}],
       node(),
-      :rem
+      :rem,
+      []
     )
 
     supervisor_resp
@@ -118,6 +134,8 @@ defmodule ProcessHub.Service.Distributor do
           {node(),
            [{any, :restarting | :undefined | pid, :supervisor | :worker, :dynamic | list}]}
   def which_children_local(hub_id, _opts) do
+    # TODO: switch it with the local registry data because this is very unperformant and document it.
+
     {node(), Supervisor.which_children(Name.distributed_supervisor(hub_id))}
   end
 

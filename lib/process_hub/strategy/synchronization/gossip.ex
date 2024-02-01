@@ -57,9 +57,10 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             ProcessHub.hub_id(),
             [term()],
             node(),
-            :add | :rem
+            :add | :rem,
+            keyword()
           ) :: :ok
-    def propagate(strategy, hub_id, children, update_node, type) do
+    def propagate(strategy, hub_id, children, update_node, type, _opts) do
       ref = make_ref()
       handle_propagation_type(hub_id, children, update_node, type)
 

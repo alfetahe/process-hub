@@ -36,7 +36,8 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
           ProcessHub.hub_id(),
           ProcessHub.child_id(),
           [node()],
-          {:up | :down, node()}
+          {:up | :down, node()},
+          keyword()
         ) :: :ok
-  def handle_post_update(strategy, hub_id, child_id, hub_nodes, action_node)
+  def handle_post_update(strategy, hub_id, child_id, hub_nodes, action_node, opts)
 end

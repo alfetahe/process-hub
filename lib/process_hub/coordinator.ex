@@ -19,9 +19,9 @@ defmodule ProcessHub.Coordinator do
   alias :blockade, as: Blockade
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.Handler.ChildrenAdd
   alias ProcessHub.Handler.ChildrenRem
   alias ProcessHub.Handler.ClusterUpdate
   alias ProcessHub.Handler.Synchronization
@@ -30,6 +30,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Service.State
+  alias ProcessHub.Service.TaskManager
   alias ProcessHub.Utility.Name
 
   @propagation_interval 10000
@@ -136,22 +137,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_cast({:start_children, children, start_opts}, state) do
-    Task.Supervisor.start_child(
-      state.managers.task_supervisor,
-      ChildrenAdd.StartHandle,
-      :handle,
-      [
-        %ChildrenAdd.StartHandle{
-          hub_id: state.hub_id,
-          children: children,
-          dist_sup: state.managers.distributed_supervisor,
-          sync_strategy: state.settings.synchronization_strategy,
-          redun_strategy: state.settings.redundancy_strategy,
-          dist_strategy: state.settings.distribution_strategy,
-          start_opts: start_opts
-        }
-      ]
-    )
+    TaskManager.start_children(state.hub_id, children, start_opts)
 
     {:noreply, state}
   end
@@ -174,12 +160,8 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  def handle_call(:strategies, _from, state) do
-    {:reply, state.settings, state}
-  end
-
-  def handle_call(:state, _from, state) do
-    {:reply, state, state}
+  def handle_call(:ping, _from, state) do
+    {:reply, :bong, state}
   end
 
   def handle_info({@event_cluster_leave, node}, state) do
@@ -234,8 +216,11 @@ defmodule ProcessHub.Coordinator do
           node
         )
 
-        Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, :local)
-        State.lock_local_event_handler(state.hub_id)
+        # Atomic dispatch with locking.
+        Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, :local, %{
+          atomic_priority_set: PriorityLevel.locked()
+        })
+
         Cluster.propagate_self(state.hub_id, node)
         HookManager.dispatch_hook(state.hub_id, Hook.post_cluster_join(), node)
 
@@ -264,24 +249,24 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  def handle_info({@event_migration_add, {children, start_opts}}, state) do
+    if length(children) > 0 do
+      State.lock_local_event_handler(state.hub_id)
+    end
+
+    TaskManager.start_children(state.hub_id, children, start_opts)
+
+    {:noreply, state}
+  end
+
   def handle_info({@event_children_registration, {children, _node}}, state) do
-    Task.Supervisor.start_child(
-      state.managers.task_supervisor,
-      ChildrenAdd.SyncHandle,
-      :handle,
-      [
-        %ChildrenAdd.SyncHandle{
-          hub_id: state.hub_id,
-          children: children
-        }
-      ]
-    )
+    TaskManager.local_reg_insert(state.hub_id, children)
 
     {:noreply, state}
   end
 
   def handle_info({@event_children_unregistration, {children, node}}, state) do
-    Task.Supervisor.start_child(
+    Task.Supervisor.async(
       state.managers.task_supervisor,
       ChildrenRem.SyncHandle,
       :handle,
@@ -293,6 +278,7 @@ defmodule ProcessHub.Coordinator do
         }
       ]
     )
+    |> Task.await()
 
     {:noreply, state}
   end
@@ -320,6 +306,10 @@ defmodule ProcessHub.Coordinator do
 
     Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), :global)
 
+    {:noreply, state}
+  end
+
+  def handle_info({:EXIT, _pid, :normal}, state) do
     {:noreply, state}
   end
 
@@ -384,6 +374,7 @@ defmodule ProcessHub.Coordinator do
     LocalStorage.insert(hub.hub_id, :hub_nodes, hub_nodes)
     LocalStorage.insert(hub.hub_id, :redundancy_strategy, strategies.redundancy_strategy)
     LocalStorage.insert(hub.hub_id, :distribution_strategy, strategies.distribution_strategy)
+    LocalStorage.insert(hub.hub_id, :migration_strategy, strategies.migration_strategy)
 
     LocalStorage.insert(
       hub.hub_id,
@@ -400,13 +391,12 @@ defmodule ProcessHub.Coordinator do
 
   defp register_handlers(%{global_event_queue: gq, local_event_queue: lq}) do
     Blockade.add_handler(lq, @event_distribute_children)
-    # TODO: we're not even dispatching it but calling directly..
     Blockade.add_handler(gq, @event_cluster_join)
-    # maybe same as above, we don't need to register the handlers then but call them directly..
     Blockade.add_handler(lq, @event_cluster_leave)
     Blockade.add_handler(lq, @event_sync_remote_children)
     Blockade.add_handler(gq, @event_children_registration)
     Blockade.add_handler(gq, @event_children_unregistration)
+    Blockade.add_handler(lq, @event_migration_add)
   end
 
   defp register_hook_handlers(hub_id, hooks) when is_map(hooks) do

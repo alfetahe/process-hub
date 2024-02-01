@@ -18,6 +18,17 @@ defmodule Test.Service.MailboxTest do
              {:child_id, {:handler_resp, :child_id, {:ok, self()}, node()}}
   end
 
+  test "receive response 2" do
+    send(self(), {:child_start_resp, :child_id, {:ok, self()}, node()})
+
+    handler = fn a, b, c ->
+      {:handler_resp, a, b, c}
+    end
+
+    assert Mailbox.receive_response(:child_start_resp, handler, 100) ===
+             {:child_id, {:handler_resp, :child_id, {:ok, self()}, node()}}
+  end
+
   test "receives start resp" do
     assert Mailbox.receive_start_resp([{node(), [:none]}], timeout: 1) ===
              {:error, [none: [error: {node(), :child_start_timeout}]]}

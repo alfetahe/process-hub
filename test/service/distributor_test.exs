@@ -81,10 +81,7 @@ defmodule Test.Service.DistributorTest do
     )
     |> ProcessHub.await()
 
-    sync_strategy =
-      Name.coordinator(hub_id)
-      |> GenServer.call(:strategies)
-      |> Map.get(:synchronization_strategy)
+    sync_strategy = ProcessHub.Service.LocalStorage.get(hub_id, :synchronization_strategy)
 
     Distributor.child_terminate(hub_id, child_spec.id, sync_strategy)
 
@@ -147,13 +144,13 @@ defmodule Test.Service.DistributorTest do
     assert ProcessRegistry.registry(hub_id) === %{}
   end
 
-  test "child redist init", %{hub_id: hub_id} = _context do
+  test "children redist init", %{hub_id: hub_id} = _context do
     child_spec = %{
       id: :dist_child_stop,
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
     }
 
-    assert Distributor.child_redist_init(hub_id, [child_spec], node()) ===
+    assert Distributor.children_redist_init(hub_id, [child_spec], node()) ===
              {:ok, :redistribution_initiated}
   end
 end
