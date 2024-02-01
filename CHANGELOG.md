@@ -6,6 +6,12 @@ Added support for configurable distribution strategy.
 Improved integration tests by making them more reliable.
 Improved documentation by adding guides.
 
+Analysed the performance of the system and made huge improvements to the process replication and
+migration. Most of the improvements done we're replacing multiple single operations with bulk operations,
+switching `Supervisor.which_children/1` calls or minimizing the number of calls.
+
+Improved failure handling of the overall system.
+
 ### Changed
 - `Hook.registry_pid_inserted/0` no longer returns all node-pid pairs that are
 inserted but only the ones that are different from the previous state.
@@ -37,6 +43,7 @@ from the user to decide which nodes should be used for process distribution.
 ### Fixed
 - Replication strategy `:cluster_size` option was not couting the local node.
 - Documentation fixes.
+- Removed hotswap migration retention `:none` option in favour of integer value.
 
 ## v0.1.4-alpha - 2023-11-19
 Replaced :ets with Cachex for local storage to improve reliability of the system and avoid
