@@ -25,6 +25,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Handler.ChildrenRem
   alias ProcessHub.Handler.ClusterUpdate
   alias ProcessHub.Handler.Synchronization
+  alias ProcessHub.Handler.ChildrenAdd
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Cluster
@@ -260,7 +261,18 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({@event_children_registration, {children, _node}}, state) do
-    TaskManager.local_reg_insert(state.hub_id, children)
+    Task.Supervisor.async(
+      Name.task_supervisor(state.hub_id),
+      ChildrenAdd.SyncHandle,
+      :handle,
+      [
+        %ChildrenAdd.SyncHandle{
+          hub_id: state.hub_id,
+          children: children
+        }
+      ]
+    )
+    |> Task.await()
 
     {:noreply, state}
   end

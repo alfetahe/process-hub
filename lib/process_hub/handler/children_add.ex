@@ -8,11 +8,73 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.HookManager
-  alias ProcessHub.Constant.Hook
-  alias ProcessHub.Service.TaskManager
   alias ProcessHub.Service.State
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Utility.Name
 
   use Task
+
+  defmodule SyncHandle do
+    @moduledoc """
+    Handler for synchronizing added child processes.
+    """
+
+    @type process_startup_result() :: {:ok, pid()} | {:error, any()} | term()
+
+    @type t :: %__MODULE__{
+            hub_id: ProcessHub.hub_id(),
+            children: [
+              {
+                ProcessHub.child_id(),
+                ProcessHub.child_spec(),
+                {
+                  ProcessHub.reply_to(),
+                  process_startup_result()
+                }
+              }
+            ]
+          }
+
+    @enforce_keys [
+      :hub_id,
+      :children
+    ]
+    defstruct @enforce_keys
+
+    @spec handle(t()) :: :ok
+    def handle(%__MODULE__{} = arg) do
+      children_formatted =
+        Enum.map(arg.children, fn {child_id, {_child_spec, _child_nodes} = cn, _, _} ->
+          {child_id, cn}
+        end)
+        |> Map.new()
+
+      ProcessRegistry.bulk_insert(arg.hub_id, children_formatted)
+
+      local_node = node()
+
+      # Not all nodes should handle the reply_to options or we will end up with multiple replies.
+      Enum.each(arg.children, fn {child_id, _, startup_res, {:for_node, for_node, opts}} ->
+        if for_node === local_node do
+          handle_reply_to(opts, child_id, startup_res, for_node)
+        end
+      end)
+    end
+
+    defp handle_reply_to(opts, child_id, startup_res, local_node) do
+      reply_to = Keyword.get(opts, :reply_to, nil)
+
+      if is_list(reply_to) and length(reply_to) > 0 do
+        Dispatcher.reply_respondents(
+          reply_to,
+          :child_start_resp,
+          child_id,
+          startup_res,
+          local_node
+        )
+      end
+    end
+  end
 
   defmodule StartHandle do
     @moduledoc """
@@ -54,7 +116,18 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         false ->
           start_results = start_children(arg)
 
-          TaskManager.local_reg_insert(arg.hub_id, start_results)
+          Task.Supervisor.async(
+            Name.task_supervisor(arg.hub_id),
+            SyncHandle,
+            :handle,
+            [
+              %SyncHandle{
+                hub_id: arg.hub_id,
+                children: start_results
+              }
+            ]
+          )
+          |> Task.await()
 
           SynchronizationStrategy.propagate(
             arg.sync_strategy,
@@ -183,68 +256,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         end)
 
       Keyword.merge(forw_data, updated_forw)
-    end
-  end
-
-  defmodule SyncHandle do
-    @moduledoc """
-    Handler for synchronizing added child processes.
-    """
-
-    @type process_startup_result() :: {:ok, pid()} | {:error, any()} | term()
-
-    @type t :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
-            children: [
-              {
-                ProcessHub.child_id(),
-                ProcessHub.child_spec(),
-                {
-                  ProcessHub.reply_to(),
-                  process_startup_result()
-                }
-              }
-            ]
-          }
-
-    @enforce_keys [
-      :hub_id,
-      :children
-    ]
-    defstruct @enforce_keys
-
-    @spec handle(t()) :: :ok
-    def handle(%__MODULE__{} = arg) do
-      children_formatted =
-        Enum.map(arg.children, fn {child_id, {_child_spec, _child_nodes} = cn, _, _} ->
-          {child_id, cn}
-        end)
-        |> Map.new()
-
-      ProcessRegistry.bulk_insert(arg.hub_id, children_formatted)
-
-      local_node = node()
-
-      # Not all nodes should handle the reply_to options or we will end up with multiple replies.
-      Enum.each(arg.children, fn {child_id, _, startup_res, {:for_node, for_node, opts}} ->
-        if for_node === local_node do
-          handle_reply_to(opts, child_id, startup_res, for_node)
-        end
-      end)
-    end
-
-    defp handle_reply_to(opts, child_id, startup_res, local_node) do
-      reply_to = Keyword.get(opts, :reply_to, nil)
-
-      if is_list(reply_to) and length(reply_to) > 0 do
-        Dispatcher.reply_respondents(
-          reply_to,
-          :child_start_resp,
-          child_id,
-          startup_res,
-          local_node
-        )
-      end
     end
   end
 end
