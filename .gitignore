@@ -33,3 +33,6 @@ ccc-*.tar
 
 # IntelliJ IDEA files
 .idea
+
+# Temporary in the gitignore until we have some benchmarks
+/lib/process_hub/benchmark
