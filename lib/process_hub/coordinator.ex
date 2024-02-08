@@ -44,8 +44,7 @@ defmodule ProcessHub.Coordinator do
           managers: %{
             coordinator: atom(),
             distributed_supervisor: atom(),
-            local_event_queue: atom(),
-            global_event_queue: atom(),
+            event_queue: atom(),
             task_supervisor: atom()
           },
           storage: %{
@@ -100,13 +99,10 @@ defmodule ProcessHub.Coordinator do
     local_node = node()
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
-    Enum.each(Cluster.nodes(state.hub_id), fn node ->
-      Node.spawn(node, fn ->
-        if Process.whereis(state.managers.coordinator) do
-          Process.send(state.managers.coordinator, {@event_cluster_leave, local_node}, [])
-        end
-      end)
-    end)
+    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, local_node, %{
+      members: :external,
+      priority: PriorityLevel.locked()
+    })
 
     # Terminate all the running tasks before shutting down the coordinator.
     task_sup = state.managers.task_supervisor
@@ -127,11 +123,13 @@ defmodule ProcessHub.Coordinator do
     schedule_sync(state.settings.synchronization_strategy)
 
     # TODO: handlers are not registered in some cases thats why dispatching may fail..
-    # Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), :global)
+    # Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node())
     # Make sure it's okay to dispatch all nodes
     Enum.each(Node.list(), fn node ->
       :erlang.send({state.managers.coordinator, node}, {@event_cluster_join, node()}, [])
     end)
+
+    # Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), %{members: :external})
 
     {:noreply, state}
   end
@@ -175,7 +173,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({:nodedown, node}, state) do
-    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, node, :local)
+    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, node, %{members: :local})
 
     {:noreply, state}
   end
@@ -217,9 +215,11 @@ defmodule ProcessHub.Coordinator do
         )
 
         # Atomic dispatch with locking.
-        Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, :local, %{
-          atomic_priority_set: PriorityLevel.locked()
+        Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, %{
+          members: :local
         })
+
+        State.lock_event_handler(state.hub_id)
 
         Cluster.propagate_self(state.hub_id, node)
         HookManager.dispatch_hook(state.hub_id, Hook.post_cluster_join(), node)
@@ -251,7 +251,7 @@ defmodule ProcessHub.Coordinator do
 
   def handle_info({@event_migration_add, {children, start_opts}}, state) do
     if length(children) > 0 do
-      State.lock_local_event_handler(state.hub_id)
+      State.lock_event_handler(state.hub_id)
     end
 
     TaskManager.start_children(state.hub_id, children, start_opts)
@@ -304,7 +304,10 @@ defmodule ProcessHub.Coordinator do
   def handle_info(:propagate, state) do
     schedule_propagation()
 
-    Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), :global)
+    Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), %{
+      members: :external,
+      priority: PriorityLevel.locked()
+    })
 
     {:noreply, state}
   end
@@ -329,7 +332,7 @@ defmodule ProcessHub.Coordinator do
     if Enum.member?(hub_nodes, down_node) do
       HookManager.dispatch_hook(state.hub_id, Hook.pre_cluster_leave(), down_node)
 
-      State.lock_local_event_handler(state.hub_id)
+      State.lock_event_handler(state.hub_id)
       hub_nodes = Cluster.rem_hub_node(state.hub_id, down_node)
 
       Task.Supervisor.start_child(
@@ -389,14 +392,14 @@ defmodule ProcessHub.Coordinator do
     )
   end
 
-  defp register_handlers(%{global_event_queue: gq, local_event_queue: lq}) do
-    Blockade.add_handler(lq, @event_distribute_children)
-    Blockade.add_handler(gq, @event_cluster_join)
-    Blockade.add_handler(lq, @event_cluster_leave)
-    Blockade.add_handler(lq, @event_sync_remote_children)
-    Blockade.add_handler(gq, @event_children_registration)
-    Blockade.add_handler(gq, @event_children_unregistration)
-    Blockade.add_handler(lq, @event_migration_add)
+  defp register_handlers(%{event_queue: eq}) do
+    Blockade.add_handler(eq, @event_distribute_children)
+    Blockade.add_handler(eq, @event_cluster_join)
+    Blockade.add_handler(eq, @event_cluster_leave)
+    Blockade.add_handler(eq, @event_sync_remote_children)
+    Blockade.add_handler(eq, @event_children_registration)
+    Blockade.add_handler(eq, @event_children_unregistration)
+    Blockade.add_handler(eq, @event_migration_add)
   end
 
   defp register_hook_handlers(hub_id, hooks) when is_map(hooks) do

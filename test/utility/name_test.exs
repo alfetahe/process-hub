@@ -13,12 +13,8 @@ defmodule Test.Utility.NameTest do
     assert Name.initializer(:test) === :"hub.test.initializer"
   end
 
-  test "local event queue" do
-    assert Name.local_event_queue(:test) === :"hub.test.#{node()}.local_event_queue"
-  end
-
-  test "global event queue" do
-    assert Name.global_event_queue(:test) === :"hub.test.global_event_queue"
+  test "event queue" do
+    assert Name.event_queue(:test) === :"hub.test.event_queue"
   end
 
   test "coordinator" do

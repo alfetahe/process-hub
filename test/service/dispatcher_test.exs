@@ -19,31 +19,15 @@ defmodule Test.Service.DispatcherTest do
     assert_received {:test_msg, :test_child, :ok, :test_node}, @default_receive_timeout
   end
 
-  test "propagate event local", %{hub_id: hub_id} = _context do
-    :blockade.add_handler(Name.local_event_queue(hub_id), :propagate_local_test)
-    :blockade.add_handler(Name.local_event_queue(hub_id), :propagate_local_test2)
+  test "propagate event", %{hub_id: hub_id} = _context do
+    :blockade.add_handler(Name.event_queue(hub_id), :propagate_test)
+    :blockade.add_handler(Name.event_queue(hub_id), :propagate_test2)
 
-    :blockade.get_priority(Name.local_event_queue(hub_id)) |> IO.inspect(label: "PRIORITY")
+    Dispatcher.propagate_event(hub_id, :propagate_test, "test_data")
+    Dispatcher.propagate_event(hub_id, :propagate_test2, "test_data2")
 
-    Dispatcher.propagate_event(hub_id, :propagate_local_test, "local_test_data", :local)
-    Dispatcher.propagate_event(hub_id, :propagate_local_test2, "local_test_data2", :local)
-
-    # TODO: priority is 10 sometimes..
-    ProcessHub.Utility.Bag.all_messages() |> IO.inspect(label: "ALL")
-
-    assert_receive {:propagate_local_test, "local_test_data"}, @default_receive_timeout
-    assert_receive {:propagate_local_test2, "local_test_data2"}, @default_receive_timeout
-  end
-
-  test "propagate event global", %{hub_id: hub_id} = _context do
-    :blockade.add_handler(Name.global_event_queue(hub_id), :propagate_global_test)
-    :blockade.add_handler(Name.global_event_queue(hub_id), :propagate_global_test2)
-
-    Dispatcher.propagate_event(hub_id, :propagate_global_test, "global_test_data", :global)
-    Dispatcher.propagate_event(hub_id, :propagate_global_test2, "global_test_data2", :global)
-
-    assert_receive {:propagate_global_test, "global_test_data"}, @default_receive_timeout
-    assert_receive {:propagate_global_test2, "global_test_data2"}, @default_receive_timeout
+    assert_receive {:propagate_test, "test_data"}, @default_receive_timeout
+    assert_receive {:propagate_test2, "test_data2"}, @default_receive_timeout
   end
 
   test "propagate init", %{hub_id: hub_id} = _context do
@@ -93,7 +77,7 @@ defmodule Test.Service.DispatcherTest do
 
     # Reset priority.
     GenServer.call(Name.coordinator(hub_id), :ping)
-    :blockade.set_priority(Name.local_event_queue(hub_id), 0)
+    :blockade.set_priority(Name.event_queue(hub_id), 0)
 
     assert_receive {:child_start_resp, :propagate_migrate_test, _, _}, @default_receive_timeout
   end

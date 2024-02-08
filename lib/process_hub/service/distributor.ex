@@ -29,10 +29,6 @@ defmodule ProcessHub.Service.Distributor do
         |> Map.merge(Map.new(opts))
       end)
 
-    if Keyword.get(opts, :migration_add) === true do
-      #   IO.puts "THE REDIST CHILDREN ON NODE #{node()} FOR ADDED NODE #{node} ARE: #{inspect(redist_children)}"
-    end
-
     case length(redist_children) > 0 do
       true ->
         Dispatcher.children_migrate(hub_id, [{node, redist_children}], opts)
@@ -123,6 +119,33 @@ defmodule ProcessHub.Service.Distributor do
 
     supervisor_resp
   end
+
+  # TODO: we can use this function in the future for performance.
+  # @spec children_terminate(
+  #         ProcessHub.hub_id(),
+  #         [ProcessHub.child_id()],
+  #         ProcessHub.Strategy.Synchronization.Base
+  #       ) :: :ok
+  # def children_terminate(hub_id, child_ids, sync_strategy) do
+  #   dist_sup = Name.distributed_supervisor(hub_id)
+
+  #   propagation_data = Enum.map(child_ids, fn child_id ->
+  #     supervisor_resp = DistributedSupervisor.terminate_child(dist_sup, child_id)
+
+  #     {child_id, {supervisor_resp, []}}
+  #   end)
+
+  #   SynchronizationStrategy.propagate(
+  #     sync_strategy,
+  #     hub_id,
+  #     propagation_data,
+  #     node(),
+  #     :rem,
+  #     []
+  #   )
+
+  #   :ok
+  # end
 
   @doc """
   Returns all child processes started by the local node.

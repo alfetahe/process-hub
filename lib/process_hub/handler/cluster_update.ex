@@ -52,8 +52,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       # Dispatch the nodes pre redistribution event.
       HookManager.dispatch_hook(arg.hub_id, Hook.pre_nodes_redistribution(), {:nodeup, arg.node})
 
-      # IO.puts("CLUSTER UPDATE START ON NODE #{node()} FOR NODE #{arg.node}")
-
       # Handle the redistribution of processes.
       distribute_processes(arg)
 
@@ -63,12 +61,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       # Dispatch the nodes post redistribution event.
       HookManager.dispatch_hook(arg.hub_id, Hook.post_nodes_redistribution(), {:nodeup, arg.node})
 
-      # IO.puts("MA RELEASING NODEUP ON NODE #{node()} FOR NODE #{arg.node}")
-
-      # Unlock the local event handler.
-      State.unlock_local_event_handler(arg.hub_id)
-
-      # IO.puts( "---------- CLUSTER UPDATE END ON NODE #{node()} FOR NODE #{arg.node} ----------")
+      # Unlock the event handler.
+      State.unlock_event_handler(arg.hub_id)
 
       :ok
     end
@@ -77,15 +71,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       local_processes = Synchronizer.local_sync_data(hub_id)
       local_node = node()
 
-      :erpc.cast(node, fn ->
-        Dispatcher.propagate_event(
-          hub_id,
-          @event_sync_remote_children,
-          {local_processes, local_node},
-          :local,
-          %{members: :local, priority: PriorityLevel.locked()}
-        )
-      end)
+      Dispatcher.propagate_event(
+        hub_id,
+        @event_sync_remote_children,
+        {local_processes, local_node},
+        %{members: [node], priority: PriorityLevel.locked()}
+      )
     end
 
     defp distribute_processes(arg) do
@@ -255,8 +246,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
       distribute_processes(arg)
 
-      # IO.puts("%%% NODE DOWN UNLOCK ON NODE #{node()} FOR NODE #{arg.removed_node}")
-      State.unlock_local_event_handler(arg.hub_id)
+      State.unlock_event_handler(arg.hub_id)
 
       PartitionToleranceStrategy.handle_node_down(
         arg.partition_strat,

@@ -2,7 +2,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   @moduledoc """
   This PubSub synchronization strategy uses the `:blockade` library to
   dispatch and handle synchronization events. Each `ProcessHub` instance
-  has its own global event queue that is used to dispatch and handle synchronization events.
+  has its own event queue that is used to dispatch and handle synchronization events.
   """
 
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
@@ -28,7 +28,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     @impl SynchronizationStrategy
     def propagate(_strategy, hub_id, children, node, :add, opts) do
       Blockade.dispatch_sync(
-        Name.global_event_queue(hub_id),
+        Name.event_queue(hub_id),
         @event_children_registration,
         {children, node},
         %{
@@ -42,7 +42,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
 
     def propagate(_strategy, hub_id, child_ids, node, :rem, opts) do
       Blockade.dispatch_sync(
-        Name.global_event_queue(hub_id),
+        Name.event_queue(hub_id),
         @event_children_unregistration,
         {child_ids, node},
         %{

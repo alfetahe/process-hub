@@ -32,8 +32,7 @@ defmodule ProcessHub.Initializer do
   def init(%ProcessHub{hub_id: hub_id} = hub) do
     managers = %{
       coordinator: Name.coordinator(hub_id),
-      local_event_queue: Name.local_event_queue(hub_id),
-      global_event_queue: Name.global_event_queue(hub_id),
+      event_queue: Name.event_queue(hub_id),
       distributed_supervisor: Name.distributed_supervisor(hub_id),
       task_supervisor: Name.task_supervisor(hub_id)
     }
@@ -41,8 +40,7 @@ defmodule ProcessHub.Initializer do
     children =
       storage(hub_id) ++
         [
-          {Blockade, %{name: managers.local_event_queue}},
-          {Blockade, %{name: managers.global_event_queue}},
+          {Blockade, %{name: managers.event_queue, priority_sync: false}},
           {ProcessHub.DistributedSupervisor, {hub_id, managers}},
           {Task.Supervisor, name: managers.task_supervisor},
           {ProcessHub.Coordinator, {hub_id, hub, managers}},

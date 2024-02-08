@@ -42,16 +42,10 @@ defmodule ProcessHub.Utility.Name do
     concat_name([hub_id, "initializer"], ".")
   end
 
-  @doc "The name of the local event queue process."
-  @spec local_event_queue(ProcessHub.hub_id()) :: atom()
-  def local_event_queue(hub_id) do
-    concat_name([hub_id, node(), "local_event_queue"], ".")
-  end
-
-  @doc "The name of the global event queue process."
-  @spec global_event_queue(ProcessHub.hub_id()) :: atom()
-  def global_event_queue(hub_id) do
-    concat_name([hub_id, "global_event_queue"], ".")
+  @doc "The name of the event queue process."
+  @spec event_queue(ProcessHub.hub_id()) :: atom()
+  def event_queue(hub_id) do
+    concat_name([hub_id, "event_queue"], ".")
   end
 
   @doc "The name of main coordinator process."

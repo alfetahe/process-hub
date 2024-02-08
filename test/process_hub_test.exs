@@ -218,7 +218,7 @@ defmodule ProcessHubTest do
 
   test "is locked?", %{hub_id: hub_id} = _context do
     assert ProcessHub.is_locked?(hub_id) === false
-    ProcessHub.Service.State.lock_local_event_handler(hub_id)
+    ProcessHub.Service.State.lock_event_handler(hub_id)
     assert ProcessHub.is_locked?(hub_id) === true
   end
 

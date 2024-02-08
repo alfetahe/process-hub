@@ -16,7 +16,7 @@ defmodule ProcessHub.Service.State do
   @doc "Returns a boolean indicating whether the hub is locked."
   @spec is_locked?(ProcessHub.hub_id()) :: boolean
   def is_locked?(hub_id) do
-    {:ok, prio_level} = Blockade.get_priority(Name.local_event_queue(hub_id))
+    {:ok, prio_level} = Blockade.get_priority(Name.event_queue(hub_id))
 
     prio_level === PriorityLevel.locked()
   end
@@ -28,17 +28,18 @@ defmodule ProcessHub.Service.State do
   end
 
   @doc """
-  Locks the local event handler and dispatches the priority state updated hook.
+  Locks the event handler and dispatches the priority state updated hook.
   """
-  @spec lock_local_event_handler(ProcessHub.hub_id(), pos_integer() | nil) :: :ok
-  def lock_local_event_handler(hub_id, reset \\ @prio_reset) do
+  @spec lock_event_handler(ProcessHub.hub_id(), pos_integer() | nil) :: :ok
+  def lock_event_handler(hub_id, reset \\ @prio_reset) do
     options =
       case reset do
         nil -> %{}
         _ -> %{reset_after: @prio_reset}
       end
+      |> Map.put(:local_priority_set, true)
 
-    Name.local_event_queue(hub_id)
+    Name.event_queue(hub_id)
     |> Blockade.set_priority(PriorityLevel.locked(), options)
 
     HookManager.dispatch_hook(
@@ -51,13 +52,13 @@ defmodule ProcessHub.Service.State do
   end
 
   @doc """
-  Unlocks the local event handler and dispatches the priority state updated hook.
+  Unlocks the event handler and dispatches the priority state updated hook.
   """
-  @spec unlock_local_event_handler(ProcessHub.hub_id()) :: :ok
-  def unlock_local_event_handler(hub_id) do
-    local_event_queue = Name.local_event_queue(hub_id)
+  @spec unlock_event_handler(ProcessHub.hub_id()) :: :ok
+  def unlock_event_handler(hub_id) do
+    local_event_queue = Name.event_queue(hub_id)
 
-    Blockade.set_priority(local_event_queue, PriorityLevel.unlocked())
+    Blockade.set_priority(local_event_queue, PriorityLevel.unlocked(), %{local_priority_set: true})
 
     HookManager.dispatch_hook(
       hub_id,
@@ -69,12 +70,12 @@ defmodule ProcessHub.Service.State do
   end
 
   @doc """
-  Locks the local event handler and kills the local distributed supervisor.
+  Locks the event handler and kills the local distributed supervisor.
   """
   @spec toggle_quorum_failure(ProcessHub.hub_id()) :: :ok | {:error, :already_partitioned}
   def toggle_quorum_failure(hub_id) do
     unless is_partitioned?(hub_id) do
-      lock_local_event_handler(hub_id, nil)
+      lock_event_handler(hub_id, nil)
       initializer = Name.initializer(hub_id)
 
       Supervisor.terminate_child(initializer, DistributedSupervisor)
@@ -94,7 +95,7 @@ defmodule ProcessHub.Service.State do
       Name.initializer(hub_id)
       |> Supervisor.restart_child(DistributedSupervisor)
 
-      unlock_local_event_handler(hub_id)
+      unlock_event_handler(hub_id)
 
       :ok
     else

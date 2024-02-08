@@ -4,9 +4,9 @@ defmodule ProcessHub.Service.Cluster do
   The cluster service provides API functions for managing the cluster.
   """
 
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Constant.Event
-  alias ProcessHub.Utility.Name
 
   use Event
 
@@ -59,9 +59,6 @@ defmodule ProcessHub.Service.Cluster do
   @doc "Sends a cluster join event to the remote node."
   @spec propagate_self(ProcessHub.hub_id(), node()) :: term()
   def propagate_self(hub_id, node) do
-    local_node = node()
-    coordinator = Name.coordinator(hub_id)
-
-    :erlang.send({coordinator, node}, {@event_cluster_join, local_node})
+    Dispatcher.propagate_event(hub_id, @event_cluster_join, node(), %{members: [node]})
   end
 end

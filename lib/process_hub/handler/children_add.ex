@@ -67,9 +67,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
           # Release the event queue lock when migrating processes.
           if Keyword.get(arg.start_opts, :migration_add, false) === true do
-            # IO.puts( "RELEASe CHILDRENADD ON NODE #{node()} FOR #{inspect(arg.children)}")
-
-            State.unlock_local_event_handler(arg.hub_id)
+            State.unlock_event_handler(arg.hub_id)
           end
 
           :ok
@@ -168,8 +166,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         end)
 
       if length(forw) > 0 do
-        # IO.puts "FORWARDING ON NODE #{node()} FOR CHILDREN #{inspect(forw)}"
-
         Dispatcher.children_start(hub_id, forw, start_opts)
         HookManager.dispatch_hook(hub_id, Hook.forwarded_migration(), forw)
       end

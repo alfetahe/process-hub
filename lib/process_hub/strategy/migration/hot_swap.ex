@@ -154,6 +154,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             :kill
         end)
 
+        # Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
+
         if length(migration_cids) > 0 do
           # Dispatch hook.
           HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})

@@ -19,23 +19,23 @@ defmodule Test.Service.StateTest do
 
   test "is locked?", %{hub_id: hub_id} = _context do
     assert State.is_locked?(hub_id) === false
-    :blockade.set_priority(Name.local_event_queue(hub_id), PriorityLevel.unlocked())
+    :blockade.set_priority(Name.event_queue(hub_id), PriorityLevel.unlocked())
     assert State.is_locked?(hub_id) === false
-    :blockade.set_priority(Name.local_event_queue(hub_id), PriorityLevel.locked())
+    :blockade.set_priority(Name.event_queue(hub_id), PriorityLevel.locked())
     assert State.is_locked?(hub_id) === true
   end
 
-  test "lock local event handler", %{hub_id: hub_id} = _context do
+  test "lock event handler", %{hub_id: hub_id} = _context do
     assert State.is_locked?(hub_id) === false
-    State.lock_local_event_handler(hub_id)
+    State.lock_event_handler(hub_id)
     assert State.is_locked?(hub_id) === true
   end
 
-  test "unlock local event handler", %{hub_id: hub_id} = _context do
+  test "unlock event handler", %{hub_id: hub_id} = _context do
     assert State.is_locked?(hub_id) === false
-    State.lock_local_event_handler(hub_id)
+    State.lock_event_handler(hub_id)
     assert State.is_locked?(hub_id) === true
-    State.unlock_local_event_handler(hub_id)
+    State.unlock_event_handler(hub_id)
     assert State.is_locked?(hub_id) === false
   end
 

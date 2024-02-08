@@ -3,7 +3,7 @@ defmodule ProcessHub.Utility.Bag do
   Utility functions.
   """
 
-  @default_timeout 5000
+  @default_timeout 30000
 
   @doc """
   Sends hook messages to the given process.
