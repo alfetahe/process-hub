@@ -23,6 +23,10 @@ defmodule ProcessHub.Service.Distributor do
         ) ::
           {:ok, :redistribution_initiated} | {:ok, :no_children_to_redistribute}
   def children_redist_init(hub_id, child_specs, node, opts \\ []) do
+    # Migration expects the `:migration_add` true flag otherwise the
+    # remote node wont release the lock.
+    opts = Keyword.put(opts, :migration_add, true)
+
     redist_children =
       Enum.map(child_specs, fn child_spec ->
         init_data([node], hub_id, child_spec)

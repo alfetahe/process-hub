@@ -107,10 +107,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             :ok
     def handle_migration(strategy, hub_id, child_specs, added_node, sync_strategy) do
       # Start redistribution of the child processes.
-      Distributor.children_redist_init(hub_id, child_specs, added_node,
-        reply_to: [self()],
-        migration_add: true
-      )
+      Distributor.children_redist_init(hub_id, child_specs, added_node, reply_to: [self()])
 
       if length(child_specs) > 0 do
         migration_cids = migration_cids(hub_id, strategy, child_specs, added_node)

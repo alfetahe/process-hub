@@ -212,7 +212,7 @@ defmodule ProcessHub do
   This function is similar to `stop_child/3`, but it stops multiple children at once, making it more
   efficient than calling `stop_child/3` multiple times.
 
-  > #### Warning {: .warning}
+  > #### Warning {: .info}
   >
   > Using `stop_children/3` with `async_wait: true` can lead to timeout errors,
   > especially when stopping a large number of child processes.
