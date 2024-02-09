@@ -1,16 +1,19 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.2.0-alpha - YYYY-MM-DD
-Added support for configurable distribution strategy.
-Improved integration tests by making them more reliable.
-Improved documentation by adding guides.
+## v0.2.0-alpha - 2024-02-09
+This release brings in lots of improvements and few new features.
 
-Analysed the performance of the system and made huge improvements to the process replication and
-migration. Most of the improvements done we're replacing multiple single operations with bulk operations,
-switching `Supervisor.which_children/1` calls or minimizing the number of calls.
+The main focus was on making the distribution strategy configurable.
+This has led to the introduction of new strategies and the ability to implement custom strategies
+for process distribution.
 
-Improved failure handling of the overall system.
+Secondary focus was on improving the performance and reliability of the system.
+Profiled and optimized the codebase to find the biggest inefficiencies and bottlenecks.
+
+Includes also some bugfixes.
+
+New guides and documentation pages added.
 
 ### Changed
 - `Hook.registry_pid_inserted/0` no longer returns all node-pid pairs that are
@@ -40,11 +43,13 @@ from the user to decide which nodes should be used for process distribution.
 
 ### Removed
 - Reduced parameters on some strategy callbacks.
+- Removed hotswap migration retention `:none` option in favour of integer value.
 
 ### Fixed
-- Replication strategy `:cluster_size` option was not couting the local node.
+- Replication strategy `:cluster_size` option was not counting the local node.
+- Tests we're failing due to race conditions in some cases.
+- The hotswap migration was having difficulties with migrating large amount of processes.
 - Documentation fixes.
-- Removed hotswap migration retention `:none` option in favour of integer value.
 
 ## v0.1.4-alpha - 2023-11-19
 Replaced :ets with Cachex for local storage to improve reliability of the system and avoid
