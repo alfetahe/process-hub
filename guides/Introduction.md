@@ -86,22 +86,22 @@ iex --name node1@127.0.0.1 --cookie mycookie -S mix
 ```elixir
 # Run the following in the iex console to start 5 processes under the hub.
 iex> ProcessHub.start_children(:my_hub, [
-...>  %{id: :some_id1, start: {MyProcess, :start_link, []}},
-...>  %{id: :another_id2, start: {MyProcess, :start_link, []}},
-...>  %{id: :child_3, start: {MyProcess, :start_link, []}},
-...>  %{id: :child_4, start: {MyProcess, :start_link, []}},
-...>  %{id: "the_last_child", start: {MyProcess, :start_link, []}}
+...>    %{id: :process1, start: {MyProcess, :start_link, []}},
+...>    %{id: :process2, start: {MyProcess, :start_link, []}},
+...>    %{id: :process3, start: {MyProcess, :start_link, []}},
+...>    %{id: :process4, start: {MyProcess, :start_link, []}},
+...>    %{id: :process5, start: {MyProcess, :start_link, []}}
 ...> ])
 {:ok, :start_initiated}
 
 # Check the started processes by running the command below.
 iex> ProcessHub.process_list(:my_hub, :global)
 [
-    {:another_id2, [{:"node1@127.0.0.1", #PID<0.248.0>}]},
-    {:some_id1, [{:"node1@127.0.0.1", #PID<0.249.0>}]},
-    {:child_3, [{:"node1@127.0.0.1", #PID<0.250.0>}]},
-    {"the_last_child", [{:"node1@127.0.0.1", #PID<0.252.0>}]},
-    {:child_4, [{:"node1@127.0.0.1", #PID<0.251.0>}]},
+  process1: ["node1@127.0.0.1": #PID<0.256.0>],
+  process2: ["node1@127.0.0.1": #PID<0.257.0>],
+  process3: ["node1@127.0.0.1": #PID<0.258.0>],
+  process4: ["node1@127.0.0.1": #PID<0.259.0>],
+  process5: ["node1@127.0.0.1": #PID<0.260.0>]
 ]
 ```
 
@@ -123,11 +123,11 @@ true
 # see how some of the processes are distributed to the second node.
 iex> ProcessHub.process_list(:my_hub, :global)
 [
-  {:another_id2, [{:"node2@127.0.0.1", #PID<0.240.0>}]},
-  {:some_id1, [{:"node1@127.0.0.1", #PID<21674.249.0>}]},
-  {:child_3, [{:"node1@127.0.0.1",, #PID<21674.250.0>}]},
-  {"the_last_child", [{:"node2@127.0.0.1", #PID<0.241.0>}]},
-  {:child_4, [{:"node1@127.0.0.1",, #PID<21674.251.0>}]},
+  process4: ["node2@127.0.0.1": #PID<0.285.0>],
+  process3: ["node2@127.0.0.1": #PID<0.284.0>],
+  process1: ["node2@127.0.0.1": #PID<0.283.0>],
+  process2: ["node1@127.0.0.1": #PID<23045.257.0>],
+  process5: ["node1@127.0.0.1": #PID<23045.260.0>]
 ]
 ```
 <!-- tabs-close -->

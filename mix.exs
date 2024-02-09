@@ -26,6 +26,7 @@ defmodule ProcessHub.MixProject do
           "README.md",
           "guides/Introduction.md",
           "guides/Configuration.md",
+          "guides/StateHandover.md",
           "guides/Hooks.cheatmd"
         ],
         authors: ["Anuar Alfetahe"]
