@@ -151,6 +151,8 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_info({@event_cluster_leave, node}, state) do
+    IO.puts "Node down event"
+
     {:noreply, handle_node_down(state, node)}
   end
 
