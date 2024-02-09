@@ -157,8 +157,6 @@ defmodule ProcessHub.Service.Distributor do
           {node(),
            [{any, :restarting | :undefined | pid, :supervisor | :worker, :dynamic | list}]}
   def which_children_local(hub_id, _opts) do
-    # TODO: switch it with the local registry data because this is very unperformant and document it.
-
     {node(), Supervisor.which_children(Name.distributed_supervisor(hub_id))}
   end
 

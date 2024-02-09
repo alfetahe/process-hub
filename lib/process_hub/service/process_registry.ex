@@ -24,6 +24,32 @@ defmodule ProcessHub.Service.ProcessRegistry do
     |> Map.new()
   end
 
+  @spec process_list(atom(), :global | :local) :: [
+          {ProcessHub.child_id(), [{node(), pid()}] | [pid()]}
+        ]
+  def process_list(hub_id, :global) do
+    registry(hub_id)
+    |> Enum.map(fn {child_id, {_child_spec, nodes}} ->
+      {child_id, nodes}
+    end)
+  end
+
+  def process_list(hub_id, :local) do
+    local_node = node()
+
+    process_list(hub_id, :global)
+    |> Enum.map(fn {child_id, nodes} ->
+      pids =
+        Enum.filter(nodes, fn {node, _} -> node === local_node end)
+        |> Enum.map(fn {_, pid} -> pid end)
+
+      {child_id, pids}
+    end)
+    |> Enum.filter(fn {_, nodes} ->
+      length(nodes) > 0
+    end)
+  end
+
   @spec contains_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
   @doc "Returns a list of child_ids that match the given `child_ids` variable."
   def contains_children(hub_id, child_ids) do

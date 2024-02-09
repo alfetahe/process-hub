@@ -61,6 +61,7 @@ defmodule ProcessHub.DistributedSupervisor do
     |> Map.new()
   end
 
+  @spec local_child_ids(atom() | pid() | {atom(), any()} | {:via, atom(), any()}) :: list()
   @doc "Returns the child process ids that are running on local node."
   def local_child_ids(distributed_sup) do
     Supervisor.which_children(distributed_sup)

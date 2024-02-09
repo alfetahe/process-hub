@@ -36,6 +36,7 @@ from the user to decide which nodes should be used for process distribution.
 - Created guides.
 - Added new hooks: `:pre_children_start_hook`, `:pre_cluster_join`, `:pre_cluster_leave`
 - Documentation pages for hooks, strategies and guides.
+- New API function `ProcessHub.process_list/2`
 
 ### Removed
 - Reduced parameters on some strategy callbacks.

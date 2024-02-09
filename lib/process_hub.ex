@@ -227,8 +227,13 @@ defmodule ProcessHub do
   Works similarly to `Supervisor.which_children/1`, but wraps the result in a tuple
   containing the node name and the children.
 
-  It's recommended to use `ProcessHub.process_registry/1` instead when fast lookups
-  are required, as it makes no network calls.
+  > #### Info {: .info}
+  >
+  > The `Supervisor.which_children/1` function is known to consume a lot of memory
+  > and this can affect performance. The problem is even more relevant when
+  > using the `:global` option as it will make a network call to all nodes in the cluster.
+  >
+  > It is highly recommended to use `ProcessHub.process_list/2` instead.
 
   Available options:
   - `:global` - returns a list of all child processes started by all nodes in the cluster.
@@ -335,12 +340,39 @@ defmodule ProcessHub do
   defdelegate child_lookup(hub_id, child_id), to: ProcessRegistry, as: :lookup
 
   @doc """
-  Returns all information registered regarding the child processes.
+  Returns all information in the registry.
 
   This function queries results from the local `ets` table and does not make any network calls.
   """
   @spec process_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry()
   defdelegate process_registry(hub_id), to: ProcessRegistry, as: :registry
+
+  @doc """
+  Returns a list of processes that are registered.
+
+  The process list contains the `t:child_id/0` and depending on the scope
+  option, it may contain the node and `pid()` of the child.
+
+  This function queries results from the local `ets` table and does not make any network calls.
+
+  Available options:
+  - `:global` - returns a list of all child processes on all nodes in the cluster.
+    The return result will be in the format of `[{child_id, [{:node, pid}]}]`.
+  - `:local` - returns a list of child processes that belong to the local node.
+    The return result will be in the format of `[{child_id, [pid]}]`
+    but only the processes that belong to the local node will be returned.
+
+  ## Example
+      iex> ProcessHub.process_list(:my_hub, :global)
+      [
+        {:my_child1, [{:node1, #PID<0.123.0>}, {:node2, #PID<2.123.0>}]},
+        {:my_child2, [{:node2, #PID<5.124.0>}]}
+      ]
+      iex> ProcessHub.process_list(:my_hub, :local)
+      [{:my_child1, [#PID<0.123.0>]}]
+  """
+  @spec process_list(hub_id(), :global | :local) :: [{ProcessHub.child_id(), [{node(), pid()}]}]
+  defdelegate process_list(hub_id, scope), to: ProcessRegistry, as: :process_list
 
   @doc """
   Checks if the `ProcessHub` with the given `t:hub_id/0` is locked.

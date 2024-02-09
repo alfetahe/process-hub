@@ -95,15 +95,13 @@ iex> ProcessHub.start_children(:my_hub, [
 {:ok, :start_initiated}
 
 # Check the started processes by running the command below.
-iex> ProcessHub.which_children(:my_hub, [:global])
+iex> ProcessHub.process_list(:my_hub, :global)
 [
-  "node1@127.0.0.1": [
-    {"the_last_child", #PID<0.250.0>, :worker, [MyProcess]},
-    {:child_4, #PID<0.249.0>, :worker, [MyProcess]},
-    {:child_3, #PID<0.248.0>, :worker, [MyProcess]},
-    {:another_id2, #PID<0.247.0>, :worker, [MyProcess]},
-    {:some_id1, #PID<0.246.0>, :worker, [MyProcess]}
-  ]
+    {:another_id2, [{:"node1@127.0.0.1", #PID<0.248.0>}]},
+    {:some_id1, [{:"node1@127.0.0.1", #PID<0.249.0>}]},
+    {:child_3, [{:"node1@127.0.0.1", #PID<0.250.0>}]},
+    {"the_last_child", [{:"node1@127.0.0.1", #PID<0.252.0>}]},
+    {:child_4, [{:"node1@127.0.0.1", #PID<0.251.0>}]},
 ]
 ```
 
@@ -123,17 +121,13 @@ true
 
 # Check the started procsses by running the command below and
 # see how some of the processes are distributed to the second node.
-iex> ProcessHub.which_children(:my_hub, [:global])
+iex> ProcessHub.process_list(:my_hub, :global)
 [
-  "node2@127.0.0.1": [
-    {:child_3, #PID<0.261.0>, :worker, [MyProcess]},
-    {:some_id1, #PID<0.246.0>, :worker, [MyProcess]}
-  ],
-  "node1@127.0.0.1": [
-    {"the_last_child", #PID<21674.251.0>, :worker, [MyProcess]},
-    {:child_4, #PID<21674.250.0>, :worker, [MyProcess]},
-    {:another_id2, #PID<21674.248.0>, :worker, [MyProcess]}
-  ]
+  {:another_id2, [{:"node2@127.0.0.1", #PID<0.240.0>}]},
+  {:some_id1, [{:"node1@127.0.0.1", #PID<21674.249.0>}]},
+  {:child_3, [{:"node1@127.0.0.1",, #PID<21674.250.0>}]},
+  {"the_last_child", [{:"node2@127.0.0.1", #PID<0.241.0>}]},
+  {:child_4, [{:"node1@127.0.0.1",, #PID<21674.251.0>}]},
 ]
 ```
 <!-- tabs-close -->

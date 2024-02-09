@@ -20,7 +20,7 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   def propagate(strategy, hub_id, children, node, type, opts)
 
   @doc """
-  This function handles the propagation messages sent by `ProcessHub.Strategy.Synchronization.Base.propagate/5`.
+  This function handles the propagation messages sent by `ProcessHub.Strategy.Synchronization.Base.propagate/6`.
 
   It saves the process data that was propagated to the local process registry.
   """
