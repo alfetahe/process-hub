@@ -112,52 +112,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         migration_add: true
       )
 
-      # TODO: refactor this code..
-
       if length(child_specs) > 0 do
-        dist_sup = Name.distributed_supervisor(hub_id)
+        migration_cids = migration_cids(hub_id, strategy, child_specs, added_node)
 
-        local_pids = DistributedSupervisor.local_children(dist_sup)
-
-        migration_cids =
-          Enum.map(1..length(child_specs), fn _x ->
-            start_resp =
-              Mailbox.receive_response(
-                :child_start_resp,
-                receive_handler(),
-                @migration_timeout
-              )
-
-            case start_resp do
-              {:error, _reason} ->
-                Logger.error("Migration failed to start on node #{inspect(added_node)}")
-                nil
-
-              {child_id, result} ->
-                # Notify the peer process about the migration.
-                case start_handover(strategy, child_id, local_pids, result) do
-                  nil -> nil
-                  _ -> child_id
-                end
-            end
-          end)
-          |> Enum.filter(&(&1 != nil))
-          |> retention_switch(strategy)
-
-        Enum.reduce(migration_cids, :continue, fn
-          child_id, :continue ->
-            # Wait for response from the peer process and then terminate the child from local node.
-            retention_signal = handle_retention(strategy, child_id)
-            Distributor.child_terminate(hub_id, child_id, sync_strategy)
-            retention_signal
-
-          child_id, :kill ->
-            # Terminate the local child immediately.
-            Distributor.child_terminate(hub_id, child_id, sync_strategy)
-            :kill
-        end)
-
-        # Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
+        handle_retentions(hub_id, strategy, sync_strategy, migration_cids)
 
         if length(migration_cids) > 0 do
           # Dispatch hook.
@@ -166,6 +124,53 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
 
       :ok
+    end
+
+    defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do
+      Enum.reduce(migration_cids, :continue, fn
+        child_id, :continue ->
+          # Wait for response from the peer process and then terminate the child from local node.
+          retention_signal = handle_retention(strategy, child_id)
+          Distributor.child_terminate(hub_id, child_id, sync_strategy)
+          retention_signal
+
+        child_id, :kill ->
+          # Terminate the local child immediately.
+          Distributor.child_terminate(hub_id, child_id, sync_strategy)
+          :kill
+      end)
+
+      # Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
+    end
+
+    defp migration_cids(hub_id, strategy, child_specs, added_node) do
+      dist_sup = Name.distributed_supervisor(hub_id)
+
+      local_pids = DistributedSupervisor.local_children(dist_sup)
+
+      Enum.map(1..length(child_specs), fn _x ->
+        start_resp =
+          Mailbox.receive_response(
+            :child_start_resp,
+            receive_handler(),
+            @migration_timeout
+          )
+
+        case start_resp do
+          {:error, _reason} ->
+            Logger.error("Migration failed to start on node #{inspect(added_node)}")
+            nil
+
+          {child_id, result} ->
+            # Notify the peer process about the migration.
+            case start_handover(strategy, child_id, local_pids, result) do
+              nil -> nil
+              _ -> child_id
+            end
+        end
+      end)
+      |> Enum.filter(&(&1 != nil))
+      |> retention_switch(strategy)
     end
 
     defp retention_switch(child_ids, strategy) do
