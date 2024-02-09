@@ -244,7 +244,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             partition_strat: PartitionToleranceStrategy.t(),
             redun_strat: RedundancyStrategy.t(),
             dist_strat: DistributionStrategy.t(),
-            hub_nodes: [node()]
+            hub_nodes: [node()],
+            rem_node_cids: [ProcessHub.child_id()]
           }
 
     @enforce_keys [
@@ -252,7 +253,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :removed_node,
       :hub_nodes
     ]
-    defstruct @enforce_keys ++ [:partition_strat, :redun_strat, :dist_strat]
+    defstruct @enforce_keys ++ [:partition_strat, :redun_strat, :dist_strat, :rem_node_cids]
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = arg) do
@@ -269,7 +270,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         {:nodedown, arg.removed_node}
       )
 
-      distribute_processes(arg)
+      distribute_processes(arg) |> clear_registry()
 
       State.unlock_event_handler(arg.hub_id)
 
@@ -290,35 +291,80 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :ok
     end
 
-    defp distribute_processes(%__MODULE__{} = arg) do
-      children = ProcessRegistry.registry(arg.hub_id)
+    defp clear_registry(arg) do
+      children_nodes =
+        Enum.map(arg.rem_node_cids, fn child_id ->
+          {child_id, [arg.removed_node]}
+        end)
+        |> Map.new()
 
-      removed_node_processes(children, arg.removed_node)
-      |> Enum.each(fn {child_id, child_spec, nodes_new, nodes_old} ->
-        RedundancyStrategy.handle_post_update(
-          arg.redun_strat,
-          arg.hub_id,
-          child_id,
-          nodes_new,
-          {:down, arg.removed_node},
-          []
-        )
+      ProcessRegistry.bulk_delete(arg.hub_id, children_nodes)
 
-        local_node = node()
-        # Check if removed nodes procsses should be started on the local node.
-        if !Enum.member?(nodes_old, local_node) && Enum.member?(nodes_new, local_node) do
-          # TODO: We should also pass all children not one by one.
-          Distributor.children_redist_init(arg.hub_id, [child_spec], local_node)
-        end
-      end)
+      arg
     end
 
-    defp removed_node_processes(children, removed_node) do
-      Enum.reduce(children, [], fn {child_id, {child_spec, nodes_old}}, acc ->
-        if Enum.member?(Keyword.keys(nodes_old), removed_node) do
-          nodes_new = Enum.filter(nodes_old, fn node -> node !== removed_node end)
+    defp distribute_processes(%__MODULE__{} = arg) do
+      local_node = node()
 
-          [{child_id, child_spec, nodes_new, nodes_old} | acc]
+      cids =
+        removed_node_processes(arg)
+        |> Enum.map(fn {child_id, child_spec, nodes_orig, nodes_updated} ->
+          # Check if the local node is part of the original nodes.
+          # Then continue checking if local node is part of the updated nodes.
+          case Enum.member?(nodes_orig, local_node) do
+            true ->
+              handle_redundancy(arg, child_id, nodes_updated)
+
+            false ->
+              handle_redistribution(arg, child_spec, nodes_updated, local_node)
+          end
+
+          child_id
+        end)
+
+      Map.put(arg, :rem_node_cids, cids)
+    end
+
+    defp handle_redistribution(arg, child_spec, nodes_updated, local_node) do
+      case Enum.member?(nodes_updated, local_node) do
+        true ->
+          # Local node is part of the new nodes and therefore we need to start
+          # the child process locally.
+          Distributor.children_redist_init(arg.hub_id, [child_spec], local_node)
+
+        false ->
+          nil
+      end
+    end
+
+    defp handle_redundancy(arg, child_id, nodes_updated) do
+      RedundancyStrategy.handle_post_update(
+        arg.redun_strat,
+        arg.hub_id,
+        child_id,
+        nodes_updated,
+        {:down, arg.removed_node},
+        []
+      )
+    end
+
+    defp removed_node_processes(arg) do
+      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
+
+      ProcessRegistry.registry(arg.hub_id)
+      |> Enum.reduce([], fn {child_id, {child_spec, node_pids}}, acc ->
+        nodes_orig = Keyword.keys(node_pids)
+
+        if Enum.member?(nodes_orig, arg.removed_node) do
+          nodes_updated =
+            DistributionStrategy.belongs_to(
+              arg.dist_strat,
+              arg.hub_id,
+              child_id,
+              repl_fact
+            )
+
+          [{child_id, child_spec, nodes_orig, nodes_updated} | acc]
         else
           acc
         end

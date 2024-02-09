@@ -50,6 +50,8 @@ from the user to decide which nodes should be used for process distribution.
 - Tests we're failing due to race conditions in some cases.
 - The hotswap migration was having difficulties with migrating large amount of processes.
 - Documentation fixes.
+- Process redistribution on node leave was not cleaning up the local storage properly
+and some processes we're not distributed to other nodes.
 
 ## v0.1.4-alpha - 2023-11-19
 Replaced :ets with Cachex for local storage to improve reliability of the system and avoid
