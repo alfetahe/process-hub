@@ -94,6 +94,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     @migration_timeout 15000
 
     @impl true
+    def init(_strategy, _hub_id), do: nil
+
+    @impl true
     @spec handle_migration(
             struct(),
             ProcessHub.hub_id(),

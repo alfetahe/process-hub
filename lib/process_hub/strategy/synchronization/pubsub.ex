@@ -25,6 +25,9 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.PubSub do
     use Event
 
+    @impl true
+    def init(_strategy, _hub_id), do: nil
+
     @impl SynchronizationStrategy
     def propagate(_strategy, hub_id, children, node, :add, opts) do
       Blockade.dispatch_sync(

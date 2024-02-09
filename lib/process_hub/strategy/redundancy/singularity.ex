@@ -14,6 +14,9 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
 
   defimpl RedundancyStrategy, for: ProcessHub.Strategy.Redundancy.Singularity do
     @impl true
+    def init(_strategy, _hub_id), do: nil
+
+    @impl true
     @spec replication_factor(ProcessHub.Strategy.Redundancy.Singularity.t()) :: 1
     def replication_factor(_strategy), do: 1
 

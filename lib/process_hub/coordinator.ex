@@ -22,6 +22,9 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
+  alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
+  alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Handler.ChildrenRem
   alias ProcessHub.Handler.ClusterUpdate
   alias ProcessHub.Handler.Synchronization
@@ -31,7 +34,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Service.State
-  alias ProcessHub.Service.TaskManager
   alias ProcessHub.Utility.Name
 
   @propagation_interval 10000
@@ -89,7 +91,7 @@ defmodule ProcessHub.Coordinator do
 
     hub_nodes = get_hub_nodes(hub.hub_id)
     setup_local_storage(hub, hub_nodes)
-    init_distribution(hub)
+    init_strategies(hub)
     register_handlers(hub.managers)
     register_hook_handlers(hub.hub_id, hub.settings.hooks)
 
@@ -115,7 +117,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_continue(:additional_setup, state) do
-    PartitionToleranceStrategy.handle_startup(
+    PartitionToleranceStrategy.init(
       state.settings.partition_tolerance_strategy,
       state.hub_id
     )
@@ -136,7 +138,24 @@ defmodule ProcessHub.Coordinator do
   end
 
   def handle_cast({:start_children, children, start_opts}, state) do
-    TaskManager.start_children(state.hub_id, children, start_opts)
+    if length(children) > 0 do
+      Task.Supervisor.start_child(
+        Name.task_supervisor(state.hub_id),
+        ChildrenAdd.StartHandle,
+        :handle,
+        [
+          %ChildrenAdd.StartHandle{
+            hub_id: state.hub_id,
+            children: children,
+            dist_sup: Name.distributed_supervisor(state.hub_id),
+            sync_strategy: LocalStorage.get(state.hub_id, :synchronization_strategy),
+            redun_strategy: LocalStorage.get(state.hub_id, :redundancy_strategy),
+            dist_strategy: LocalStorage.get(state.hub_id, :distribution_strategy),
+            start_opts: start_opts
+          }
+        ]
+      )
+    end
 
     {:noreply, state}
   end
@@ -253,9 +272,24 @@ defmodule ProcessHub.Coordinator do
   def handle_info({@event_migration_add, {children, start_opts}}, state) do
     if length(children) > 0 do
       State.lock_event_handler(state.hub_id)
-    end
 
-    TaskManager.start_children(state.hub_id, children, start_opts)
+      Task.Supervisor.start_child(
+        Name.task_supervisor(state.hub_id),
+        ChildrenAdd.StartHandle,
+        :handle,
+        [
+          %ChildrenAdd.StartHandle{
+            hub_id: state.hub_id,
+            children: children,
+            dist_sup: Name.distributed_supervisor(state.hub_id),
+            sync_strategy: LocalStorage.get(state.hub_id, :synchronization_strategy),
+            redun_strategy: LocalStorage.get(state.hub_id, :redundancy_strategy),
+            dist_strategy: LocalStorage.get(state.hub_id, :distribution_strategy),
+            start_opts: start_opts
+          }
+        ]
+      )
+    end
 
     {:noreply, state}
   end
@@ -376,9 +410,24 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
-  defp init_distribution(hub) do
+  defp init_strategies(hub) do
     DistributionStrategy.init(
       hub.settings.distribution_strategy,
+      hub.hub_id
+    )
+
+    SynchronizationStrategy.init(
+      hub.settings.synchronization_strategy,
+      hub.hub_id
+    )
+
+    MigrationStrategy.init(
+      hub.settings.migration_strategy,
+      hub.hub_id
+    )
+
+    RedundancyStrategy.init(
+      hub.settings.redundancy_strategy,
       hub.hub_id
     )
   end

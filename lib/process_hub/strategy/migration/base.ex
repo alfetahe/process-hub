@@ -4,6 +4,14 @@ defprotocol ProcessHub.Strategy.Migration.Base do
   """
 
   @doc """
+  Triggered when coordinator is initialized.
+
+  Could be used to perform initialization.
+  """
+  @spec init(struct(), ProcessHub.hub_id()) :: any()
+  def init(strategy, hub_id)
+
+  @doc """
   Migrates processes from the local to the remote node.
 
   Process migration happens when a new node joins the `ProcessHub` cluster, and some of the

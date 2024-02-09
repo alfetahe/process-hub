@@ -4,6 +4,14 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   """
 
   @doc """
+  Triggered when coordinator is initialized.
+
+  Could be used to perform initialization.
+  """
+  @spec init(struct(), ProcessHub.hub_id()) :: any()
+  def init(strategy, hub_id)
+
+  @doc """
   This function is called when a process has been started on the local node, and the
   information about the process is about to be propagated to other nodes.
   """

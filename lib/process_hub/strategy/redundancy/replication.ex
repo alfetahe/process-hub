@@ -70,6 +70,9 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     alias ProcessHub.Strategy.Redundancy.Replication
 
     @impl true
+    def init(_strategy, _hub_id), do: nil
+
+    @impl true
     @spec replication_factor(ProcessHub.Strategy.Redundancy.Replication.t()) ::
             pos_integer() | :cluster_size
     def replication_factor(strategy) do

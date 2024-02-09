@@ -22,24 +22,13 @@ defmodule ProcessHub.Strategy.PartitionTolerance.Divergence do
   defstruct []
 
   defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.Divergence do
-    @spec handle_node_down(
-            ProcessHub.Strategy.PartitionTolerance.Divergence.t(),
-            ProcessHub.hub_id(),
-            node()
-          ) :: :ok
+    @impl true
+    def init(_strategy, _hub_id), do: nil
+
+    @impl true
     def handle_node_down(_strategy, _hub_id, _node), do: :ok
 
-    @spec handle_node_up(
-            ProcessHub.Strategy.PartitionTolerance.Divergence.t(),
-            ProcessHub.hub_id(),
-            node()
-          ) :: :ok
+    @impl true
     def handle_node_up(_strategy, _hub_id, _node), do: :ok
-
-    @spec handle_startup(
-            ProcessHub.Strategy.PartitionTolerance.Divergence.t(),
-            ProcessHub.hub_id()
-          ) :: :ok
-    def handle_startup(_strategy, _hub_id), do: :ok
   end
 end

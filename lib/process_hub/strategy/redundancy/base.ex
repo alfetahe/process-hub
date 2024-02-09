@@ -7,6 +7,14 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   """
 
   @doc """
+  Triggered when coordinator is initialized.
+
+  Could be used to perform initialization.
+  """
+  @spec init(struct(), ProcessHub.hub_id()) :: any()
+  def init(strategy, hub_id)
+
+  @doc """
   Returns the replication factor for the given strategy struct. This is the number of replicas
   that the process will be started with.
   """

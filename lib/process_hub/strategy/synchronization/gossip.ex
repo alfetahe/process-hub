@@ -52,6 +52,10 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.Gossip do
     use Event
 
+    @impl true
+    def init(_strategy, _hub_id), do: nil
+
+    @impl true
     @spec propagate(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
             ProcessHub.hub_id(),
@@ -71,6 +75,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       :ok
     end
 
+    @impl true
     @spec handle_propagation(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
             ProcessHub.hub_id(),
@@ -115,6 +120,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       :ok
     end
 
+    @impl true
     @spec init_sync(ProcessHub.Strategy.Synchronization.Gossip.t(), ProcessHub.hub_id(), [node()]) ::
             :ok
     def init_sync(strategy, hub_id, cluster_nodes) do
@@ -144,6 +150,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       :ok
     end
 
+    @impl true
     @spec handle_synchronization(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
             ProcessHub.hub_id(),

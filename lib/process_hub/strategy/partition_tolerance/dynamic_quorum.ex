@@ -60,17 +60,10 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
   defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     @quorum_cache_key :dynamic_quorum_node_down
 
-    @spec handle_startup(
-            ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
-            ProcessHub.hub_id()
-          ) :: :ok
-    def handle_startup(_strategy, _hub_id), do: :ok
+    @impl true
+    def init(_strategy, _hub_id), do: nil
 
-    @spec handle_node_up(
-            ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
-            ProcessHub.hub_id(),
-            node()
-          ) :: :ok
+    @impl true
     def handle_node_up(strategy, hub_id, node) do
       cluster_nodes = Cluster.nodes(hub_id, [:include_local])
 
@@ -88,11 +81,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       :ok
     end
 
-    @spec handle_node_down(
-            ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
-            ProcessHub.hub_id(),
-            node()
-          ) :: :ok
+    @impl true
     def handle_node_down(strategy, hub_id, node) do
       cluster_nodes = Cluster.nodes(hub_id, [:include_local])
 

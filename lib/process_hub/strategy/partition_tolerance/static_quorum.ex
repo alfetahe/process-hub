@@ -32,11 +32,8 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
   defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
     alias ProcessHub.Service.Cluster
 
-    @spec handle_startup(
-            ProcessHub.Strategy.PartitionTolerance.StaticQuorum.t(),
-            ProcessHub.hub_id()
-          ) :: :ok
-    def handle_startup(strategy, hub_id) do
+    @impl true
+    def init(strategy, hub_id) do
       cluster_nodes = Cluster.nodes(hub_id, [:include_local])
 
       if strategy.startup_confirm do
@@ -44,15 +41,9 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
           State.toggle_quorum_failure(hub_id)
         end
       end
-
-      :ok
     end
 
-    @spec handle_node_down(
-            ProcessHub.Strategy.PartitionTolerance.StaticQuorum.t(),
-            ProcessHub.hub_id(),
-            node()
-          ) :: :ok
+    @impl true
     def handle_node_down(strategy, hub_id, _node) do
       cluster_nodes = Cluster.nodes(hub_id, [:include_local])
 
@@ -63,11 +54,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
       :ok
     end
 
-    @spec handle_node_up(
-            ProcessHub.Strategy.PartitionTolerance.StaticQuorum.t(),
-            ProcessHub.hub_id(),
-            node()
-          ) :: :ok
+    @impl true
     def handle_node_up(strategy, hub_id, _node) do
       cluster_nodes = Cluster.nodes(hub_id, [:include_local])
 
