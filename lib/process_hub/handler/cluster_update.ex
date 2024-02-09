@@ -9,6 +9,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
+  alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -38,17 +39,26 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     @enforce_keys [
       :hub_id,
-      :redun_strat,
-      :sync_strat,
-      :migr_strat,
-      :partition_strat,
-      :dist_strat,
       :node
     ]
-    defstruct @enforce_keys ++ [:repl_fact, :local_children, :keep, :migrate, async_tasks: []]
+    defstruct @enforce_keys ++
+                [
+                  :repl_fact,
+                  :local_children,
+                  :keep,
+                  :migrate,
+                  :redun_strat,
+                  :migr_strat,
+                  :sync_strat,
+                  :partition_strat,
+                  :dist_strat,
+                  async_tasks: []
+                ]
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = arg) do
+      arg = add_strategies(arg)
+
       # Dispatch the nodes pre redistribution event.
       HookManager.dispatch_hook(arg.hub_id, Hook.pre_nodes_redistribution(), {:nodeup, arg.node})
 
@@ -65,6 +75,17 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       State.unlock_event_handler(arg.hub_id)
 
       :ok
+    end
+
+    defp add_strategies(arg) do
+      %__MODULE__{
+        arg
+        | sync_strat: LocalStorage.get(arg.hub_id, :synchronization_strategy),
+          redun_strat: LocalStorage.get(arg.hub_id, :redundancy_strategy),
+          dist_strat: LocalStorage.get(arg.hub_id, :distribution_strategy),
+          migr_strat: LocalStorage.get(arg.hub_id, :migration_strategy),
+          partition_strat: LocalStorage.get(arg.hub_id, :partition_tolerance_strategy)
+      }
     end
 
     defp propagate_local_children(hub_id, node) do
@@ -221,7 +242,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             hub_id: ProcessHub.hub_id(),
             removed_node: node(),
             partition_strat: PartitionToleranceStrategy.t(),
-            redun_strategy: RedundancyStrategy.t(),
+            redun_strat: RedundancyStrategy.t(),
             dist_strat: DistributionStrategy.t(),
             hub_nodes: [node()]
           }
@@ -229,15 +250,19 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     @enforce_keys [
       :hub_id,
       :removed_node,
-      :partition_strat,
-      :redun_strategy,
-      :dist_strat,
       :hub_nodes
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [:partition_strat, :redun_strat, :dist_strat]
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = arg) do
+      arg = %__MODULE__{
+        arg
+        | partition_strat: LocalStorage.get(arg.hub_id, :partition_tolerance_strategy),
+          redun_strat: LocalStorage.get(arg.hub_id, :redundancy_strategy),
+          dist_strat: LocalStorage.get(arg.hub_id, :distribution_strategy)
+      }
+
       HookManager.dispatch_hook(
         arg.hub_id,
         Hook.pre_nodes_redistribution(),
@@ -271,7 +296,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       removed_node_processes(children, arg.removed_node)
       |> Enum.each(fn {child_id, child_spec, nodes_new, nodes_old} ->
         RedundancyStrategy.handle_post_update(
-          arg.redun_strategy,
+          arg.redun_strat,
           arg.hub_id,
           child_id,
           nodes_new,

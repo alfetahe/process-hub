@@ -3,6 +3,8 @@ defmodule ProcessHub.Handler.ChildrenRem do
 
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
+  alias ProcessHub.Utility.Name
+  alias ProcessHub.Service.LocalStorage
 
   use Task
 
@@ -25,15 +27,23 @@ defmodule ProcessHub.Handler.ChildrenRem do
 
     @enforce_keys [
       :hub_id,
-      :children,
-      :dist_sup,
-      :sync_strategy
+      :children
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++
+                [
+                  :dist_sup,
+                  :sync_strategy
+                ]
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
-    def handle(%__MODULE__{} = args) do
-      case ProcessHub.Service.State.is_partitioned?(args.hub_id) do
+    def handle(%__MODULE__{} = arg) do
+      arg = %__MODULE__{
+        arg
+        | dist_sup: Name.distributed_supervisor(arg.hub_id),
+          sync_strategy: LocalStorage.get(arg.hub_id, :synchronization_strategy)
+      }
+
+      case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
         true ->
           {:error, :partitioned}
 
@@ -41,15 +51,15 @@ defmodule ProcessHub.Handler.ChildrenRem do
           local_node = node()
 
           stopped_children =
-            Enum.map(args.children, fn child_data ->
-              result = DistributedSupervisor.terminate_child(args.dist_sup, child_data.child_id)
+            Enum.map(arg.children, fn child_data ->
+              result = DistributedSupervisor.terminate_child(arg.dist_sup, child_data.child_id)
 
               {child_data.child_id, {result, Map.get(child_data, :reply_to, [])}}
             end)
 
           SynchronizationStrategy.propagate(
-            args.sync_strategy,
-            args.hub_id,
+            arg.sync_strategy,
+            arg.hub_id,
             stopped_children,
             local_node,
             :rem,

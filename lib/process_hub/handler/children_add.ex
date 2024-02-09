@@ -9,6 +9,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.State
+  alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Utility.Name
 
@@ -99,16 +100,26 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @enforce_keys [
       :hub_id,
       :children,
-      :dist_sup,
-      :sync_strategy,
-      :dist_strategy,
-      :redun_strategy,
       :start_opts
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++
+                [
+                  :dist_sup,
+                  :sync_strategy,
+                  :redun_strategy,
+                  :dist_strategy
+                ]
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = arg) do
+      arg = %__MODULE__{
+        arg
+        | dist_sup: Name.distributed_supervisor(arg.hub_id),
+          sync_strategy: LocalStorage.get(arg.hub_id, :synchronization_strategy),
+          redun_strategy: LocalStorage.get(arg.hub_id, :redundancy_strategy),
+          dist_strategy: LocalStorage.get(arg.hub_id, :distribution_strategy)
+      }
+
       case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
         true ->
           {:error, :partitioned}
