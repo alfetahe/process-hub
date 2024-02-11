@@ -2,7 +2,7 @@
 
 In this guide we will show a simple example of how to handover the state of a process from one node to another.
 
-`ProcessHub` this scenario is happening automatically when the cluster has received new node event,
+This scenario is happening automatically when the cluster has received new node event,
 meaning that the new node has joined the cluster or left.
 
 Suppose we have the following `GenServer` process:
