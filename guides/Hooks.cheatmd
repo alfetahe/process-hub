@@ -23,9 +23,15 @@ defmodule MyApp.Application do
     children = [
       ProcessHub.child_spec(%ProcessHub{
         hub_id: :my_hub,
-        hooks: [
-            ProcessHub.Constant.Hook.pre_cluster_join(), {MyModule, :my_function, [:some_data, :_]}
-        ]
+        hooks: %{
+          ProcessHub.Constant.Hook.pre_cluster_join() => [
+            {MyModule, :my_function, [:some_data, :_]},
+            {MyModule2, :my_function2, [:some_data]}
+          ],
+          ProcessHub.Constant.Hook.post_cluster_join() => [
+            {MyModule, :my_function, [:some_data, :_]}
+          ]
+        }
       })
     ]
 

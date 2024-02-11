@@ -1,6 +1,11 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.2.1-alpha - YYYY-MM-DD
+
+### Fixed
+- Documentation errors on hooks and minor typos.
+
 ## v0.2.0-alpha - 2024-02-09
 This release brings in lots of improvements and few new features.
 
