@@ -30,7 +30,7 @@ defmodule MyApp.Application do
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Replication{
         replication_factor: 2,
         replication_model: :active_passive,
-        redundancy_signal: :all
+        redundancy_signal: :none
       },
       # Configure the migration strategy.
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
