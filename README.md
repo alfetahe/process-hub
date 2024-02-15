@@ -2,16 +2,6 @@
 
 ![example workflow](https://github.com/alfetahe/process-hub/actions/workflows/elixir.yml/badge.svg)  [![hex.pm version](https://img.shields.io/hexpm/v/coverex.svg?style=flat)](https://hex.pm/packages/process_hub)
 
-
-## Table of Contents
-* [Description](#description)
-* [Features](#features)
-* [Installation](#installation)
-* [Cluster Discovery and Formation](#cluster-discovery-and-formation)
-* [Resilience and Reliability](#resilience-and-reliability)
-* [Locking Mechanism](#locking-mechanism)
-* [Contributing](#contributing)
-
 ## Description
 
 Library for building distributed systems that are scalable. It handles the distribution of
@@ -88,34 +78,6 @@ synchronization, distribution and more.
     ```
   It is possible to start multiple hubs under the same supervision tree.
   Each hub must have a unique `:hub_id`.
-
-## Cluster Discovery and Formation
-ProcessHub monitors connecting and disconnecting nodes and forms a cluster automatically
-from the connected nodes that share the same `hub_id`. It's not required to start
-the `ProcessHub` on all nodes in the cluster.
-
-## Resilience and Reliability
-ProcessHub uses the `Supervisor` behavior and leverages the features that come with it.
-Each hub starts its own `ProcessHub.DistributedSupervisor` process, which is responsible for
-starting, stopping, and monitoring the processes in its local cluster.
-
-When a process dies unexpectedly, the `ProcessHub.DistributedSupervisor` will restart it
-automatically.
-
-ProcessHub also takes care of validating the `child_spec` before starting it and makes sure
-it's started on the right node that the process belongs to.
-If the process is being started on the wrong node, the initialization request will be forwarded
-to the correct node.
-
-## Locking Mechanism
-ProcessHub utilizes the `:blockade` library to provide event-driven communication
-and a locking mechanism.
-It locks the local event queue by increasing its priority for some operations.
-This allows the system to queue events and process them in order to preserve data integrity.
-Other events can be processed once the priority level is set back to default.
-
-To avoid deadlocks, the system places a timeout on the event queue priority and
-restores it to its original value if the timeout is reached.
 
 ## Contributing
 Contributions are welcome and appreciated. If you have any ideas, suggestions, or bugs to report,

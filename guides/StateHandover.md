@@ -54,13 +54,13 @@ Pay attention to the `retention` and `handover` options. The `retention` option 
 
 
 > #### Retention option {: .info}
-> The `retention` option does not mean that the old process will be kept that long, actually the old
-> process will be terminated as soon as it has sent its state to the new process. The `retention` 
-> option is used to limit the time old process is kept alive.
+> The `retention` option does not mean that the old process will be kept that long alive.
+> It is used to limit the time the old processes can stay alive in the handover process
+> before they are killed.
 
 
 ### 2. Implement the neccessary callbacks
-Our `MyProcess` have to also implement the `ProcessHub.Strategy.Migration.Handover` behaviour or define the necessary callbacks yourself.
+Our `MyProcess` have to also implement the `ProcessHub.Strategy.Migration.Handover` behaviour or define the necessary callbacks.
 
 ```elixir
 defmodule MyProcess do
@@ -78,4 +78,4 @@ the new node.
 
 
 ## More info can be found in the `Hotswap` module
-Check out the [Hotswap](https://hexdocs.pm/process_hub/ProcessHub.Strategy.Migration.HotSwap.html) module for more information about the `Hotswap` strategy.
+Check out the [Hotswap](https://hexdocs.pm/process_hub/ProcessHub.Strategy.Migration.HotSwap.html) module for more information.
