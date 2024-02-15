@@ -25,8 +25,11 @@ defmodule ProcessHub.MixProject do
         extras: [
           "README.md",
           "guides/Introduction.md",
+          "guides/Architecture.md",
           "guides/Configuration.md",
           "guides/StateHandover.md",
+          "guides/ManualDistribution.md",
+          "guides/ReplicatingProcesses.md",
           "guides/Hooks.cheatmd"
         ],
         authors: ["Anuar Alfetahe"]
