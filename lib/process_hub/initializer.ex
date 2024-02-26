@@ -41,7 +41,7 @@ defmodule ProcessHub.Initializer do
       storage(hub_id) ++
         [
           {Blockade, %{name: managers.event_queue, priority_sync: false}},
-          {ProcessHub.DistributedSupervisor, {hub_id, managers}},
+          dist_sup(hub_id, managers),
           {Task.Supervisor, name: managers.task_supervisor},
           {ProcessHub.Coordinator, {hub_id, hub, managers}},
           {ProcessHub.WorkerQueue, Name.worker_queue(hub_id)}
@@ -53,6 +53,16 @@ defmodule ProcessHub.Initializer do
       true -> Supervisor.init(children, opts)
       false -> {:error, :local_node_not_alive}
     end
+  end
+
+  defp dist_sup(hub_id, managers) do
+    [
+      %{
+        id: :distributed_supervisor,
+        start: {ProcessHub.DistributedSupervisor, :start_link, [{hub_id, managers}]},
+        shutdown: 60_000
+      }
+    ]
   end
 
   defp storage(hub_id) do
