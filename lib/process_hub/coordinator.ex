@@ -73,6 +73,9 @@ defmodule ProcessHub.Coordinator do
   def terminate(_reason, state) do
     local_node = node()
 
+    LocalStorage.get(state.hub_id, :migration_strategy)
+    |> MigrationStrategy.handle_shutdown(state.hub_id)
+
     # Notify all the nodes in the cluster that this node is leaving the hub.
     Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, local_node, %{
       members: :external,

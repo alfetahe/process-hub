@@ -28,14 +28,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     def init(_strategy, _hub_id), do: nil
 
     @impl true
-    @spec handle_migration(
-            struct(),
-            ProcessHub.hub_id(),
-            [ProcessHub.child_spec()],
-            node(),
-            term()
-          ) ::
-            :ok
     def handle_migration(_struct, hub_id, child_specs, added_node, sync_strategy) do
       Enum.each(child_specs, fn child_spec ->
         Distributor.child_terminate(hub_id, child_spec.id, sync_strategy)
@@ -47,5 +39,8 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
       :ok
     end
+
+    @impl true
+    def handle_shutdown(_struct, _hub_id), do: :ok
   end
 end

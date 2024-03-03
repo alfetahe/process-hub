@@ -56,13 +56,11 @@ defmodule ProcessHub.Initializer do
   end
 
   defp dist_sup(hub_id, managers) do
-    [
-      %{
-        id: :distributed_supervisor,
-        start: {ProcessHub.DistributedSupervisor, :start_link, [{hub_id, managers}]},
-        shutdown: 60_000
-      }
-    ]
+    %{
+      id: :distributed_supervisor,
+      start: {ProcessHub.DistributedSupervisor, :start_link, [{hub_id, managers}]}
+      # shutdown: 60_000
+    }
   end
 
   defp storage(hub_id) do

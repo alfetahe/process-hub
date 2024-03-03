@@ -91,20 +91,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defstruct retention: 5000, handover: false
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
+    alias ProcessHub.Service.ProcessRegistry
     @migration_timeout 15000
 
     @impl true
     def init(_strategy, _hub_id), do: nil
 
     @impl true
-    @spec handle_migration(
-            struct(),
-            ProcessHub.hub_id(),
-            [ProcessHub.child_spec()],
-            node(),
-            term()
-          ) ::
-            :ok
     def handle_migration(strategy, hub_id, child_specs, added_node, sync_strategy) do
       # Start redistribution of the child processes.
       Distributor.children_redist_init(hub_id, child_specs, added_node, reply_to: [self()])
@@ -121,6 +114,18 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
 
       :ok
+    end
+
+    @impl true
+    def handle_shutdown(_strategy, hub_id) do
+      # Get all the child specs that belong to the local node.
+      ProcessRegistry.local_children(hub_id)
+
+      # Get all states of the local children.
+
+      # Find out the nodes where the children are being migrated.
+
+      # Send the state to the remote nodes.
     end
 
     defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do

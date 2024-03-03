@@ -88,6 +88,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     @impl true
     @spec master_node(struct(), ProcessHub.hub_id(), ProcessHub.child_id(), [node()]) :: node()
     def master_node(_strategy, _hub_id, child_id, child_nodes) do
+      child_nodes = Enum.sort(child_nodes)
+
       child_total =
         cond do
           is_binary(child_id) -> child_id

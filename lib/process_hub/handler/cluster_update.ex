@@ -161,7 +161,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                 hub_id,
                 child_spec.id,
                 child_nodes,
-                {:up, arg.node},
+                {:up, node},
                 pid: children_pids[child_spec.id]
               )
 
@@ -309,8 +309,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       cids =
         removed_node_processes(arg)
         |> Enum.map(fn {child_id, child_spec, nodes_orig, nodes_updated} ->
-          # Check if the local node is part of the original nodes.
-          # Then continue checking if local node is part of the updated nodes.
           case Enum.member?(nodes_orig, local_node) do
             true ->
               handle_redundancy(arg, child_id, nodes_updated)

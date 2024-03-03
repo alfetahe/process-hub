@@ -1,6 +1,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.2.2-alpha - YYYY-MM-DD
+Fixed:
+- Replication master node could differ from node to node in some cases.
+
 ## v0.2.1-alpha - 2024-02-15
 This release adds some guides and documentation pages and minor documentation fixes.
 
