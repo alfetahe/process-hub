@@ -91,7 +91,12 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defstruct retention: 5000, handover: false
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
+    alias ProcessHub.Service.LocalStorage
     alias ProcessHub.Service.ProcessRegistry
+    alias ProcessHub.Strategy.Migration.HotSwap
+    alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+    alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+
     @migration_timeout 15000
 
     @impl true
@@ -117,16 +122,51 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     @impl true
-    def handle_shutdown(_strategy, hub_id) do
-      # Get all the child specs that belong to the local node.
-      ProcessRegistry.local_children(hub_id)
+    def handle_shutdown(%HotSwap{handover: true} = _strategy, hub_id) do
+      self = self()
+      local_node = node()
 
-      # Get all states of the local children.
+      dist_strat = LocalStorage.get(hub_id, :distribution_strategy)
 
-      # Find out the nodes where the children are being migrated.
+      repl_fact =
+        LocalStorage.get(hub_id, :redundancy_strategy)
+        |> RedundancyStrategy.replication_factor()
 
-      # Send the state to the remote nodes.
+      local_data = ProcessRegistry.local_data(hub_id)
+
+      Enum.each(local_data, fn {_child_id, _cs, cn} ->
+        local_pid = Keyword.get(cn, local_node)
+
+        if is_pid(local_pid) do
+          send(local_pid, {:process_hub, :handover, self})
+        end
+      end)
+
+      state = Enum.map(local_data, fn _x ->
+        receive do
+          {:process_hub, :process_state, cid, state} ->
+            {cid, state}
+        after
+          5000 ->
+            nil
+        end
+      end)
+
+      Enum.reduce(local_data, %{}, fn {cid, _, cn}, acc ->
+        nodes = Keyword.keys(cn)
+        new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
+        migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
+        node_data = Map.get(acc, migration_node, [])
+
+        Map.put(acc, migration_node, [{cid, Keyword.get(state, cid)} | node_data])
+      end)
+
+      # Send the data to each node now.
+
+      :ok
     end
+
+    def handle_shutdown(_strategy, _hub_id), do: :ok
 
     defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do
       Enum.reduce(migration_cids, :continue, fn
@@ -236,6 +276,12 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
       def handle_info({:process_hub, :handover, handover_state}, _state) do
         {:noreply, handover_state}
+      end
+
+      def handle_info({:process_hub, :get_state, cid, from}, state) do
+        send(from, {:process_hub, :process_state, cid, state})
+
+        {:noreply, state}
       end
 
       defp send_handover_start(pid, cid, from, state) do
