@@ -60,7 +60,9 @@ Pay attention to the `retention` and `handover` options. The `retention` option 
 
 
 ### 2. Implement the neccessary callbacks
-Our `MyProcess` have to also implement the `ProcessHub.Strategy.Migration.Handover` behaviour or define the necessary callbacks.
+In order to handover the state our `MyProcess` have to implement the `ProcessHub.Strategy.Migration.Handover` behaviour or define the necessary callbacks.
+
+The most convenient way is to use the `ProcessHub.Strategy.Migration.HotSwap` module that provides the default implementation of the `ProcessHub.Strategy.Migration.Handover` behaviour.
 
 ```elixir
 defmodule MyProcess do

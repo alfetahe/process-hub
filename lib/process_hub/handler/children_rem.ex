@@ -21,7 +21,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
                 reply_to: ProcessHub.reply_to()
               }
             ],
-            dist_sup: ProcessHub.DistributedSupervisor.pname(),
+            dist_sup: atom(),
             sync_strategy: SynchronizationStrategy.t()
           }
 

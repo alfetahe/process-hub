@@ -5,7 +5,6 @@ defmodule ProcessHub.Service.State do
   """
 
   alias :blockade, as: Blockade
-  alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.PriorityLevel
@@ -78,7 +77,7 @@ defmodule ProcessHub.Service.State do
       lock_event_handler(hub_id, nil)
       initializer = Name.initializer(hub_id)
 
-      Supervisor.terminate_child(initializer, DistributedSupervisor)
+      Supervisor.terminate_child(initializer, :distributed_supervisor)
 
       :ok
     else
@@ -93,7 +92,7 @@ defmodule ProcessHub.Service.State do
   def toggle_quorum_success(hub_id) do
     if is_partitioned?(hub_id) do
       Name.initializer(hub_id)
-      |> Supervisor.restart_child(DistributedSupervisor)
+      |> Supervisor.restart_child(:distributed_supervisor)
 
       unlock_event_handler(hub_id)
 

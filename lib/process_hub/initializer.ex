@@ -58,8 +58,8 @@ defmodule ProcessHub.Initializer do
   defp dist_sup(hub_id, managers) do
     %{
       id: :distributed_supervisor,
-      start: {ProcessHub.DistributedSupervisor, :start_link, [{hub_id, managers}]}
-      # shutdown: 60_000
+      start: {ProcessHub.DistributedSupervisor, :start_link, [{hub_id, managers}]},
+      shutdown: 60_000
     }
   end
 
