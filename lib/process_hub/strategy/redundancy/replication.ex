@@ -221,8 +221,10 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       end
     end
 
-    defp send_redundancy_signal(pid, mode) do
+    defp send_redundancy_signal(pid, mode) when is_pid(pid) do
       send(pid, {:process_hub, :redundancy_signal, mode})
     end
+
+    defp send_redundancy_signal(_pid, _mode), do: nil
   end
 end
