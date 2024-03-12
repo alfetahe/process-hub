@@ -90,7 +90,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
                 reply_to: ProcessHub.reply_to()
               }
             ],
-            dist_sup: ProcessHub.DistributedSupervisor.pname(),
+            dist_sup: atom(),
             sync_strategy: SynchronizationStrategy.t(),
             redun_strategy: RedundancyStrategy.t(),
             dist_strategy: DistributionStrategy.t(),

@@ -152,7 +152,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
          ) do
       task =
         Task.async(fn ->
-          children_pids = ProcessRegistry.local_children(hub_id)
+          children_pids = ProcessRegistry.local_data(hub_id)
 
           child_specs =
             Enum.map(keep, fn %{child_spec: child_spec, child_nodes: child_nodes} ->

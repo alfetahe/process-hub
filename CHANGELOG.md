@@ -2,6 +2,11 @@
 All notable changes to this project will be documented in this file.
 
 ## v0.2.2-alpha - YYYY-MM-DD
+
+Changed:
+- `ProcessHub.process_list/2` when used with `local` option now returns `{child_id, pid}` tuples
+and not `{child_id, [pid]}` as before.
+
 Fixed:
 - Replication master node could differ from node to node in some cases.
 

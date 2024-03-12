@@ -369,9 +369,9 @@ defmodule ProcessHub do
         {:my_child2, [{:node2, #PID<5.124.0>}]}
       ]
       iex> ProcessHub.process_list(:my_hub, :local)
-      [{:my_child1, [#PID<0.123.0>]}]
+      [{:my_child1, #PID<0.123.0>}]
   """
-  @spec process_list(hub_id(), :global | :local) :: [{ProcessHub.child_id(), [{node(), pid()}]}]
+  @spec process_list(hub_id(), :global | :local) :: [{ProcessHub.child_id(), [{node(), pid()}] | pid()}]
   defdelegate process_list(hub_id, scope), to: ProcessRegistry, as: :process_list
 
   @doc """

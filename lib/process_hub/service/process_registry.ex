@@ -25,7 +25,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @spec process_list(atom(), :global | :local) :: [
-          {ProcessHub.child_id(), [{node(), pid()}] | [pid()]}
+          {ProcessHub.child_id(), [{node(), pid()}] | pid()}
         ]
   def process_list(hub_id, :global) do
     registry(hub_id)
@@ -39,15 +39,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
     process_list(hub_id, :global)
     |> Enum.map(fn {child_id, nodes} ->
-      pids =
-        Enum.filter(nodes, fn {node, _} -> node === local_node end)
-        |> Enum.map(fn {_, pid} -> pid end)
-
-      {child_id, pids}
+      {child_id, Keyword.get(nodes, local_node)}
     end)
-    |> Enum.filter(fn {_, nodes} ->
-      length(nodes) > 0
-    end)
+    |> Enum.filter(fn {_, pid} -> pid end)
   end
 
   @spec contains_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
@@ -72,16 +66,16 @@ defmodule ProcessHub.Service.ProcessRegistry do
     number_of_rows
   end
 
-  @doc "Returns information about processes registered under the local node."
-  @spec local_children(ProcessHub.hub_id()) :: [
+  @doc "Returns information on all processes that are running on the local node."
+  @spec local_data(ProcessHub.hub_id()) :: [
           {ProcessHub.child_id(), {ProcessHub.child_spec(), [{node(), pid()}]}}
         ]
-  def local_children(hub_id) do
+  def local_data(hub_id) do
     local_node = node()
 
-    local_data(hub_id)
-    |> Enum.map(fn {child_id, {_child_spec, child_nodes}} ->
-      {child_id, Keyword.get(child_nodes, local_node)}
+    registry(hub_id)
+    |> Enum.filter(fn {_, {_, nodes}} ->
+      Enum.member?(Keyword.keys(nodes), local_node)
     end)
   end
 
@@ -260,15 +254,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
             acc
           end
       end
-    end)
-  end
-
-  defp local_data(hub_id) do
-    local_node = node()
-
-    registry(hub_id)
-    |> Enum.filter(fn {_, {_, nodes}} ->
-      Enum.member?(Keyword.keys(nodes), local_node)
     end)
   end
 end

@@ -191,7 +191,7 @@ defmodule Test.Service.ProcessRegistryTest do
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
       2 =>
         {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}},
-         [{:"ex_unit@127.0.0.1", "pid3"}, {:node4, "pid4"}, {:"ex_unit@127.0.0.1", "pid5"}]},
+         [{:"ex_unit@127.0.0.1", "pid3"}, {:node4, "pid4"}, {:node5, "pid5"}]},
       3 =>
         {%{id: 3, start: {:thirdmod, :thirdfunc, [5, 6]}},
          [{:"ex_unit@127.0.0.1", :pid5}, {:node6, "pid6"}]}
@@ -201,7 +201,7 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes)
     end)
 
-    assert ProcessRegistry.process_list(hub_id, :local) === [{2, ["pid3", "pid5"]}, {3, [:pid5]}]
+    assert ProcessRegistry.process_list(hub_id, :local) === [{2, "pid3"}, {3, :pid5}]
   end
 
   test "process list global", %{hub_id: hub_id} = _context do
@@ -221,7 +221,7 @@ defmodule Test.Service.ProcessRegistryTest do
     assert ProcessRegistry.process_list(hub_id, :global) === children_formatted
   end
 
-  test "local children", %{hub_id: hub_id} = _context do
+  test "local data", %{hub_id: hub_id} = _context do
     local_node = node()
 
     remote = %{
@@ -250,14 +250,7 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes)
     end)
 
-    formatted_data =
-      Map.merge(local, local_n_remote)
-      |> Enum.map(fn {child_id, {_child_spec, nodes}} ->
-        {child_id, List.first(nodes) |> elem(1)}
-      end)
-      |> Enum.sort()
-
-    assert Enum.sort(ProcessRegistry.local_children(hub_id)) === formatted_data
+    assert Enum.sort(ProcessRegistry.local_data(hub_id)) === Map.merge(local, local_n_remote) |> Map.to_list()
   end
 
   test "local child specs", %{hub_id: hub_id} = _context do
