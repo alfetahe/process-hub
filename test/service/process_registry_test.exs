@@ -250,7 +250,8 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes)
     end)
 
-    assert Enum.sort(ProcessRegistry.local_data(hub_id)) === Map.merge(local, local_n_remote) |> Map.to_list()
+    assert Enum.sort(ProcessRegistry.local_data(hub_id)) ===
+             Map.merge(local, local_n_remote) |> Map.to_list()
   end
 
   test "local child specs", %{hub_id: hub_id} = _context do

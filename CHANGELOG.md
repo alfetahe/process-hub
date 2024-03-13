@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 ## v0.2.2-alpha - YYYY-MM-DD
 
+Added:
+- New callback `ProcessHub.Strategy.Migration.Base.handle_startup/3` which will be
+called once the processes are started on the local distributed supervisor.
+
 Changed:
 - `ProcessHub.process_list/2` when used with `local` option now returns `{child_id, pid}` tuples
 and not `{child_id, [pid]}` as before.

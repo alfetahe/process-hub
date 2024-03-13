@@ -42,5 +42,8 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
     @impl true
     def handle_shutdown(_struct, _hub_id), do: :ok
+
+    @impl true
+    def handle_startup(_struct, _hub_id, _pids), do: :ok
   end
 end

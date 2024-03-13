@@ -3,6 +3,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
+  alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.ProcessRegistry
@@ -94,6 +95,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             sync_strategy: SynchronizationStrategy.t(),
             redun_strategy: RedundancyStrategy.t(),
             dist_strategy: DistributionStrategy.t(),
+            migr_strategy: MigrationStrategy.t(),
             start_opts: keyword()
           }
 
@@ -107,7 +109,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
                   :dist_sup,
                   :sync_strategy,
                   :redun_strategy,
-                  :dist_strategy
+                  :migr_strategy,
+                  :dist_strategy,
+                  :start_results
                 ]
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
@@ -117,7 +121,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         | dist_sup: Name.distributed_supervisor(arg.hub_id),
           sync_strategy: LocalStorage.get(arg.hub_id, :synchronization_strategy),
           redun_strategy: LocalStorage.get(arg.hub_id, :redundancy_strategy),
-          dist_strategy: LocalStorage.get(arg.hub_id, :distribution_strategy)
+          dist_strategy: LocalStorage.get(arg.hub_id, :distribution_strategy),
+          migr_strategy: LocalStorage.get(arg.hub_id, :migration_strategy)
       }
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
@@ -125,36 +130,63 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           {:error, :partitioned}
 
         false ->
-          start_results = start_children(arg)
-
-          Task.Supervisor.async(
-            Name.task_supervisor(arg.hub_id),
-            SyncHandle,
-            :handle,
-            [
-              %SyncHandle{
-                hub_id: arg.hub_id,
-                children: start_results
-              }
-            ]
-          )
-          |> Task.await()
-
-          SynchronizationStrategy.propagate(
-            arg.sync_strategy,
-            arg.hub_id,
-            start_results,
-            node(),
-            :add,
-            members: :external
-          )
-
-          # Release the event queue lock when migrating processes.
-          if Keyword.get(arg.start_opts, :migration_add, false) === true do
-            State.unlock_event_handler(arg.hub_id)
-          end
+          %__MODULE__{arg | start_results: start_children(arg)}
+          |> update_registry()
+          |> handle_migration_callback()
+          |> handle_sync_callback()
+          |> release_lock()
 
           :ok
+      end
+    end
+
+    defp handle_sync_callback(arg) do
+      SynchronizationStrategy.propagate(
+        arg.sync_strategy,
+        arg.hub_id,
+        arg.start_results,
+        node(),
+        :add,
+        members: :external
+      )
+
+      arg
+    end
+
+    defp handle_migration_callback(arg) do
+      MigrationStrategy.handle_startup(
+        arg.migr_strategy,
+        arg.hub_id,
+        Enum.map(arg.start_results, fn {child_id, {_, [_, pid]}, _, _} ->
+          {child_id, pid}
+        end)
+      )
+
+      arg
+    end
+
+    defp update_registry(arg) do
+      Task.Supervisor.async(
+        Name.task_supervisor(arg.hub_id),
+        SyncHandle,
+        :handle,
+        [
+          %SyncHandle{
+            hub_id: arg.hub_id,
+            children: arg.start_results
+          }
+        ]
+      )
+      |> Task.await()
+
+      arg
+    end
+
+    defp release_lock(arg) do
+      # Release the event queue lock only when migrating
+      # processes rather than regular startup.
+      if Keyword.get(arg.start_opts, :migration_add, false) === true do
+        State.unlock_event_handler(arg.hub_id)
       end
     end
 

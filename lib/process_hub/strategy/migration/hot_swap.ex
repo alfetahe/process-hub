@@ -98,6 +98,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
     @migration_timeout 15000
+    @shutdown_handover_timeout 5000
 
     @impl true
     def init(_strategy, _hub_id), do: nil
@@ -142,15 +143,16 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         end
       end)
 
-      state = Enum.map(local_data, fn _x ->
-        receive do
-          {:process_hub, :process_state, cid, state} ->
-            {cid, state}
-        after
-          5000 ->
-            nil
-        end
-      end)
+      state =
+        Enum.map(local_data, fn _x ->
+          receive do
+            {:process_hub, :process_state, cid, state} ->
+              {cid, state}
+          after
+            @shutdown_handover_timeout ->
+              Logger.error("Handover timeout while shutting down the node #{local_node}")
+          end
+        end)
 
       Enum.reduce(local_data, %{}, fn {cid, _, cn}, acc ->
         nodes = Keyword.keys(cn)
@@ -167,6 +169,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     def handle_shutdown(_strategy, _hub_id), do: :ok
+
+    @impl true
+    def handle_startup(_struct, _hub_id, _pids), do: :ok
 
     defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do
       Enum.reduce(migration_cids, :continue, fn
