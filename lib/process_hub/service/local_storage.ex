@@ -29,6 +29,13 @@ defmodule ProcessHub.Service.LocalStorage do
     value
   end
 
+  # TODO: add tests and comments
+  def update(hub_id, key, func) do
+    Cachex.get_and_update(hub_id, key, fn
+      value -> {:commit, func.(value)}
+    end)
+  end
+
   @doc """
   Inserts the key and value into local storage.
 

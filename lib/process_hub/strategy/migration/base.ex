@@ -44,7 +44,9 @@ defprotocol ProcessHub.Strategy.Migration.Base do
   Migration srategies can perform any necessary operations after the processes have been started
   such as state handover etc.
   """
-  @spec handle_startup(__MODULE__.t(), ProcessHub.hub_id(), [{ProcessHub.child_id(), pid()}]) ::
+  @spec handle_process_startups(__MODULE__.t(), ProcessHub.hub_id(), [
+          {ProcessHub.child_id(), pid()}
+        ]) ::
           :ok
-  def handle_startup(struct, hub_id, pids)
+  def handle_process_startups(struct, hub_id, pids)
 end

@@ -154,7 +154,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     end
 
     defp handle_migration_callback(arg) do
-      MigrationStrategy.handle_startup(
+      MigrationStrategy.handle_process_startups(
         arg.migr_strategy,
         arg.hub_id,
         Enum.map(arg.start_results, fn {child_id, {_, [_, pid]}, _, _} ->

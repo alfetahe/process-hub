@@ -91,6 +91,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defstruct retention: 5000, handover: false
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
+    alias Mix.Local
     alias ProcessHub.Service.LocalStorage
     alias ProcessHub.Service.ProcessRegistry
     alias ProcessHub.Strategy.Migration.HotSwap
@@ -100,18 +101,20 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     @migration_timeout 15000
     @shutdown_handover_timeout 5000
 
-    @impl true
-    def init(_strategy, _hub_id), do: nil
+    @migr_state_key :migration_hotswap_state
 
     @impl true
-    def handle_migration(strategy, hub_id, child_specs, added_node, sync_strategy) do
+    def init(_struct, _hub_id), do: nil
+
+    @impl true
+    def handle_migration(struct, hub_id, child_specs, added_node, sync_strategy) do
       # Start redistribution of the child processes.
       Distributor.children_redist_init(hub_id, child_specs, added_node, reply_to: [self()])
 
       if length(child_specs) > 0 do
-        migration_cids = migration_cids(hub_id, strategy, child_specs, added_node)
+        migration_cids = migration_cids(hub_id, struct, child_specs, added_node)
 
-        handle_retentions(hub_id, strategy, sync_strategy, migration_cids)
+        handle_retentions(hub_id, struct, sync_strategy, migration_cids)
 
         if length(migration_cids) > 0 do
           # Dispatch hook.
@@ -123,7 +126,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     @impl true
-    def handle_shutdown(%HotSwap{handover: true} = _strategy, hub_id) do
+    def handle_shutdown(%HotSwap{handover: true} = _struct, hub_id) do
       self = self()
       local_node = node()
 
@@ -154,24 +157,55 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           end
         end)
 
-      Enum.reduce(local_data, %{}, fn {cid, _, cn}, acc ->
-        nodes = Keyword.keys(cn)
-        new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
-        migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
-        node_data = Map.get(acc, migration_node, [])
+      send_data =
+        Enum.reduce(local_data, %{}, fn {cid, _, cn}, acc ->
+          nodes = Keyword.keys(cn)
+          new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
+          migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
+          node_data = Map.get(acc, migration_node, [])
 
-        Map.put(acc, migration_node, [{cid, Keyword.get(state, cid)} | node_data])
-      end)
+          Map.put(acc, migration_node, [{cid, Keyword.get(state, cid)} | node_data])
+        end)
 
       # Send the data to each node now.
+      Enum.each(send_data, fn {node, data} ->
+        Node.spawn(node, fn ->
+          LocalStorage.update(hub_id, @migr_state_key, fn old_value ->
+            case old_value do
+              nil -> data
+              _ -> data ++ old_value
+            end
+          end)
+        end)
+      end)
+
+      :ok
+
+      # TODO: refactor this function.
+    end
+
+    def handle_shutdown(_struct, _hub_id), do: :ok
+
+    @impl true
+    def handle_process_startups(%HotSwap{handover: true} = _struct, hub_id, pids) do
+      state_data = LocalStorage.get(hub_id, @migr_state_key)
+
+      Enum.each(pids, fn {cid, pid} ->
+        send(pid, {:process_hub, :handover, Keyword.get(state_data, cid, nil)})
+      end)
+
+      rem_states(hub_id, Keyword.keys(state_data))
 
       :ok
     end
 
-    def handle_shutdown(_strategy, _hub_id), do: :ok
+    def handle_process_startups(_struct, _hub_id, _pids), do: :ok
 
-    @impl true
-    def handle_startup(_struct, _hub_id, _pids), do: :ok
+    defp rem_states(hub_id, cids) do
+      LocalStorage.update(hub_id, @migr_state_key, fn states ->
+        Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
+      end)
+    end
 
     defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do
       Enum.reduce(migration_cids, :continue, fn
@@ -187,6 +221,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           :kill
       end)
 
+      # TODO: we could kill them in bulk for better performance.
       # Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
     end
 
