@@ -73,6 +73,9 @@ defmodule ProcessHub.Coordinator do
   def terminate(_reason, state) do
     local_node = node()
 
+    LocalStorage.get(state.hub_id, :distribution_strategy)
+    |> DistributionStrategy.handle_shutdown(state.hub_id)
+
     LocalStorage.get(state.hub_id, :migration_strategy)
     |> MigrationStrategy.handle_shutdown(state.hub_id)
 

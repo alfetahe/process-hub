@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 Added:
 - New callback `ProcessHub.Strategy.Migration.Base.handle_startup/3` which will be
 called once the processes are started on the local distributed supervisor.
+- - New callback `ProcessHub.Strategy.Distribution.Base.handle_shutdown/2` which will be
+called when coordinator process is shutting down.
 
 Changed:
 - `ProcessHub.process_list/2` when used with `local` option now returns `{child_id, pid}` tuples

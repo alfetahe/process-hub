@@ -74,8 +74,6 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
     end
 
     @impl true
-    @spec init(ProcessHub.Strategy.Distribution.ConsistentHashing.t(), ProcessHub.hub_id()) ::
-            any()
     def init(_strategy, hub_id) do
       hub_nodes = LocalStorage.get(hub_id, :hub_nodes)
 
@@ -95,6 +93,16 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
 
       HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
       HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
+    end
+
+    @impl true
+    @doc """
+    Removes the local node from the hash ring.
+    """
+    def handle_shutdown(_strategy, hub_id) do
+      hash_ring = LocalStorage.get(hub_id, Ring.storage_key()) |> Ring.remove_node(node())
+
+      LocalStorage.insert(hub_id, Ring.storage_key(), hash_ring)
     end
   end
 end

@@ -33,4 +33,10 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   """
   @spec children_init(struct(), ProcessHub.hub_id(), [map()], keyword()) :: :ok | {:error, any()}
   def children_init(strategy, hub_id, child_specs, opts)
+
+  @doc """
+  Trigger when coordinator process is shutting down.
+  """
+  @spec handle_shutdown(struct(), ProcessHub.hub_id()) :: any()
+  def handle_shutdown(strategy, hub_id)
 end

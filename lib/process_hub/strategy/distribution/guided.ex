@@ -111,6 +111,9 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
       HookManager.register_hook_handlers(hub_id, Hook.pre_children_start(), [hook])
     end
 
+    @impl true
+    def handle_shutdown(_strategy, _hub_id), do: nil
+
     defp validate_child_init(hub_id, opts, child_specs) do
       with {:ok, mappings} <- opts_validate_existance(opts),
            :ok <- validate_mappings_type(mappings),
