@@ -103,15 +103,14 @@ defmodule ProcessHub.Coordinator do
     schedule_propagation()
     schedule_sync(LocalStorage.get(state.hub_id, :synchronization_strategy))
 
-    # TODO: handlers are not registered in some cases thats why dispatching may fail..
-    # Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node())
-    # Make sure it's okay to dispatch all nodes
     coordinator = Name.coordinator(state.hub_id)
 
+    # TODO: is it okay to dispatch all nodes?
     Enum.each(Node.list(), fn node ->
       :erlang.send({coordinator, node}, {@event_cluster_join, node()}, [])
     end)
 
+    # TODO: handlers are not registered in some cases thats why dispatching may fail..
     # Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), %{members: :external})
 
     {:noreply, state}

@@ -98,7 +98,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
     @migration_timeout 15000
-    @shutdown_handover_timeout 5000
+    @shutdown_handover_timeout 3000
 
     @migr_state_key :migration_hotswap_state
 
@@ -137,11 +137,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
       local_data = ProcessRegistry.local_data(hub_id)
 
-      Enum.each(local_data, fn {_child_id, {_cs, cn}} ->
+      Enum.each(local_data, fn {child_id, {_cs, cn}} ->
         local_pid = Keyword.get(cn, local_node)
 
         if is_pid(local_pid) do
-          send(local_pid, {:process_hub, :handover, self})
+          send(local_pid, {:process_hub, :get_state, child_id, self})
         end
       end)
 
@@ -159,7 +159,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         |> Enum.filter(&(&1 != nil))
 
       send_data =
-        Enum.reduce(local_data, %{}, fn {cid, _, cn}, acc ->
+        Enum.reduce(local_data, %{}, fn {cid, {_, cn}}, acc ->
           nodes = Keyword.keys(cn)
           new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
           migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
