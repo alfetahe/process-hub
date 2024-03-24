@@ -91,7 +91,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defstruct retention: 5000, handover: false
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
-    alias Mix.Local
     alias ProcessHub.Service.LocalStorage
     alias ProcessHub.Service.ProcessRegistry
     alias ProcessHub.Strategy.Migration.HotSwap
@@ -138,7 +137,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
       local_data = ProcessRegistry.local_data(hub_id)
 
-      Enum.each(local_data, fn {_child_id, _cs, cn} ->
+      Enum.each(local_data, fn {_child_id, {_cs, cn}} ->
         local_pid = Keyword.get(cn, local_node)
 
         if is_pid(local_pid) do
@@ -146,7 +145,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         end
       end)
 
-      state =
+      states =
         Enum.map(local_data, fn _x ->
           receive do
             {:process_hub, :process_state, cid, state} ->
@@ -154,8 +153,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           after
             @shutdown_handover_timeout ->
               Logger.error("Handover timeout while shutting down the node #{local_node}")
+              nil
           end
         end)
+        |> Enum.filter(&(&1 != nil))
 
       send_data =
         Enum.reduce(local_data, %{}, fn {cid, _, cn}, acc ->
@@ -164,7 +165,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
           node_data = Map.get(acc, migration_node, [])
 
-          Map.put(acc, migration_node, [{cid, Keyword.get(state, cid)} | node_data])
+          Map.put(acc, migration_node, [{cid, Keyword.get(states, cid)} | node_data])
         end)
 
       # Send the data to each node now.
@@ -188,10 +189,14 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     @impl true
     def handle_process_startups(%HotSwap{handover: true} = _struct, hub_id, pids) do
-      state_data = LocalStorage.get(hub_id, @migr_state_key)
+      state_data = LocalStorage.get(hub_id, @migr_state_key) || []
 
       Enum.each(pids, fn {cid, pid} ->
-        send(pid, {:process_hub, :handover, Keyword.get(state_data, cid, nil)})
+        pstate = Keyword.get(state_data, cid, nil)
+
+        unless pstate === nil do
+          send(pid, {:process_hub, :handover, pstate})
+        end
       end)
 
       rem_states(hub_id, Keyword.keys(state_data))

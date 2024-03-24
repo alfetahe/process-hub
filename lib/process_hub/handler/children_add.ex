@@ -157,7 +157,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       MigrationStrategy.handle_process_startups(
         arg.migr_strategy,
         arg.hub_id,
-        Enum.map(arg.start_results, fn {child_id, {_, [_, pid]}, _, _} ->
+        Enum.map(arg.start_results, fn {child_id, {_, [{_node, pid}]}, _, _} ->
           {child_id, pid}
         end)
       )
