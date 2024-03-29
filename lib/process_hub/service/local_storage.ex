@@ -31,7 +31,7 @@ defmodule ProcessHub.Service.LocalStorage do
 
   # TODO: add tests and comments
   def update(hub_id, key, func) do
-    Cachex.get_and_update(hub_id, key, fn
+    Cachex.get_and_update(Name.local_storage(hub_id), key, fn
       value -> {:commit, func.(value)}
     end)
   end

@@ -170,7 +170,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
       # Send the data to each node now.
       Enum.each(send_data, fn {node, data} ->
-        Node.spawn(node, fn ->
+        # Need to be sure that this is sent and handled on the remote nodes
+        # before they start the new children.
+        :erpc.call(node, fn ->
           LocalStorage.update(hub_id, @migr_state_key, fn old_value ->
             case old_value do
               nil -> data
@@ -189,7 +191,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     @impl true
     def handle_process_startups(%HotSwap{handover: true} = _struct, hub_id, pids) do
-      state_data = LocalStorage.get(hub_id, @migr_state_key) || []
+      state_data =
+        LocalStorage.get(hub_id, @migr_state_key) ||
+          [] |> IO.inspect(label: "state_data #{node()}")
 
       Enum.each(pids, fn {cid, pid} ->
         pstate = Keyword.get(state_data, cid, nil)
