@@ -8,8 +8,7 @@ defmodule Test.IntegrationTest do
   use ExUnit.Case, async: false
 
   # Total nr of nodes to start (without the main node)
-  # TODO: back to 5
-  @nr_of_peers 1
+  @nr_of_peers 5
 
   setup_all context do
     Map.merge(Test.Helper.Bootstrap.init_nodes(@nr_of_peers), context)
@@ -565,16 +564,23 @@ defmodule Test.IntegrationTest do
   @tag migr_handover: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :local},
+         {Hook.post_cluster_leave(), :local},
          {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.registry_pid_removed(), :global},
+         {Hook.post_nodes_redistribution(), :local},
+         {Hook.children_migrated(), :global},
+         {Hook.forwarded_migration(), :global}
        ]
   test "migration hotswap shutdown", %{hub_id: hub_id} = context do
-    IO.inspect(context)
-
-    child_count = 300
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
 
     Common.sync_base_test(context, child_specs, :add, scope: :global)
+
+    # Node ups.
+    Bag.receive_multiple(@nr_of_peers, Hook.post_nodes_redistribution(),
+      error_msg: "Post redistribution timeout"
+    )
 
     ProcessHub.process_registry(hub_id)
     |> Enum.each(fn {_child_id, {_, nodes}} ->
@@ -583,13 +589,19 @@ defmodule Test.IntegrationTest do
     end)
 
     # Stop hubs on peer nodes.
-    Enum.each(Node.list(), fn node ->
-      :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
-    end)
+    # Enum.each(Node.list(), fn node ->
+    :erpc.call(Node.list() |> List.first(), ProcessHub.Initializer, :stop, [hub_id])
+    # end)
+
+    # Node downs
+    Bag.receive_multiple(1, Hook.post_nodes_redistribution(),
+      error_msg: "Post redistribution timeout"
+    )
+
+    # Confirm that hubs are stopped.
+    Bag.receive_multiple(1, Hook.post_cluster_leave(), error_msg: "Cluster leave timeout")
 
     Process.sleep(2000)
-
-    IO.puts("PEALE STOPPI")
 
     # Confirm that all processes have their states migrated.
     ProcessHub.process_registry(hub_id)

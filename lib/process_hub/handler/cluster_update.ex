@@ -306,44 +306,47 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp distribute_processes(%__MODULE__{} = arg) do
       local_node = node()
 
-      cids =
+      {redun, redist, cids} =
         removed_node_processes(arg)
-        |> Enum.map(fn {child_id, child_spec, nodes_orig, nodes_updated} ->
-          case Enum.member?(nodes_orig, local_node) do
+        |> Enum.reduce({[], [], []}, fn {cid, cspec, nlist1, nlist2}, {redun, redist, cids} ->
+          case Enum.member?(nlist1, local_node) do
             true ->
-              handle_redundancy(arg, child_id, nodes_updated)
+              {[{cid, nlist2} | redun], redist, [cid | cids]}
 
             false ->
-              handle_redistribution(arg, child_spec, nodes_updated, local_node)
-          end
+              case Enum.member?(nlist2, local_node) do
+                true ->
+                  {redun, [cspec | redist], [cid | cids]}
 
-          child_id
+                false ->
+                  {redun, redist, cids}
+              end
+          end
         end)
+
+      handle_redistribution(arg.hub_id, redist)
+      handle_redundancy(arg, redun)
 
       Map.put(arg, :rem_node_cids, cids)
     end
 
-    defp handle_redistribution(arg, child_spec, nodes_updated, local_node) do
-      case Enum.member?(nodes_updated, local_node) do
-        true ->
-          # Local node is part of the new nodes and therefore we need to start
-          # the child process locally.
-          Distributor.children_redist_init(arg.hub_id, [child_spec], local_node)
-
-        false ->
-          nil
-      end
+    defp handle_redistribution(hub_id, child_specs) do
+      # Local node is part of the new nodes and therefore we need to start
+      # the child process locally.
+      Distributor.children_redist_init(hub_id, child_specs, node())
     end
 
-    defp handle_redundancy(arg, child_id, nodes_updated) do
-      RedundancyStrategy.handle_post_update(
-        arg.redun_strat,
-        arg.hub_id,
-        child_id,
-        nodes_updated,
-        {:down, arg.removed_node},
-        []
-      )
+    defp handle_redundancy(arg, children) do
+      Enum.each(children, fn {cid, nodes_updated} ->
+        RedundancyStrategy.handle_post_update(
+          arg.redun_strat,
+          arg.hub_id,
+          cid,
+          nodes_updated,
+          {:down, arg.removed_node},
+          []
+        )
+      end)
     end
 
     defp removed_node_processes(arg) do

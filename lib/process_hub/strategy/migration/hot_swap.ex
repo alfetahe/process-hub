@@ -191,9 +191,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     @impl true
     def handle_process_startups(%HotSwap{handover: true} = _struct, hub_id, pids) do
-      state_data =
-        LocalStorage.get(hub_id, @migr_state_key) ||
-          [] |> IO.inspect(label: "state_data #{node()}")
+      state_data = LocalStorage.get(hub_id, @migr_state_key) || []
 
       Enum.each(pids, fn {cid, pid} ->
         pstate = Keyword.get(state_data, cid, nil)
