@@ -2,12 +2,16 @@
 All notable changes to this project will be documented in this file.
 
 ## v0.2.2-alpha - YYYY-MM-DD
+This release introduces process state migration to the next node when the node is shutting down.
+
+Note that it currently only supports the hotswap strategy with graceful shutdown of the node.
 
 Added:
 - New callback `ProcessHub.Strategy.Migration.Base.handle_startup/3` which will be
 called once the processes are started on the local distributed supervisor.
-- - New callback `ProcessHub.Strategy.Distribution.Base.handle_shutdown/2` which will be
+- New callback `ProcessHub.Strategy.Distribution.Base.handle_shutdown/2` which will be
 called when coordinator process is shutting down.
+- Hotswap process state is now migrated to the next node when the node is shutting down.
 
 Changed:
 - `ProcessHub.process_list/2` when used with `local` option now returns `{child_id, pid}` tuples
