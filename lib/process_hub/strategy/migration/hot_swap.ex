@@ -91,6 +91,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defstruct retention: 5000, handover: false
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
+    alias ProcessHub.Service.Cluster
     alias ProcessHub.Service.LocalStorage
     alias ProcessHub.Service.ProcessRegistry
     alias ProcessHub.Strategy.Migration.HotSwap
@@ -170,16 +171,20 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
       # Send the data to each node now.
       Enum.each(send_data, fn {node, data} ->
-        # Need to be sure that this is sent and handled on the remote nodes
-        # before they start the new children.
-        :erpc.call(node, fn ->
-          LocalStorage.update(hub_id, @migr_state_key, fn old_value ->
-            case old_value do
-              nil -> data
-              _ -> data ++ old_value
-            end
+        cluster_nodes = Cluster.nodes(hub_id)
+
+        if Enum.member?(cluster_nodes, node) do
+          # Need to be sure that this is sent and handled on the remote nodes
+          # before they start the new children.
+          :erpc.call(node, fn ->
+            LocalStorage.update(hub_id, @migr_state_key, fn old_value ->
+              case old_value do
+                nil -> data
+                _ -> data ++ old_value
+              end
+            end)
           end)
-        end)
+        end
       end)
 
       :ok
