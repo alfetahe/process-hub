@@ -601,8 +601,6 @@ defmodule Test.IntegrationTest do
     # Confirm that hubs are stopped.
     Bag.receive_multiple(1, Hook.post_cluster_leave(), error_msg: "Cluster leave timeout")
 
-    Process.sleep(2000)
-
     # Confirm that all processes have their states migrated.
     ProcessHub.process_registry(hub_id)
     |> Enum.each(fn {child_id, {_, nodes}} ->

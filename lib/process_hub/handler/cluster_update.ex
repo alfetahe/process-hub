@@ -291,6 +291,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :ok
     end
 
+    # Removes all processes from the registry that were running on the removed node.
     defp clear_registry(arg) do
       children_nodes =
         Enum.map(arg.rem_node_cids, fn child_id ->
@@ -319,7 +320,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                   {redun, [cspec | redist], [cid | cids]}
 
                 false ->
-                  {redun, redist, cids}
+                  {redun, redist, [cid | cids]}
               end
           end
         end)
