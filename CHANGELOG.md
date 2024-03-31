@@ -1,7 +1,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.2.2-alpha - YYYY-MM-DD
+## v0.2.2-alpha - 2024-03-31
 This release introduces process state migration to the next node when the node is shutting down.
 
 Note that it currently only supports the hotswap strategy with graceful shutdown of the node.
