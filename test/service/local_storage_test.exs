@@ -38,4 +38,20 @@ defmodule Test.Service.LocalStorageTest do
     assert LocalStorage.get(hub_id, :test2) === :test_value2
     assert LocalStorage.get(hub_id, :non_exist) === nil
   end
+
+  test "update", %{hub_id: hub_id} = _context do
+    res1 = LocalStorage.update(hub_id, :not_exist_update1, fn val -> val end)
+    res2 = LocalStorage.update(hub_id, :not_exist_update2, fn _val -> 5000 end)
+
+    LocalStorage.insert(hub_id, :exist_update1, 4)
+    res3 = LocalStorage.update(hub_id, :exist_update1, fn val -> val * 2 end)
+
+    assert LocalStorage.get(hub_id, :not_exist_update1) === nil
+    assert LocalStorage.get(hub_id, :not_exist_update2) === 5000
+    assert LocalStorage.get(hub_id, :exist_update1) === 8
+
+    assert res1 === {:commit, nil}
+    assert res2 === {:commit, 5000}
+    assert res3 === {:commit, 8}
+  end
 end

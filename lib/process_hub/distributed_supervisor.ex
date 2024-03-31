@@ -52,7 +52,6 @@ defmodule ProcessHub.DistributedSupervisor do
     |> elem(1)
   end
 
-  # TODO: add tests
   @doc "Returns a list of processe pairs in the form of `{child_id, pid}`
   that are running on local node."
   def local_children(distributed_sup) do

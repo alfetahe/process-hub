@@ -29,7 +29,15 @@ defmodule ProcessHub.Service.LocalStorage do
     value
   end
 
-  # TODO: add tests and comments
+  @doc """
+  Updates the value for the key in local storage.
+
+  The `func` function is expected to take the current value as an argument and
+  return the new value.
+
+  If the key does not exist, the current value is nil.
+  """
+  @spec update(ProcessHub.hub_id(), term(), function()) :: {:commit, any()}
   def update(hub_id, key, func) do
     Cachex.get_and_update(Name.local_storage(hub_id), key, fn
       value -> {:commit, func.(value)}
