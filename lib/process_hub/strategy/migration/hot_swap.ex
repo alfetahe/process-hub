@@ -7,6 +7,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   In the following text, we will refer to the process that is being terminated after the migration
   as the peer process.
 
+  Hotswap migration can also handle process state migration when nodes are leaving the cluster.
+  The process states are stored in the local storage and are sent to the remote node before the
+  local process is terminated. This will only work if the node is being shut down **gracefully**.
+
   The hot swap strategy is useful when we want to ensure that there is no downtime when migrating
   the child process to the remote node. It also provides a way to ensure that the state of the
   process is synchronized before terminating the peer process.
