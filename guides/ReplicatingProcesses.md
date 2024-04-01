@@ -80,11 +80,18 @@ Here's an example how we handle the signal in the `MyProcess`. In the following 
 save the signal in the state and handle incoming messages based on the state.
 
 ```elixir
-# The necceassary callbacks we have to implement.
+# The required callback we have to implement, to handle the signal.
 def handle_info({:process_hub, :redundancy_signal, mode}, state) do
     # Save the mode in the state for later use.
     {:noreply, %{mode: mode}}
 end
+
+# Below are examples of how we can handle the signal in the process.
+# These are just examples and you can implement your own logic based on the mode.
+
+# Here we define two different handle_info functions based on the mode.
+# The second one handles the request because we're the active process.
+# The first one does nothing because we're the passive process.
 
 def handle_info({:handle_request, _request}, %{mode: :passive} = state) do
     # Ignore and don't do anything because we're the passive process.

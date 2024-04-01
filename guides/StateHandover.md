@@ -78,6 +78,13 @@ Now the `ProcessHub` will take care of the rest. When the process is going to be
 redirected to another node, the state of the process will be handed over to the new process on
 the new node.
 
+## Handover on node leave
+The hub takes care of the handover process when a node joins the cluster and processes
+migrate to the new node. 
+The same can be said when a node leaves the cluster, meaning that the process states on the 
+leaving node will be handed over to the remaining nodes but only if the node is shut down **gracefully**.
+This leaves the hub with the time to handover the process states to the remaining nodes.
+It is advised to scale nodes down one at a time to avoid any data loss(30 second - 10 minute intervals).
 
 ## More info can be found in the `Hotswap` module
 Check out the [Hotswap](https://hexdocs.pm/process_hub/ProcessHub.Strategy.Migration.HotSwap.html) module for more information.
