@@ -44,7 +44,11 @@ end
 Example hook registration using the `ProcessHub.Service.HookManager` module:
 ```elixir
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-ProcessHub.Service.HookManager.register_hook_handlers(:my_hub, ProcessHub.Constant.Hook.post_cluster_join(), [{MyModule, :my_function, [:some_data, :_]}])
+ProcessHub.Service.HookManager.register_hook_handlers(
+  :my_hub, 
+  ProcessHub.Constant.Hook.post_cluster_join(),
+  [{MyModule, :my_function, [:some_data, :_]}]
+)
 ```
 
 ## Hook handler examples
@@ -65,11 +69,15 @@ extend the functionality of the strategy.
 Here's an example of ProcessHub using hooks internally in the 
 `ProcessHub.Strategy.Distribution.ConsistentHashing` strategy implementation:
 ```elixir
+alias ProcessHub.Constant.StorageKey
+alias ProcessHub.Service.LocalStorage
+alias ProcessHub.Service.HookManager
+
 # Register hook handlers to update the hash ring when node joins or leaves the cluster.
 def init(_strategy, hub_id) do
   hub_nodes = LocalStorage.get(hub_id, :hub_nodes)
 
-  LocalStorage.insert(hub_id, ProcessHub.Constant.StorageKey.hr, Ring.create_ring(hub_nodes))
+  LocalStorage.insert(hub_id, StorageKey.hr, Ring.create_ring(hub_nodes))
 
   join_handler = {
     ProcessHub.Strategy.Distribution.ConsistentHashing,
@@ -92,13 +100,13 @@ end
 def handle_node_join(hub_id, node) do
   hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
 
-  LocalStorage.insert(hub_id, ProcessHub.Constant.StorageKey.hr, hash_ring)
+  LocalStorage.insert(hub_id, StorageKey.hr, hash_ring)
 end
 
 def handle_node_leave(hub_id, node) do
   hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
 
-  LocalStorage.insert(hub_id, ProcessHub.Constant.StorageKey.hr, hash_ring)
+  LocalStorage.insert(hub_id, StorageKey.hr, hash_ring)
 end
 ```
 
@@ -113,6 +121,7 @@ Example:
 ```elixir 
 # Register hook handler
 alias ProcessHub.Service.HookManager
+alias ProcessHub.Constant.Hook
 ...
 hook_handler = {
   MyModule,
