@@ -81,7 +81,7 @@ defmodule Test.Service.DistributorTest do
     )
     |> ProcessHub.await()
 
-    sync_strategy = ProcessHub.Service.LocalStorage.get(hub_id, :synchronization_strategy)
+    sync_strategy = ProcessHub.Service.Storage.get(hub_id, :synchronization_strategy)
 
     Distributor.child_terminate(hub_id, child_spec.id, sync_strategy)
 

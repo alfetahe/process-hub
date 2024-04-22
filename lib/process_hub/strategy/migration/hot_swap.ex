@@ -97,7 +97,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
     alias ProcessHub.Constant.StorageKey
     alias ProcessHub.Service.Cluster
-    alias ProcessHub.Service.LocalStorage
+    alias ProcessHub.Service.Storage
     alias ProcessHub.Service.ProcessRegistry
     alias ProcessHub.Strategy.Migration.HotSwap
     alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
@@ -143,7 +143,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     @impl true
     def handle_process_startups(%HotSwap{handover: true} = _struct, hub_id, pids) do
-      state_data = LocalStorage.get(hub_id, StorageKey.msk()) || []
+      state_data = Storage.get(hub_id, StorageKey.msk()) || []
 
       Enum.each(pids, fn {cid, pid} ->
         pstate = Keyword.get(state_data, cid, nil)
@@ -169,7 +169,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           # Need to be sure that this is sent and handled on the remote nodes
           # before they start the new children.
           :erpc.call(node, fn ->
-            LocalStorage.update(hub_id, StorageKey.msk(), fn old_value ->
+            Storage.update(hub_id, StorageKey.msk(), fn old_value ->
               case old_value do
                 nil -> data
                 _ -> data ++ old_value
@@ -181,10 +181,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     defp format_send_data({local_data, states}, hub_id) do
-      dist_strat = LocalStorage.get(hub_id, StorageKey.strdist())
+      dist_strat = Storage.get(hub_id, StorageKey.strdist())
 
       repl_fact =
-        LocalStorage.get(hub_id, StorageKey.strred())
+        Storage.get(hub_id, StorageKey.strred())
         |> RedundancyStrategy.replication_factor()
 
       Enum.reduce(local_data, %{}, fn {cid, {_, cn}}, acc ->
@@ -232,7 +232,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     defp rem_states(hub_id, cids) do
-      LocalStorage.update(hub_id, StorageKey.msk(), fn states ->
+      Storage.update(hub_id, StorageKey.msk(), fn states ->
         Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
       end)
     end

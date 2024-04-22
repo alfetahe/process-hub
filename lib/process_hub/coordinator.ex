@@ -34,7 +34,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Cluster
-  alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Service.State
   alias ProcessHub.Utility.Name
 
@@ -73,10 +73,10 @@ defmodule ProcessHub.Coordinator do
   def terminate(_reason, state) do
     local_node = node()
 
-    LocalStorage.get(state.hub_id, StorageKey.strdist())
+    Storage.get(state.hub_id, StorageKey.strdist())
     |> DistributionStrategy.handle_shutdown(state.hub_id)
 
-    LocalStorage.get(state.hub_id, StorageKey.strmigr())
+    Storage.get(state.hub_id, StorageKey.strmigr())
     |> MigrationStrategy.handle_shutdown(state.hub_id)
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
@@ -96,12 +96,12 @@ defmodule ProcessHub.Coordinator do
 
   def handle_continue(:additional_setup, state) do
     PartitionToleranceStrategy.init(
-      LocalStorage.get(state.hub_id, StorageKey.strpart()),
+      Storage.get(state.hub_id, StorageKey.strpart()),
       state.hub_id
     )
 
-    schedule_hub_discovery(LocalStorage.get(state.hub_id, StorageKey.hdi()))
-    schedule_sync(LocalStorage.get(state.hub_id, StorageKey.strsyn()))
+    schedule_hub_discovery(Storage.get(state.hub_id, StorageKey.hdi()))
+    schedule_sync(Storage.get(state.hub_id, StorageKey.strsyn()))
 
     coordinator = Name.coordinator(state.hub_id)
 
@@ -197,7 +197,7 @@ defmodule ProcessHub.Coordinator do
         HookManager.dispatch_hook(state.hub_id, Hook.pre_cluster_join(), node)
 
         PartitionToleranceStrategy.handle_node_up(
-          LocalStorage.get(state.hub_id, StorageKey.strpart()),
+          Storage.get(state.hub_id, StorageKey.strpart()),
           state.hub_id,
           node
         )
@@ -305,13 +305,13 @@ defmodule ProcessHub.Coordinator do
       ]
     )
 
-    schedule_sync(LocalStorage.get(state.hub_id, StorageKey.strsyn()))
+    schedule_sync(Storage.get(state.hub_id, StorageKey.strsyn()))
 
     {:noreply, state}
   end
 
   def handle_info(:propagate, state) do
-    schedule_hub_discovery(LocalStorage.get(state.hub_id, StorageKey.hdi()))
+    schedule_hub_discovery(Storage.get(state.hub_id, StorageKey.hdi()))
 
     Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), %{
       members: :external,
@@ -393,24 +393,24 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp setup_local_storage(hub_id, settings, hub_nodes) do
-    LocalStorage.insert(hub_id, StorageKey.hn(), hub_nodes)
-    LocalStorage.insert(hub_id, StorageKey.strred(), settings.redundancy_strategy)
-    LocalStorage.insert(hub_id, StorageKey.strdist(), settings.distribution_strategy)
-    LocalStorage.insert(hub_id, StorageKey.strmigr(), settings.migration_strategy)
+    Storage.insert(hub_id, StorageKey.hn(), hub_nodes)
+    Storage.insert(hub_id, StorageKey.strred(), settings.redundancy_strategy)
+    Storage.insert(hub_id, StorageKey.strdist(), settings.distribution_strategy)
+    Storage.insert(hub_id, StorageKey.strmigr(), settings.migration_strategy)
 
-    LocalStorage.insert(
+    Storage.insert(
       hub_id,
       StorageKey.strsyn(),
       settings.synchronization_strategy
     )
 
-    LocalStorage.insert(
+    Storage.insert(
       hub_id,
       StorageKey.strpart(),
       settings.partition_tolerance_strategy
     )
 
-    LocalStorage.insert(hub_id, StorageKey.hdi(), settings.hubs_discover_interval)
+    Storage.insert(hub_id, StorageKey.hdi(), settings.hubs_discover_interval)
   end
 
   defp register_handlers(%{event_queue: eq}) do

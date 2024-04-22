@@ -5,7 +5,7 @@ defmodule ProcessHub.Service.Cluster do
   """
 
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.StorageKey
 
@@ -14,7 +14,7 @@ defmodule ProcessHub.Service.Cluster do
   @doc "Adds a new node to the hub cluster and returns new list of nodes."
   @spec add_hub_node(atom(), node()) :: [node()]
   def add_hub_node(hub_id, node) do
-    hub_nodes = LocalStorage.get(hub_id, StorageKey.hn())
+    hub_nodes = Storage.get(hub_id, StorageKey.hn())
 
     hub_nodes =
       case Enum.member?(hub_nodes, node) do
@@ -25,7 +25,7 @@ defmodule ProcessHub.Service.Cluster do
           hub_nodes ++ [node]
       end
 
-    LocalStorage.insert(hub_id, StorageKey.hn(), hub_nodes)
+    Storage.insert(hub_id, StorageKey.hn(), hub_nodes)
 
     hub_nodes
   end
@@ -33,9 +33,9 @@ defmodule ProcessHub.Service.Cluster do
   @doc "Removes a node from the cluster and returns new list of nodes."
   @spec rem_hub_node(atom(), node()) :: [node()]
   def rem_hub_node(hub_id, node) do
-    hub_nodes = LocalStorage.get(hub_id, StorageKey.hn())
+    hub_nodes = Storage.get(hub_id, StorageKey.hn())
     hub_nodes = Enum.filter(hub_nodes, fn n -> n != node end)
-    LocalStorage.insert(hub_id, StorageKey.hn(), hub_nodes)
+    Storage.insert(hub_id, StorageKey.hn(), hub_nodes)
 
     hub_nodes
   end
@@ -49,7 +49,7 @@ defmodule ProcessHub.Service.Cluster do
   @doc "Returns a list of nodes in the cluster."
   @spec nodes(ProcessHub.hub_id(), [:include_local] | nil) :: [node()]
   def nodes(hub_id, opts \\ []) do
-    nodes = LocalStorage.get(hub_id, StorageKey.hn()) || []
+    nodes = Storage.get(hub_id, StorageKey.hn()) || []
 
     case Enum.member?(opts, :include_local) do
       false -> Enum.filter(nodes, &(&1 !== node()))

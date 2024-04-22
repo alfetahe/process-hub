@@ -1,4 +1,4 @@
-defmodule ProcessHub.Service.LocalStorage do
+defmodule ProcessHub.Service.Storage do
   @moduledoc """
   The local storage service provides API functions for managing local storage.
   This is mainly used for storing data that is not required to be persisted.

@@ -70,14 +70,14 @@ Here's an example of ProcessHub using hooks internally in the
 `ProcessHub.Strategy.Distribution.ConsistentHashing` strategy implementation:
 ```elixir
 alias ProcessHub.Constant.StorageKey
-alias ProcessHub.Service.LocalStorage
+alias ProcessHub.Service.Storage
 alias ProcessHub.Service.HookManager
 
 # Register hook handlers to update the hash ring when node joins or leaves the cluster.
 def init(_strategy, hub_id) do
-  hub_nodes = LocalStorage.get(hub_id, :hub_nodes)
+  hub_nodes = Storage.get(hub_id, :hub_nodes)
 
-  LocalStorage.insert(hub_id, StorageKey.hr, Ring.create_ring(hub_nodes))
+  Storage.insert(hub_id, StorageKey.hr, Ring.create_ring(hub_nodes))
 
   join_handler = {
     ProcessHub.Strategy.Distribution.ConsistentHashing,
@@ -100,13 +100,13 @@ end
 def handle_node_join(hub_id, node) do
   hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
 
-  LocalStorage.insert(hub_id, StorageKey.hr, hash_ring)
+  Storage.insert(hub_id, StorageKey.hr, hash_ring)
 end
 
 def handle_node_leave(hub_id, node) do
   hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
 
-  LocalStorage.insert(hub_id, StorageKey.hr, hash_ring)
+  Storage.insert(hub_id, StorageKey.hr, hash_ring)
 end
 ```
 

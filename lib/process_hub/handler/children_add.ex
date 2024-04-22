@@ -10,7 +10,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.State
-  alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Utility.Name
@@ -120,10 +120,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg = %__MODULE__{
         arg
         | dist_sup: Name.distributed_supervisor(arg.hub_id),
-          sync_strategy: LocalStorage.get(arg.hub_id, StorageKey.strsyn()),
-          redun_strategy: LocalStorage.get(arg.hub_id, StorageKey.strred()),
-          dist_strategy: LocalStorage.get(arg.hub_id, StorageKey.strdist()),
-          migr_strategy: LocalStorage.get(arg.hub_id, StorageKey.strmigr())
+          sync_strategy: Storage.get(arg.hub_id, StorageKey.strsyn()),
+          redun_strategy: Storage.get(arg.hub_id, StorageKey.strred()),
+          dist_strategy: Storage.get(arg.hub_id, StorageKey.strdist()),
+          migr_strategy: Storage.get(arg.hub_id, StorageKey.strmigr())
       }
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do

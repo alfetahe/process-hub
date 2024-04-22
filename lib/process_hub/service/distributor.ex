@@ -4,7 +4,7 @@ defmodule ProcessHub.Service.Distributor do
   """
 
   alias ProcessHub.Constant.StorageKey
-  alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Dispatcher
@@ -73,8 +73,8 @@ defmodule ProcessHub.Service.Distributor do
   @spec stop_children(ProcessHub.hub_id(), [ProcessHub.child_id()], keyword()) ::
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
   def stop_children(hub_id, child_ids, opts) do
-    redun_strat = LocalStorage.get(hub_id, StorageKey.strred())
-    dist_strat = LocalStorage.get(hub_id, StorageKey.strdist())
+    redun_strat = Storage.get(hub_id, StorageKey.strred())
+    dist_strat = Storage.get(hub_id, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
@@ -199,8 +199,8 @@ defmodule ProcessHub.Service.Distributor do
   defp init_strategies(hub_id) do
     {:ok,
      %{
-       distribution: LocalStorage.get(hub_id, StorageKey.strdist()),
-       redundancy: LocalStorage.get(hub_id, StorageKey.strred())
+       distribution: Storage.get(hub_id, StorageKey.strdist()),
+       redundancy: Storage.get(hub_id, StorageKey.strred())
      }}
   end
 

@@ -10,7 +10,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
-  alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -81,11 +81,11 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp add_strategies(arg) do
       %__MODULE__{
         arg
-        | sync_strat: LocalStorage.get(arg.hub_id, StorageKey.strsyn()),
-          redun_strat: LocalStorage.get(arg.hub_id, StorageKey.strred()),
-          dist_strat: LocalStorage.get(arg.hub_id, StorageKey.strdist()),
-          migr_strat: LocalStorage.get(arg.hub_id, StorageKey.strmigr()),
-          partition_strat: LocalStorage.get(arg.hub_id, StorageKey.strpart())
+        | sync_strat: Storage.get(arg.hub_id, StorageKey.strsyn()),
+          redun_strat: Storage.get(arg.hub_id, StorageKey.strred()),
+          dist_strat: Storage.get(arg.hub_id, StorageKey.strdist()),
+          migr_strat: Storage.get(arg.hub_id, StorageKey.strmigr()),
+          partition_strat: Storage.get(arg.hub_id, StorageKey.strpart())
       }
     end
 
@@ -260,9 +260,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     def handle(%__MODULE__{} = arg) do
       arg = %__MODULE__{
         arg
-        | partition_strat: LocalStorage.get(arg.hub_id, StorageKey.strpart()),
-          redun_strat: LocalStorage.get(arg.hub_id, StorageKey.strred()),
-          dist_strat: LocalStorage.get(arg.hub_id, StorageKey.strdist())
+        | partition_strat: Storage.get(arg.hub_id, StorageKey.strpart()),
+          redun_strat: Storage.get(arg.hub_id, StorageKey.strred()),
+          dist_strat: Storage.get(arg.hub_id, StorageKey.strdist())
       }
 
       HookManager.dispatch_hook(

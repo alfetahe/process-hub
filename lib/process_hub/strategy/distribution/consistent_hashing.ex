@@ -34,7 +34,7 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   """
 
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Ring
   alias ProcessHub.Constant.Hook
@@ -47,14 +47,14 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   def handle_node_join(hub_id, node) do
     hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
 
-    LocalStorage.insert(hub_id, StorageKey.hr(), hash_ring)
+    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
   end
 
   @spec handle_node_leave(ProcessHub.hub_id(), node()) :: boolean()
   def handle_node_leave(hub_id, node) do
     hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
 
-    LocalStorage.insert(hub_id, StorageKey.hr(), hash_ring)
+    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
   end
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.ConsistentHashing do
@@ -76,9 +76,9 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
 
     @impl true
     def init(_strategy, hub_id) do
-      hub_nodes = LocalStorage.get(hub_id, StorageKey.hn())
+      hub_nodes = Storage.get(hub_id, StorageKey.hn())
 
-      LocalStorage.insert(hub_id, StorageKey.hr(), Ring.create_ring(hub_nodes))
+      Storage.insert(hub_id, StorageKey.hr(), Ring.create_ring(hub_nodes))
 
       join_handler = {
         ProcessHub.Strategy.Distribution.ConsistentHashing,
@@ -101,9 +101,9 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
     Removes the local node from the hash ring.
     """
     def handle_shutdown(_strategy, hub_id) do
-      hash_ring = LocalStorage.get(hub_id, StorageKey.hr()) |> Ring.remove_node(node())
+      hash_ring = Storage.get(hub_id, StorageKey.hr()) |> Ring.remove_node(node())
 
-      LocalStorage.insert(hub_id, StorageKey.hr(), hash_ring)
+      Storage.insert(hub_id, StorageKey.hr(), hash_ring)
     end
   end
 end
