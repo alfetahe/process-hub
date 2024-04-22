@@ -95,6 +95,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defstruct retention: 5000, handover: false
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
+    alias ProcessHub.Constant.StorageKey
     alias ProcessHub.Service.Cluster
     alias ProcessHub.Service.LocalStorage
     alias ProcessHub.Service.ProcessRegistry
@@ -104,8 +105,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     @migration_timeout 15000
     @shutdown_handover_timeout 3000
-
-    @migr_state_key :migration_hotswap_state
 
     @impl true
     def init(_struct, _hub_id), do: nil
@@ -144,7 +143,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     @impl true
     def handle_process_startups(%HotSwap{handover: true} = _struct, hub_id, pids) do
-      state_data = LocalStorage.get(hub_id, @migr_state_key) || []
+      state_data = LocalStorage.get(hub_id, StorageKey.msk()) || []
 
       Enum.each(pids, fn {cid, pid} ->
         pstate = Keyword.get(state_data, cid, nil)
@@ -170,7 +169,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           # Need to be sure that this is sent and handled on the remote nodes
           # before they start the new children.
           :erpc.call(node, fn ->
-            LocalStorage.update(hub_id, @migr_state_key, fn old_value ->
+            LocalStorage.update(hub_id, StorageKey.msk(), fn old_value ->
               case old_value do
                 nil -> data
                 _ -> data ++ old_value
@@ -182,10 +181,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     defp format_send_data({local_data, states}, hub_id) do
-      dist_strat = LocalStorage.get(hub_id, :distribution_strategy)
+      dist_strat = LocalStorage.get(hub_id, StorageKey.strdist())
 
       repl_fact =
-        LocalStorage.get(hub_id, :redundancy_strategy)
+        LocalStorage.get(hub_id, StorageKey.strred())
         |> RedundancyStrategy.replication_factor()
 
       Enum.reduce(local_data, %{}, fn {cid, {_, cn}}, acc ->
@@ -233,7 +232,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     defp rem_states(hub_id, cids) do
-      LocalStorage.update(hub_id, @migr_state_key, fn states ->
+      LocalStorage.update(hub_id, StorageKey.msk(), fn states ->
         Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
       end)
     end

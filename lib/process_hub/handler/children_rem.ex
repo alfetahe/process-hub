@@ -5,6 +5,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Utility.Name
   alias ProcessHub.Service.LocalStorage
+  alias ProcessHub.Constant.StorageKey
 
   use Task
 
@@ -40,7 +41,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
       arg = %__MODULE__{
         arg
         | dist_sup: Name.distributed_supervisor(arg.hub_id),
-          sync_strategy: LocalStorage.get(arg.hub_id, :synchronization_strategy)
+          sync_strategy: LocalStorage.get(arg.hub_id, StorageKey.strsyn())
       }
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do

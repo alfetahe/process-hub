@@ -3,6 +3,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.Event
+  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Dispatcher
@@ -80,11 +81,11 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp add_strategies(arg) do
       %__MODULE__{
         arg
-        | sync_strat: LocalStorage.get(arg.hub_id, :synchronization_strategy),
-          redun_strat: LocalStorage.get(arg.hub_id, :redundancy_strategy),
-          dist_strat: LocalStorage.get(arg.hub_id, :distribution_strategy),
-          migr_strat: LocalStorage.get(arg.hub_id, :migration_strategy),
-          partition_strat: LocalStorage.get(arg.hub_id, :partition_tolerance_strategy)
+        | sync_strat: LocalStorage.get(arg.hub_id, StorageKey.strsyn()),
+          redun_strat: LocalStorage.get(arg.hub_id, StorageKey.strred()),
+          dist_strat: LocalStorage.get(arg.hub_id, StorageKey.strdist()),
+          migr_strat: LocalStorage.get(arg.hub_id, StorageKey.strmigr()),
+          partition_strat: LocalStorage.get(arg.hub_id, StorageKey.strpart())
       }
     end
 
@@ -259,9 +260,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     def handle(%__MODULE__{} = arg) do
       arg = %__MODULE__{
         arg
-        | partition_strat: LocalStorage.get(arg.hub_id, :partition_tolerance_strategy),
-          redun_strat: LocalStorage.get(arg.hub_id, :redundancy_strategy),
-          dist_strat: LocalStorage.get(arg.hub_id, :distribution_strategy)
+        | partition_strat: LocalStorage.get(arg.hub_id, StorageKey.strpart()),
+          redun_strat: LocalStorage.get(arg.hub_id, StorageKey.strred()),
+          dist_strat: LocalStorage.get(arg.hub_id, StorageKey.strdist())
       }
 
       HookManager.dispatch_hook(

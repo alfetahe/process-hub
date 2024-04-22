@@ -3,6 +3,7 @@ defmodule ProcessHub.Service.Distributor do
   The distributor service provides API functions for distributing child processes.
   """
 
+  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Name
@@ -72,8 +73,8 @@ defmodule ProcessHub.Service.Distributor do
   @spec stop_children(ProcessHub.hub_id(), [ProcessHub.child_id()], keyword()) ::
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
   def stop_children(hub_id, child_ids, opts) do
-    redun_strat = LocalStorage.get(hub_id, :redundancy_strategy)
-    dist_strat = LocalStorage.get(hub_id, :distribution_strategy)
+    redun_strat = LocalStorage.get(hub_id, StorageKey.strred())
+    dist_strat = LocalStorage.get(hub_id, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
@@ -198,8 +199,8 @@ defmodule ProcessHub.Service.Distributor do
   defp init_strategies(hub_id) do
     {:ok,
      %{
-       distribution: LocalStorage.get(hub_id, :distribution_strategy),
-       redundancy: LocalStorage.get(hub_id, :redundancy_strategy)
+       distribution: LocalStorage.get(hub_id, StorageKey.strdist()),
+       redundancy: LocalStorage.get(hub_id, StorageKey.strred())
      }}
   end
 

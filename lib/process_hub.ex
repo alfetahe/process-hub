@@ -86,6 +86,8 @@ defmodule ProcessHub do
   The default is `ProcessHub.Strategy.PartitionTolerance.Divergence`.
   - `:distribution_strategy` is optional and is used to define the strategy for process distribution.
   The default is `ProcessHub.Strategy.Distribution.ConsistentHashing`.
+  - `:hubs_discover_interval` is optional and is used to define the interval in milliseconds
+  for hubs to start the discovery process. The default is `60000` (1 minute).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -104,7 +106,8 @@ defmodule ProcessHub do
             | ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
           distribution_strategy:
             ProcessHub.Strategy.Distribution.ConsistentHashing.t()
-            | ProcessHub.Strategy.Distribution.Guided.t()
+            | ProcessHub.Strategy.Distribution.Guided.t(),
+          hubs_discover_interval: non_neg_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -115,7 +118,8 @@ defmodule ProcessHub do
     migration_strategy: %ProcessHub.Strategy.Migration.ColdSwap{},
     synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
     partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
-    distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{}
+    distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
+    hubs_discover_interval: 60000
   ]
 
   alias ProcessHub.Service.Distributor

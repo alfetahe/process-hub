@@ -8,10 +8,6 @@ defmodule Test.Service.RingTest do
     Test.Helper.SetupHelper.setup_base(%{}, :ring_test)
   end
 
-  test "storage key" do
-    assert Ring.storage_key() === :hash_ring_storage
-  end
-
   test "create ring" do
     hub_nodes = [:node1, :node2, :node3]
     hash_ring = Ring.create_ring(hub_nodes)

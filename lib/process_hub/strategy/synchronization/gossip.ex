@@ -33,6 +33,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   alias ProcessHub.Constant.Event
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Utility.Name
+  alias ProcessHub.Constant.StorageKey
 
   @typedoc """
   The Gossip strategy configuration options.
@@ -269,7 +270,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
     defp sync_locally(hub_id, nodes_data) do
       node_timestamps =
-        case LocalStorage.get(hub_id, :gossip_node_timestamps) do
+        case LocalStorage.get(hub_id, StorageKey.gct()) do
           nil -> %{}
           node_timestamps -> node_timestamps
         end
@@ -301,13 +302,13 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
     defp update_node_timestamps(hub_id, node, timestamp) do
       node_timestamps =
-        case LocalStorage.get(hub_id, :gossip_node_timestamps) do
+        case LocalStorage.get(hub_id, StorageKey.gct()) do
           nil -> %{}
           node_timestamps -> node_timestamps || %{}
         end
         |> Map.put(node, timestamp)
 
-      LocalStorage.insert(hub_id, :gossip_node_timestamps, node_timestamps)
+      LocalStorage.insert(hub_id, StorageKey.gct(), node_timestamps)
     end
 
     defp unacked_nodes(sync_acks, hub_id) do

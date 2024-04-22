@@ -34,14 +34,10 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
   alias ProcessHub.Service.LocalStorage
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Constant.StorageKey
 
   @type t() :: %__MODULE__{}
   defstruct []
-
-  @cache_key :guided_distribution_cache
-
-  @spec cache_key() :: :guided_distribution_cache
-  def cache_key(), do: @cache_key
 
   @spec handle_children_start(ProcessHub.hub_id(), %{
           :start_opts => keyword(),
@@ -54,13 +50,13 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
 
   @spec insert_child_mappings(ProcessHub.hub_id(), any()) :: :ok
   def insert_child_mappings(hub_id, child_mappings) do
-    case LocalStorage.get(hub_id, @cache_key) do
+    case LocalStorage.get(hub_id, StorageKey.gdc()) do
       nil ->
-        LocalStorage.insert(hub_id, @cache_key, child_mappings)
+        LocalStorage.insert(hub_id, StorageKey.gdc(), child_mappings)
 
       existing_mappings ->
         new_mappings = Map.merge(existing_mappings, child_mappings)
-        LocalStorage.insert(hub_id, @cache_key, new_mappings)
+        LocalStorage.insert(hub_id, StorageKey.gdc(), new_mappings)
     end
 
     :ok
@@ -75,7 +71,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     def children_init(_strategy, hub_id, child_specs, opts) do
       with {:ok, child_mappings} <- validate_child_init(hub_id, opts, child_specs),
            :ok <- GuidedStrategy.insert_child_mappings(hub_id, child_mappings) do
-        LocalStorage.get(hub_id, GuidedStrategy.cache_key())
+        LocalStorage.get(hub_id, StorageKey.gdc())
         :ok
       else
         err -> err
@@ -90,7 +86,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
             pos_integer()
           ) :: [atom]
     def belongs_to(_strategy, hub_id, child_id, replication_factor) do
-      with child_mappings <- LocalStorage.get(hub_id, GuidedStrategy.cache_key()),
+      with child_mappings <- LocalStorage.get(hub_id, StorageKey.gdc()),
            child_nodes <- Map.get(child_mappings, child_id),
            nodes <- Enum.take(child_nodes, replication_factor) do
         nodes
@@ -127,7 +123,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
 
     defp validate_children_replication(hub_id, mappings) do
       repl_fact =
-        LocalStorage.get(hub_id, :redundancy_strategy)
+        LocalStorage.get(hub_id, StorageKey.strred())
         |> RedundancyStrategy.replication_factor()
 
       case Enum.all?(mappings, fn {_, children} -> length(children) == repl_fact end) do
