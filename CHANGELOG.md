@@ -1,6 +1,22 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.2.3-alpha - 2024-04-23
+Added new configuration options for timeout values and renamed LocalStorage -> Storage.
+
+Depending on the number of nodes and processes, the default values might not be optimal.
+The new timeout configuration options enable the user to fine-tune the system for their specific use case.
+
+### Changed
+- Renamed `ProcessHub.Service.LocalStorage` module to `ProcessHub.Service.Storage`.
+
+### Added
+- New timeout configuration for different operations:
+    - `:hubs_discover_interval`
+    - `:deadlock_recovery_timeout`
+    - `:child_migration_timeout`
+    - `:handover_data_wait`
+
 ## v0.2.2-alpha - 2024-03-31
 This release introduces process state migration to the next node when the node is shutting down.
 
