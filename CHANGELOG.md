@@ -1,7 +1,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.2.3-alpha - 2024-04-23
+## v0.2.3-alpha - 2024-04-24
 Added new configuration options for timeout values and renamed LocalStorage -> Storage.
 
 Depending on the number of nodes and processes, the default values might not be optimal.
