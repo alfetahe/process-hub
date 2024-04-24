@@ -12,7 +12,7 @@ defmodule ProcessHub.Initializer do
 
   @doc "Starts a `ProcessHub` instance with all its children."
   @spec start_link(ProcessHub.t()) :: {:ok, pid()} | {:error, term()}
-  def start_link(hub_settings) when is_struct(hub_settings) do
+  def start_link(%ProcessHub{} = hub_settings) do
     Supervisor.start_link(__MODULE__, hub_settings, name: Name.initializer(hub_settings.hub_id))
   end
 

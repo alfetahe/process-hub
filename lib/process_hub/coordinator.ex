@@ -57,6 +57,8 @@ defmodule ProcessHub.Coordinator do
   ### Callbacks
   ##############################################################################
 
+  @spec init({ProcessHub.hub_id(), ProcessHub.t(), map()}) ::
+          {:ok, ProcessHub.Coordinator.t(), {:continue, :additional_setup}}
   def init({hub_id, settings, managers}) do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
@@ -392,7 +394,7 @@ defmodule ProcessHub.Coordinator do
     )
   end
 
-  defp setup_local_storage(hub_id, settings, hub_nodes) do
+  defp setup_local_storage(hub_id, %ProcessHub{} = settings, hub_nodes) do
     Storage.insert(hub_id, StorageKey.hn(), hub_nodes)
     Storage.insert(hub_id, StorageKey.strred(), settings.redundancy_strategy)
     Storage.insert(hub_id, StorageKey.strdist(), settings.distribution_strategy)
@@ -411,6 +413,7 @@ defmodule ProcessHub.Coordinator do
     )
 
     Storage.insert(hub_id, StorageKey.hdi(), settings.hubs_discover_interval)
+    Storage.insert(hub_id, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
   end
 
   defp register_handlers(%{event_queue: eq}) do

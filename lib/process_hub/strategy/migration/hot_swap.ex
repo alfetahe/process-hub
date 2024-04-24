@@ -87,12 +87,26 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     that the state has been handled; otherwise, the handler will wait until the default retention time has passed.
     The handler PID is passed in the `from` variable.
     The default value is `false`.
+
+  - `:handover_data_wait` - An integer value in milliseconds is used to specify how long the handler process
+    should wait for the state of the remote process to be sent to the local node.
+    The default value is `3000`.
+
+  - `:child_migration_timeout` - An integer value in milliseconds is used to specify the timeout for single
+  child process migration. If the child process migration does not complete within this time, the migration
+  for single child process will be considered failed but the migration for other child processes will continue.
+    The default value is `5000`.
   """
   @type t() :: %__MODULE__{
           retention: pos_integer(),
-          handover: boolean()
+          handover: boolean(),
+          handover_data_wait: pos_integer(),
+          child_migration_timeout: pos_integer()
         }
-  defstruct retention: 5000, handover: false
+  defstruct retention: 5000,
+            handover: false,
+            handover_data_wait: 3000,
+            child_migration_timeout: 5000
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
     alias ProcessHub.Constant.StorageKey
@@ -102,9 +116,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     alias ProcessHub.Strategy.Migration.HotSwap
     alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
     alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-
-    @migration_timeout 15000
-    @shutdown_handover_timeout 3000
 
     @impl true
     def init(_struct, _hub_id), do: nil
@@ -129,10 +140,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     @impl true
-    def handle_shutdown(%HotSwap{handover: true} = _struct, hub_id) do
+    def handle_shutdown(%HotSwap{handover: true, handover_data_wait: hodw} = _struct, hub_id) do
       ProcessRegistry.local_data(hub_id)
       |> get_state_msgs()
-      |> get_send_data()
+      |> get_send_data(hodw)
       |> format_send_data(hub_id)
       |> send_data(hub_id)
 
@@ -212,7 +223,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       local_data
     end
 
-    defp get_send_data(local_data) do
+    defp get_send_data(local_data, handover_data_wait) do
       local_node = node()
 
       send_data =
@@ -221,7 +232,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             {:process_hub, :process_state, cid, state} ->
               {cid, state}
           after
-            @shutdown_handover_timeout ->
+            handover_data_wait ->
               Logger.error("Handover timeout while shutting down the node #{local_node}")
               nil
           end
@@ -255,7 +266,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       # Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
     end
 
-    defp migration_cids(hub_id, strategy, child_specs, added_node) do
+    defp migration_cids(hub_id, %HotSwap{} = strategy, child_specs, added_node) do
       dist_sup = Name.distributed_supervisor(hub_id)
 
       local_pids = DistributedSupervisor.local_children(dist_sup)
@@ -265,7 +276,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           Mailbox.receive_response(
             :child_start_resp,
             receive_handler(),
-            @migration_timeout
+            strategy.child_migration_timeout
           )
 
         case start_resp do

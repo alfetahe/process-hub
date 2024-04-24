@@ -88,6 +88,10 @@ defmodule ProcessHub do
   The default is `ProcessHub.Strategy.Distribution.ConsistentHashing`.
   - `:hubs_discover_interval` is optional and is used to define the interval in milliseconds
   for hubs to start the discovery process. The default is `60000` (1 minute).
+  - `:deadlock_recovery_timeout` is optional and is used to define the timeout in milliseconds
+  to recover from locked hub. Hub locking can happen for different reasons
+  such as updating internal data, migrating processes or handling network partitions.
+  The default is `60000` (1 minute).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -107,7 +111,8 @@ defmodule ProcessHub do
           distribution_strategy:
             ProcessHub.Strategy.Distribution.ConsistentHashing.t()
             | ProcessHub.Strategy.Distribution.Guided.t(),
-          hubs_discover_interval: non_neg_integer()
+          hubs_discover_interval: non_neg_integer(),
+          deadlock_recovery_timeout: non_neg_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -119,7 +124,8 @@ defmodule ProcessHub do
     synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
     partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
     distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
-    hubs_discover_interval: 60000
+    hubs_discover_interval: 60000,
+    deadlock_recovery_timeout: 60000
   ]
 
   alias ProcessHub.Service.Distributor
