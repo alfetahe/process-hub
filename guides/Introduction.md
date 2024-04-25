@@ -16,7 +16,7 @@ supervision tree.
     ```elixir
     def deps do
         [
-            {:process_hub, "~> 0.2.2-alpha"}
+            {:process_hub, "~> 0.2.3-alpha"}
         ]
     end
     ```
