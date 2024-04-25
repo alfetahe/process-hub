@@ -34,5 +34,8 @@ ccc-*.tar
 # IntelliJ IDEA files
 .idea
 
+# VsCode files
+.vscode
+
 # Temporary in the gitignore until we have some benchmarks
 /lib/process_hub/benchmark
