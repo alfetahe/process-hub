@@ -20,25 +20,41 @@ defmodule ProcessHub.Service.HookManager do
           | :post_nodes_redistribution_hook
           | :pre_children_start_hook
 
-  @type hook_handler() :: {module(), atom(), [any()]}
+  @type handler_id() :: atom()
+
+  @type t() :: %__MODULE__{
+    id: handler_id(),
+    m: module(),
+    f: atom(),
+    a: [any()]
+  }
 
   @type hook_handlers() :: %{
           hook_key() => [
-            hook_handler()
+            t()
           ]
         }
 
+  defstruct [:id, :m, :f, :a]
+
   @doc "Registers a new hook handler."
-  @spec register_hook_handlers(ProcessHub.hub_id(), hook_key(), [hook_handler()]) ::
-          {atom(), boolean()}
-  def register_hook_handlers(hub_id, hook_key, hook_handlers) do
+  @spec register_handlers(ProcessHub.hub_id(), hook_key(), [t()]) :: :ok | :error
+  def register_handlers(hub_id, hook_key, hook_handlers) do
     hook_handlers = registered_handlers(hub_id, hook_key) ++ hook_handlers
 
-    Name.hook_registry(hub_id) |> Cachex.put(hook_key, hook_handlers)
+    insert_hooks(hub_id, hook_key, hook_handlers)
+  end
+
+  # TODO: add tests
+  @spec register_handler(ProcessHub.hub_id(), hook_key(), t()) :: :ok | :error
+  def register_handler(hub_id, hook_key, hook_handler) do
+    hook_handlers = [registered_handlers(hub_id, hook_key) | hook_handler]
+
+    insert_hooks(hub_id, hook_key, hook_handlers)
   end
 
   @doc "Returns all registered hook handlers for the given hook key"
-  @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: [hook_handler()]
+  @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: [t()]
   def registered_handlers(hub_id, hook_key) do
     {:ok, res} = Name.hook_registry(hub_id) |> Cachex.get(hook_key)
 
@@ -49,7 +65,7 @@ defmodule ProcessHub.Service.HookManager do
   end
 
   @doc "Dispatches multiple hooks to the registered handlers."
-  @spec dispatch_hooks(ProcessHub.hub_id(), [hook_handler()]) :: :ok
+  @spec dispatch_hooks(ProcessHub.hub_id(), [t()]) :: :ok
   def dispatch_hooks(_hub_id, %{}), do: :ok
 
   def dispatch_hooks(hub_id, hooks) do
@@ -76,9 +92,9 @@ defmodule ProcessHub.Service.HookManager do
     :ok
   end
 
-  defp exec_hook({m, f, a}, hook_data) do
+  defp exec_hook(%__MODULE__{m: module, f: func, a: args}, hook_data) do
     args =
-      Enum.map(a, fn arg ->
+      Enum.map(args, fn arg ->
         case arg do
           :_ ->
             hook_data
@@ -88,6 +104,19 @@ defmodule ProcessHub.Service.HookManager do
         end
       end)
 
-    apply(m, f, args)
+    apply(module, func, args)
+  end
+
+  defp insert_hooks(hub_id, hook_key, hook_handlers) do
+    res = Cachex.put(
+      Name.hook_registry(hub_id),
+      hook_key,
+      hook_handlers
+    )
+
+    case res do
+      {:ok, _} -> :ok
+      _ -> :error
+    end
   end
 end
