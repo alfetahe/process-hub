@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Hooks are registered as structs with an ID so they are easier to add/remove at runtime.
+- Renamed `HookManager.register_hook_handlers/3` to `HookManager.register_handlers/3`.
 
 ### Added
 
