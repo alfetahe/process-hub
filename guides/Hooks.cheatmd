@@ -44,7 +44,7 @@ end
 Example hook registration using the `ProcessHub.Service.HookManager` module:
 ```elixir
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-ProcessHub.Service.HookManager.register_hook_handlers(
+ProcessHub.Service.HookManager.register_handlers(
   :my_hub, 
   ProcessHub.Constant.Hook.post_cluster_join(),
   [{MyModule, :my_function, [:some_data, :_]}]
@@ -91,8 +91,8 @@ def init(_strategy, hub_id) do
     [hub_id, :_]
   }
 
-  HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
-  HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
+  HookManager.register_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
+  HookManager.register_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
 end
 
 
@@ -130,7 +130,7 @@ hook_handler = {
 }
 
 # We're triggering the hook when child process has been registered under the process registry.
-HookManager.register_hook_handlers(hub_id, Hook.registry_pid_inserted(), [join_handler])
+HookManager.register_handlers(hub_id, Hook.registry_pid_inserted(), [join_handler])
 ...
 
 # The hook handler

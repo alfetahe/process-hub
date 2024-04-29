@@ -43,7 +43,7 @@ defmodule Test.Service.ProcessRegistryTest do
     Cachex.purge(ProcessHub.Utility.Name.registry(hub_id))
 
     hook = {:erlang, :send, [self(), :bulk_insert_test]}
-    HookManager.register_hook_handlers(hub_id, Hook.registry_pid_inserted(), [hook])
+    HookManager.register_handlers(hub_id, Hook.registry_pid_inserted(), [hook])
 
     assert ProcessRegistry.registry(hub_id) === %{}
 
@@ -65,7 +65,7 @@ defmodule Test.Service.ProcessRegistryTest do
 
   test "bulk delete", %{hub_id: hub_id} = _context do
     hook = {:erlang, :send, [self(), :bulk_delete]}
-    HookManager.register_hook_handlers(hub_id, Hook.registry_pid_removed(), [hook])
+    HookManager.register_handlers(hub_id, Hook.registry_pid_removed(), [hook])
 
     assert ProcessRegistry.registry(hub_id) === %{}
 
@@ -108,7 +108,7 @@ defmodule Test.Service.ProcessRegistryTest do
 
   test "insert", %{hub_id: hub_id} = _context do
     hook = {:erlang, :send, [self(), :insert_test]}
-    HookManager.register_hook_handlers(hub_id, Hook.registry_pid_inserted(), [hook])
+    HookManager.register_handlers(hub_id, Hook.registry_pid_inserted(), [hook])
 
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
@@ -136,7 +136,7 @@ defmodule Test.Service.ProcessRegistryTest do
 
   test "delete child", %{hub_id: hub_id} = _context do
     hook = {:erlang, :send, [self(), :delete_test]}
-    HookManager.register_hook_handlers(hub_id, Hook.registry_pid_removed(), [hook])
+    HookManager.register_handlers(hub_id, Hook.registry_pid_removed(), [hook])
 
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},

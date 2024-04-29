@@ -92,8 +92,8 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
         [hub_id, :_]
       }
 
-      HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
-      HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
+      HookManager.register_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
+      HookManager.register_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
     end
 
     @impl true

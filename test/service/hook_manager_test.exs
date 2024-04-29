@@ -9,7 +9,7 @@ defmodule Test.Service.HookManagerTest do
 
   test "register handler", %{hub_id: hub_id} = _contexxt do
     mfa = {:m, :f, :a}
-    HookManager.register_hook_handlers(hub_id, :test, [mfa])
+    HookManager.register_handlers(hub_id, :test, [mfa])
 
     assert HookManager.registered_handlers(hub_id, :test) === [mfa]
   end
@@ -18,19 +18,19 @@ defmodule Test.Service.HookManagerTest do
     assert HookManager.registered_handlers(hub_id, :test) === []
 
     mfa = {:ma, :ff, :aa}
-    HookManager.register_hook_handlers(hub_id, :test, [mfa])
+    HookManager.register_handlers(hub_id, :test, [mfa])
 
     assert HookManager.registered_handlers(hub_id, :test) === [mfa]
   end
 
   test "dispatch hooks", %{hub_id: hub_id} = _context do
-    HookManager.register_hook_handlers(
+    HookManager.register_handlers(
       hub_id,
       :test_1,
       [{:erlang, :send, [self(), :dispatch_hooks_test_1]}]
     )
 
-    HookManager.register_hook_handlers(hub_id, :test_2, [{:erlang, :send, [self(), :_]}])
+    HookManager.register_handlers(hub_id, :test_2, [{:erlang, :send, [self(), :_]}])
 
     HookManager.dispatch_hooks(hub_id, [{:test_1, :hook_data}, {:test_2, :dispatch_hooks_test_2}])
 
@@ -39,7 +39,7 @@ defmodule Test.Service.HookManagerTest do
   end
 
   test "dispatch hook", %{hub_id: hub_id} = _context do
-    HookManager.register_hook_handlers(
+    HookManager.register_handlers(
       hub_id,
       :test_1,
       [{:erlang, :send, [self(), :dispatch_hook_test_1]}]
@@ -47,7 +47,7 @@ defmodule Test.Service.HookManagerTest do
 
     HookManager.dispatch_hook(hub_id, :test_1, :hook_data)
 
-    HookManager.register_hook_handlers(hub_id, :test_2, [{:erlang, :send, [self(), :_]}])
+    HookManager.register_handlers(hub_id, :test_2, [{:erlang, :send, [self(), :_]}])
     :ok = HookManager.dispatch_hook(hub_id, :test_2, :dispatch_hook_test_2)
 
     assert_receive :dispatch_hook_test_1

@@ -104,7 +104,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
         [hub_id, :_]
       }
 
-      HookManager.register_hook_handlers(hub_id, Hook.pre_children_start(), [hook])
+      HookManager.register_handlers(hub_id, Hook.pre_children_start(), [hook])
     end
 
     @impl true

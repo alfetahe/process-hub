@@ -67,7 +67,7 @@ defmodule ProcessHub.Coordinator do
     setup_local_storage(hub_id, settings, hub_nodes)
     init_strategies(hub_id, settings)
     register_handlers(managers)
-    register_hook_handlers(hub_id, settings.hooks)
+    register_handlers(hub_id, settings.hooks)
 
     {:ok, %__MODULE__{hub_id: hub_id}, {:continue, :additional_setup}}
   end
@@ -426,14 +426,14 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_migration_add)
   end
 
-  defp register_hook_handlers(hub_id, hooks) when is_map(hooks) do
+  defp register_handlers(hub_id, hooks) when is_map(hooks) do
     for {hook_key, hook_handlers} <- hooks do
-      HookManager.register_hook_handlers(hub_id, hook_key, hook_handlers)
+      HookManager.register_handlers(hub_id, hook_key, hook_handlers)
     end
   end
 
-  defp register_hook_handlers(hub_id, _hooks) do
-    register_hook_handlers(hub_id, %{})
+  defp register_handlers(hub_id, _hooks) do
+    register_handlers(hub_id, %{})
   end
 
   defp schedule_sync(sync_strat) do
