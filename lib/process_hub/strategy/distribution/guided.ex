@@ -98,13 +98,14 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     @impl true
     @spec init(ProcessHub.Strategy.Distribution.Guided.t(), ProcessHub.hub_id()) :: any()
     def init(_strategy, hub_id) do
-      hook = {
-        ProcessHub.Strategy.Distribution.Guided,
-        :handle_children_start,
-        [hub_id, :_]
+      handler = %HookManager{
+        id: :guided_pre_start_handler,
+        m: ProcessHub.Strategy.Distribution.Guided,
+        f: :handle_children_start,
+        a: [hub_id, :_]
       }
 
-      HookManager.register_handlers(hub_id, Hook.pre_children_start(), [hook])
+      HookManager.register_handler(hub_id, Hook.pre_children_start(), handler)
     end
 
     @impl true

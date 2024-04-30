@@ -23,11 +23,11 @@ defmodule ProcessHub.Service.HookManager do
   @type handler_id() :: atom()
 
   @type t() :: %__MODULE__{
-    id: handler_id(),
-    m: module(),
-    f: atom(),
-    a: [any()]
-  }
+          id: handler_id(),
+          m: module(),
+          f: atom(),
+          a: [any()]
+        }
 
   @type hook_handlers() :: %{
           hook_key() => [
@@ -38,19 +38,27 @@ defmodule ProcessHub.Service.HookManager do
   defstruct [:id, :m, :f, :a]
 
   @doc "Registers a new hook handler."
-  @spec register_handlers(ProcessHub.hub_id(), hook_key(), [t()]) :: :ok | :error
+  @spec register_handlers(ProcessHub.hub_id(), hook_key(), [t()]) ::
+          :ok | {:error, {:handler_id_not_unique, [handler_id()]}}
   def register_handlers(hub_id, hook_key, hook_handlers) do
-    hook_handlers = registered_handlers(hub_id, hook_key) ++ hook_handlers
+    hook_handlers = hook_handlers ++ registered_handlers(hub_id, hook_key)
 
-    insert_hooks(hub_id, hook_key, hook_handlers)
+    case insert_hooks(hub_id, hook_key, hook_handlers) do
+      :ok -> :ok
+      error -> error
+    end
   end
 
   # TODO: add tests
-  @spec register_handler(ProcessHub.hub_id(), hook_key(), t()) :: :ok | :error
+  @spec register_handler(ProcessHub.hub_id(), hook_key(), t()) ::
+          :ok | {:error, :handler_id_not_unique}
   def register_handler(hub_id, hook_key, hook_handler) do
-    hook_handlers = [registered_handlers(hub_id, hook_key) | hook_handler]
+    hook_handlers = [hook_handler | registered_handlers(hub_id, hook_key)]
 
-    insert_hooks(hub_id, hook_key, hook_handlers)
+    case insert_hooks(hub_id, hook_key, hook_handlers) do
+      :ok -> :ok
+      {:error, {:handler_id_not_unique, _}} -> {:error, :handler_id_not_unique}
+    end
   end
 
   @doc "Returns all registered hook handlers for the given hook key"
@@ -108,15 +116,24 @@ defmodule ProcessHub.Service.HookManager do
   end
 
   defp insert_hooks(hub_id, hook_key, hook_handlers) do
-    res = Cachex.put(
-      Name.hook_registry(hub_id),
-      hook_key,
-      hook_handlers
-    )
+    # Make sure that the hook id is unique
+    duplicates = duplicate_handlers(hook_handlers)
 
-    case res do
-      {:ok, _} -> :ok
-      _ -> :error
+    cond do
+      Enum.empty?(duplicates) ->
+        Cachex.put(Name.hook_registry(hub_id), hook_key, hook_handlers)
+        :ok
+
+      true ->
+        {:error, {:handler_id_not_unique, duplicates}}
     end
+  end
+
+  defp duplicate_handlers(hook_handlers) do
+    hook_handlers
+    |> Enum.map(& &1.id)
+    |> Enum.group_by(& &1)
+    |> Enum.filter(fn {_id, handlers} -> Enum.count(handlers) > 1 end)
+    |> Enum.map(&elem(&1, 0))
   end
 end

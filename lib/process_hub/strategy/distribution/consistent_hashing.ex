@@ -80,20 +80,22 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
 
       Storage.insert(hub_id, StorageKey.hr(), Ring.create_ring(hub_nodes))
 
-      join_handler = {
-        ProcessHub.Strategy.Distribution.ConsistentHashing,
-        :handle_node_join,
-        [hub_id, :_]
+      join_handler = %HookManager{
+        id: :ch_join,
+        m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+        f: :handle_node_join,
+        a: [hub_id, :_]
       }
 
-      leave_handler = {
-        ProcessHub.Strategy.Distribution.ConsistentHashing,
-        :handle_node_leave,
-        [hub_id, :_]
+      leave_handler = %HookManager{
+        id: :ch_leave,
+        m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+        f: :handle_node_leave,
+        a: [hub_id, :_]
       }
 
-      HookManager.register_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
-      HookManager.register_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
+      HookManager.register_handler(hub_id, Hook.pre_cluster_join(), join_handler)
+      HookManager.register_handler(hub_id, Hook.pre_cluster_leave(), leave_handler)
     end
 
     @impl true

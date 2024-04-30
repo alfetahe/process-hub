@@ -42,8 +42,14 @@ defmodule Test.Service.ProcessRegistryTest do
   test "bulk insert", %{hub_id: hub_id} = _context do
     Cachex.purge(ProcessHub.Utility.Name.registry(hub_id))
 
-    hook = {:erlang, :send, [self(), :bulk_insert_test]}
-    HookManager.register_handlers(hub_id, Hook.registry_pid_inserted(), [hook])
+    hook = %HookManager{
+      id: :process_registry_test_bulk_insert,
+      m: :erlang,
+      f: :send,
+      a: [self(), :bulk_insert_test]
+    }
+
+    HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), hook)
 
     assert ProcessRegistry.registry(hub_id) === %{}
 
@@ -64,8 +70,14 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "bulk delete", %{hub_id: hub_id} = _context do
-    hook = {:erlang, :send, [self(), :bulk_delete]}
-    HookManager.register_handlers(hub_id, Hook.registry_pid_removed(), [hook])
+    handler = %HookManager{
+      id: :process_registry_test_bulk_delete,
+      m: :erlang,
+      f: :send,
+      a: [self(), :bulk_delete]
+    }
+
+    HookManager.register_handler(hub_id, Hook.registry_pid_removed(), [handler])
 
     assert ProcessRegistry.registry(hub_id) === %{}
 
@@ -107,8 +119,14 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "insert", %{hub_id: hub_id} = _context do
-    hook = {:erlang, :send, [self(), :insert_test]}
-    HookManager.register_handlers(hub_id, Hook.registry_pid_inserted(), [hook])
+    handler = %HookManager{
+      id: :process_registry_test_insert_test,
+      m: :erlang,
+      f: :send,
+      a: [self(), :insert_test]
+    }
+
+    HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), handler)
 
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
@@ -135,8 +153,14 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "delete child", %{hub_id: hub_id} = _context do
-    hook = {:erlang, :send, [self(), :delete_test]}
-    HookManager.register_handlers(hub_id, Hook.registry_pid_removed(), [hook])
+    handler = %HookManager{
+      id: :process_registry_test_delete_test,
+      m: :erlang,
+      f: :send,
+      a: [self(), :delete_test]
+    }
+
+    HookManager.register_handler(hub_id, Hook.registry_pid_removed(), handler)
 
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
