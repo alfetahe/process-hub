@@ -137,4 +137,26 @@ defmodule Test.Service.HookManagerTest do
     assert_receive :dispatch_hook_test_1
     assert_receive :dispatch_hook_test_2
   end
+
+  test "cancel handler", %{hub_id: hub_id} = _context do
+    handler = %HookManager{
+      id: :hook_manager_test_cancel_handler,
+      m: :erlang,
+      f: :send,
+      a: [self(), :cancel_handler_test]
+    }
+
+    handler2 = %HookManager{
+      id: :hook_manager_test_cancel_handler2,
+      m: :erlang,
+      f: :send,
+      a: [self(), :cancel_handler_test2]
+    }
+
+    HookManager.register_handlers(hub_id, :test, [handler, handler2])
+
+    HookManager.cancel_handler(hub_id, :test, :hook_manager_test_cancel_handler)
+
+    assert HookManager.registered_handlers(hub_id, :test) === [handler2]
+  end
 end

@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Renamed `HookManager.register_hook_handlers/3` to `HookManager.register_handlers/3`.
 
 ### Added
+- Function to remove hook handler by it's ID. `HookManager.cancel_handler/3`.
 
 ## v0.2.3-alpha - 2024-04-23
 Added new configuration options for timeout values and renamed LocalStorage -> Storage.

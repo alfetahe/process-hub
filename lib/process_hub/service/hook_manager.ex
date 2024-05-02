@@ -37,25 +37,25 @@ defmodule ProcessHub.Service.HookManager do
 
   defstruct [:id, :m, :f, :a]
 
-  @doc "Registers a new hook handler."
+  @doc "Registers a new hook handlers."
   @spec register_handlers(ProcessHub.hub_id(), hook_key(), [t()]) ::
           :ok | {:error, {:handler_id_not_unique, [handler_id()]}}
   def register_handlers(hub_id, hook_key, hook_handlers) do
     hook_handlers = hook_handlers ++ registered_handlers(hub_id, hook_key)
 
-    case insert_hooks(hub_id, hook_key, hook_handlers) do
+    case insert_handlers(hub_id, hook_key, hook_handlers) do
       :ok -> :ok
       error -> error
     end
   end
 
-  # TODO: add tests
+  @doc "Registers a new hook handler."
   @spec register_handler(ProcessHub.hub_id(), hook_key(), t()) ::
           :ok | {:error, :handler_id_not_unique}
   def register_handler(hub_id, hook_key, hook_handler) do
     hook_handlers = [hook_handler | registered_handlers(hub_id, hook_key)]
 
-    case insert_hooks(hub_id, hook_key, hook_handlers) do
+    case insert_handlers(hub_id, hook_key, hook_handlers) do
       :ok -> :ok
       {:error, {:handler_id_not_unique, _}} -> {:error, :handler_id_not_unique}
     end
@@ -70,6 +70,18 @@ defmodule ProcessHub.Service.HookManager do
       nil -> []
       handlers -> handlers
     end
+  end
+
+  @doc "Cancels a hook handler."
+  @spec cancel_handler(ProcessHub.hub_id(), hook_key(), handler_id()) :: :ok
+  def cancel_handler(hub_id, hook_key, handler_id) do
+    hook_handlers =
+      registered_handlers(hub_id, hook_key)
+      |> Enum.reject(fn handler -> handler.id == handler_id end)
+
+    Cachex.put(Name.hook_registry(hub_id), hook_key, hook_handlers)
+
+    :ok
   end
 
   @doc "Dispatches multiple hooks to the registered handlers."
@@ -115,7 +127,7 @@ defmodule ProcessHub.Service.HookManager do
     apply(module, func, args)
   end
 
-  defp insert_hooks(hub_id, hook_key, hook_handlers) do
+  defp insert_handlers(hub_id, hook_key, hook_handlers) do
     # Make sure that the hook id is unique
     duplicates = duplicate_handlers(hook_handlers)
 
