@@ -13,14 +13,14 @@ defprotocol ProcessHub.Strategy.PartitionTolerance.Base do
   def init(strategy, hub_id)
 
   @doc """
-  This function is called when a new node joins the `ProcessHub` cluster.
+  Determines if the lock should be toggled when a node leaves the cluster.
   """
-  @spec handle_node_up(__MODULE__.t(), ProcessHub.hub_id(), node()) :: :ok
-  def handle_node_up(strategy, hub_id, node)
+  @spec toggle_lock?(__MODULE__.t(), ProcessHub.hub_id(), node()) :: boolean()
+  def toggle_lock?(strategy, hub_id, down_node)
 
   @doc """
-  This function is called when a new node leaves the `ProcessHub` cluster.
+  Determines if the lock should be released when a node joins the cluster.
   """
-  @spec handle_node_down(__MODULE__.t(), ProcessHub.hub_id(), node()) :: :ok
-  def handle_node_down(strategy, hub_id, node)
+  @spec toggle_unlock?(__MODULE__.t(), ProcessHub.hub_id(), node()) :: boolean()
+  def toggle_unlock?(strategy, hub_id, down_node)
 end

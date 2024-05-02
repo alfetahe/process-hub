@@ -26,9 +26,9 @@ defmodule ProcessHub.Strategy.PartitionTolerance.Divergence do
     def init(_strategy, _hub_id), do: nil
 
     @impl true
-    def handle_node_down(_strategy, _hub_id, _node), do: :ok
+    def toggle_unlock?(_strategy, _hub_id, _up_node), do: false
 
     @impl true
-    def handle_node_up(_strategy, _hub_id, _node), do: :ok
+    def toggle_lock?(_strategy, _hub_id, _down_node), do: false
   end
 end

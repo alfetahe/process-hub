@@ -77,7 +77,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :bulk_delete]
     }
 
-    HookManager.register_handler(hub_id, Hook.registry_pid_removed(), [handler])
+    HookManager.register_handler(hub_id, Hook.registry_pid_removed(), handler)
 
     assert ProcessRegistry.registry(hub_id) === %{}
 

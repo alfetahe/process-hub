@@ -198,11 +198,16 @@ defmodule ProcessHub.Coordinator do
 
         HookManager.dispatch_hook(state.hub_id, Hook.pre_cluster_join(), node)
 
-        PartitionToleranceStrategy.handle_node_up(
-          Storage.get(state.hub_id, StorageKey.strpart()),
-          state.hub_id,
-          node
-        )
+        unlock_status =
+          PartitionToleranceStrategy.toggle_unlock?(
+            Storage.get(state.hub_id, StorageKey.strpart()),
+            state.hub_id,
+            node
+          )
+
+        if unlock_status do
+          State.toggle_quorum_success(state.hub_id)
+        end
 
         # Atomic dispatch with locking.
         Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, %{

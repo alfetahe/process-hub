@@ -38,7 +38,6 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.Cluster
-  alias ProcessHub.Service.State
   alias ProcessHub.Constant.StorageKey
 
   @typedoc """
@@ -63,38 +62,21 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     def init(_strategy, _hub_id), do: nil
 
     @impl true
-    def handle_node_up(strategy, hub_id, node) do
+    def toggle_unlock?(strategy, hub_id, up_node) do
       cluster_nodes = Cluster.nodes(hub_id, [:include_local])
 
-      node_log_func(strategy, hub_id, node, :up)
+      node_log_func(strategy, hub_id, up_node, :up)
+      propagate_quorum_log(hub_id, up_node)
 
-      with false <- quorum_failure?(hub_id, strategy, cluster_nodes) do
-        State.toggle_quorum_success(hub_id)
-      else
-        _any ->
-          nil
-      end
-
-      propagate_quorum_log(hub_id, node)
-
-      :ok
+      !quorum_failure?(hub_id, strategy, cluster_nodes)
     end
 
     @impl true
-    def handle_node_down(strategy, hub_id, node) do
+    def toggle_lock?(strategy, hub_id, down_node) do
       cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+      node_log_func(strategy, hub_id, down_node, :down)
 
-      node_log_func(strategy, hub_id, node, :down)
-
-      case quorum_failure?(hub_id, strategy, cluster_nodes) do
-        true ->
-          State.toggle_quorum_failure(hub_id)
-
-        false ->
-          nil
-      end
-
-      :ok
+      quorum_failure?(hub_id, strategy, cluster_nodes)
     end
 
     defp propagate_quorum_log(hub_id, node) do

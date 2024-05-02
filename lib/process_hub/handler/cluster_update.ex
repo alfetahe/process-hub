@@ -256,31 +256,22 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     ]
     defstruct @enforce_keys ++ [:partition_strat, :redun_strat, :dist_strat, :rem_node_cids]
 
-    @spec handle(t()) :: :ok
+    @spec handle(t()) :: any()
     def handle(%__MODULE__{} = arg) do
-      arg = %__MODULE__{
+      %__MODULE__{
         arg
         | partition_strat: Storage.get(arg.hub_id, StorageKey.strpart()),
           redun_strat: Storage.get(arg.hub_id, StorageKey.strred()),
           dist_strat: Storage.get(arg.hub_id, StorageKey.strdist())
       }
+      |> dispatch_down_hook()
+      |> distribute_processes()
+      |> clear_registry()
+      |> handle_locking()
+      |> dispatch_post_hooks()
+    end
 
-      HookManager.dispatch_hook(
-        arg.hub_id,
-        Hook.pre_nodes_redistribution(),
-        {:nodedown, arg.removed_node}
-      )
-
-      distribute_processes(arg) |> clear_registry()
-
-      State.unlock_event_handler(arg.hub_id)
-
-      PartitionToleranceStrategy.handle_node_down(
-        arg.partition_strat,
-        arg.hub_id,
-        arg.removed_node
-      )
-
+    defp dispatch_post_hooks(arg) do
       HookManager.dispatch_hook(
         arg.hub_id,
         Hook.post_nodes_redistribution(),
@@ -288,8 +279,33 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       )
 
       HookManager.dispatch_hook(arg.hub_id, Hook.post_cluster_leave(), arg)
+    end
 
-      :ok
+    defp handle_locking(arg) do
+      State.unlock_event_handler(arg.hub_id)
+
+      lock_status =
+        PartitionToleranceStrategy.toggle_lock?(
+          arg.partition_strat,
+          arg.hub_id,
+          arg.removed_node
+        )
+
+      if lock_status do
+        State.toggle_quorum_failure(arg.hub_id)
+      end
+
+      arg
+    end
+
+    defp dispatch_down_hook(arg) do
+      HookManager.dispatch_hook(
+        arg.hub_id,
+        Hook.pre_nodes_redistribution(),
+        {:nodedown, arg.removed_node}
+      )
+
+      arg
     end
 
     # Removes all processes from the registry that were running on the removed node.
