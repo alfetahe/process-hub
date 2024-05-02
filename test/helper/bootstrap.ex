@@ -5,6 +5,7 @@ defmodule Test.Helper.Bootstrap do
   alias Test.Helper.TestNode
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Utility.Bag
+  alias ProcessHub.Service.HookManager
 
   use ExUnit.Case, async: false
 
@@ -92,20 +93,27 @@ defmodule Test.Helper.Bootstrap do
     Enum.each(nodes, fn node ->
       hooks =
         Enum.map(listed_hooks, fn {hook_key, scope} ->
-          hook = {
+          handler = {
             hook_key,
-            [{ProcessHub.Utility.Bag, :hook_erlang_send, [:_, host_pid, hook_key]}]
+            [
+              %HookManager{
+                id: hook_key,
+                m: ProcessHub.Utility.Bag,
+                f: :hook_erlang_send,
+                a: [:_, host_pid, hook_key]
+              }
+            ]
           }
 
           case scope do
             :global ->
-              hook
+              handler
 
             :local ->
               if node !== local_node do
                 nil
               else
-                hook
+                handler
               end
           end
         end)
