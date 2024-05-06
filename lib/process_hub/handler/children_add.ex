@@ -1,6 +1,8 @@
 defmodule ProcessHub.Handler.ChildrenAdd do
   @moduledoc false
 
+  require Logger
+
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -17,49 +19,66 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
   use Task
 
+  defmodule PostStartData do
+    @type t :: %__MODULE__{
+            cid: ProcessHub.child_id(),
+            pid: pid(),
+            child_spec: ProcessHub.child_spec(),
+            result: {:ok, pid()} | {:error, term()} | term(),
+            child_nodes: [{node(), pid()}],
+            nodes: [node()],
+            for_node: {
+              node(),
+              [
+                {:reply_to, ProcessHub.reply_to()},
+                {:migration, boolean()}
+              ]
+            }
+          }
+
+    defstruct [
+      :cid,
+      :pid,
+      :child_spec,
+      :result,
+      :for_node,
+      :child_nodes,
+      :nodes
+    ]
+  end
+
   defmodule SyncHandle do
     @moduledoc """
     Handler for synchronizing added child processes.
     """
 
-    @type process_startup_result() :: {:ok, pid()} | {:error, any()} | term()
-
     @type t :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
-            children: [
-              {
-                ProcessHub.child_id(),
-                ProcessHub.child_spec(),
-                {
-                  ProcessHub.reply_to(),
-                  process_startup_result()
-                }
-              }
-            ]
+            post_start_results: [%PostStartData{}]
           }
 
     @enforce_keys [
       :hub_id,
-      :children
+      :post_start_results
     ]
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{} = arg) do
+    def handle(%__MODULE__{hub_id: hub_id, post_start_results: psr}) do
       children_formatted =
-        Enum.map(arg.children, fn {child_id, {_child_spec, _child_nodes} = cn, _, _} ->
-          {child_id, cn}
+        Enum.map(psr, fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn} ->
+          {cid, {cs, cn}}
         end)
         |> Map.new()
 
-      ProcessRegistry.bulk_insert(arg.hub_id, children_formatted)
+      ProcessRegistry.bulk_insert(hub_id, children_formatted)
 
       local_node = node()
 
       # Not all nodes should handle the reply_to options or we will end up with multiple replies.
-      Enum.each(arg.children, fn {child_id, _, startup_res, {:for_node, for_node, opts}} ->
+      Enum.each(psr, fn %PostStartData{cid: cid, result: rs, for_node: {for_node, opts}} ->
         if for_node === local_node do
-          handle_reply_to(opts, child_id, startup_res, for_node)
+          handle_reply_to(opts, cid, rs, for_node)
         end
       end)
     end
@@ -97,7 +116,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             redun_strategy: RedundancyStrategy.t(),
             dist_strategy: DistributionStrategy.t(),
             migr_strategy: MigrationStrategy.t(),
-            start_opts: keyword()
+            start_opts: keyword(),
+            process_data: [%PostStartData{}]
           }
 
     @enforce_keys [
@@ -112,7 +132,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
                   :redun_strategy,
                   :migr_strategy,
                   :dist_strategy,
-                  :start_results
+                  :process_data
                 ]
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
@@ -131,7 +151,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           {:error, :partitioned}
 
         false ->
-          %__MODULE__{arg | start_results: start_children(arg)}
+          %__MODULE__{arg | process_data: start_children(arg)}
+          |> post_start_hook()
           |> update_registry()
           |> handle_migration_callback()
           |> handle_sync_callback()
@@ -141,11 +162,13 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp handle_sync_callback(arg) do
+    defp handle_sync_callback(
+           %__MODULE__{hub_id: hub_id, sync_strategy: ss, process_data: pd} = arg
+         ) do
       SynchronizationStrategy.propagate(
-        arg.sync_strategy,
-        arg.hub_id,
-        arg.start_results,
+        ss,
+        hub_id,
+        pd,
         node(),
         :add,
         members: :external
@@ -154,27 +177,29 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp handle_migration_callback(arg) do
+    defp handle_migration_callback(
+           %__MODULE__{hub_id: hub_id, migr_strategy: ms, process_data: pd} = arg
+         ) do
       MigrationStrategy.handle_process_startups(
-        arg.migr_strategy,
-        arg.hub_id,
-        Enum.map(arg.start_results, fn {child_id, {_, [{_node, pid}]}, _, _} ->
-          {child_id, pid}
+        ms,
+        hub_id,
+        Enum.map(pd, fn %{cid: cid, pid: pid} ->
+          {cid, pid}
         end)
       )
 
       arg
     end
 
-    defp update_registry(arg) do
+    defp update_registry(%__MODULE__{hub_id: hub_id, process_data: pd} = arg) do
       Task.Supervisor.async(
-        Name.task_supervisor(arg.hub_id),
+        Name.task_supervisor(hub_id),
         SyncHandle,
         :handle,
         [
           %SyncHandle{
-            hub_id: arg.hub_id,
-            children: arg.start_results
+            hub_id: hub_id,
+            post_start_results: pd
           }
         ]
       )
@@ -183,22 +208,22 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp release_lock(arg) do
+    defp release_lock(%__MODULE__{hub_id: hub_id, start_opts: so}) do
       # Release the event queue lock only when migrating
       # processes rather than regular startup.
-      if Keyword.get(arg.start_opts, :migration_add, false) === true do
-        State.unlock_event_handler(arg.hub_id)
+      if Keyword.get(so, :migration_add, false) === true do
+        State.unlock_event_handler(hub_id)
       end
     end
 
-    defp start_children(arg) do
-      HookManager.dispatch_hook(arg.hub_id, Hook.pre_children_start(), arg)
+    defp start_children(%__MODULE__{hub_id: hub_id, dist_sup: ds} = arg) do
+      HookManager.dispatch_hook(hub_id, Hook.pre_children_start(), arg)
 
       local_node = node()
 
       validate_children(arg)
       |> Enum.map(fn child_data ->
-        startup_result = child_start_result(arg, child_data, local_node)
+        startup_result = child_start_result(child_data, ds, local_node)
 
         case startup_result do
           {:ok, pid} ->
@@ -208,6 +233,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             format_start_resp(child_data, local_node, pid, startup_result)
 
           _ ->
+            Logger.error(
+              "Unexpected message received while starting child: #{inspect(child_data)}"
+            )
+
             nil
         end
       end)
@@ -215,31 +244,47 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     end
 
     defp format_start_resp(child_data, local_node, pid, startup_result) do
-      {
-        child_data.child_spec.id,
-        {child_data.child_spec, [{local_node, pid}]},
-        startup_result,
-        {:for_node, local_node,
-         [
-           {:reply_to, Map.get(child_data, :reply_to, [])},
-           {:migration, Map.get(child_data, :migration, false)}
-         ]}
+      %PostStartData{
+        cid: child_data.child_spec.id,
+        pid: pid,
+        child_spec: child_data.child_spec,
+        result: startup_result,
+        nodes: child_data.nodes,
+        child_nodes: [{local_node, pid}],
+        for_node: {
+          local_node,
+          [
+            {:reply_to, Map.get(child_data, :reply_to, [])},
+            {:migration, Map.get(child_data, :migration, false)}
+          ]
+        }
       }
     end
 
-    defp child_start_result(arg, child_data, local_node) do
+    defp post_start_hook(
+           %__MODULE__{redun_strategy: rs, dist_strategy: ds, process_data: ps} = arg
+         ) do
+      post_data =
+        Enum.reduce(ps, [], fn %PostStartData{cid: cid, pid: pid, result: rs, nodes: n}, acc ->
+          case rs do
+            {:ok, _} ->
+              [{cid, pid, n} | acc]
+
+            _ ->
+              acc
+          end
+        end)
+
+      RedundancyStrategy.handle_post_start(rs, ds, post_data)
+
+      arg
+    end
+
+    defp child_start_result(child_data, dist_sup, local_node) do
       cid = child_data.child_spec.id
 
-      case DistributedSupervisor.start_child(arg.dist_sup, child_data.child_spec) do
+      case DistributedSupervisor.start_child(dist_sup, child_data.child_spec) do
         {:ok, pid} ->
-          RedundancyStrategy.handle_post_start(
-            arg.redun_strategy,
-            arg.dist_strategy,
-            cid,
-            pid,
-            child_data.nodes
-          )
-
           {:ok, pid}
 
         {:error, {:already_started, pid}} ->

@@ -12,6 +12,14 @@ defprotocol ProcessHub.Strategy.Migration.Base do
   def init(strategy, hub_id)
 
   @doc """
+  Triggered when the coordinator is shutting down.
+
+  Could be used to perform state handover.
+  """
+  @spec handle_shutdown(__MODULE__.t(), ProcessHub.hub_id()) :: :ok
+  def handle_shutdown(struct, hub_id)
+
+  @doc """
   Migrates processes from the local to the remote node.
 
   Process migration happens when a new node joins the `ProcessHub` cluster, and some of the
@@ -29,14 +37,6 @@ defprotocol ProcessHub.Strategy.Migration.Base do
           ProcessHub.Strategy.Synchronization.Base.t()
         ) :: :ok
   def handle_migration(struct, hub_id, child_specs, added_node, sync_strategy)
-
-  @doc """
-  Triggered when the coordinator is shutting down.
-
-  Could be used to perform state handover.
-  """
-  @spec handle_shutdown(__MODULE__.t(), ProcessHub.hub_id()) :: :ok
-  def handle_shutdown(struct, hub_id)
 
   @doc """
   Trigger after processes have been started on the local node.

@@ -105,53 +105,49 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
 
     @impl true
-    @spec handle_post_start(
-            ProcessHub.Strategy.Redundancy.Replication.t(),
-            ProcessHub.hub_id(),
-            ProcessHub.child_id(),
-            pid(),
-            [node()]
-          ) :: :ok
-    def handle_post_start(%Replication{redundancy_signal: :none}, _, _, _, _), do: :ok
+    def handle_post_start(%Replication{redundancy_signal: :none}, _, _), do: :ok
 
-    def handle_post_start(strategy, hub_id, child_id, child_pid, child_nodes) do
-      mode = process_mode(strategy, hub_id, child_id, child_nodes)
+    def handle_post_start(strategy, hub_id, post_start_data) do
+      Enum.each(post_start_data, fn {child_id, child_pid, child_nodes} ->
+        mode = process_mode(strategy, hub_id, child_id, child_nodes)
 
-      cond do
-        strategy.redundancy_signal === :all ->
-          send_redundancy_signal(child_pid, mode)
+        cond do
+          strategy.redundancy_signal === :all ->
+            send_redundancy_signal(child_pid, mode)
 
-        mode === strategy.redundancy_signal ->
-          send_redundancy_signal(child_pid, mode)
+          mode === strategy.redundancy_signal ->
+            send_redundancy_signal(child_pid, mode)
 
-        true ->
-          :ok
-      end
+          true ->
+            :ok
+        end
+      end)
+
+      :ok
     end
 
     @impl true
-    @spec handle_post_update(
-            ProcessHub.Strategy.Redundancy.Replication.t(),
-            ProcessHub.hub_id(),
-            ProcessHub.child_id(),
-            [node()],
-            {:up | :down, node()},
-            keyword()
-          ) :: :ok
-    def handle_post_update(%Replication{redundancy_signal: :none}, _, _, _, _, _), do: :ok
+    def handle_post_update(%Replication{redundancy_signal: :none}, _, _, _), do: :ok
 
     def handle_post_update(
           %Replication{replication_model: :active_passive} = strategy,
           hub_id,
+          processes_data,
+          {node_action, node}
+        ) do
+      Enum.each(processes_data, fn {child_id, child_nodes, opts} ->
+        handle_redundancy_signal(
+          strategy,
+          hub_id,
           child_id,
-          nodes,
+          child_nodes,
           {node_action, node},
           opts
-        ) do
-      handle_redundancy_signal(strategy, hub_id, child_id, nodes, {node_action, node}, opts)
+        )
+      end)
     end
 
-    def handle_post_update(_, _, _, _, _, _), do: :ok
+    def handle_post_update(_, _, _, _), do: :ok
 
     defp node_modes(strategy, hub_id, node_action, child_id, nodes, node) do
       curr_master = RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)

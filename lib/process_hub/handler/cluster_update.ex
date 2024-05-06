@@ -155,19 +155,19 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         Task.async(fn ->
           children_pids = ProcessRegistry.local_data(hub_id)
 
-          child_specs =
-            Enum.map(keep, fn %{child_spec: child_spec, child_nodes: child_nodes} ->
-              RedundancyStrategy.handle_post_update(
-                redun_strat,
-                hub_id,
-                child_spec.id,
-                child_nodes,
-                {:up, node},
-                pid: children_pids[child_spec.id]
-              )
+          child_specs = Enum.map(keep, fn %{child_spec: cs} -> cs end)
 
-              child_spec
+          redun_data =
+            Enum.map(keep, fn %{child_spec: cs, child_nodes: cn} ->
+              {cs.id, cn, {:pid, children_pids[cs.id]}}
             end)
+
+          RedundancyStrategy.handle_post_update(
+            redun_strat,
+            hub_id,
+            redun_data,
+            {:up, node}
+          )
 
           Distributor.children_redist_init(hub_id, child_specs, node)
         end)
@@ -329,7 +329,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         |> Enum.reduce({[], [], []}, fn {cid, cspec, nlist1, nlist2}, {redun, redist, cids} ->
           case Enum.member?(nlist1, local_node) do
             true ->
-              {[{cid, nlist2} | redun], redist, [cid | cids]}
+              {[{cid, nlist2, []} | redun], redist, [cid | cids]}
 
             false ->
               case Enum.member?(nlist2, local_node) do
@@ -355,16 +355,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp handle_redundancy(arg, children) do
-      Enum.each(children, fn {cid, nodes_updated} ->
-        RedundancyStrategy.handle_post_update(
-          arg.redun_strat,
-          arg.hub_id,
-          cid,
-          nodes_updated,
-          {:down, arg.removed_node},
-          []
-        )
-      end)
+      RedundancyStrategy.handle_post_update(
+        arg.redun_strat,
+        arg.hub_id,
+        children,
+        {:down, arg.removed_node}
+      )
     end
 
     defp removed_node_processes(arg) do

@@ -1,4 +1,6 @@
 defprotocol ProcessHub.Strategy.Synchronization.Base do
+  alias ProcessHub.Handler.ChildrenAdd.PostStartData
+
   @moduledoc """
   This protocol defines the behavior of a synchronization strategy.
   """
@@ -15,7 +17,14 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   This function is called when a process has been started on the local node, and the
   information about the process is about to be propagated to other nodes.
   """
-  @spec propagate(__MODULE__.t(), ProcessHub.hub_id(), [term()], node(), :add | :rem, keyword()) ::
+  @spec propagate(
+          __MODULE__.t(),
+          ProcessHub.hub_id(),
+          [PostStartData.t()],
+          node(),
+          :add | :rem,
+          keyword()
+        ) ::
           :ok
   def propagate(strategy, hub_id, children, node, type, opts)
 
