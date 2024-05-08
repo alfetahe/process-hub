@@ -15,6 +15,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
+  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
 
   defmodule NodeUp do
     @moduledoc """

@@ -122,7 +122,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     @impl true
     def handle_migration(struct, hub_id, child_specs, added_node, sync_strategy) do
-      # Start redistribution of the child processes.
       Distributor.children_redist_init(hub_id, child_specs, added_node, reply_to: [self()])
 
       if length(child_specs) > 0 do
@@ -131,7 +130,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         handle_retentions(hub_id, struct, sync_strategy, migration_cids)
 
         if length(migration_cids) > 0 do
-          # Dispatch hook.
           HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})
         end
       end
@@ -251,19 +249,14 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do
       Enum.reduce(migration_cids, :continue, fn
         child_id, :continue ->
-          # Wait for response from the peer process and then terminate the child from local node.
-          retention_signal = handle_retention(strategy, child_id)
-          Distributor.child_terminate(hub_id, child_id, sync_strategy)
-          retention_signal
+          # Wait for response from the peer process.
+          handle_retention(strategy, child_id)
 
-        child_id, :kill ->
-          # Terminate the local child immediately.
-          Distributor.child_terminate(hub_id, child_id, sync_strategy)
+        _child_id, :kill ->
           :kill
       end)
 
-      # TODO: we could kill them in bulk for better performance.
-      # Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
+      Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
     end
 
     defp migration_cids(hub_id, %HotSwap{} = strategy, child_specs, added_node) do

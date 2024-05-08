@@ -100,57 +100,36 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   @doc """
-  Terminates child process locally and propagates all nodes in the cluster
-  to remove the child process from their registry.
+  Terminates child processes locally and propagates all nodes in the cluster
+  to remove the child processes from their registry.
   """
-  @spec child_terminate(
+  @spec children_terminate(
           ProcessHub.hub_id(),
-          ProcessHub.child_id(),
-          ProcessHub.Strategy.Synchronization.Base
-        ) :: :ok | {:error, :not_found | :restarting | :running}
-  def child_terminate(hub_id, child_id, sync_strategy) do
-    supervisor_resp =
-      Name.distributed_supervisor(hub_id)
-      |> DistributedSupervisor.terminate_child(child_id)
+          [ProcessHub.child_id()],
+          ProcessHub.Strategy.Synchronization.Base,
+          nil | [{ProcessHub.child_id(), [pid()]}]
+        ) :: [{ProcessHub.child_id(), {any(), any()}}]
+  def children_terminate(hub_id, child_ids, sync_strategy, reply_opts \\ []) do
+    dist_sup = Name.distributed_supervisor(hub_id)
+
+    shutdown_results =
+      Enum.map(child_ids, fn child_id ->
+        result = DistributedSupervisor.terminate_child(dist_sup, child_id)
+
+        {child_id, {result, Keyword.get(reply_opts, child_id, [])}}
+      end)
 
     SynchronizationStrategy.propagate(
       sync_strategy,
       hub_id,
-      [{child_id, {supervisor_resp, []}}],
+      shutdown_results,
       node(),
       :rem,
       []
     )
 
-    supervisor_resp
+    shutdown_results
   end
-
-  # TODO: we can use this function in the future for performance.
-  # @spec children_terminate(
-  #         ProcessHub.hub_id(),
-  #         [ProcessHub.child_id()],
-  #         ProcessHub.Strategy.Synchronization.Base
-  #       ) :: :ok
-  # def children_terminate(hub_id, child_ids, sync_strategy) do
-  #   dist_sup = Name.distributed_supervisor(hub_id)
-
-  #   propagation_data = Enum.map(child_ids, fn child_id ->
-  #     supervisor_resp = DistributedSupervisor.terminate_child(dist_sup, child_id)
-
-  #     {child_id, {supervisor_resp, []}}
-  #   end)
-
-  #   SynchronizationStrategy.propagate(
-  #     sync_strategy,
-  #     hub_id,
-  #     propagation_data,
-  #     node(),
-  #     :rem,
-  #     []
-  #   )
-
-  #   :ok
-  # end
 
   @doc """
   Returns all child processes started by the local node.

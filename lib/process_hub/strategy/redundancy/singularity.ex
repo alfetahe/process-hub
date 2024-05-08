@@ -27,9 +27,9 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     end
 
     @impl true
-    def handle_post_start(_strategy, _hub_id, _processeses_data), do: :ok
+    def handle_post_start(_strategy, _hub_id, _processes_data), do: :ok
 
     @impl true
-    def handle_post_update(_strategy, _hub_id, _processeses_data, _action_node), do: :ok
+    def handle_post_update(_strategy, _hub_id, _processes_data, _action_node), do: :ok
   end
 end
