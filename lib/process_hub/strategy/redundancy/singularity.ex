@@ -25,11 +25,5 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     def master_node(_strategy, _hub_id, _child_id, child_nodes) do
       List.first(child_nodes)
     end
-
-    @impl true
-    def handle_post_start(_strategy, _hub_id, _processes_data), do: :ok
-
-    @impl true
-    def handle_post_update(_strategy, _hub_id, _processes_data, _action_node), do: :ok
   end
 end

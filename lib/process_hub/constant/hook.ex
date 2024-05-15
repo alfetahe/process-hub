@@ -78,4 +78,18 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec pre_children_start() :: :pre_children_start_hook
   def pre_children_start(), do: :pre_children_start_hook
+
+  @doc """
+  Hook triggered right after the children of a process are started.
+  """
+  @spec post_children_start() :: :post_children_start_hook
+  def post_children_start(), do: :post_children_start_hook
+
+  @doc """
+  Hook triggered before redistribution of children is called.
+
+  This is only called with node addition or removal from the cluster.
+  """
+  @spec pre_children_redistribution() :: :pre_children_redistribution_hook
+  def pre_children_redistribution(), do: :pre_children_redistribution_hook
 end

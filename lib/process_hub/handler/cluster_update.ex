@@ -79,6 +79,16 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :ok
     end
 
+    defp distribute_processes(arg) do
+      arg
+      |> Map.put(:repl_fact, RedundancyStrategy.replication_factor(arg.redun_strat))
+      |> local_children()
+      |> dist_children()
+      |> handle_migrate()
+      |> handle_keep()
+      |> wait_for_tasks()
+    end
+
     defp add_strategies(arg) do
       %__MODULE__{
         arg
@@ -100,16 +110,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         {local_processes, local_node},
         %{members: [node], priority: PriorityLevel.locked()}
       )
-    end
-
-    defp distribute_processes(arg) do
-      arg
-      |> Map.put(:repl_fact, RedundancyStrategy.replication_factor(arg.redun_strat))
-      |> local_children()
-      |> dist_children()
-      |> handle_migrate()
-      |> handle_keep()
-      |> wait_for_tasks()
     end
 
     defp wait_for_tasks(%__MODULE__{async_tasks: async_tasks, migr_strat: migr_strat} = _arg) do
@@ -147,33 +147,37 @@ defmodule ProcessHub.Handler.ClusterUpdate do
            %__MODULE__{
              hub_id: hub_id,
              keep: keep,
-             redun_strat: redun_strat,
              async_tasks: async_tasks,
              node: node
            } = arg
          ) do
       task =
         Task.async(fn ->
-          children_pids = ProcessRegistry.local_data(hub_id)
+          handle_redundancy(hub_id, node, keep)
 
-          child_specs = Enum.map(keep, fn %{child_spec: cs} -> cs end)
-
-          redun_data =
-            Enum.map(keep, fn %{child_spec: cs, child_nodes: cn} ->
-              {cs.id, cn, {:pid, children_pids[cs.id]}}
-            end)
-
-          RedundancyStrategy.handle_post_update(
-            redun_strat,
+          Distributor.children_redist_init(
             hub_id,
-            redun_data,
-            {:up, node}
+            node,
+            Enum.map(keep, fn %{child_spec: cs} -> cs end)
           )
-
-          Distributor.children_redist_init(hub_id, child_specs, node)
         end)
 
       %__MODULE__{arg | async_tasks: [task | async_tasks]}
+    end
+
+    defp handle_redundancy(hub_id, node, children) do
+      children_pids = ProcessRegistry.local_data(hub_id)
+
+      redun_data =
+        Enum.map(children, fn %{child_spec: cs, child_nodes: cn} ->
+          {cs.id, cn, {:pid, children_pids[cs.id]}}
+        end)
+
+      HookManager.dispatch_hook(
+        hub_id,
+        Hook.pre_children_redistribution(),
+        {redun_data, {:up, node}}
+      )
     end
 
     defp local_children(%__MODULE__{hub_id: hub_id} = arg) do
@@ -343,8 +347,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           end
         end)
 
-      handle_redistribution(arg.hub_id, redist)
       handle_redundancy(arg, redun)
+      handle_redistribution(arg.hub_id, redist)
 
       Map.put(arg, :rem_node_cids, cids)
     end
@@ -352,15 +356,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp handle_redistribution(hub_id, child_specs) do
       # Local node is part of the new nodes and therefore we need to start
       # the child process locally.
-      Distributor.children_redist_init(hub_id, child_specs, node())
+      Distributor.children_redist_init(hub_id, node(), child_specs)
     end
 
     defp handle_redundancy(arg, children) do
-      RedundancyStrategy.handle_post_update(
-        arg.redun_strat,
+      HookManager.dispatch_hook(
         arg.hub_id,
-        children,
-        {:down, arg.removed_node}
+        Hook.pre_children_redistribution(),
+        {children, {:down, arg.removed_node}}
       )
     end
 

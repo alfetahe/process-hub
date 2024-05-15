@@ -261,9 +261,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       }
     end
 
-    defp post_start_hook(
-           %__MODULE__{redun_strategy: rs, dist_strategy: ds, process_data: ps} = arg
-         ) do
+    defp post_start_hook(%__MODULE__{process_data: ps} = arg) do
       post_data =
         Enum.reduce(ps, [], fn %PostStartData{cid: cid, pid: pid, result: rs, nodes: n}, acc ->
           case rs do
@@ -275,7 +273,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           end
         end)
 
-      RedundancyStrategy.handle_post_start(rs, ds, post_data)
+      HookManager.dispatch_hook(arg.hub_id, Hook.post_children_start(), post_data)
 
       arg
     end

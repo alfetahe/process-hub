@@ -50,4 +50,12 @@ defmodule Test.Constant.HookTest do
   test "pre children start" do
     assert Hook.pre_children_start() === :pre_children_start_hook
   end
+
+  test "post children start" do
+    assert Hook.post_children_start() === :post_children_start_hook
+  end
+
+  test "pre children redistribution" do
+    assert Hook.pre_children_redistribution() === :pre_children_redistribution_hook
+  end
 end

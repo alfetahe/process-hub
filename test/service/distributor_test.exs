@@ -155,7 +155,7 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
     }
 
-    assert Distributor.children_redist_init(hub_id, [child_spec], node()) ===
+    assert Distributor.children_redist_init(hub_id, node(), [child_spec]) ===
              {:ok, :redistribution_initiated}
   end
 end

@@ -5,6 +5,14 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   """
 
   @doc """
+  Triggered when coordinator is initialized.
+
+  Could be used to perform initialization.
+  """
+  @spec init(struct(), ProcessHub.hub_id()) :: any()
+  def init(strategy, hub_id)
+
+  @doc """
   Returns the list of nodes where the child process belongs to.
 
   The list of nodes is used to determine where the child process should be started
@@ -17,14 +25,6 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
           replication_factor :: pos_integer()
         ) :: [node()]
   def belongs_to(strategy, hub_id, child_id, replication_factor)
-
-  @doc """
-  Triggered when coordinator is initialized.
-
-  Could be used to perform initialization.
-  """
-  @spec init(struct(), ProcessHub.hub_id()) :: any()
-  def init(strategy, hub_id)
 
   @doc """
   Triggered when children are started.

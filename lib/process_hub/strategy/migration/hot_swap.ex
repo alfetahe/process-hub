@@ -122,7 +122,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     @impl true
     def handle_migration(struct, hub_id, child_specs, added_node, sync_strategy) do
-      Distributor.children_redist_init(hub_id, child_specs, added_node, reply_to: [self()])
+      Distributor.children_redist_init(hub_id, added_node, child_specs, reply_to: [self()])
 
       if length(child_specs) > 0 do
         migration_cids = migration_cids(hub_id, struct, child_specs, added_node)

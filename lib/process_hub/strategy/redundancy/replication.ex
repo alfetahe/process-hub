@@ -38,6 +38,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Utility.Name
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Constant.Hook
 
   @typedoc """
   Replication strategy options.
@@ -66,14 +67,28 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   defstruct replication_factor: 2, replication_model: :active_active, redundancy_signal: :none
 
   defimpl RedundancyStrategy, for: ProcessHub.Strategy.Redundancy.Replication do
-    alias ProcessHub.Strategy.Redundancy.Base.ProcessHub.Strategy.Redundancy.Replication
+    alias ProcessHub.Service.HookManager
     alias ProcessHub.Strategy.Redundancy.Replication
 
     @impl true
-    def init(_strategy, _hub_id), do: nil
+    def init(strategy, hub_id) do
+      HookManager.register_handler(hub_id, Hook.post_children_start(), %HookManager{
+        id: :replication_post_start,
+        m: Replication,
+        f: :handle_post_start,
+        a: [strategy, hub_id, :_]
+      })
+
+      HookManager.register_handler(hub_id, Hook.pre_children_redistribution(), %HookManager{
+        id: :replication_post_update,
+        m: Replication,
+        f: :handle_post_update,
+        a: [strategy, hub_id, :_]
+      })
+    end
 
     @impl true
-    @spec replication_factor(ProcessHub.Strategy.Redundancy.Replication.t()) ::
+    @spec replication_factor(Replication.t()) ::
             pos_integer() | :cluster_size
     def replication_factor(strategy) do
       case strategy.replication_factor do
@@ -103,124 +118,129 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
       Enum.at(child_nodes, index)
     end
-
-    @impl true
-    def handle_post_start(%Replication{redundancy_signal: :none}, _, _), do: :ok
-
-    def handle_post_start(strategy, hub_id, post_start_data) do
-      Enum.each(post_start_data, fn {child_id, child_pid, child_nodes} ->
-        mode = process_mode(strategy, hub_id, child_id, child_nodes)
-
-        cond do
-          strategy.redundancy_signal === :all ->
-            send_redundancy_signal(child_pid, mode)
-
-          mode === strategy.redundancy_signal ->
-            send_redundancy_signal(child_pid, mode)
-
-          true ->
-            :ok
-        end
-      end)
-
-      :ok
-    end
-
-    @impl true
-    def handle_post_update(%Replication{redundancy_signal: :none}, _, _, _), do: :ok
-
-    def handle_post_update(
-          %Replication{replication_model: :active_passive} = strategy,
-          hub_id,
-          processes_data,
-          {node_action, node}
-        ) do
-      Enum.each(processes_data, fn {child_id, child_nodes, opts} ->
-        handle_redundancy_signal(
-          strategy,
-          hub_id,
-          child_id,
-          child_nodes,
-          {node_action, node},
-          opts
-        )
-      end)
-    end
-
-    def handle_post_update(_, _, _, _), do: :ok
-
-    defp node_modes(strategy, hub_id, node_action, child_id, nodes, node) do
-      curr_master = RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)
-
-      prev_master =
-        case node_action do
-          :up ->
-            RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)
-
-          :down ->
-            [node | nodes]
-        end
-
-      {prev_master, curr_master}
-    end
-
-    defp handle_redundancy_signal(strategy, hub_id, child_id, nodes, {node_action, node}, opts) do
-      local_node = node()
-
-      {prev_master, curr_master} =
-        node_modes(strategy, hub_id, node_action, child_id, nodes, node)
-
-      cond do
-        prev_master === curr_master ->
-          # Do nothing because the same node still holds the active process.
-          :ok
-
-        Enum.member?([:all, :active], strategy.redundancy_signal) ->
-          if curr_master === local_node and prev_master !== curr_master do
-            # Current node is the new active node.
-            child_pid(hub_id, child_id, opts) |> send_redundancy_signal(:active)
-          end
-
-        Enum.member?([:all, :passive], strategy.redundancy_signal) ->
-          if curr_master !== local_node and prev_master === local_node do
-            # Current node is the new passive node.
-            child_pid(hub_id, child_id, opts) |> send_redundancy_signal(:passive)
-          end
-
-        true ->
-          :ok
-      end
-    end
-
-    defp process_mode(%Replication{replication_model: rp} = strat, hub_id, child_id, child_nodes) do
-      master_node = RedundancyStrategy.master_node(strat, hub_id, child_id, child_nodes)
-
-      cond do
-        rp === :active_active ->
-          :active
-
-        master_node === node() ->
-          :active
-
-        true ->
-          :passive
-      end
-    end
-
-    defp child_pid(hub_id, child_id, opts) do
-      case Keyword.get(opts, :pid) do
-        nil ->
-          Name.distributed_supervisor(hub_id) |> DistributedSupervisor.local_pid(child_id)
-
-        pid ->
-          pid
-      end
-    end
-
-    defp send_redundancy_signal(pid, mode) when is_pid(pid) do
-      send(pid, {:process_hub, :redundancy_signal, mode})
-    end
-
-    defp send_redundancy_signal(_pid, _mode), do: nil
   end
+
+  @spec handle_post_start(struct(), ProcessHub.hub_id(), [
+          {ProcessHub.child_id(), pid(), [node()]}
+        ]) :: :ok
+  def handle_post_start(%__MODULE__{redundancy_signal: :none}, _, _), do: :ok
+
+  def handle_post_start(strategy, hub_id, post_start_data) do
+    Enum.each(post_start_data, fn {child_id, child_pid, child_nodes} ->
+      mode = process_mode(strategy, hub_id, child_id, child_nodes)
+
+      cond do
+        strategy.redundancy_signal === :all ->
+          send_redundancy_signal(child_pid, mode)
+
+        mode === strategy.redundancy_signal ->
+          send_redundancy_signal(child_pid, mode)
+
+        true ->
+          :ok
+      end
+    end)
+
+    :ok
+  end
+
+  @spec handle_post_update(
+          struct(),
+          ProcessHub.hub_id(),
+          {[{ProcessHub.child_id(), [node()], keyword()}], {:up | :down, node()}}
+        ) :: :ok
+  def handle_post_update(%__MODULE__{redundancy_signal: :none}, _, _), do: :ok
+
+  def handle_post_update(
+        %__MODULE__{replication_model: :active_passive} = strategy,
+        hub_id,
+        {processes_data, {node_action, node}}
+      ) do
+    Enum.each(processes_data, fn {child_id, child_nodes, opts} ->
+      handle_redundancy_signal(
+        strategy,
+        hub_id,
+        child_id,
+        child_nodes,
+        {node_action, node},
+        opts
+      )
+    end)
+  end
+
+  def handle_post_update(_, _, _), do: :ok
+
+  defp node_modes(strategy, hub_id, node_action, child_id, nodes, node) do
+    curr_master = RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)
+
+    prev_master =
+      case node_action do
+        :up ->
+          RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)
+
+        :down ->
+          [node | nodes]
+      end
+
+    {prev_master, curr_master}
+  end
+
+  defp handle_redundancy_signal(strategy, hub_id, child_id, nodes, {node_action, node}, opts) do
+    local_node = node()
+
+    {prev_master, curr_master} =
+      node_modes(strategy, hub_id, node_action, child_id, nodes, node)
+
+    cond do
+      prev_master === curr_master ->
+        # Do nothing because the same node still holds the active process.
+        :ok
+
+      Enum.member?([:all, :active], strategy.redundancy_signal) ->
+        if curr_master === local_node and prev_master !== curr_master do
+          # Current node is the new active node.
+          child_pid(hub_id, child_id, opts) |> send_redundancy_signal(:active)
+        end
+
+      Enum.member?([:all, :passive], strategy.redundancy_signal) ->
+        if curr_master !== local_node and prev_master === local_node do
+          # Current node is the new passive node.
+          child_pid(hub_id, child_id, opts) |> send_redundancy_signal(:passive)
+        end
+
+      true ->
+        :ok
+    end
+  end
+
+  defp process_mode(%__MODULE__{replication_model: rp} = strat, hub_id, child_id, child_nodes) do
+    master_node = RedundancyStrategy.master_node(strat, hub_id, child_id, child_nodes)
+
+    cond do
+      rp === :active_active ->
+        :active
+
+      master_node === node() ->
+        :active
+
+      true ->
+        :passive
+    end
+  end
+
+  defp child_pid(hub_id, child_id, opts) do
+    case Keyword.get(opts, :pid) do
+      nil ->
+        Name.distributed_supervisor(hub_id) |> DistributedSupervisor.local_pid(child_id)
+
+      pid ->
+        pid
+    end
+  end
+
+  defp send_redundancy_signal(pid, mode) when is_pid(pid) do
+    send(pid, {:process_hub, :redundancy_signal, mode})
+  end
+
+  defp send_redundancy_signal(_pid, _mode), do: nil
 end

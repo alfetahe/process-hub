@@ -18,12 +18,12 @@ defmodule ProcessHub.Service.Distributor do
   @doc "Initiates process redistribution."
   @spec children_redist_init(
           ProcessHub.hub_id(),
-          [ProcessHub.child_spec()],
           node(),
+          [ProcessHub.child_spec()],
           keyword() | nil
         ) ::
           {:ok, :redistribution_initiated} | {:ok, :no_children_to_redistribute}
-  def children_redist_init(hub_id, child_specs, node, opts \\ []) do
+  def children_redist_init(hub_id, node, child_specs, opts \\ []) do
     # Migration expects the `:migration_add` true flag otherwise the
     # remote node wont release the lock.
     opts = Keyword.put(opts, :migration_add, true)

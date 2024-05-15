@@ -155,19 +155,21 @@ end
 ## Available hooks
 {: .width-100}
 
-| Event Key                        | Trigger                                 | Data                                             |
-| -------------------------------- | --------------------------------------- | ------------------------------------------------ |
-| `:pre_cluster_join_hook`         | Node joins hub cluster, not handled     | `node()`                                         |
-| `:post_cluster_join_hook`        | Node joins hub cluster, handled         | `node()`                                         |
-| `:pre_cluster_leave_hook`        | Node leaves hub cluster, not handled    | `node()`                                         |
-| `:post_cluster_leave_hook`       | Node leaves hub cluster, handled        | `node()`                                         |
-| `:registry_pid_inserted_hook`    | Process registered                      | `{child_id(), [{node(), pid()}]}`                |
-| `:registry_pid_removed_hook`     | Process unregistered                    | `child_id()`                                     |
-| `:children_migrated_hook`        | Processes migrated                      | `{node(), [child_spec()]}`                       |
-| `:priority_state_updated_hook`   | Priority state updated                  | `{priority_level(), list()}`                     |
-| `:pre_nodes_redistribution_hook` | Nodes redistribution start              | `{:nodeup or :nodedown, node()}`                 |
-| `:post_nodes_redistribution_hook`| Nodes redistribution end                | `{:nodeup or :nodedown, node()}`                 |
-| `:forwarded_migration_hook`      | Migration was forwarded and handled     | `[{node(), [children_start_data()]}]`            |
-| `:pre_children_start`            | Before child process is started         | `ProcessHub.Handler.ChildrenAdd.StartHandle.t()` |
+| Event Key                           | Trigger                                     | Data                                               |
+| ----------------------------------- | ------------------------------------------- | -------------------------------------------------- |
+| `:pre_cluster_join_hook`            | Node joins hub cluster, not handled         | `node()`                                           |
+| `:post_cluster_join_hook`           | Node joins hub cluster, handled             | `node()`                                           |
+| `:pre_cluster_leave_hook`           | Node leaves hub cluster, not handled        | `node()`                                           |
+| `:post_cluster_leave_hook`          | Node leaves hub cluster, handled            | `node()`                                           |
+| `:registry_pid_inserted_hook`       | Process registered                          | `{child_id(), [{node(), pid()}]}`                  |
+| `:registry_pid_removed_hook`        | Process unregistered                        | `child_id()`                                       |
+| `:children_migrated_hook`           | Processes migrated                          | `{node(), [child_spec()]}`                         |
+| `:priority_state_updated_hook`      | Priority state updated                      | `{priority_level(), list()}`                       |
+| `:pre_nodes_redistribution_hook`    | Nodes redistribution start                  | `{:nodeup or :nodedown, node()}`                   |
+| `:post_nodes_redistribution_hook`   | Nodes redistribution end                    | `{:nodeup or :nodedown, node()}`                   |
+| `:forwarded_migration_hook`         | Migration was forwarded and handled         | `[{node(), [children_start_data()]}]`              |
+| `:pre_children_start`               | Before child process is started             | `ProcessHub.Handler.ChildrenAdd.StartHandle.t()`   |
+| `:post_children_start`              | After child process is started              | `[{child_id(), pid(), node()}]`                    |
+| `:pre_children_redistribution_hook` | Before redistribution of children is called | `[{child_id(), node(), {:pid, pid()}}]`            |
 
 See `ProcessHub.Constant.Hook` module for more information.
