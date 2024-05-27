@@ -20,6 +20,8 @@ defmodule ProcessHub.Service.HookManager do
           | :post_nodes_redistribution_hook
           | :pre_children_start_hook
 
+  # TODO: we need to update the list above or make it more dynamic.
+
   @type handler_id() :: atom()
 
   @type t() :: %__MODULE__{

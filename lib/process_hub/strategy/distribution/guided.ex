@@ -39,43 +39,20 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
   @type t() :: %__MODULE__{}
   defstruct []
 
-  @spec handle_children_start(ProcessHub.hub_id(), %{
-          :start_opts => keyword(),
-          optional(any()) => any()
-        }) ::
-          :ok
-  def handle_children_start(hub_id, %{start_opts: start_opts}) do
-    insert_child_mappings(hub_id, Keyword.get(start_opts, :child_mapping, %{}))
-  end
-
-  @spec insert_child_mappings(ProcessHub.hub_id(), any()) :: :ok
-  def insert_child_mappings(hub_id, child_mappings) do
-    case Storage.get(hub_id, StorageKey.gdc()) do
-      nil ->
-        Storage.insert(hub_id, StorageKey.gdc(), child_mappings)
-
-      existing_mappings ->
-        new_mappings = Map.merge(existing_mappings, child_mappings)
-        Storage.insert(hub_id, StorageKey.gdc(), new_mappings)
-    end
-
-    :ok
-  end
-
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.Guided do
     alias ProcessHub.Strategy.Distribution.Guided, as: GuidedStrategy
 
     @impl true
-    @spec children_init(struct(), ProcessHub.hub_id(), [map()], keyword()) ::
-            :ok | {:error, any()}
-    def children_init(_strategy, hub_id, child_specs, opts) do
-      with {:ok, child_mappings} <- validate_child_init(hub_id, opts, child_specs),
-           :ok <- GuidedStrategy.insert_child_mappings(hub_id, child_mappings) do
-        Storage.get(hub_id, StorageKey.gdc())
-        :ok
-      else
-        err -> err
-      end
+    @spec init(ProcessHub.Strategy.Distribution.Guided.t(), ProcessHub.hub_id()) :: any()
+    def init(_strategy, hub_id) do
+      handler = %HookManager{
+        id: :guided_pre_start_handler,
+        m: ProcessHub.Strategy.Distribution.Guided,
+        f: :handle_children_start,
+        a: [hub_id, :_]
+      }
+
+      HookManager.register_handler(hub_id, Hook.pre_children_start(), handler)
     end
 
     @impl true
@@ -96,20 +73,17 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     end
 
     @impl true
-    @spec init(ProcessHub.Strategy.Distribution.Guided.t(), ProcessHub.hub_id()) :: any()
-    def init(_strategy, hub_id) do
-      handler = %HookManager{
-        id: :guided_pre_start_handler,
-        m: ProcessHub.Strategy.Distribution.Guided,
-        f: :handle_children_start,
-        a: [hub_id, :_]
-      }
-
-      HookManager.register_handler(hub_id, Hook.pre_children_start(), handler)
+    @spec children_init(struct(), ProcessHub.hub_id(), [map()], keyword()) ::
+            :ok | {:error, any()}
+    def children_init(_strategy, hub_id, child_specs, opts) do
+      with {:ok, child_mappings} <- validate_child_init(hub_id, opts, child_specs),
+           :ok <- GuidedStrategy.insert_child_mappings(hub_id, child_mappings) do
+        Storage.get(hub_id, StorageKey.gdc())
+        :ok
+      else
+        err -> err
+      end
     end
-
-    @impl true
-    def handle_shutdown(_strategy, _hub_id), do: nil
 
     defp validate_child_init(hub_id, opts, child_specs) do
       with {:ok, mappings} <- opts_validate_existance(opts),
@@ -155,5 +129,28 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
         true -> {:ok, Keyword.get(opts, :child_mapping, %{})}
       end
     end
+  end
+
+  @spec handle_children_start(ProcessHub.hub_id(), %{
+          :start_opts => keyword(),
+          optional(any()) => any()
+        }) ::
+          :ok
+  def handle_children_start(hub_id, %{start_opts: start_opts}) do
+    insert_child_mappings(hub_id, Keyword.get(start_opts, :child_mapping, %{}))
+  end
+
+  @spec insert_child_mappings(ProcessHub.hub_id(), any()) :: :ok
+  def insert_child_mappings(hub_id, child_mappings) do
+    case Storage.get(hub_id, StorageKey.gdc()) do
+      nil ->
+        Storage.insert(hub_id, StorageKey.gdc(), child_mappings)
+
+      existing_mappings ->
+        new_mappings = Map.merge(existing_mappings, child_mappings)
+        Storage.insert(hub_id, StorageKey.gdc(), new_mappings)
+    end
+
+    :ok
   end
 end

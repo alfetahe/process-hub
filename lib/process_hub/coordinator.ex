@@ -72,17 +72,15 @@ defmodule ProcessHub.Coordinator do
     {:ok, %__MODULE__{hub_id: hub_id}, {:continue, :additional_setup}}
   end
 
-  def terminate(_reason, state) do
-    local_node = node()
-
-    Storage.get(state.hub_id, StorageKey.strdist())
-    |> DistributionStrategy.handle_shutdown(state.hub_id)
-
-    Storage.get(state.hub_id, StorageKey.strmigr())
-    |> MigrationStrategy.handle_shutdown(state.hub_id)
+  def terminate(reason, state) do
+    HookManager.dispatch_hook(
+      state.hub_id,
+      Hook.coordinator_shutdown(),
+      reason
+    )
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
-    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, local_node, %{
+    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, node(), %{
       members: :external,
       priority: PriorityLevel.locked()
     })

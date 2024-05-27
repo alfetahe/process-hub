@@ -58,4 +58,8 @@ defmodule Test.Constant.HookTest do
   test "pre children redistribution" do
     assert Hook.pre_children_redistribution() === :pre_children_redistribution_hook
   end
+
+  test "coordinator shutdown" do
+    assert Hook.coordinator_shutdown() === :coordinator_shutdown_hook
+  end
 end

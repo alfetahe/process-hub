@@ -92,4 +92,10 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec pre_children_redistribution() :: :pre_children_redistribution_hook
   def pre_children_redistribution(), do: :pre_children_redistribution_hook
+
+  @doc """
+  Hook triggered inside the coordinator `terminate/2` function.
+  """
+  @spec coordinator_shutdown() :: :coordinator_shutdown_hook
+  def coordinator_shutdown(), do: :coordinator_shutdown_hook
 end
