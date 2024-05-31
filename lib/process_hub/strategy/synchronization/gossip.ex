@@ -35,6 +35,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.StorageKey
 
+  use Event
+
   @typedoc """
   The Gossip strategy configuration options.
 
@@ -50,8 +52,114 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         }
   defstruct sync_interval: 15000, recipients: 3, restricted_init: true
 
+  @spec handle_propagation(
+          ProcessHub.Strategy.Synchronization.Gossip.t(),
+          ProcessHub.hub_id(),
+          term(),
+          :add | :rem
+        ) :: :ok
+  def handle_propagation(strategy, hub_id, {ref, acks, child_data, update_node}, type) do
+    cached_acks =
+      case Storage.get(hub_id, ref) do
+        nil -> []
+        :invalidated -> :invalidated
+        cached_acks -> cached_acks
+      end
+
+    case cached_acks do
+      :invalidated ->
+        nil
+
+      _ ->
+        acks = Enum.uniq(acks ++ cached_acks)
+        unacked_nodes = unacked_nodes(acks, hub_id)
+
+        if length(unacked_nodes) === 0 do
+          invalidate_ref(strategy, hub_id, ref)
+        end
+
+        acks =
+          if Enum.member?(unacked_nodes, node()) do
+            handle_propagation_type(hub_id, child_data, update_node, type)
+
+            [node() | acks]
+          else
+            acks
+          end
+
+        Storage.insert(hub_id, ref, acks, strategy.sync_interval)
+
+        recipients_select(unacked_nodes, strategy)
+        |> propagate_data(hub_id, strategy, {ref, acks, child_data, update_node}, type)
+    end
+
+    :ok
+  end
+
+  @spec invalidate_ref(
+          ProcessHub.Strategy.Synchronization.Gossip.t(),
+          ProcessHub.hub_id(),
+          reference()
+        ) :: boolean()
+  def invalidate_ref(strategy, hub_id, ref) do
+    Storage.insert(hub_id, ref, :invalidated, strategy.sync_interval)
+  end
+
+  @spec propagate_data(
+          [node()],
+          ProcessHub.hub_id(),
+          ProcessHub.Strategy.Synchronization.Gossip.t(),
+          term(),
+          :add | :rem
+        ) :: :ok
+  def propagate_data(nodes, hub_id, strategy, data, type) do
+    Enum.each(nodes, fn node ->
+      Node.spawn(node, fn ->
+        GenServer.cast(
+          Name.worker_queue(hub_id),
+          {:handle_work, fn -> __MODULE__.handle_propagation(strategy, hub_id, data, type) end}
+        )
+      end)
+    end)
+  end
+
+  @spec recipients_select([node()], ProcessHub.Strategy.Synchronization.Gossip.t()) :: [node()]
+  def recipients_select(nodes, strategy) do
+    Enum.take_random(nodes, strategy.recipients)
+  end
+
+  @spec handle_propagation_type(
+          ProcessHub.hub_id(),
+          [term()],
+          node(),
+          :add | :rem
+        ) :: :ok
+  def handle_propagation_type(hub_id, children, updated_node, :add) do
+    try do
+      Name.coordinator(hub_id)
+      |> send({@event_children_registration, {children, updated_node}})
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def handle_propagation_type(hub_id, children, updated_node, :rem) do
+    try do
+      Name.coordinator(hub_id)
+      |> send({@event_children_unregistration, {children, updated_node}})
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  @spec unacked_nodes([node()], ProcessHub.hub_id()) :: [node()]
+  def unacked_nodes(sync_acks, hub_id) do
+    Cluster.nodes(hub_id, [:include_local])
+    |> Enum.filter(fn node -> !Enum.member?(sync_acks, node) end)
+  end
+
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.Gossip do
-    use Event
+    alias ProcessHub.Strategy.Synchronization.Gossip
 
     @impl true
     def init(_strategy, _hub_id), do: nil
@@ -67,56 +175,11 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           ) :: :ok
     def propagate(strategy, hub_id, children, update_node, type, _opts) do
       ref = make_ref()
-      handle_propagation_type(hub_id, children, update_node, type)
+      Gossip.handle_propagation_type(hub_id, children, update_node, type)
 
       Cluster.nodes(hub_id)
-      |> recipients_select(strategy)
-      |> propagate_data(hub_id, strategy, {ref, [node()], children, update_node}, type)
-
-      :ok
-    end
-
-    @impl true
-    @spec handle_propagation(
-            ProcessHub.Strategy.Synchronization.Gossip.t(),
-            ProcessHub.hub_id(),
-            term(),
-            :add | :rem
-          ) :: :ok
-    def handle_propagation(strategy, hub_id, {ref, acks, child_data, update_node}, type) do
-      cached_acks =
-        case Storage.get(hub_id, ref) do
-          nil -> []
-          :invalidated -> :invalidated
-          cached_acks -> cached_acks
-        end
-
-      case cached_acks do
-        :invalidated ->
-          nil
-
-        _ ->
-          acks = Enum.uniq(acks ++ cached_acks)
-          unacked_nodes = unacked_nodes(acks, hub_id)
-
-          if length(unacked_nodes) === 0 do
-            invalidate_ref(strategy, hub_id, ref)
-          end
-
-          acks =
-            if Enum.member?(unacked_nodes, node()) do
-              handle_propagation_type(hub_id, child_data, update_node, type)
-
-              [node() | acks]
-            else
-              acks
-            end
-
-          Storage.insert(hub_id, ref, acks, strategy.sync_interval)
-
-          recipients_select(unacked_nodes, strategy)
-          |> propagate_data(hub_id, strategy, {ref, acks, child_data, update_node}, type)
-      end
+      |> Gossip.recipients_select(strategy)
+      |> Gossip.propagate_data(hub_id, strategy, {ref, [node()], children, update_node}, type)
 
       :ok
     end
@@ -188,19 +251,12 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
       cond do
         length(missing_nodes) === 0 ->
-          unacked_nodes = unacked_nodes(sync_acks, hub_id)
+          unacked_nodes = Gossip.unacked_nodes(sync_acks, hub_id)
 
-          sync_acks =
-            if Enum.member?(unacked_nodes, node()) do
-              sync_locally(hub_id, sync_data)
-
-              [node() | sync_acks]
-            else
-              sync_acks
-            end
+          sync_acks = sync_acks(hub_id, unacked_nodes, sync_acks, sync_data)
 
           if length(unacked_nodes) === 0 do
-            invalidate_ref(strategy, hub_id, ref)
+            Gossip.invalidate_ref(strategy, hub_id, ref)
           else
             forward_data(unacked_nodes, strategy, hub_id, %{
               ref: ref,
@@ -221,8 +277,14 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       end
     end
 
-    defp invalidate_ref(strategy, hub_id, ref) do
-      Storage.insert(hub_id, ref, :invalidated, strategy.sync_interval)
+    defp sync_acks(hub_id, unacked_nodes, sync_acks, sync_data) do
+      if Enum.member?(unacked_nodes, node()) do
+        sync_locally(hub_id, sync_data)
+
+        [node() | sync_acks]
+      else
+        sync_acks
+      end
     end
 
     defp init_sync_internal(strategy, hub_id, cluster_nodes, true) do
@@ -235,7 +297,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       Storage.insert(hub_id, ref, {sync_data, []}, strategy.sync_interval)
 
       cluster_nodes
-      |> recipients_select(strategy)
+      |> Gossip.recipients_select(strategy)
       |> forward_data(strategy, hub_id, %{ref: ref, nodes_data: sync_data, sync_acks: []})
     end
 
@@ -311,11 +373,6 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       Storage.insert(hub_id, StorageKey.gct(), node_timestamps)
     end
 
-    defp unacked_nodes(sync_acks, hub_id) do
-      Cluster.nodes(hub_id, [:include_local])
-      |> Enum.filter(fn node -> !Enum.member?(sync_acks, node) end)
-    end
-
     defp missing_nodes(nodes_data, hub_id) do
       node_keys = Map.keys(nodes_data)
 
@@ -335,40 +392,6 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           )
         end)
       end)
-    end
-
-    defp handle_propagation_type(hub_id, children, updated_node, :add) do
-      try do
-        Name.coordinator(hub_id)
-        |> send({@event_children_registration, {children, updated_node}})
-      catch
-        _, _ -> :ok
-      end
-    end
-
-    defp handle_propagation_type(hub_id, children, updated_node, :rem) do
-      try do
-        Name.coordinator(hub_id)
-        |> send({@event_children_unregistration, {children, updated_node}})
-      catch
-        _, _ -> :ok
-      end
-    end
-
-    defp propagate_data(nodes, hub_id, strategy, data, type) do
-      Enum.each(nodes, fn node ->
-        Node.spawn(node, fn ->
-          GenServer.cast(
-            Name.worker_queue(hub_id),
-            {:handle_work,
-             fn -> SynchronizationStrategy.handle_propagation(strategy, hub_id, data, type) end}
-          )
-        end)
-      end)
-    end
-
-    defp recipients_select(nodes, strategy) do
-      Enum.take_random(nodes, strategy.recipients)
     end
   end
 end

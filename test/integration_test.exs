@@ -429,7 +429,7 @@ defmodule Test.IntegrationTest do
     # Add custom data to children.
     Enum.each(child_specs, fn child_spec ->
       {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
-      Process.send(pid, {:set_value, :handoff_data, child_spec.id}, [])
+      GenServer.call(pid, {:set_value, :handoff_data, child_spec.id})
     end)
 
     # Restart hubs on peer nodes and confirm they are up and running.
@@ -510,7 +510,7 @@ defmodule Test.IntegrationTest do
     # Add custom data to children.
     Enum.each(child_specs, fn child_spec ->
       {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
-      Process.send(pid, {:set_value, :handoff_data, child_spec.id}, [])
+      GenServer.call(pid, {:set_value, :handoff_data, child_spec.id})
     end)
 
     # Restart hubs on peer nodes and confirm they are up and running.
@@ -585,7 +585,7 @@ defmodule Test.IntegrationTest do
     ProcessHub.process_registry(hub_id)
     |> Enum.each(fn {_child_id, {_, nodes}} ->
       pid = List.first(nodes) |> elem(1)
-      send(pid, {:set_value, :shutdown, true})
+      GenServer.call(pid, {:set_value, :shutdown, true})
     end)
 
     # Stop hubs on peer nodes.

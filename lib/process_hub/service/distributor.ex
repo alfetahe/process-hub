@@ -11,6 +11,7 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Service.Mailbox
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
+  alias ProcessHub.Handler.ChildrenRem.StopHandle
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -108,7 +109,7 @@ defmodule ProcessHub.Service.Distributor do
           [ProcessHub.child_id()],
           ProcessHub.Strategy.Synchronization.Base,
           nil | [{ProcessHub.child_id(), [pid()]}]
-        ) :: [{ProcessHub.child_id(), {any(), any()}}]
+        ) :: [StopHandle.t()]
   def children_terminate(hub_id, child_ids, sync_strategy, reply_opts \\ []) do
     dist_sup = Name.distributed_supervisor(hub_id)
 

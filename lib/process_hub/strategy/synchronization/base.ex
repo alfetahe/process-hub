@@ -1,5 +1,6 @@
 defprotocol ProcessHub.Strategy.Synchronization.Base do
   alias ProcessHub.Handler.ChildrenAdd.PostStartData
+  alias ProcessHub.Handler.ChildrenRem.StopHandle
 
   @moduledoc """
   This protocol defines the behavior of a synchronization strategy.
@@ -20,21 +21,13 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   @spec propagate(
           __MODULE__.t(),
           ProcessHub.hub_id(),
-          [PostStartData.t()],
+          [PostStartData.t() | StopHandle.t()],
           node(),
           :add | :rem,
           keyword()
         ) ::
           :ok
   def propagate(strategy, hub_id, children, node, type, opts)
-
-  @doc """
-  This function handles the propagation messages sent by `ProcessHub.Strategy.Synchronization.Base.propagate/6`.
-
-  It saves the process data that was propagated to the local process registry.
-  """
-  @spec handle_propagation(__MODULE__.t(), ProcessHub.hub_id(), term(), :add | :rem) :: :ok
-  def handle_propagation(strategy, hub_id, propagation_data, type)
 
   @doc """
   Initializes the periodic synchronization of the process registry.

@@ -6,6 +6,7 @@ defmodule ProcessHub.Service.HookManager do
 
   alias ProcessHub.Utility.Name
 
+  # TODO: need more dynamic way of defining those.
   @type hook_key() ::
           :pre_cluster_join_hook
           | :post_cluster_join_hook
@@ -19,8 +20,9 @@ defmodule ProcessHub.Service.HookManager do
           | :pre_nodes_redistribution_hook
           | :post_nodes_redistribution_hook
           | :pre_children_start_hook
-
-  # TODO: we need to update the list above or make it more dynamic.
+          | :post_children_start_hook
+          | :pre_children_redistribution_hook
+          | :coordinator_shutdown_hook
 
   @type handler_id() :: atom()
 
