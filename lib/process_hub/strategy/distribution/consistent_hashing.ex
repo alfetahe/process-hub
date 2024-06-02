@@ -68,7 +68,8 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
         id: :ch_shutdown,
         m: ProcessHub.Strategy.Distribution.ConsistentHashing,
         f: :handle_shutdown,
-        a: [hub_id]
+        a: [hub_id],
+        p: 100
       }
 
       HookManager.register_handler(hub_id, Hook.pre_cluster_join(), join_handler)
