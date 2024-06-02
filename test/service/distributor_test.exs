@@ -67,13 +67,18 @@ defmodule Test.Service.DistributorTest do
            end)
   end
 
-  test "terminate child", %{hub_id: hub_id} = _context do
-    child_spec = %{
+  test "terminate children", %{hub_id: hub_id} = _context do
+    cs1 = %{
       id: :dist_child_add,
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add}]}
     }
 
-    Distributor.init_children(hub_id, [child_spec],
+    cs2 = %{
+      id: :dist_child_add2,
+      start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
+    }
+
+    Distributor.init_children(hub_id, [cs1, cs2],
       async_wait: true,
       check_existing: true,
       check_mailbox: false,
@@ -83,7 +88,7 @@ defmodule Test.Service.DistributorTest do
 
     sync_strategy = ProcessHub.Service.Storage.get(hub_id, :synchronization_strategy)
 
-    Distributor.child_terminate(hub_id, child_spec.id, sync_strategy)
+    Distributor.children_terminate(hub_id, [cs1.id, cs2.id], sync_strategy)
 
     assert Supervisor.which_children(Name.distributed_supervisor(hub_id)) === []
   end
@@ -150,7 +155,7 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
     }
 
-    assert Distributor.children_redist_init(hub_id, [child_spec], node()) ===
+    assert Distributor.children_redist_init(hub_id, node(), [child_spec]) ===
              {:ok, :redistribution_initiated}
   end
 end

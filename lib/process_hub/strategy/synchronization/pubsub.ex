@@ -43,11 +43,11 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       :ok
     end
 
-    def propagate(_strategy, hub_id, child_ids, node, :rem, opts) do
+    def propagate(_strategy, hub_id, children, node, :rem, opts) do
       Blockade.dispatch_sync(
         Name.event_queue(hub_id),
         @event_children_unregistration,
-        {child_ids, node},
+        {children, node},
         %{
           priority: PriorityLevel.locked(),
           members: Keyword.get(opts, :members, :global)
@@ -56,9 +56,6 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
 
       :ok
     end
-
-    @impl SynchronizationStrategy
-    def handle_propagation(_strategy, _hub_id, _propagation_data, _type), do: :ok
 
     @impl SynchronizationStrategy
     def init_sync(strategy, hub_id, cluster_nodes) do

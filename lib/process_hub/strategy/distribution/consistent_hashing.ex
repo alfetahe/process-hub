@@ -43,25 +43,39 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   @type t() :: %__MODULE__{}
   defstruct []
 
-  @spec handle_node_join(ProcessHub.hub_id(), node()) :: boolean()
-  def handle_node_join(hub_id, node) do
-    hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
-
-    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
-  end
-
-  @spec handle_node_leave(ProcessHub.hub_id(), node()) :: boolean()
-  def handle_node_leave(hub_id, node) do
-    hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
-
-    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
-  end
-
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.ConsistentHashing do
     @impl true
-    @spec children_init(struct(), ProcessHub.hub_id(), [map()], keyword()) ::
-            :ok | {:error, any()}
-    def children_init(_strategy, _hub_id, _child_specs, _opts), do: :ok
+    def init(_strategy, hub_id) do
+      hub_nodes = Storage.get(hub_id, StorageKey.hn())
+
+      Storage.insert(hub_id, StorageKey.hr(), Ring.create_ring(hub_nodes))
+
+      join_handler = %HookManager{
+        id: :ch_join,
+        m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+        f: :handle_node_join,
+        a: [hub_id, :_]
+      }
+
+      leave_handler = %HookManager{
+        id: :ch_leave,
+        m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+        f: :handle_node_leave,
+        a: [hub_id, :_]
+      }
+
+      shutdown_handler = %HookManager{
+        id: :ch_shutdown,
+        m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+        f: :handle_shutdown,
+        a: [hub_id],
+        p: 100
+      }
+
+      HookManager.register_handler(hub_id, Hook.pre_cluster_join(), join_handler)
+      HookManager.register_handler(hub_id, Hook.pre_cluster_leave(), leave_handler)
+      HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
+    end
 
     @impl true
     @spec belongs_to(
@@ -75,35 +89,38 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
     end
 
     @impl true
-    def init(_strategy, hub_id) do
-      hub_nodes = Storage.get(hub_id, StorageKey.hn())
+    @spec children_init(struct(), ProcessHub.hub_id(), [map()], keyword()) ::
+            :ok | {:error, any()}
+    def children_init(_strategy, _hub_id, _child_specs, _opts), do: :ok
+  end
 
-      Storage.insert(hub_id, StorageKey.hr(), Ring.create_ring(hub_nodes))
+  @doc """
+  Adds a new node to the hash ring.
+  """
+  @spec handle_node_join(ProcessHub.hub_id(), node()) :: boolean()
+  def handle_node_join(hub_id, node) do
+    hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
 
-      join_handler = {
-        ProcessHub.Strategy.Distribution.ConsistentHashing,
-        :handle_node_join,
-        [hub_id, :_]
-      }
+    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
+  end
 
-      leave_handler = {
-        ProcessHub.Strategy.Distribution.ConsistentHashing,
-        :handle_node_leave,
-        [hub_id, :_]
-      }
+  @doc """
+  Removes the node from the hash ring.
+  """
+  @spec handle_node_leave(ProcessHub.hub_id(), node()) :: boolean()
+  def handle_node_leave(hub_id, node) do
+    hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
 
-      HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
-      HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
-    end
+    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
+  end
 
-    @impl true
-    @doc """
-    Removes the local node from the hash ring.
-    """
-    def handle_shutdown(_strategy, hub_id) do
-      hash_ring = Storage.get(hub_id, StorageKey.hr()) |> Ring.remove_node(node())
+  @doc """
+  Removes the local node from the hash ring.
+  """
+  @spec handle_shutdown(ProcessHub.hub_id()) :: any()
+  def handle_shutdown(hub_id) do
+    hash_ring = Storage.get(hub_id, StorageKey.hr()) |> Ring.remove_node(node())
 
-      Storage.insert(hub_id, StorageKey.hr(), hash_ring)
-    end
+    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
   end
 end

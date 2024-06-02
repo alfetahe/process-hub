@@ -6,6 +6,7 @@ defmodule ProcessHub.Service.HookManager do
 
   alias ProcessHub.Utility.Name
 
+  # TODO: need more dynamic way of defining those.
   @type hook_key() ::
           :pre_cluster_join_hook
           | :post_cluster_join_hook
@@ -19,26 +20,57 @@ defmodule ProcessHub.Service.HookManager do
           | :pre_nodes_redistribution_hook
           | :post_nodes_redistribution_hook
           | :pre_children_start_hook
+          | :post_children_start_hook
+          | :pre_children_redistribution_hook
+          | :coordinator_shutdown_hook
+          | :process_startups_hook
 
-  @type hook_handler() :: {module(), atom(), [any()]}
+  @type handler_id() :: atom()
+
+  @type handler_priority() :: integer()
+
+  @type t() :: %__MODULE__{
+          id: handler_id(),
+          m: module(),
+          f: atom(),
+          a: [any()],
+          p: handler_priority()
+        }
 
   @type hook_handlers() :: %{
           hook_key() => [
-            hook_handler()
+            t()
           ]
         }
 
-  @doc "Registers a new hook handler."
-  @spec register_hook_handlers(ProcessHub.hub_id(), hook_key(), [hook_handler()]) ::
-          {atom(), boolean()}
-  def register_hook_handlers(hub_id, hook_key, hook_handlers) do
-    hook_handlers = registered_handlers(hub_id, hook_key) ++ hook_handlers
+  defstruct [:id, :m, :f, :a, p: 0]
 
-    Name.hook_registry(hub_id) |> Cachex.put(hook_key, hook_handlers)
+  @doc "Registers a new hook handlers."
+  @spec register_handlers(ProcessHub.hub_id(), hook_key(), [t()]) ::
+          :ok | {:error, {:handler_id_not_unique, [handler_id()]}}
+  def register_handlers(hub_id, hook_key, hook_handlers) do
+    hook_handlers = hook_handlers ++ registered_handlers(hub_id, hook_key)
+
+    case insert_handlers(hub_id, hook_key, hook_handlers) do
+      :ok -> :ok
+      error -> error
+    end
+  end
+
+  @doc "Registers a new hook handler."
+  @spec register_handler(ProcessHub.hub_id(), hook_key(), t()) ::
+          :ok | {:error, :handler_id_not_unique}
+  def register_handler(hub_id, hook_key, hook_handler) do
+    hook_handlers = [hook_handler | registered_handlers(hub_id, hook_key)]
+
+    case insert_handlers(hub_id, hook_key, hook_handlers) do
+      :ok -> :ok
+      {:error, {:handler_id_not_unique, _}} -> {:error, :handler_id_not_unique}
+    end
   end
 
   @doc "Returns all registered hook handlers for the given hook key"
-  @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: [hook_handler()]
+  @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: [t()]
   def registered_handlers(hub_id, hook_key) do
     {:ok, res} = Name.hook_registry(hub_id) |> Cachex.get(hook_key)
 
@@ -48,8 +80,20 @@ defmodule ProcessHub.Service.HookManager do
     end
   end
 
+  @doc "Cancels a hook handler."
+  @spec cancel_handler(ProcessHub.hub_id(), hook_key(), handler_id()) :: :ok
+  def cancel_handler(hub_id, hook_key, handler_id) do
+    hook_handlers =
+      registered_handlers(hub_id, hook_key)
+      |> Enum.reject(fn handler -> handler.id == handler_id end)
+
+    Cachex.put(Name.hook_registry(hub_id), hook_key, hook_handlers)
+
+    :ok
+  end
+
   @doc "Dispatches multiple hooks to the registered handlers."
-  @spec dispatch_hooks(ProcessHub.hub_id(), [hook_handler()]) :: :ok
+  @spec dispatch_hooks(ProcessHub.hub_id(), [t()]) :: :ok
   def dispatch_hooks(_hub_id, %{}), do: :ok
 
   def dispatch_hooks(hub_id, hooks) do
@@ -76,9 +120,9 @@ defmodule ProcessHub.Service.HookManager do
     :ok
   end
 
-  defp exec_hook({m, f, a}, hook_data) do
+  defp exec_hook(%__MODULE__{m: module, f: func, a: args}, hook_data) do
     args =
-      Enum.map(a, fn arg ->
+      Enum.map(args, fn arg ->
         case arg do
           :_ ->
             hook_data
@@ -88,6 +132,29 @@ defmodule ProcessHub.Service.HookManager do
         end
       end)
 
-    apply(m, f, args)
+    apply(module, func, args)
+  end
+
+  defp insert_handlers(hub_id, hook_key, hook_handlers) do
+    # Make sure that the hook id is unique
+    duplicates = duplicate_handlers(hook_handlers)
+    sorted_handlers = Enum.sort_by(hook_handlers, & &1.p) |> Enum.reverse()
+
+    cond do
+      Enum.empty?(duplicates) ->
+        Cachex.put(Name.hook_registry(hub_id), hook_key, sorted_handlers)
+        :ok
+
+      true ->
+        {:error, {:handler_id_not_unique, duplicates}}
+    end
+  end
+
+  defp duplicate_handlers(hook_handlers) do
+    hook_handlers
+    |> Enum.map(& &1.id)
+    |> Enum.group_by(& &1)
+    |> Enum.filter(fn {_id, handlers} -> Enum.count(handlers) > 1 end)
+    |> Enum.map(&elem(&1, 0))
   end
 end

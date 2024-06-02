@@ -44,10 +44,15 @@ end
 Example hook registration using the `ProcessHub.Service.HookManager` module:
 ```elixir
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-ProcessHub.Service.HookManager.register_hook_handlers(
+ProcessHub.Service.HookManager.register_handler(
   :my_hub, 
   ProcessHub.Constant.Hook.post_cluster_join(),
-  [{MyModule, :my_function, [:some_data, :_]}]
+  %HookManager{
+    id: :hook_id_1, 
+    m: MyModule,
+    f: :my_function,
+    a: [:some_data, :_]
+  }
 )
 ```
 
@@ -79,20 +84,22 @@ def init(_strategy, hub_id) do
 
   Storage.insert(hub_id, StorageKey.hr, Ring.create_ring(hub_nodes))
 
-  join_handler = {
-    ProcessHub.Strategy.Distribution.ConsistentHashing,
-    :handle_node_join,
-    [hub_id, :_]
+  join_handler = %HookManager{
+    id: :ch_join,
+    m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+    f: :handle_node_join,
+    a: [hub_id, :_]
   }
 
-  leave_handler = {
-    ProcessHub.Strategy.Distribution.ConsistentHashing,
-    :handle_node_leave,
-    [hub_id, :_]
+  leave_handler = %HookManager{
+    id: :ch_join,
+    m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+    f: :handle_node_leave,
+    a: [hub_id, :_]
   }
 
-  HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
-  HookManager.register_hook_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
+  HookManager.register_handlers(hub_id, Hook.pre_cluster_join(), join_handler)
+  HookManager.register_handlers(hub_id, Hook.pre_cluster_leave(), leave_handler)
 end
 
 
@@ -123,14 +130,15 @@ Example:
 alias ProcessHub.Service.HookManager
 alias ProcessHub.Constant.Hook
 ...
-hook_handler = {
-  MyModule,
-  :handle_child_start,
-  [hub_id, :_]
+hook_handler = %HookManager{
+  id: :handler_id_1,
+  m: MyModule,
+  f: :handle_child_start,
+  a: [hub_id, :_]
 }
 
 # We're triggering the hook when child process has been registered under the process registry.
-HookManager.register_hook_handlers(hub_id, Hook.registry_pid_inserted(), [join_handler])
+HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), join_handler)
 ...
 
 # The hook handler
@@ -147,19 +155,23 @@ end
 ## Available hooks
 {: .width-100}
 
-| Event Key                        | Trigger                                 | Data                                             |
-| -------------------------------- | --------------------------------------- | ------------------------------------------------ |
-| `:pre_cluster_join_hook`         | Node joins hub cluster, not handled     | `node()`                                         |
-| `:post_cluster_join_hook`        | Node joins hub cluster, handled         | `node()`                                         |
-| `:pre_cluster_leave_hook`        | Node leaves hub cluster, not handled    | `node()`                                         |
-| `:post_cluster_leave_hook`       | Node leaves hub cluster, handled        | `node()`                                         |
-| `:registry_pid_inserted_hook`    | Process registered                      | `{child_id(), [{node(), pid()}]}`                |
-| `:registry_pid_removed_hook`     | Process unregistered                    | `child_id()`                                     |
-| `:children_migrated_hook`        | Processes migrated                      | `{node(), [child_spec()]}`                       |
-| `:priority_state_updated_hook`   | Priority state updated                  | `{priority_level(), list()}`                     |
-| `:pre_nodes_redistribution_hook` | Nodes redistribution start              | `{:nodeup or :nodedown, node()}`                 |
-| `:post_nodes_redistribution_hook`| Nodes redistribution end                | `{:nodeup or :nodedown, node()}`                 |
-| `:forwarded_migration_hook`      | Migration was forwarded and handled     | `[{node(), [children_start_data()]}]`            |
-| `:pre_children_start`            | Before child process is started         | `ProcessHub.Handler.ChildrenAdd.StartHandle.t()` |
+| Event Key                           | Trigger                                     | Data                                               |
+| ----------------------------------- | ------------------------------------------- | -------------------------------------------------- |
+| `:pre_cluster_join_hook`            | Node joins hub cluster, not handled         | `node()`                                           |
+| `:post_cluster_join_hook`           | Node joins hub cluster, handled             | `node()`                                           |
+| `:pre_cluster_leave_hook`           | Node leaves hub cluster, not handled        | `node()`                                           |
+| `:post_cluster_leave_hook`          | Node leaves hub cluster, handled            | `node()`                                           |
+| `:registry_pid_inserted_hook`       | Process registered                          | `{child_id(), [{node(), pid()}]}`                  |
+| `:registry_pid_removed_hook`        | Process unregistered                        | `child_id()`                                       |
+| `:children_migrated_hook`           | Processes migrated                          | `{node(), [child_spec()]}`                         |
+| `:priority_state_updated_hook`      | Priority state updated                      | `{priority_level(), list()}`                       |
+| `:pre_nodes_redistribution_hook`    | Nodes redistribution start                  | `{:nodeup or :nodedown, node()}`                   |
+| `:post_nodes_redistribution_hook`   | Nodes redistribution end                    | `{:nodeup or :nodedown, node()}`                   |
+| `:forwarded_migration_hook`         | Migration was forwarded and handled         | `[{node(), [children_start_data()]}]`              |
+| `:pre_children_start`               | Before child process is started             | `ProcessHub.Handler.ChildrenAdd.StartHandle.t()`   |
+| `:post_children_start`              | After child process is started              | `[{child_id(), pid(), node()}]`                    |
+| `:pre_children_redistribution_hook` | Before redistribution of children is called | `[{child_id(), node(), {:pid, pid()}}]`            |
+| `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `any()`                                            |
+| `:process_startups_hook`            | Processes have been startups                | `[%{cid: child_id, pid: pid()}]`                   |
 
 See `ProcessHub.Constant.Hook` module for more information.

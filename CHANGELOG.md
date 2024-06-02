@@ -1,7 +1,39 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.2.3-alpha - 2024-04-24
+## v0.2.4-alpha - 2024-06-02
+This release was focused on improving the hook system and adding new features to the system.
+
+Some of the callbacks were removed from the strategies and the hooks were introduced to replace them.
+All strategies will implement the `init`callback where they can define the hooks they want to use.
+
+### Changed
+- Hooks are registered as structs with an ID so they are easier to add/remove at runtime.
+- Renamed `HookManager.register_hook_handlers/3` to `HookManager.register_handlers/3`.
+- `Distributor/child_terminate` now handles operation at bulk to increase efficiency.
+The function is renamed to `Distributor/children_terminate`.
+- All hook handlers can specify priority when registering them. Default is 0.
+
+### Added
+- Function to remove hook handler by it's ID. `HookManager.cancel_handler/3`.
+- `ProcessHub.Strategy.PartitionTolerance.Base.toggle_lock?/3`
+- `ProcessHub.Strategy.PartitionTolerance.Base.toggle_unlock?/3`
+
+### Removed
+- `ProcessHub.Strategy.PartitionTolerance.Base.handle_node_up/3`
+- `ProcessHub.Strategy.PartitionTolerance.Base.handle_node_down/3`
+- `ProcessHub.Strategy.Migration.Base.handle_process_startups/3`
+- `ProcessHub.Strategy.Distribution.Base.handle_node_join/2`
+- `ProcessHub.Strategy.Distribution.Base.handle_node_leave/2`
+- `ProcessHub.Strategy.Distribution.Base.handle_shutdown/1`
+- `ProcessHub.Strategy.Redundancy.Base.handle_post_start/3`
+- `ProcessHub.Strategy.Redundancy.Base.handle_post_update/3`
+
+### Fixed
+- migration hotswap shutdown test case by synchronizing the state update.
+- `Test.Helper.TestServer.handle_call/3` function parameters by adding the missin _from parameter.
+
+## v0.2.3-alpha - 2024-04-23
 Added new configuration options for timeout values and renamed LocalStorage -> Storage.
 
 Depending on the number of nodes and processes, the default values might not be optimal.

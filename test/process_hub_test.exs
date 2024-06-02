@@ -134,11 +134,11 @@ defmodule ProcessHubTest do
     assert ProcessHub.stop_child(hub_id, :child1, async_wait: false) === {:ok, :stop_initiated}
     assert ProcessHub.stop_child(hub_id, :child2) === {:ok, :stop_initiated}
 
-    assert ProcessHub.stop_child(hub_id, :non_existing, async_wait: true, timeout: 10)
+    assert ProcessHub.stop_child(hub_id, :non_existing, async_wait: true, timeout: 100)
            |> ProcessHub.await() ===
              {:error, {:non_existing, [{node(), {:error, :not_found}}]}}
 
-    assert ProcessHub.stop_child(hub_id, :child3, async_wait: true, timeout: 1000)
+    assert ProcessHub.stop_child(hub_id, :child3, async_wait: true, timeout: 100)
            |> ProcessHub.await() === {:ok, {:child3, [node()]}}
   end
 

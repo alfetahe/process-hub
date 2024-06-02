@@ -59,12 +59,19 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   require Logger
 
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
+  alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Mailbox
   alias ProcessHub.Utility.Name
+  alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Service.Cluster
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Strategy.Migration.HotSwap
 
   @typedoc """
   Hot-swap migration strategy configuration.
@@ -109,21 +116,29 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             child_migration_timeout: 10000
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
-    alias ProcessHub.Constant.StorageKey
-    alias ProcessHub.Service.Cluster
-    alias ProcessHub.Service.Storage
-    alias ProcessHub.Service.ProcessRegistry
-    alias ProcessHub.Strategy.Migration.HotSwap
-    alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-    alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-
     @impl true
-    def init(_struct, _hub_id), do: nil
+    def init(struct, hub_id) do
+      shutdown_handler = %HookManager{
+        id: :mhs_shutdown,
+        m: ProcessHub.Strategy.Migration.HotSwap,
+        f: :handle_shutdown,
+        a: [struct, hub_id]
+      }
+
+      process_startups_handler = %HookManager{
+        id: :mhs_process_startups,
+        m: ProcessHub.Strategy.Migration.HotSwap,
+        f: :handle_process_startups,
+        a: [struct, hub_id, :_]
+      }
+
+      HookManager.register_handler(hub_id, Hook.process_startups(), process_startups_handler)
+      HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
+    end
 
     @impl true
     def handle_migration(struct, hub_id, child_specs, added_node, sync_strategy) do
-      # Start redistribution of the child processes.
-      Distributor.children_redist_init(hub_id, child_specs, added_node, reply_to: [self()])
+      Distributor.children_redist_init(hub_id, added_node, child_specs, reply_to: [self()])
 
       if length(child_specs) > 0 do
         migration_cids = migration_cids(hub_id, struct, child_specs, added_node)
@@ -131,7 +146,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         handle_retentions(hub_id, struct, sync_strategy, migration_cids)
 
         if length(migration_cids) > 0 do
-          # Dispatch hook.
           HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})
         end
       end
@@ -139,131 +153,17 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       :ok
     end
 
-    @impl true
-    def handle_shutdown(%HotSwap{handover: true, handover_data_wait: hodw} = _struct, hub_id) do
-      ProcessRegistry.local_data(hub_id)
-      |> get_state_msgs()
-      |> get_send_data(hodw)
-      |> format_send_data(hub_id)
-      |> send_data(hub_id)
-
-      :ok
-    end
-
-    def handle_shutdown(_struct, _hub_id), do: :ok
-
-    @impl true
-    def handle_process_startups(%HotSwap{handover: true} = _struct, hub_id, pids) do
-      state_data = Storage.get(hub_id, StorageKey.msk()) || []
-
-      Enum.each(pids, fn {cid, pid} ->
-        pstate = Keyword.get(state_data, cid, nil)
-
-        unless pstate === nil do
-          send(pid, {:process_hub, :handover, pstate})
-        end
-      end)
-
-      rem_states(hub_id, Keyword.keys(state_data))
-
-      :ok
-    end
-
-    def handle_process_startups(_struct, _hub_id, _pids), do: :ok
-
-    defp send_data(send_data, hub_id) do
-      # Send the data to each node now.
-      Enum.each(send_data, fn {node, data} ->
-        cluster_nodes = Cluster.nodes(hub_id)
-
-        if Enum.member?(cluster_nodes, node) do
-          # Need to be sure that this is sent and handled on the remote nodes
-          # before they start the new children.
-          :erpc.call(node, fn ->
-            Storage.update(hub_id, StorageKey.msk(), fn old_value ->
-              case old_value do
-                nil -> data
-                _ -> data ++ old_value
-              end
-            end)
-          end)
-        end
-      end)
-    end
-
-    defp format_send_data({local_data, states}, hub_id) do
-      dist_strat = Storage.get(hub_id, StorageKey.strdist())
-
-      repl_fact =
-        Storage.get(hub_id, StorageKey.strred())
-        |> RedundancyStrategy.replication_factor()
-
-      Enum.reduce(local_data, %{}, fn {cid, {_, cn}}, acc ->
-        nodes = Keyword.keys(cn)
-        new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
-        migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
-        node_data = Map.get(acc, migration_node, [])
-
-        Map.put(acc, migration_node, [{cid, Keyword.get(states, cid)} | node_data])
-      end)
-    end
-
-    defp get_state_msgs(local_data) do
-      local_node = node()
-      self = self()
-
-      Enum.each(local_data, fn {child_id, {_cs, cn}} ->
-        local_pid = Keyword.get(cn, local_node)
-
-        if is_pid(local_pid) do
-          send(local_pid, {:process_hub, :get_state, child_id, self})
-        end
-      end)
-
-      local_data
-    end
-
-    defp get_send_data(local_data, handover_data_wait) do
-      local_node = node()
-
-      send_data =
-        Enum.map(local_data, fn _x ->
-          receive do
-            {:process_hub, :process_state, cid, state} ->
-              {cid, state}
-          after
-            handover_data_wait ->
-              Logger.error("Handover timeout while shutting down the node #{local_node}")
-              nil
-          end
-        end)
-        |> Enum.filter(&(&1 != nil))
-
-      {local_data, send_data}
-    end
-
-    defp rem_states(hub_id, cids) do
-      Storage.update(hub_id, StorageKey.msk(), fn states ->
-        Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
-      end)
-    end
-
     defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do
       Enum.reduce(migration_cids, :continue, fn
         child_id, :continue ->
-          # Wait for response from the peer process and then terminate the child from local node.
-          retention_signal = handle_retention(strategy, child_id)
-          Distributor.child_terminate(hub_id, child_id, sync_strategy)
-          retention_signal
+          # Wait for response from the peer process.
+          handle_retention(strategy, child_id)
 
-        child_id, :kill ->
-          # Terminate the local child immediately.
-          Distributor.child_terminate(hub_id, child_id, sync_strategy)
+        _child_id, :kill ->
           :kill
       end)
 
-      # TODO: we could kill them in bulk for better performance.
-      # Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
+      Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
     end
 
     defp migration_cids(hub_id, %HotSwap{} = strategy, child_specs, added_node) do
@@ -334,6 +234,111 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           :kill
       end
     end
+  end
+
+  def handle_shutdown(%__MODULE__{handover: true, handover_data_wait: hodw} = _struct, hub_id) do
+    ProcessRegistry.local_data(hub_id)
+    |> get_state_msgs()
+    |> get_send_data(hodw)
+    |> format_send_data(hub_id)
+    |> send_data(hub_id)
+
+    :ok
+  end
+
+  def handle_shutdown(_struct, _hub_id), do: :ok
+
+  def handle_process_startups(%__MODULE__{handover: true} = _struct, hub_id, cpids) do
+    state_data = Storage.get(hub_id, StorageKey.msk()) || []
+
+    Enum.each(cpids, fn %{cid: cid, pid: pid} ->
+      pstate = Keyword.get(state_data, cid, nil)
+
+      unless pstate === nil do
+        send(pid, {:process_hub, :handover, pstate})
+      end
+    end)
+
+    rem_states(hub_id, Keyword.keys(state_data))
+  end
+
+  def handle_process_startups(_struct, _hub_id, _pids), do: nil
+
+  defp rem_states(hub_id, cids) do
+    Storage.update(hub_id, StorageKey.msk(), fn states ->
+      Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
+    end)
+  end
+
+  defp send_data(send_data, hub_id) do
+    # Send the data to each node now.
+    Enum.each(send_data, fn {node, data} ->
+      cluster_nodes = Cluster.nodes(hub_id)
+
+      if Enum.member?(cluster_nodes, node) do
+        # Need to be sure that this is sent and handled on the remote nodes
+        # before they start the new children.
+        :erpc.call(node, fn ->
+          Storage.update(hub_id, StorageKey.msk(), fn old_value ->
+            case old_value do
+              nil -> data
+              _ -> data ++ old_value
+            end
+          end)
+        end)
+      end
+    end)
+  end
+
+  defp format_send_data({local_data, states}, hub_id) do
+    dist_strat = Storage.get(hub_id, StorageKey.strdist())
+
+    repl_fact =
+      Storage.get(hub_id, StorageKey.strred())
+      |> RedundancyStrategy.replication_factor()
+
+    Enum.reduce(local_data, %{}, fn {cid, {_, cn}}, acc ->
+      nodes = Keyword.keys(cn)
+      new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
+      migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
+      node_data = Map.get(acc, migration_node, [])
+
+      Map.put(acc, migration_node, [{cid, Keyword.get(states, cid)} | node_data])
+    end)
+  end
+
+  defp get_state_msgs(local_data) do
+    local_node = node()
+    self = self()
+
+    Enum.each(local_data, fn {child_id, {_cs, cn}} ->
+      local_pid = Keyword.get(cn, local_node)
+
+      if is_pid(local_pid) do
+        send(local_pid, {:process_hub, :get_state, child_id, self})
+      end
+    end)
+
+    local_data
+  end
+
+  defp get_send_data(local_data, handover_data_wait) do
+    local_node = node()
+
+    send_data =
+      Enum.map(local_data, fn _x ->
+        receive do
+          {:process_hub, :process_state, cid, state} ->
+            {cid, state}
+        after
+          handover_data_wait ->
+            Logger.error("Handover timeout while shutting down the node #{local_node}")
+            nil
+        end
+      end)
+      |> Enum.filter(&(&1 != nil))
+
+    {local_data, send_data}
   end
 
   defmacro __using__(_) do

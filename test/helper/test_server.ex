@@ -29,12 +29,12 @@ defmodule Test.Helper.TestServer do
     {:reply, Map.get(state, key, nil), state}
   end
 
-  def handle_call(:ping, _from, state) do
-    {:reply, :pong, state}
+  def handle_call({:set_value, key, value}, _from, state) do
+    {:reply, :ok, Map.put(state, key, value)}
   end
 
-  def handle_info({:set_value, key, value}, state) do
-    {:noreply, Map.put(state, key, value)}
+  def handle_call(:ping, _from, state) do
+    {:reply, :pong, state}
   end
 
   def handle_info({:process_hub, :redundancy_signal, mode}, state) do

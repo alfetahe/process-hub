@@ -1,4 +1,5 @@
 defmodule Test.Helper.TestNode do
+  @spec local_node() :: :"ex_unit@127.0.0.1"
   def local_node() do
     :"ex_unit@127.0.0.1"
   end

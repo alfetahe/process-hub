@@ -29,24 +29,4 @@ defprotocol ProcessHub.Strategy.Migration.Base do
           ProcessHub.Strategy.Synchronization.Base.t()
         ) :: :ok
   def handle_migration(struct, hub_id, child_specs, added_node, sync_strategy)
-
-  @doc """
-  Triggered when the coordinator is shutting down.
-
-  Could be used to perform state handover.
-  """
-  @spec handle_shutdown(__MODULE__.t(), ProcessHub.hub_id()) :: :ok
-  def handle_shutdown(struct, hub_id)
-
-  @doc """
-  Trigger after processes have been started on the local node.
-
-  Migration srategies can perform any necessary operations after the processes have been started
-  such as state handover etc.
-  """
-  @spec handle_process_startups(__MODULE__.t(), ProcessHub.hub_id(), [
-          {ProcessHub.child_id(), pid()}
-        ]) ::
-          :ok
-  def handle_process_startups(struct, hub_id, pids)
 end

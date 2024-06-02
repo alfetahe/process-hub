@@ -1,11 +1,11 @@
 defmodule ProcessHub.Handler.ChildrenRem do
   @moduledoc false
 
-  alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Service.Distributor
 
   use Task
 
@@ -49,23 +49,17 @@ defmodule ProcessHub.Handler.ChildrenRem do
           {:error, :partitioned}
 
         false ->
-          local_node = node()
+          {cids, reply_opts} =
+            Enum.reduce(arg.children, {[], []}, fn child_data, {cids, reply_opts} ->
+              cid = child_data.child_id
 
-          stopped_children =
-            Enum.map(arg.children, fn child_data ->
-              result = DistributedSupervisor.terminate_child(arg.dist_sup, child_data.child_id)
-
-              {child_data.child_id, {result, Map.get(child_data, :reply_to, [])}}
+              {
+                [cid | cids],
+                [{cid, Map.get(child_data, :reply_to, [])} | reply_opts]
+              }
             end)
 
-          SynchronizationStrategy.propagate(
-            arg.sync_strategy,
-            arg.hub_id,
-            stopped_children,
-            local_node,
-            :rem,
-            []
-          )
+          Distributor.children_terminate(arg.hub_id, cids, arg.sync_strategy, reply_opts)
 
           :ok
       end

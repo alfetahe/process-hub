@@ -67,22 +67,20 @@ defmodule ProcessHub.Coordinator do
     setup_local_storage(hub_id, settings, hub_nodes)
     init_strategies(hub_id, settings)
     register_handlers(managers)
-    register_hook_handlers(hub_id, settings.hooks)
+    register_handlers(hub_id, settings.hooks)
 
     {:ok, %__MODULE__{hub_id: hub_id}, {:continue, :additional_setup}}
   end
 
-  def terminate(_reason, state) do
-    local_node = node()
-
-    Storage.get(state.hub_id, StorageKey.strdist())
-    |> DistributionStrategy.handle_shutdown(state.hub_id)
-
-    Storage.get(state.hub_id, StorageKey.strmigr())
-    |> MigrationStrategy.handle_shutdown(state.hub_id)
+  def terminate(reason, state) do
+    HookManager.dispatch_hook(
+      state.hub_id,
+      Hook.coordinator_shutdown(),
+      reason
+    )
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
-    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, local_node, %{
+    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, node(), %{
       members: :external,
       priority: PriorityLevel.locked()
     })
@@ -198,11 +196,16 @@ defmodule ProcessHub.Coordinator do
 
         HookManager.dispatch_hook(state.hub_id, Hook.pre_cluster_join(), node)
 
-        PartitionToleranceStrategy.handle_node_up(
-          Storage.get(state.hub_id, StorageKey.strpart()),
-          state.hub_id,
-          node
-        )
+        unlock_status =
+          PartitionToleranceStrategy.toggle_unlock?(
+            Storage.get(state.hub_id, StorageKey.strpart()),
+            state.hub_id,
+            node
+          )
+
+        if unlock_status do
+          State.toggle_quorum_success(state.hub_id)
+        end
 
         # Atomic dispatch with locking.
         Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, %{
@@ -260,7 +263,7 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  def handle_info({@event_children_registration, {children, _node}}, state) do
+  def handle_info({@event_children_registration, {post_start_results, _node}}, state) do
     Task.Supervisor.async(
       Name.task_supervisor(state.hub_id),
       ChildrenAdd.SyncHandle,
@@ -268,7 +271,7 @@ defmodule ProcessHub.Coordinator do
       [
         %ChildrenAdd.SyncHandle{
           hub_id: state.hub_id,
-          children: children
+          post_start_results: post_start_results
         }
       ]
     )
@@ -358,11 +361,9 @@ defmodule ProcessHub.Coordinator do
           }
         ]
       )
-
-      state
-    else
-      state
     end
+
+    state
   end
 
   defp get_hub_nodes(hub_id) do
@@ -426,14 +427,14 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_migration_add)
   end
 
-  defp register_hook_handlers(hub_id, hooks) when is_map(hooks) do
+  defp register_handlers(hub_id, hooks) when is_map(hooks) do
     for {hook_key, hook_handlers} <- hooks do
-      HookManager.register_hook_handlers(hub_id, hook_key, hook_handlers)
+      HookManager.register_handlers(hub_id, hook_key, hook_handlers)
     end
   end
 
-  defp register_hook_handlers(hub_id, _hooks) do
-    register_hook_handlers(hub_id, %{})
+  defp register_handlers(hub_id, _hooks) do
+    register_handlers(hub_id, %{})
   end
 
   defp schedule_sync(sync_strat) do

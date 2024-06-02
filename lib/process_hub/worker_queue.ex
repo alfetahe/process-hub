@@ -15,7 +15,7 @@ defmodule ProcessHub.WorkerQueue do
     {:noreply, state}
   end
 
-  def handle_call({:handle_work, func}, state) do
+  def handle_call({:handle_work, func}, _from, state) do
     {:reply, func.(), state}
   end
 end
