@@ -27,11 +27,14 @@ defmodule ProcessHub.Service.HookManager do
 
   @type handler_id() :: atom()
 
+  @type handler_priority() :: integer()
+
   @type t() :: %__MODULE__{
           id: handler_id(),
           m: module(),
           f: atom(),
-          a: [any()]
+          a: [any()],
+          p: handler_priority()
         }
 
   @type hook_handlers() :: %{
@@ -40,7 +43,7 @@ defmodule ProcessHub.Service.HookManager do
           ]
         }
 
-  defstruct [:id, :m, :f, :a]
+  defstruct [:id, :m, :f, :a, p: 0]
 
   @doc "Registers a new hook handlers."
   @spec register_handlers(ProcessHub.hub_id(), hook_key(), [t()]) ::
@@ -135,10 +138,11 @@ defmodule ProcessHub.Service.HookManager do
   defp insert_handlers(hub_id, hook_key, hook_handlers) do
     # Make sure that the hook id is unique
     duplicates = duplicate_handlers(hook_handlers)
+    sorted_handlers = Enum.sort_by(hook_handlers, & &1.p) |> Enum.reverse()
 
     cond do
       Enum.empty?(duplicates) ->
-        Cachex.put(Name.hook_registry(hub_id), hook_key, hook_handlers)
+        Cachex.put(Name.hook_registry(hub_id), hook_key, sorted_handlers)
         :ok
 
       true ->
