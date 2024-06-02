@@ -98,4 +98,10 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec coordinator_shutdown() :: :coordinator_shutdown_hook
   def coordinator_shutdown(), do: :coordinator_shutdown_hook
+
+  @doc """
+  Hook triggered right after processes are started.
+  """
+  @spec process_startups() :: :process_startups_hook
+  def process_startups(), do: :process_startups_hook
 end

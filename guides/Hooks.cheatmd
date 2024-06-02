@@ -171,6 +171,7 @@ end
 | `:pre_children_start`               | Before child process is started             | `ProcessHub.Handler.ChildrenAdd.StartHandle.t()`   |
 | `:post_children_start`              | After child process is started              | `[{child_id(), pid(), node()}]`                    |
 | `:pre_children_redistribution_hook` | Before redistribution of children is called | `[{child_id(), node(), {:pid, pid()}}]`            |
-| `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `any()`                                           |
+| `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `any()`                                            |
+| `:process_startups_hook`            | Processes have been startups                | `[%{cid: child_id, pid: pid()}]`                   |
 
 See `ProcessHub.Constant.Hook` module for more information.

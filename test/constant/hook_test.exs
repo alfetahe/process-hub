@@ -62,4 +62,8 @@ defmodule Test.Constant.HookTest do
   test "coordinator shutdown" do
     assert Hook.coordinator_shutdown() === :coordinator_shutdown_hook
   end
+
+  test "process startups" do
+    assert Hook.process_startups() === :process_startups_hook
+  end
 end

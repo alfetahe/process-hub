@@ -125,6 +125,14 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         a: [struct, hub_id]
       }
 
+      process_startups_handler = %HookManager{
+        id: :mhs_process_startups,
+        m: ProcessHub.Strategy.Migration.HotSwap,
+        f: :handle_process_startups,
+        a: [struct, hub_id, :_]
+      }
+
+      HookManager.register_handler(hub_id, Hook.process_startups(), process_startups_handler)
       HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
     end
 
@@ -143,31 +151,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
 
       :ok
-    end
-
-    @impl true
-    def handle_process_startups(%HotSwap{handover: true} = _struct, hub_id, pids) do
-      state_data = Storage.get(hub_id, StorageKey.msk()) || []
-
-      Enum.each(pids, fn {cid, pid} ->
-        pstate = Keyword.get(state_data, cid, nil)
-
-        unless pstate === nil do
-          send(pid, {:process_hub, :handover, pstate})
-        end
-      end)
-
-      rem_states(hub_id, Keyword.keys(state_data))
-
-      :ok
-    end
-
-    def handle_process_startups(_struct, _hub_id, _pids), do: :ok
-
-    defp rem_states(hub_id, cids) do
-      Storage.update(hub_id, StorageKey.msk(), fn states ->
-        Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
-      end)
     end
 
     defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do
@@ -264,6 +247,28 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   end
 
   def handle_shutdown(_struct, _hub_id), do: :ok
+
+  def handle_process_startups(%__MODULE__{handover: true} = _struct, hub_id, cpids) do
+    state_data = Storage.get(hub_id, StorageKey.msk()) || []
+
+    Enum.each(cpids, fn %{cid: cid, pid: pid} ->
+      pstate = Keyword.get(state_data, cid, nil)
+
+      unless pstate === nil do
+        send(pid, {:process_hub, :handover, pstate})
+      end
+    end)
+
+    rem_states(hub_id, Keyword.keys(state_data))
+  end
+
+  def handle_process_startups(_struct, _hub_id, _pids), do: nil
+
+  defp rem_states(hub_id, cids) do
+    Storage.update(hub_id, StorageKey.msk(), fn states ->
+      Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
+    end)
+  end
 
   defp send_data(send_data, hub_id) do
     # Send the data to each node now.

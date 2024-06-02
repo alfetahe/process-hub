@@ -154,7 +154,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           %__MODULE__{arg | process_data: start_children(arg)}
           |> post_start_hook()
           |> update_registry()
-          |> handle_migration_callback()
+          |> dispatch_process_startups()
           |> handle_sync_callback()
           |> release_lock()
 
@@ -177,15 +177,11 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp handle_migration_callback(
-           %__MODULE__{hub_id: hub_id, migr_strategy: ms, process_data: pd} = arg
-         ) do
-      MigrationStrategy.handle_process_startups(
-        ms,
+    defp dispatch_process_startups(%__MODULE__{hub_id: hub_id, process_data: pd} = arg) do
+      HookManager.dispatch_hook(
         hub_id,
-        Enum.map(pd, fn %{cid: cid, pid: pid} ->
-          {cid, pid}
-        end)
+        Hook.process_startups(),
+        pd
       )
 
       arg

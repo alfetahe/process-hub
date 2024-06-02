@@ -23,6 +23,7 @@ defmodule ProcessHub.Service.HookManager do
           | :post_children_start_hook
           | :pre_children_redistribution_hook
           | :coordinator_shutdown_hook
+          | :process_startups_hook
 
   @type handler_id() :: atom()
 
