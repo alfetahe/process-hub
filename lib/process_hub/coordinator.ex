@@ -361,11 +361,9 @@ defmodule ProcessHub.Coordinator do
           }
         ]
       )
-
-      state
-    else
-      state
     end
+
+    state
   end
 
   defp get_hub_nodes(hub_id) do
