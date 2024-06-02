@@ -42,19 +42,21 @@ defmodule Test.Service.HookManagerTest do
         id: :hook_manager_test_register_handlers_1,
         m: :m,
         f: :f,
-        a: []
+        a: [],
+        p: 0
       },
       %HookManager{
         id: :hook_manager_test_register_handlers_2,
         m: :m,
         f: :f,
-        a: []
+        a: [],
+        p: 10
       }
     ]
 
     HookManager.register_handlers(hub_id, :test, handlers)
 
-    assert HookManager.registered_handlers(hub_id, :test) === handlers
+    assert HookManager.registered_handlers(hub_id, :test) === handlers |> Enum.reverse()
   end
 
   test "register handlers duplicates", %{hub_id: hub_id} = _context do
@@ -63,13 +65,15 @@ defmodule Test.Service.HookManagerTest do
         id: :hook_manager_test_register_handlers_1,
         m: :m,
         f: :f,
-        a: []
+        a: [],
+        p: 10
       },
       %HookManager{
         id: :hook_manager_test_register_handlers_2,
         m: :m,
         f: :f,
-        a: []
+        a: [],
+        p: 0
       }
     ]
 
@@ -131,7 +135,7 @@ defmodule Test.Service.HookManagerTest do
     }
 
     # Dispatching to separate key thats why we should not receive duplicate error.
-    HookManager.register_handlers(hub_id, :test_2, [handler2]) |> IO.inspect()
+    HookManager.register_handlers(hub_id, :test_2, [handler2])
     :ok = HookManager.dispatch_hook(hub_id, :test_2, :dispatch_hook_test_2)
 
     assert_receive :dispatch_hook_test_1
