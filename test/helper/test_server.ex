@@ -8,7 +8,16 @@ defmodule Test.Helper.TestServer do
 
   def start_link(args) do
     name = Map.get(args, :name, __MODULE__)
-    GenServer.start_link(__MODULE__, args, name: name)
+
+    valid_genserver_name =
+      if is_binary(name) do
+        # use this dangerous `&String.to_atom/1` function in tests ONLY!
+        String.to_atom(name)
+      else
+        name
+      end
+
+    GenServer.start_link(__MODULE__, args, name: valid_genserver_name)
   end
 
   def init(args) do

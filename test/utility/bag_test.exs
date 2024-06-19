@@ -24,7 +24,7 @@ defmodule Test.Utility.BagTest do
   end
 
   test "gen child specs" do
-    child_specs = Bag.gen_child_specs(10, "gen_test")
+    child_specs = Bag.gen_child_specs(10, prefix: "gen_test")
 
     assert length(child_specs) === 10
 

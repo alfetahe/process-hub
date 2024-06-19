@@ -28,7 +28,7 @@ defmodule Test.IntegrationTest do
        ]
   test "guided pubsub children starting and removing", %{hub_id: hub_id} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     assert ProcessHub.start_children(hub_id, child_specs) === {:error, :missing_child_mapping},
            "Children should not be started without mapping"
@@ -76,7 +76,7 @@ defmodule Test.IntegrationTest do
        ]
   test "pubsub children starting and removing", %{hub_id: hub_id} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)
@@ -106,7 +106,7 @@ defmodule Test.IntegrationTest do
        ]
   test "pubsub interval sync test", %{hub_id: hub_id} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Locally start children without propagating to the rest of the cluster.
     Common.periodic_sync_base(context, child_specs, :add)
@@ -136,7 +136,7 @@ defmodule Test.IntegrationTest do
        ]
   test "gossip children starting and removing", %{hub_id: hub_id} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)
@@ -166,7 +166,7 @@ defmodule Test.IntegrationTest do
        ]
   test "gossip interval sync test", %{hub_id: hub_id} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Locally start children without propagating to the rest of the cluster.
     Common.periodic_sync_base(context, child_specs, :add)
@@ -198,7 +198,7 @@ defmodule Test.IntegrationTest do
        ]
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
@@ -225,7 +225,7 @@ defmodule Test.IntegrationTest do
   test "replication cluster size with mode active active",
        %{hub_id: hub_id, hub: hub} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
     repl_fact = ProcessHub.Strategy.Redundancy.Base.replication_factor(hub.redundancy_strategy)
 
     # Starts children on all nodes.
@@ -252,7 +252,7 @@ defmodule Test.IntegrationTest do
        ]
   test "redundancy with singularity", %{hub_id: hub_id} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add)
@@ -413,7 +413,7 @@ defmodule Test.IntegrationTest do
        %{hub_id: hub_id, replication_factor: rf, listed_hooks: lh} = context do
     nodes_count = @nr_of_peers
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Stop hubs on peer nodes before we start.
     Enum.each(Node.list(), fn node ->
@@ -482,7 +482,7 @@ defmodule Test.IntegrationTest do
        %{hub_id: hub_id, listed_hooks: lh, hub: hub} = context do
     nodes_count = @nr_of_peers
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Node ups.
     Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
@@ -573,7 +573,7 @@ defmodule Test.IntegrationTest do
        ]
   test "migration hotswap shutdown", %{hub_id: hub_id} = context do
     child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     Common.sync_base_test(context, child_specs, :add, scope: :global)
 

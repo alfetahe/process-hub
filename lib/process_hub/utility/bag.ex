@@ -55,13 +55,25 @@ defmodule ProcessHub.Utility.Bag do
     end
   end
 
+  @type gen_child_specs_opts :: [{:prefix, String.t()} | {:id_type, :string | :atom}]
+
   @doc """
   Generates child specs for testing.
   """
-  @spec gen_child_specs(integer, any) :: list
-  def gen_child_specs(count, prefix \\ "child") do
+  @spec gen_child_specs(integer, gen_child_specs_opts()) :: list
+  def gen_child_specs(count, opts \\ []) do
+    prefix = Keyword.get(opts, :prefix, "child")
+    id_type = Keyword.get(opts, :id_type, :atom)
+
     for x <- 1..count do
-      id = (prefix <> Integer.to_string(x)) |> String.to_atom()
+      id =
+        (prefix <> Integer.to_string(x))
+        |> then(fn string_id ->
+          case id_type do
+            :string -> string_id
+            :atom -> String.to_atom(string_id)
+          end
+        end)
 
       %{id: id, start: {Test.Helper.TestServer, :start_link, [%{name: id}]}}
     end

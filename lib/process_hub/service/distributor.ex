@@ -117,7 +117,8 @@ defmodule ProcessHub.Service.Distributor do
       Enum.map(child_ids, fn child_id ->
         result = DistributedSupervisor.terminate_child(dist_sup, child_id)
 
-        {child_id, {result, Keyword.get(reply_opts, child_id, [])}}
+        {^child_id, found_child_reply_opt} = List.keyfind(reply_opts, child_id, 0, {child_id, []})
+        {child_id, {result, found_child_reply_opt}}
       end)
 
     SynchronizationStrategy.propagate(
