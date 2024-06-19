@@ -143,7 +143,7 @@ defmodule ProcessHubTest do
   end
 
   test "stop child with string ids", %{hub_id: hub_id} = _context do
-    child_specs = ProcessHub.Utility.Bag.gen_child_specs(3)
+    child_specs = ProcessHub.Utility.Bag.gen_child_specs(3, id_type: :string)
 
     ProcessHub.start_children(hub_id, child_specs, async_wait: true) |> ProcessHub.await()
 
@@ -152,7 +152,7 @@ defmodule ProcessHubTest do
 
     assert ProcessHub.stop_child(hub_id, "non_existing", async_wait: true, timeout: 100)
            |> ProcessHub.await() ===
-             {:error, {:non_existing, [{node(), {:error, :not_found}}]}}
+             {:error, {"non_existing", [{node(), {:error, :not_found}}]}}
 
     assert ProcessHub.stop_child(hub_id, "child3", async_wait: true, timeout: 100)
            |> ProcessHub.await() === {:ok, {"child3", [node()]}}
