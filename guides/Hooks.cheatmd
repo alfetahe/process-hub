@@ -124,7 +124,7 @@ end
 
 ## Internally registered hook handlers
 ProcessHub is using hooks internally to depending on the active configuration.
-These hook handlers are marked with the tag `:internal` and should never be removed or modified.
+These hook handlers should never be removed or modified.
 The list of internally registered hooks ids are: 
 - `:ch_join`
 - `:ch_leave`
@@ -168,8 +168,17 @@ def init(_strategy, hub_id) do
     a: [hub_id, :_]
   }
 
+  shutdown_handler = %HookManager{
+    id: :ch_shutdown,
+    m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+    f: :handle_shutdown,
+    a: [hub_id],
+    p: 100
+  }
+
   HookManager.register_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
   HookManager.register_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
+  HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
 end
 
 
@@ -189,14 +198,14 @@ end
 
 ## Hook handler priority
 ProcessHub by default does not guarantee the order of hook handler execution unless 
-the hook handler specifies a priority level. The priority level is an integer value that
+the hook handler specifies a **priority level**. The priority level is an integer value that
 determines the order of execution of the hook handlers. The higher the priority level, the
-earlier the hook handler will be executed. By default all hooks have a priority level of 0.
+earlier the hook handler will be executed. By default all hooks have a priority level of `0`.
 
-Here an example of how to set the priority level of a hook handler:
+We define the priority level of a hook handler by setting the `:p` field of the `t:ProcessHub.Service.HookManager.t/0`
+
+Here an example of how to set the priority level of a hook handler to 15:
 ```elixir
-```elixir 
-# Register hook handler
 alias ProcessHub.Service.HookManager
 alias ProcessHub.Constant.Hook
 ...
@@ -205,11 +214,42 @@ hook_handler = %HookManager{
   m: MyModule,
   f: :handle_child_start,
   a: [],
-  p: 10 # here we set the priority level to 10.
+  p: 15 # here we set the priority level to 15.
 }
 
 HookManager.register_handlers(:my_hub, Hook.pre_cluster_leave(), [hook_handler])
 ```
+
+## Hook handler arguments
+The hook handler expects a arguments which is a list of values. 
+These values will then be passed to the hook handler function in the same order.
+Some hooks dispatchers will pass additional data to the hook handler function which
+then can be accessed using the wildcard argument in the handler function.
+These are called wildcard arguments and are represented by the `:_` symbol.
+
+Example:
+```elixir
+alias ProcessHub.Service.HookManager
+alias ProcessHub.Constant.Hook
+...
+hook_handler = %HookManager{
+  id: :handler_id_1,
+  m: MyModule,
+  f: :handle_child_start,
+  a: [:_, :some, :something_else] # here the first argument will be the wildcard argument.
+}
+
+HookManager.register_handlers(:my_hub, Hook.pre_cluster_join(), [hook_handler])
+
+# Here the handler function receives the wildcard argument as the first argument.
+defmodule MyModule do
+  def handle_child_start(wild_card_value, :some, :something_else) do
+    # Because we used the `:pre_cluster_join_hook` hook event the wild_card_value will be a `node()`
+  end
+end
+```
+
+You can familiarize yourself with the available hooks and their data in the last section of this guide.
 
 ## Available hooks
 {: .width-100}
