@@ -17,6 +17,8 @@ Example dynamic hook registration using the `t:ProcessHub.t/0` configuration str
 ```elixir
 # Register a hook handler for the `:pre_cluster_join_hook` event with a wildcard argument.
 defmodule MyApp.Application do
+  alias ProcessHub.Service.HookManager
+
   use Application
 
   def start(_type, _args) do
@@ -58,12 +60,14 @@ end
 
 Example hook registration using the `ProcessHub.Service.HookManager` module:
 ```elixir
+alias ProcessHub.Service.HookManager
+
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-ProcessHub.Service.HookManager.register_handler(
+HookManager.register_handler(
   :my_hub, 
   ProcessHub.Constant.Hook.post_cluster_join(),
   %HookManager{
-    id: :hook_id_1, 
+    id: :hook_id_30, 
     m: MyModule,
     f: :my_function,
     a: [:some_data, :_]
