@@ -25,11 +25,26 @@ defmodule MyApp.Application do
         hub_id: :my_hub,
         hooks: %{
           ProcessHub.Constant.Hook.pre_cluster_join() => [
-            {MyModule, :my_function, [:some_data, :_]},
-            {MyModule2, :my_function2, [:some_data]}
+            %HookManager{
+              id: :hook_id_1,
+              m: MyModule,
+              f: :my_function,
+              a: [:some_data, :_]
+            },
+            %HookManager{
+              id: :hook_id_2,
+              m: MyModule2,
+              f: :my_function2,
+              a: [:some_data]
+            }
           ],
           ProcessHub.Constant.Hook.post_cluster_join() => [
-            {MyModule, :my_function, [:some_data, :_]}
+            %HookManager{
+              id: :hook_id_3,
+              m: MyModule,
+              f: :my_function,
+              a: [:some_data, :_]
+            }
           ]
         }
       })
