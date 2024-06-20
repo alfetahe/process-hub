@@ -46,7 +46,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     @spec init(ProcessHub.Strategy.Distribution.Guided.t(), ProcessHub.hub_id()) :: any()
     def init(_strategy, hub_id) do
       handler = %HookManager{
-        id: :guided_pre_start_handler,
+        id: :dg_pre_start_handler,
         m: ProcessHub.Strategy.Distribution.Guided,
         f: :handle_children_start,
         a: [hub_id, :_]
