@@ -1,6 +1,22 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+
+## v0.2.5-alpha - 2024-06-21
+Bugfixes and documentation improvements.
+
+### Changed
+- Internal hook handler ID's.
+
+### Added
+- Guide page for creating custom strategies.
+- More examples on how to use the hook system.
+
+### Fixed
+- Child process stopping when `child_id` was binary type. (Reported  and fixed by [
+Peaceful James](https://github.com/peaceful-james)
+- Documentation errors.
+
 ## v0.2.4-alpha - 2024-06-02
 This release was focused on improving the hook system and adding new features to the system.
 
