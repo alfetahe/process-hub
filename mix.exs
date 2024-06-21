@@ -30,7 +30,8 @@ defmodule ProcessHub.MixProject do
           "guides/StateHandover.md",
           "guides/ManualDistribution.md",
           "guides/ReplicatingProcesses.md",
-          "guides/Hooks.cheatmd"
+          "guides/Hooks.cheatmd",
+          "guides/CustomStrategy.md",
         ],
         authors: ["Anuar Alfetahe"]
       ]
