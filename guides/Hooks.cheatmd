@@ -17,6 +17,9 @@ Example dynamic hook registration using the `t:ProcessHub.t/0` configuration str
 ```elixir
 # Register a hook handler for the `:pre_cluster_join_hook` event with a wildcard argument.
 defmodule MyApp.Application do
+  alias ProcessHub.Service.HookManager
+  alias alias ProcessHub.Constant.Hook
+
   use Application
 
   def start(_type, _args) do
@@ -24,12 +27,27 @@ defmodule MyApp.Application do
       ProcessHub.child_spec(%ProcessHub{
         hub_id: :my_hub,
         hooks: %{
-          ProcessHub.Constant.Hook.pre_cluster_join() => [
-            {MyModule, :my_function, [:some_data, :_]},
-            {MyModule2, :my_function2, [:some_data]}
+          Hook.pre_cluster_join() => [
+            %HookManager{
+              id: :hook_id_1,
+              m: MyModule,
+              f: :my_function,
+              a: [:some_data, :_]
+            },
+            %HookManager{
+              id: :hook_id_2,
+              m: MyModule2,
+              f: :my_function2,
+              a: [:some_data]
+            }
           ],
-          ProcessHub.Constant.Hook.post_cluster_join() => [
-            {MyModule, :my_function, [:some_data, :_]}
+          Hook.post_cluster_join() => [
+            %HookManager{
+              id: :hook_id_3,
+              m: MyModule,
+              f: :my_function,
+              a: [:some_data, :_]
+            }
           ]
         }
       })
@@ -43,12 +61,15 @@ end
 
 Example hook registration using the `ProcessHub.Service.HookManager` module:
 ```elixir
+alias ProcessHub.Service.HookManager
+alias ProcessHub.Constant.Hook
+
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-ProcessHub.Service.HookManager.register_handler(
+HookManager.register_handler(
   :my_hub, 
-  ProcessHub.Constant.Hook.post_cluster_join(),
+  Hook.post_cluster_join(),
   %HookManager{
-    id: :hook_id_1, 
+    id: :hook_id_30, 
     m: MyModule,
     f: :my_function,
     a: [:some_data, :_]
@@ -65,6 +86,68 @@ defmodule MyModule do
   end
 end
 ```
+
+## Using hooks to react and handle asynchronous events
+
+Sometimes when starting a child process, it is necessary to know when the child process has been
+started and is ready to receive messages. We sure could use the `:async_wait` option but that would
+block the process that is starting the child process. Instead, we can use hooks to react to the
+`:pre_children_start` event asynchronously.
+
+Example:
+```elixir 
+# Register hook handler
+alias ProcessHub.Service.HookManager
+alias ProcessHub.Constant.Hook
+...
+hub_id = :my_hub
+
+hook_handler1 = %HookManager{
+  id: :handler_id_1,
+  m: MyModule,
+  f: :my_first_func,
+  a: [:_]
+}
+
+hook_handler2 = %HookManager{
+  id: :handler_id_2,
+  m: MyModule,
+  f: :my_second_func,
+  a: [:hub_id, :_]
+}
+
+# We're triggering the hook when child process has been registered under the process registry.
+HookManager.register_handlers(:my_hub, Hook.registry_pid_inserted(), [hook_handler1, hook_handler2])
+...
+
+# The hook handlers
+defmodule MyModule do
+  def my_first_func(hub_id, {child_id, node_pids}) do
+    # Send message to all started child processes.
+    Enum.each(node_pids, fn {_node, pid} ->
+      Process.send(pid, :hello_world, [])
+    end)
+  end
+
+  def my_second_func(hub_id, hook_data) do
+    ...
+  end
+end
+```
+
+## Internally registered hook handlers
+ProcessHub is using hooks internally to depending on the active configuration.
+These hook handlers should never be removed or modified.
+The list of internally registered hooks ids are: 
+- `:ch_join`
+- `:ch_leave`
+- `:ch_shutdown`
+- `:mhs_shutdown`
+- `:mhs_process_startups`
+- `:rr_post_start`
+- `:rr_post_stop`
+- `:rr_post_update`
+- `:dg_pre_start_handler`
 
 ## Hooks in custom strategy implementations
 
@@ -98,8 +181,17 @@ def init(_strategy, hub_id) do
     a: [hub_id, :_]
   }
 
-  HookManager.register_handlers(hub_id, Hook.pre_cluster_join(), join_handler)
-  HookManager.register_handlers(hub_id, Hook.pre_cluster_leave(), leave_handler)
+  shutdown_handler = %HookManager{
+    id: :ch_shutdown,
+    m: ProcessHub.Strategy.Distribution.ConsistentHashing,
+    f: :handle_shutdown,
+    a: [hub_id],
+    p: 100
+  }
+
+  HookManager.register_handler(hub_id, Hook.pre_cluster_join(), join_handler)
+  HookManager.register_handler(hub_id, Hook.pre_cluster_leave(), leave_handler)
+  HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
 end
 
 
@@ -117,16 +209,16 @@ def handle_node_leave(hub_id, node) do
 end
 ```
 
-## Using hooks to react and handle asynchronous events
+## Hook handler priority
+ProcessHub by default does not guarantee the order of hook handler execution unless 
+the hook handler specifies a **priority level**. The priority level is an integer value that
+determines the order of execution of the hook handlers. The higher the priority level, the
+earlier the hook handler will be executed. By default all hooks have a priority level of `0`.
 
-Sometimes when starting a child process, it is necessary to know when the child process has been
-started and is ready to receive messages. We sure could use the `:async_wait` option but that would
-block the process that is starting the child process. Instead, we can use hooks to react to the
-`:pre_children_start` event asynchronously.
+We define the priority level of a hook handler by setting the `:p` field of the `t:ProcessHub.Service.HookManager.t/0`
 
-Example:
-```elixir 
-# Register hook handler
+Here an example of how to set the priority level of a hook handler to 15:
+```elixir
 alias ProcessHub.Service.HookManager
 alias ProcessHub.Constant.Hook
 ...
@@ -134,23 +226,79 @@ hook_handler = %HookManager{
   id: :handler_id_1,
   m: MyModule,
   f: :handle_child_start,
-  a: [hub_id, :_]
+  a: [],
+  p: 15 # here we set the priority level to 15.
 }
 
-# We're triggering the hook when child process has been registered under the process registry.
-HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), join_handler)
-...
+HookManager.register_handler(:my_hub, Hook.pre_cluster_leave(), hook_handler)
+```
 
-# The hook handler
+## Hook handler arguments
+The hook handler expects a arguments which is a list of values. 
+These values will then be passed to the hook handler function in the same order.
+Some hooks dispatchers will pass additional data to the hook handler function which
+then can be accessed using the wildcard argument in the handler function.
+These are called wildcard arguments and are represented by the `:_` symbol.
+
+Example:
+```elixir
+alias ProcessHub.Service.HookManager
+alias ProcessHub.Constant.Hook
+...
+hook_handler = %HookManager{
+  id: :handler_id_1,
+  m: MyModule,
+  f: :handle_child_start,
+  a: [:_, :some, :something_else] # here the first argument will be the wildcard argument.
+}
+
+HookManager.register_handler(:my_hub, Hook.pre_cluster_join(), hook_handler)
+
+# Here the handler function receives the wildcard argument as the first argument.
 defmodule MyModule do
-  def handle_child_start(hub_id, {child_id, node_pids}) do
-    # Send message to all started child processes.
-    Enum.each(node_pids, fn {_node, pid} ->
-      Process.send(pid, :hello_world, [])
-    end)
+  def handle_child_start(wild_card_value, :some, :something_else) do
+    # Because we used the `:pre_cluster_join_hook` hook event the wild_card_value will be a `node()`
   end
 end
 ```
+
+You can familiarize yourself with the available hooks and their data in the last section of this guide.
+
+## Listing hook handlers
+You can list all registered hook handlers for a specific hook event by calling 
+the `registered_handlers/2` function from the `ProcessHub.Service.HookManager` module.
+
+Example:
+```elixir
+iex> alias ProcessHub.Service.HookManager
+iex> alias ProcessHub.Constant.Hook 
+iex> HookManager.registered_handlers :my_hub, Hook.registry_pid_inserted()  
+[
+  %ProcessHub.Service.HookManager{
+    id: :handler_id_2,
+    m: MyModule,
+    f: :my_second_func,
+    a: [:hub_id, :_],
+    p: 0
+  }
+]
+```
+
+## Removing hook handlers
+You can remove a specific hook handler by calling the `cancel_handler/3` function.
+
+Example:
+```elixir
+iex> alias ProcessHub.Service.HookManager
+iex> alias ProcessHub.Constant.Hook 
+iex> HookManager.cancel_handler(:my_hub, Hook.registry_pid_inserted(), :handler_id_1)
+:ok
+```
+
+It's also possible to dispatch hooks manually by calling the `dispatch_hook/3` or
+`dispatch_hooks/3` functions from the `ProcessHub.Service.HookManager` module.
+Although, it's not recommended to dispatch hooks manually as it can lead to unexpected behavior.
+
 
 ## Available hooks
 {: .width-100}
@@ -174,4 +322,4 @@ end
 | `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `any()`                                            |
 | `:process_startups_hook`            | Processes have been startups                | `[%{cid: child_id, pid: pid()}]`                   |
 
-See `ProcessHub.Constant.Hook` module for more information.
+See `ProcessHub.Constant.Hook` module for more information on available hooks.
