@@ -55,7 +55,7 @@ synchronization, distribution and more.
     ```elixir
     def deps do
       [
-        {:process_hub, "~> 0.2.4-alpha"}
+        {:process_hub, "~> 0.2.5-alpha"}
       ]
     end
     ```
