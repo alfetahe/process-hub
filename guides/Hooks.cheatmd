@@ -100,24 +100,37 @@ Example:
 alias ProcessHub.Service.HookManager
 alias ProcessHub.Constant.Hook
 ...
-hook_handler = %HookManager{
+hub_id = :my_hub
+
+hook_handler1 = %HookManager{
   id: :handler_id_1,
   m: MyModule,
-  f: :handle_child_start,
-  a: [hub_id, :_]
+  f: :my_first_func,
+  a: [:_]
+}
+
+hook_handler2 = %HookManager{
+  id: :handler_id_2,
+  m: MyModule,
+  f: :my_second_func,
+  a: [:hub_id, :_]
 }
 
 # We're triggering the hook when child process has been registered under the process registry.
-HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), join_handler)
+HookManager.register_handlers(:my_hub, Hook.registry_pid_inserted(), [hook_handler1, hook_handler2])
 ...
 
-# The hook handler
+# The hook handlers
 defmodule MyModule do
-  def handle_child_start(hub_id, {child_id, node_pids}) do
+  def my_first_func(hub_id, {child_id, node_pids}) do
     # Send message to all started child processes.
     Enum.each(node_pids, fn {_node, pid} ->
       Process.send(pid, :hello_world, [])
     end)
+  end
+
+  def my_second_func(hub_id, hook_data) do
+    ...
   end
 end
 ```
@@ -176,8 +189,8 @@ def init(_strategy, hub_id) do
     p: 100
   }
 
-  HookManager.register_handlers(hub_id, Hook.pre_cluster_join(), [join_handler])
-  HookManager.register_handlers(hub_id, Hook.pre_cluster_leave(), [leave_handler])
+  HookManager.register_handler(hub_id, Hook.pre_cluster_join(), join_handler)
+  HookManager.register_handler(hub_id, Hook.pre_cluster_leave(), leave_handler)
   HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
 end
 
@@ -217,7 +230,7 @@ hook_handler = %HookManager{
   p: 15 # here we set the priority level to 15.
 }
 
-HookManager.register_handlers(:my_hub, Hook.pre_cluster_leave(), [hook_handler])
+HookManager.register_handler(:my_hub, Hook.pre_cluster_leave(), hook_handler)
 ```
 
 ## Hook handler arguments
@@ -239,7 +252,7 @@ hook_handler = %HookManager{
   a: [:_, :some, :something_else] # here the first argument will be the wildcard argument.
 }
 
-HookManager.register_handlers(:my_hub, Hook.pre_cluster_join(), [hook_handler])
+HookManager.register_handler(:my_hub, Hook.pre_cluster_join(), hook_handler)
 
 # Here the handler function receives the wildcard argument as the first argument.
 defmodule MyModule do
@@ -250,6 +263,42 @@ end
 ```
 
 You can familiarize yourself with the available hooks and their data in the last section of this guide.
+
+## Listing hook handlers
+You can list all registered hook handlers for a specific hook event by calling 
+the `registered_handlers/2` function from the `ProcessHub.Service.HookManager` module.
+
+Example:
+```elixir
+iex> alias ProcessHub.Service.HookManager
+iex> alias ProcessHub.Constant.Hook 
+iex> HookManager.registered_handlers :my_hub, Hook.registry_pid_inserted()  
+[
+  %ProcessHub.Service.HookManager{
+    id: :handler_id_2,
+    m: MyModule,
+    f: :my_second_func,
+    a: [:hub_id, :_],
+    p: 0
+  }
+]
+```
+
+## Removing hook handlers
+You can remove a specific hook handler by calling the `cancel_handler/3` function.
+
+Example:
+```elixir
+iex> alias ProcessHub.Service.HookManager
+iex> alias ProcessHub.Constant.Hook 
+iex> HookManager.cancel_handler(:my_hub, Hook.registry_pid_inserted(), :handler_id_1)
+:ok
+```
+
+It's also possible to dispatch hooks manually by calling the `dispatch_hook/3` or
+`dispatch_hooks/3` functions from the `ProcessHub.Service.HookManager` module.
+Although, it's not recommended to dispatch hooks manually as it can lead to unexpected behavior.
+
 
 ## Available hooks
 {: .width-100}
@@ -273,4 +322,4 @@ You can familiarize yourself with the available hooks and their data in the last
 | `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `any()`                                            |
 | `:process_startups_hook`            | Processes have been startups                | `[%{cid: child_id, pid: pid()}]`                   |
 
-See `ProcessHub.Constant.Hook` module for more information.
+See `ProcessHub.Constant.Hook` module for more information on available hooks.
