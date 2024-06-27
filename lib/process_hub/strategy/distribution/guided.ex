@@ -63,8 +63,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
             pos_integer()
           ) :: [atom]
     def belongs_to(_strategy, hub_id, child_id, replication_factor) do
-      with child_mappings <- Storage.get(hub_id, StorageKey.gdc()),
-           child_nodes <- Map.get(child_mappings, child_id),
+      with %{^child_id => child_nodes} <- Storage.get(hub_id, StorageKey.gdc()),
            nodes <- Enum.take(child_nodes, replication_factor) do
         nodes
       else
