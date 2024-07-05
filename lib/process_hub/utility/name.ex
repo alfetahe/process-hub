@@ -71,4 +71,13 @@ defmodule ProcessHub.Utility.Name do
   def hook_registry(hub_id) do
     concat_name([hub_id, "hook_registry"], ".")
   end
+
+  @doc "Extracts the `hub_id` from the given name."
+  @spec extract_hub_id(atom()) :: String.t()
+  def extract_hub_id(name) do
+    name
+    |> Atom.to_string()
+    |> String.split(".")
+    |> Enum.at(1)
+  end
 end
