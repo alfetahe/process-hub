@@ -25,6 +25,7 @@ defmodule ProcessHub.MixProject do
         extras: [
           "README.md",
           "guides/Introduction.md",
+          "guides/ProcessRegistry.md",
           "guides/Architecture.md",
           "guides/Configuration.md",
           "guides/StateHandover.md",
