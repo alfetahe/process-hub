@@ -343,7 +343,7 @@ defmodule ProcessHub do
   where the child is started, and the second element is the `pid()` of the started child.
 
   ## Example
-      iex> {} = {_child_spec, _node_pid_tuples} = ProcessHub.child_lookup(:my_hub, :my_child)
+      iex> {_child_spec, _node_pid_tuples} = ProcessHub.child_lookup(:my_hub, :my_child)
       {%{id: :my_child, start: {MyProcess, :start_link, []}}, [{:mynode, #PID<0.123.0>}]}
   """
   @spec child_lookup(hub_id(), child_id()) :: {child_spec(), [{node(), pid()}]} | nil
@@ -356,6 +356,29 @@ defmodule ProcessHub do
   """
   @spec process_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry()
   defdelegate process_registry(hub_id), to: ProcessRegistry, as: :registry
+
+  @doc """
+  Returns a list of pids for the given child_id.
+
+  ## Example
+    iex> ProcessHub.get_pids(:my_hub, :my_child)
+    [#PID<0.123.0>]
+  """
+  @spec get_pids(ProcessHub.hub_id(), ProcessHub.child_id()) :: [pid()]
+  defdelegate get_pids(hub_id, child_id), to: ProcessRegistry, as: :get_pids
+
+  @doc """
+  Returns the first pid for the given child_id.
+
+  Although the function can be handy to quickly get the pid of the child, it is
+  not recommended to use with replication strategies as it will return the first pid only.
+
+  ## Example
+    iex> ProcessHub.get_pid(:my_hub, :my_child)
+    #PID<0.123.0>
+  """
+  @spec get_pid(ProcessHub.hub_id(), ProcessHub.child_id()) :: pid() | nil
+  defdelegate get_pid(hub_id, child_id), to: ProcessRegistry, as: :get_pid
 
   @doc """
   Returns a list of processes that are registered.

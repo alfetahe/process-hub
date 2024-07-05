@@ -3,11 +3,13 @@ defmodule Test.Service.ProcessRegistryTest do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Utility.Name
 
   use ExUnit.Case
 
   setup_all %{} do
-    Test.Helper.SetupHelper.setup_base(%{}, :children_reg_test)
+    Test.Helper.SetupHelper.setup_base(%{}, :process_registry_test)
   end
 
   setup %{hub_id: hub_id} = context do
@@ -40,7 +42,7 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "bulk insert", %{hub_id: hub_id} = _context do
-    Cachex.purge(ProcessHub.Utility.Name.registry(hub_id))
+    Storage.clear_all(Name.registry(hub_id))
 
     hook = %HookManager{
       id: :process_registry_test_bulk_insert,
@@ -314,65 +316,4 @@ defmodule Test.Service.ProcessRegistryTest do
 
     assert Enum.sort(ProcessRegistry.local_child_specs(hub_id)) === formatted_data
   end
-
-  # test "handle children emit", %{hub_id: hub_id} = _context do
-  #   local_node = node()
-
-  #   remote = %{
-  #     1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
-  #     2 =>
-  #       {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}}, [{:node3, :pid3}, {:node4, :pid4}]}
-  #   }
-
-  #   local = %{
-  #     "3" => {%{id: "3", start: {:firstmod, :firstfunc, [1, 2]}}, [{local_node, :pid2}]},
-  #     "4" => {%{id: "4", start: {:secondmod, :secondfunc, [3, 4]}}, [{local_node, :pid1}]}
-  #   }
-
-  #   local_n_remote = %{
-  #     :five =>
-  #       {%{id: :five, start: {:firstmod, :firstfunc, [1, 2]}},
-  #        [{local_node, :pid1}, {:node2, "pid2"}]},
-  #     :six =>
-  #       {%{id: :six, start: {:secondmod, :secondfunc, [3, 4]}},
-  #        [{local_node, :pid3}, {:node4, "pid4"}]}
-  #   }
-
-  #   Map.merge(remote, local)
-  #   |> Map.merge(local_n_remote)
-  #   |> Enum.each(fn {_key, child} ->
-  #     ProcessRegistry.insert_child(hub_id, child)
-  #   end)
-
-  #   remote1 = [
-  #     {%{id: :seven, start: {:firstmod, :firstfunc, [1, 2]}}, :pidseven},
-  #     {%{id: :eigth, start: {:firstmod, :firstfunc, [1, 2]}}, :pideigth}
-  #   ]
-
-  #   remote2 = [
-  #     {%{id: :seven, start: {:firstmod, :firstfunc, [1, 2]}}, :pidseven},
-  #     {%{id: :eigth, start: {:firstmod, :firstfunc, [1, 2]}}, :pideigth}
-  #   ]
-
-  #   ProcessRegistry.handle_children_emit(hub_id, remote1, :remote1)
-  #   ProcessRegistry.handle_children_emit(hub_id, remote2, :remote2)
-
-  #   formatted_data =
-  #     Map.merge(local, remote)
-  #     |> Map.merge(local_n_remote)
-  #     |> Map.to_list()
-
-  #   formatted_data =
-  #     formatted_data ++
-  #       [
-  #         {:seven,
-  #          {%{id: :seven, start: {:firstmod, :firstfunc, [1, 2]}},
-  #           [{:remote1, :pidseven}, {:remote2, :pidseven}]}},
-  #         {:eigth,
-  #          {%{id: :eigth, start: {:firstmod, :firstfunc, [1, 2]}},
-  #           [{:remote1, :pideigth}, {:remote2, :pideigth}]}}
-  #       ]
-
-  #   assert Enum.sort(ProcessRegistry.children(hub_id)) === Enum.sort(formatted_data)
-  # end
 end
