@@ -102,7 +102,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @moduledoc """
     Handler for starting child processes.
     """
-
     @type t :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
             children: [
@@ -137,13 +136,15 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = arg) do
+      local_storage = Name.local_storage(arg.hub_id)
+
       arg = %__MODULE__{
         arg
         | dist_sup: Name.distributed_supervisor(arg.hub_id),
-          sync_strategy: Storage.get(arg.hub_id, StorageKey.strsyn()),
-          redun_strategy: Storage.get(arg.hub_id, StorageKey.strred()),
-          dist_strategy: Storage.get(arg.hub_id, StorageKey.strdist()),
-          migr_strategy: Storage.get(arg.hub_id, StorageKey.strmigr())
+          sync_strategy: Storage.get(local_storage, StorageKey.strsyn()),
+          redun_strategy: Storage.get(local_storage, StorageKey.strred()),
+          dist_strategy: Storage.get(local_storage, StorageKey.strdist()),
+          migr_strategy: Storage.get(local_storage, StorageKey.strmigr())
       }
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do

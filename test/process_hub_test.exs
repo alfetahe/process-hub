@@ -276,4 +276,36 @@ defmodule ProcessHubTest do
     assert Enum.at(nodepids2, 0) |> elem(0) === node()
     assert Enum.at(nodepids2, 0) |> elem(1) |> is_pid()
   end
+
+  test "get pids", %{hub_id: hub_id} = _context do
+    [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
+    ProcessHub.start_children(hub_id, [cs1, cs2], async_wait: true) |> ProcessHub.await()
+
+    c1_pids = ProcessHub.get_pids(hub_id, :child1)
+    c2_pids = ProcessHub.get_pids(hub_id, :child2)
+    not_existing = ProcessHub.get_pids(hub_id, :child3)
+
+    assert is_list(c1_pids) && length(c1_pids) === 1
+    assert is_list(c2_pids) && length(c2_pids) === 1
+    assert is_list(not_existing) && length(not_existing) === 0
+
+    Enum.each([c1_pids, c2_pids], fn pids ->
+      Enum.each(pids, fn pid ->
+        assert is_pid(pid)
+      end)
+    end)
+  end
+
+  test "get pid", %{hub_id: hub_id} = _context do
+    [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
+    ProcessHub.start_children(hub_id, [cs1, cs2], async_wait: true) |> ProcessHub.await()
+
+    c1_pid = ProcessHub.get_pid(hub_id, :child1)
+    c2_pid = ProcessHub.get_pid(hub_id, :child2)
+    not_existing = ProcessHub.get_pid(hub_id, :child3)
+
+    assert is_pid(c1_pid)
+    assert is_pid(c2_pid)
+    assert not_existing === nil
+  end
 end

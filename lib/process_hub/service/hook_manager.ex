@@ -4,6 +4,7 @@ defmodule ProcessHub.Service.HookManager do
   registration, and lookup.
   """
 
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Utility.Name
 
   # TODO: need more dynamic way of defining those.
@@ -72,9 +73,7 @@ defmodule ProcessHub.Service.HookManager do
   @doc "Returns all registered hook handlers for the given hook key"
   @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: [t()]
   def registered_handlers(hub_id, hook_key) do
-    {:ok, res} = Name.hook_registry(hub_id) |> Cachex.get(hook_key)
-
-    case res do
+    case Storage.get(Name.hook_registry(hub_id), hook_key) do
       nil -> []
       handlers -> handlers
     end
@@ -87,7 +86,7 @@ defmodule ProcessHub.Service.HookManager do
       registered_handlers(hub_id, hook_key)
       |> Enum.reject(fn handler -> handler.id == handler_id end)
 
-    Cachex.put(Name.hook_registry(hub_id), hook_key, hook_handlers)
+    Storage.insert(Name.hook_registry(hub_id), hook_key, hook_handlers)
 
     :ok
   end
@@ -142,7 +141,7 @@ defmodule ProcessHub.Service.HookManager do
 
     cond do
       Enum.empty?(duplicates) ->
-        Cachex.put(Name.hook_registry(hub_id), hook_key, sorted_handlers)
+        Name.hook_registry(hub_id) |> Storage.insert(hook_key, sorted_handlers)
         :ok
 
       true ->

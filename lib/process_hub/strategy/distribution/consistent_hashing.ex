@@ -39,6 +39,7 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   alias ProcessHub.Service.Ring
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Utility.Name
 
   @type t() :: %__MODULE__{}
   defstruct []
@@ -46,9 +47,10 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.ConsistentHashing do
     @impl true
     def init(_strategy, hub_id) do
-      hub_nodes = Storage.get(hub_id, StorageKey.hn())
+      local_storage = Name.local_storage(hub_id)
+      hub_nodes = Storage.get(local_storage, StorageKey.hn())
 
-      Storage.insert(hub_id, StorageKey.hr(), Ring.create_ring(hub_nodes))
+      Storage.insert(local_storage, StorageKey.hr(), Ring.create_ring(hub_nodes))
 
       join_handler = %HookManager{
         id: :ch_join,
@@ -101,7 +103,8 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   def handle_node_join(hub_id, node) do
     hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
 
-    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
+    Name.local_storage(hub_id)
+    |> Storage.insert(StorageKey.hr(), hash_ring)
   end
 
   @doc """
@@ -111,7 +114,8 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   def handle_node_leave(hub_id, node) do
     hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
 
-    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
+    Name.local_storage(hub_id)
+    |> Storage.insert(StorageKey.hr(), hash_ring)
   end
 
   @doc """
@@ -119,8 +123,9 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   """
   @spec handle_shutdown(ProcessHub.hub_id()) :: any()
   def handle_shutdown(hub_id) do
-    hash_ring = Storage.get(hub_id, StorageKey.hr()) |> Ring.remove_node(node())
+    local_storage = Name.local_storage(hub_id)
+    hash_ring = Storage.get(local_storage, StorageKey.hr()) |> Ring.remove_node(node())
 
-    Storage.insert(hub_id, StorageKey.hr(), hash_ring)
+    Storage.insert(local_storage, StorageKey.hr(), hash_ring)
   end
 end

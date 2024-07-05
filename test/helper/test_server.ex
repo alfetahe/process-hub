@@ -46,6 +46,14 @@ defmodule Test.Helper.TestServer do
     {:reply, :pong, state}
   end
 
+  def handle_cast({:stop, reason}, _state) do
+    {:stop, reason, nil}
+  end
+
+  def handle_cast(:fail, _state) do
+    {:stop, :err, nil}
+  end
+
   def handle_info({:process_hub, :redundancy_signal, mode}, state) do
     # IO.puts("redundancy_signal: #{inspect(mode)}")
 

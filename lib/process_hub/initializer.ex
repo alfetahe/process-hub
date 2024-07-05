@@ -30,6 +30,8 @@ defmodule ProcessHub.Initializer do
 
   @impl true
   def init(%ProcessHub{hub_id: hub_id} = hub) do
+    setup_storage(hub_id)
+
     managers = %{
       coordinator: Name.coordinator(hub_id),
       event_queue: Name.event_queue(hub_id),
@@ -38,14 +40,13 @@ defmodule ProcessHub.Initializer do
     }
 
     children =
-      storage(hub_id) ++
-        [
-          {Blockade, %{name: managers.event_queue, priority_sync: false}},
-          dist_sup(hub_id, managers),
-          {Task.Supervisor, name: managers.task_supervisor},
-          {ProcessHub.Coordinator, {hub_id, hub, managers}},
-          {ProcessHub.WorkerQueue, Name.worker_queue(hub_id)}
-        ]
+      [
+        {Blockade, %{name: managers.event_queue, priority_sync: false}},
+        dist_sup(hub_id, managers),
+        {Task.Supervisor, name: managers.task_supervisor},
+        {ProcessHub.Coordinator, {hub_id, hub, managers}},
+        {ProcessHub.WorkerQueue, Name.worker_queue(hub_id)}
+      ]
 
     opts = [strategy: :one_for_one]
 
@@ -63,20 +64,9 @@ defmodule ProcessHub.Initializer do
     }
   end
 
-  defp storage(hub_id) do
-    [
-      %{
-        id: :process_registry,
-        start: {Cachex, :start_link, [[name: Name.registry(hub_id), interval: nil]]}
-      },
-      %{
-        id: :hook_registry,
-        start: {Cachex, :start_link, [[name: Name.hook_registry(hub_id), interval: nil]]}
-      },
-      %{
-        id: :local_storage,
-        start: {Cachex, :start_link, [[name: Name.local_storage(hub_id), interval: 15_000]]}
-      }
-    ]
+  defp setup_storage(hub_id) do
+    :ets.new(Name.registry(hub_id), [:set, :public, :named_table])
+    :ets.new(Name.hook_registry(hub_id), [:set, :public, :named_table])
+    :ets.new(Name.local_storage(hub_id), [:set, :public, :named_table])
   end
 end

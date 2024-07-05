@@ -35,6 +35,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Utility.Name
 
   @type t() :: %__MODULE__{}
   defstruct []
@@ -63,7 +64,8 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
             pos_integer()
           ) :: [atom]
     def belongs_to(_strategy, hub_id, child_id, replication_factor) do
-      with %{^child_id => child_nodes} <- Storage.get(hub_id, StorageKey.gdc()),
+      with %{^child_id => child_nodes} <-
+             Storage.get(Name.local_storage(hub_id), StorageKey.gdc()),
            nodes <- Enum.take(child_nodes, replication_factor) do
         nodes
       else
@@ -77,7 +79,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     def children_init(_strategy, hub_id, child_specs, opts) do
       with {:ok, child_mappings} <- validate_child_init(hub_id, opts, child_specs),
            :ok <- GuidedStrategy.insert_child_mappings(hub_id, child_mappings) do
-        Storage.get(hub_id, StorageKey.gdc())
+        Storage.get(Name.local_storage(hub_id), StorageKey.gdc())
         :ok
       else
         err -> err
@@ -97,7 +99,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
 
     defp validate_children_replication(hub_id, mappings) do
       repl_fact =
-        Storage.get(hub_id, StorageKey.strred())
+        Storage.get(Name.local_storage(hub_id), StorageKey.strred())
         |> RedundancyStrategy.replication_factor()
 
       case Enum.all?(mappings, fn {_, children} -> length(children) == repl_fact end) do
@@ -141,13 +143,15 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
 
   @spec insert_child_mappings(ProcessHub.hub_id(), any()) :: :ok
   def insert_child_mappings(hub_id, child_mappings) do
-    case Storage.get(hub_id, StorageKey.gdc()) do
+    local_storage = Name.local_storage(hub_id)
+
+    case Storage.get(local_storage, StorageKey.gdc()) do
       nil ->
-        Storage.insert(hub_id, StorageKey.gdc(), child_mappings)
+        Storage.insert(local_storage, StorageKey.gdc(), child_mappings)
 
       existing_mappings ->
         new_mappings = Map.merge(existing_mappings, child_mappings)
-        Storage.insert(hub_id, StorageKey.gdc(), new_mappings)
+        Storage.insert(local_storage, StorageKey.gdc(), new_mappings)
     end
 
     :ok

@@ -6,14 +6,17 @@ defmodule ProcessHub.Service.Storage do
   Local storage is implemented using ETS tables and is cleared periodically.
   """
 
-  alias ProcessHub.Utility.Name
+  alias :ets, as: ETS
+
+  @type table_id() :: atom()
 
   @doc "Returns a boolean indicating whether the key exists in local storage."
-  @spec exists?(ProcessHub.hub_id(), term()) :: boolean()
-  def exists?(hub_id, key) do
-    {:ok, result} = Cachex.exists?(Name.local_storage(hub_id), key)
-
-    result
+  @spec exists?(table_id(), term()) :: boolean()
+  def exists?(table, key) do
+    case ETS.lookup(table, key) do
+      [] -> false
+      _ -> true
+    end
   end
 
   @doc """
@@ -22,11 +25,18 @@ defmodule ProcessHub.Service.Storage do
   If the key does not exist, nil is returned; otherwise, the value is returned in
   the format of a tuple: `{key, value, ttl}`.
   """
-  @spec get(ProcessHub.hub_id(), term()) :: term()
-  def get(hub_id, key) do
-    {:ok, value} = Cachex.get(Name.local_storage(hub_id), key)
+  @spec get(table_id(), term()) :: term()
+  def get(table, key) do
+    item =
+      table
+      |> ETS.lookup(key)
+      |> List.first()
 
-    value
+    case item do
+      {_key, value, _ttl} -> value
+      {_key, value} -> value
+      _ -> nil
+    end
   end
 
   @doc """
@@ -37,31 +47,46 @@ defmodule ProcessHub.Service.Storage do
 
   If the key does not exist, the current value is nil.
   """
-  @spec update(ProcessHub.hub_id(), term(), function()) :: {:commit, any()}
-  def update(hub_id, key, func) do
-    Cachex.get_and_update(Name.local_storage(hub_id), key, fn
-      value -> {:commit, func.(value)}
-    end)
+  @spec update(table_id(), term(), function()) :: boolean()
+  def update(table, key, func) do
+    insert(table, key, func.(get(table, key)))
   end
 
   @doc """
   Inserts the key and value into local storage.
 
-  It is possible to set a time to live (TTL) for the key. If the TTL is set to
-  nil, the key will not expire.
-
-  The `ttl` value is expected to be a positive integer in milliseconds.
+  Available options:
+    - `ttl`: The time to live for the key in milliseconds.
   """
-  @spec insert(ProcessHub.hub_id(), term(), term(), pos_integer() | nil) :: boolean()
-  def insert(hub_id, key, value, ttl) do
-    {:ok, res} = Cachex.put(Name.local_storage(hub_id), key, value, ttl: ttl)
+  @spec insert(table_id(), term(), term(), keyword() | nil) :: boolean()
+  def insert(table, key, value, opts \\ []) do
+    ttl = Keyword.get(opts, :ttl, nil)
 
-    res
+    case is_integer(ttl) do
+      true -> ETS.insert(table, {key, value, ttl: ttl})
+      false -> ETS.insert(table, {key, value})
+    end
   end
 
-  def insert(hub_id, key, value) do
-    {:ok, res} = Cachex.put(Name.local_storage(hub_id), key, value)
+  # TODO: add tests later
 
-    res
+  @doc """
+  Removes an entry from the storage.
+  """
+  @spec remove(table_id(), term()) :: boolean()
+  def remove(table, key) do
+    ETS.delete(table, key)
+  end
+
+  @doc "Deletes all objects from the ETS table."
+  @spec clear_all(table_id()) :: boolean()
+  def clear_all(table) do
+    ETS.delete_all_objects(table)
+  end
+
+  @doc "Exports all objects from the ETS table."
+  @spec export_all(table_id()) :: [{atom() | binary(), term(), pos_integer() | nil}]
+  def export_all(table) do
+    ETS.tab2list(table)
   end
 end

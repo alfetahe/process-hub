@@ -59,8 +59,10 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           :add | :rem
         ) :: :ok
   def handle_propagation(strategy, hub_id, {ref, acks, child_data, update_node}, type) do
+    local_storage = Name.local_storage(hub_id)
+
     cached_acks =
-      case Storage.get(hub_id, ref) do
+      case Storage.get(local_storage, ref) do
         nil -> []
         :invalidated -> :invalidated
         cached_acks -> cached_acks
@@ -87,7 +89,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             acks
           end
 
-        Storage.insert(hub_id, ref, acks, strategy.sync_interval)
+        Storage.insert(local_storage, ref, acks, ttl: strategy.sync_interval)
 
         recipients_select(unacked_nodes, strategy)
         |> propagate_data(hub_id, strategy, {ref, acks, child_data, update_node}, type)
@@ -102,7 +104,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           reference()
         ) :: boolean()
   def invalidate_ref(strategy, hub_id, ref) do
-    Storage.insert(hub_id, ref, :invalidated, strategy.sync_interval)
+    Name.local_storage(hub_id)
+    |> Storage.insert(ref, :invalidated, ttl: strategy.sync_interval)
   end
 
   @spec propagate_data(
@@ -246,7 +249,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
             list()
           ) :: :ok
     def handle_sync_data(strategy, hub_id, ref, sync_data, sync_acks) do
-      Storage.insert(hub_id, ref, {sync_data, sync_acks}, strategy.sync_interval)
+      Name.local_storage(hub_id)
+      |> Storage.insert(ref, {sync_data, sync_acks}, ttl: strategy.sync_interval)
+
       missing_nodes = missing_nodes(sync_data, hub_id)
 
       cond do
@@ -294,7 +299,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         node() => {Synchronizer.local_sync_data(hub_id), Bag.timestamp(:microsecond)}
       }
 
-      Storage.insert(hub_id, ref, {sync_data, []}, strategy.sync_interval)
+      Name.local_storage(hub_id)
+      |> Storage.insert(ref, {sync_data, []}, ttl: strategy.sync_interval)
 
       cluster_nodes
       |> Gossip.recipients_select(strategy)
@@ -306,11 +312,12 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     end
 
     defp merge_sync_data(hub_id, ref, nodes_data, sync_acks) do
+      local_storage = Name.local_storage(hub_id)
       local_timestamp = Bag.timestamp(:microsecond)
       local_data = Synchronizer.local_sync_data(hub_id)
       nodes_data = Map.put(nodes_data, node(), {local_data, local_timestamp})
 
-      case Storage.get(hub_id, ref) do
+      case Storage.get(local_storage, ref) do
         nil ->
           {nodes_data, []}
 
@@ -332,7 +339,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
     defp sync_locally(hub_id, nodes_data) do
       node_timestamps =
-        case Storage.get(hub_id, StorageKey.gct()) do
+        case Storage.get(Name.local_storage(hub_id), StorageKey.gct()) do
           nil -> %{}
           node_timestamps -> node_timestamps
         end
@@ -363,14 +370,16 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     end
 
     defp update_node_timestamps(hub_id, node, timestamp) do
+      local_storage = Name.local_storage(hub_id)
+
       node_timestamps =
-        case Storage.get(hub_id, StorageKey.gct()) do
+        case Storage.get(local_storage, StorageKey.gct()) do
           nil -> %{}
           node_timestamps -> node_timestamps || %{}
         end
         |> Map.put(node, timestamp)
 
-      Storage.insert(hub_id, StorageKey.gct(), node_timestamps)
+      Storage.insert(local_storage, StorageKey.gct(), node_timestamps)
     end
 
     defp missing_nodes(nodes_data, hub_id) do

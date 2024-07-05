@@ -11,6 +11,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Utility.Name
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -90,13 +91,15 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp add_strategies(arg) do
+      local_storage = Name.local_storage(arg.hub_id)
+
       %__MODULE__{
         arg
-        | sync_strat: Storage.get(arg.hub_id, StorageKey.strsyn()),
-          redun_strat: Storage.get(arg.hub_id, StorageKey.strred()),
-          dist_strat: Storage.get(arg.hub_id, StorageKey.strdist()),
-          migr_strat: Storage.get(arg.hub_id, StorageKey.strmigr()),
-          partition_strat: Storage.get(arg.hub_id, StorageKey.strpart())
+        | sync_strat: Storage.get(local_storage, StorageKey.strsyn()),
+          redun_strat: Storage.get(local_storage, StorageKey.strred()),
+          dist_strat: Storage.get(local_storage, StorageKey.strdist()),
+          migr_strat: Storage.get(local_storage, StorageKey.strmigr()),
+          partition_strat: Storage.get(local_storage, StorageKey.strpart())
       }
     end
 
@@ -263,11 +266,13 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     @spec handle(t()) :: any()
     def handle(%__MODULE__{} = arg) do
+      local_storage = Name.local_storage(arg.hub_id)
+
       %__MODULE__{
         arg
-        | partition_strat: Storage.get(arg.hub_id, StorageKey.strpart()),
-          redun_strat: Storage.get(arg.hub_id, StorageKey.strred()),
-          dist_strat: Storage.get(arg.hub_id, StorageKey.strdist())
+        | partition_strat: Storage.get(local_storage, StorageKey.strpart()),
+          redun_strat: Storage.get(local_storage, StorageKey.strred()),
+          dist_strat: Storage.get(local_storage, StorageKey.strdist())
       }
       |> dispatch_down_hook()
       |> distribute_processes()

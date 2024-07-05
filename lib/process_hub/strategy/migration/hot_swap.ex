@@ -249,7 +249,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   def handle_shutdown(_struct, _hub_id), do: :ok
 
   def handle_process_startups(%__MODULE__{handover: true} = _struct, hub_id, cpids) do
-    state_data = Storage.get(hub_id, StorageKey.msk()) || []
+    state_data = Storage.get(Name.local_storage(hub_id), StorageKey.msk()) || []
 
     Enum.each(cpids, fn %{cid: cid, pid: pid} ->
       pstate = Keyword.get(state_data, cid, nil)
@@ -265,8 +265,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   def handle_process_startups(_struct, _hub_id, _pids), do: nil
 
   defp rem_states(hub_id, cids) do
-    Storage.update(hub_id, StorageKey.msk(), fn states ->
-      Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
+    Name.local_storage(hub_id)
+    |> Storage.update(StorageKey.msk(), fn
+      nil -> nil
+      states -> Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
     end)
   end
 
@@ -279,7 +281,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         # Need to be sure that this is sent and handled on the remote nodes
         # before they start the new children.
         :erpc.call(node, fn ->
-          Storage.update(hub_id, StorageKey.msk(), fn old_value ->
+          Storage.update(Name.local_storage(hub_id), StorageKey.msk(), fn old_value ->
             case old_value do
               nil -> data
               _ -> data ++ old_value
@@ -291,10 +293,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   end
 
   defp format_send_data({local_data, states}, hub_id) do
-    dist_strat = Storage.get(hub_id, StorageKey.strdist())
+    local_storage = Name.local_storage(hub_id)
+    dist_strat = Storage.get(local_storage, StorageKey.strdist())
 
     repl_fact =
-      Storage.get(hub_id, StorageKey.strred())
+      Storage.get(local_storage, StorageKey.strred())
       |> RedundancyStrategy.replication_factor()
 
     Enum.reduce(local_data, %{}, fn {cid, {_, cn}}, acc ->

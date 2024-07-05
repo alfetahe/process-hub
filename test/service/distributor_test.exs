@@ -68,6 +68,8 @@ defmodule Test.Service.DistributorTest do
   end
 
   test "terminate children", %{hub_id: hub_id} = _context do
+    local_storage = Name.local_storage(hub_id)
+
     cs1 = %{
       id: :dist_child_add,
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add}]}
@@ -86,7 +88,7 @@ defmodule Test.Service.DistributorTest do
     )
     |> ProcessHub.await()
 
-    sync_strategy = ProcessHub.Service.Storage.get(hub_id, :synchronization_strategy)
+    sync_strategy = ProcessHub.Service.Storage.get(local_storage, :synchronization_strategy)
 
     Distributor.children_terminate(hub_id, [cs1.id, cs2.id], sync_strategy)
 

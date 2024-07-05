@@ -163,9 +163,11 @@ alias ProcessHub.Service.HookManager
 
 # Register hook handlers to update the hash ring when node joins or leaves the cluster.
 def init(_strategy, hub_id) do
-  hub_nodes = Storage.get(hub_id, :hub_nodes)
+  local_storage = ProcessHub.Utility.Name.local_storage(hub_id)
 
-  Storage.insert(hub_id, StorageKey.hr, Ring.create_ring(hub_nodes))
+  hub_nodes = Storage.get(local_storage, :hub_nodes)
+
+  Storage.insert(local_storage, StorageKey.hr, Ring.create_ring(hub_nodes))
 
   join_handler = %HookManager{
     id: :ch_join,
@@ -199,13 +201,13 @@ end
 def handle_node_join(hub_id, node) do
   hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
 
-  Storage.insert(hub_id, StorageKey.hr, hash_ring)
+  Storage.insert(ProcessHub.Utility.Name.local_storage(hub_id), StorageKey.hr, hash_ring)
 end
 
 def handle_node_leave(hub_id, node) do
   hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
 
-  Storage.insert(hub_id, StorageKey.hr, hash_ring)
+  Storage.insert(ProcessHub.Utility.Name.local_storage(hub_id), StorageKey.hr, hash_ring)
 end
 ```
 

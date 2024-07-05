@@ -39,6 +39,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Utility.Name
 
   @typedoc """
   Dynamic quorum strategy configuration.
@@ -80,31 +81,34 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     end
 
     defp propagate_quorum_log(hub_id, node) do
+      local_storage = Name.local_storage(hub_id)
+
       local_log =
-        case Storage.get(hub_id, StorageKey.dqdn()) do
+        case Storage.get(local_storage, StorageKey.dqdn()) do
           nil -> []
           data -> data
         end
 
       Node.spawn(node, fn ->
         remote_log =
-          case Storage.get(hub_id, StorageKey.dqdn()) do
+          case Storage.get(local_storage, StorageKey.dqdn()) do
             nil -> []
             remote_log -> remote_log
           end
 
         if length(local_log) > length(remote_log) do
           # Overwrite quorum log with other nodes' data that has more data in it.
-          Storage.insert(hub_id, StorageKey.dqdn(), local_log)
+          Storage.insert(local_storage, StorageKey.dqdn(), local_log)
         end
       end)
     end
 
     defp quorum_failure?(hub_id, strategy, cluster_nodes) do
       connected_nodes = length(cluster_nodes)
+      local_storage = Name.local_storage(hub_id)
 
       cached_data =
-        case Storage.get(hub_id, StorageKey.dqdn()) do
+        case Storage.get(local_storage, StorageKey.dqdn()) do
           nil -> []
           data -> data
         end
@@ -120,14 +124,14 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     defp node_log_func(strategy, hub_id, node, type) do
       new_data = node_log_data(hub_id, node, strategy.threshold_time, type)
 
-      Storage.insert(hub_id, StorageKey.dqdn(), new_data)
+      Storage.insert(Name.local_storage(hub_id), StorageKey.dqdn(), new_data)
     end
 
-    defp node_log_data(cache, node, threshold_time, :up) do
+    defp node_log_data(hub_id, node, threshold_time, :up) do
       timestamp = DateTime.utc_now() |> DateTime.to_unix(:second)
       threshold_time = timestamp - threshold_time
 
-      case Storage.get(cache, StorageKey.dqdn()) do
+      case Storage.get(Name.local_storage(hub_id), StorageKey.dqdn()) do
         nil ->
           []
 
@@ -139,11 +143,11 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       end
     end
 
-    defp node_log_data(ets_table, node, threshold_time, :down) do
+    defp node_log_data(hub_id, node, threshold_time, :down) do
       timestamp = DateTime.utc_now() |> DateTime.to_unix(:second)
       threshold_time = timestamp - threshold_time
 
-      case Storage.get(ets_table, StorageKey.dqdn()) do
+      case Storage.get(Name.local_storage(hub_id), StorageKey.dqdn()) do
         nil ->
           [{node, timestamp}]
 

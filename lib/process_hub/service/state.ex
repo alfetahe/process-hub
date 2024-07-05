@@ -113,7 +113,7 @@ defmodule ProcessHub.Service.State do
   defp lock_options(hub_id, deadlock_recover) do
     case deadlock_recover do
       false -> %{}
-      true -> %{reset_after: Storage.get(hub_id, StorageKey.dlrt())}
+      true -> %{reset_after: Storage.get(Name.local_storage(hub_id), StorageKey.dlrt())}
     end
     |> Map.put(:local_priority_set, true)
   end

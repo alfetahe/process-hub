@@ -31,7 +31,7 @@ defmodule ProcessHub.MixProject do
           "guides/ManualDistribution.md",
           "guides/ReplicatingProcesses.md",
           "guides/Hooks.cheatmd",
-          "guides/CustomStrategy.md",
+          "guides/CustomStrategy.md"
         ],
         authors: ["Anuar Alfetahe"]
       ]
@@ -50,7 +50,6 @@ defmodule ProcessHub.MixProject do
     [
       {:blockade, "~> 0.2.1"},
       {:hash_ring, "~> 0.4.2"},
-      {:cachex, "~> 3.6"},
       {:ex_doc, "~> 0.30.6", only: :dev, runtime: false},
       {:benchee, "~> 1.2", only: :dev}
     ]

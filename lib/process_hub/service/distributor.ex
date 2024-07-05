@@ -74,8 +74,9 @@ defmodule ProcessHub.Service.Distributor do
   @spec stop_children(ProcessHub.hub_id(), [ProcessHub.child_id()], keyword()) ::
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
   def stop_children(hub_id, child_ids, opts) do
-    redun_strat = Storage.get(hub_id, StorageKey.strred())
-    dist_strat = Storage.get(hub_id, StorageKey.strdist())
+    local_storage = Name.local_storage(hub_id)
+    redun_strat = Storage.get(local_storage, StorageKey.strred())
+    dist_strat = Storage.get(local_storage, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
@@ -178,10 +179,12 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp init_strategies(hub_id) do
+    local_storage = Name.local_storage(hub_id)
+
     {:ok,
      %{
-       distribution: Storage.get(hub_id, StorageKey.strdist()),
-       redundancy: Storage.get(hub_id, StorageKey.strred())
+       distribution: Storage.get(local_storage, StorageKey.strdist()),
+       redundancy: Storage.get(local_storage, StorageKey.strred())
      }}
   end
 

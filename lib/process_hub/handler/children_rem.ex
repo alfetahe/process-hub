@@ -41,7 +41,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
       arg = %__MODULE__{
         arg
         | dist_sup: Name.distributed_supervisor(arg.hub_id),
-          sync_strategy: Storage.get(arg.hub_id, StorageKey.strsyn())
+          sync_strategy: Storage.get(Name.local_storage(arg.hub_id), StorageKey.strsyn())
       }
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
