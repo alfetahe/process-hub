@@ -33,6 +33,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Handler.ChildrenAdd
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.State
@@ -57,6 +58,7 @@ defmodule ProcessHub.Coordinator do
   ### Callbacks
   ##############################################################################
 
+  @impl true
   @spec init({ProcessHub.hub_id(), ProcessHub.t(), map()}) ::
           {:ok, ProcessHub.Coordinator.t(), {:continue, :additional_setup}}
   def init({hub_id, settings, managers}) do
@@ -72,6 +74,7 @@ defmodule ProcessHub.Coordinator do
     {:ok, %__MODULE__{hub_id: hub_id}, {:continue, :additional_setup}}
   end
 
+  @impl true
   def terminate(reason, state) do
     HookManager.dispatch_hook(
       state.hub_id,
@@ -94,14 +97,17 @@ defmodule ProcessHub.Coordinator do
     end)
   end
 
+  @impl true
   def handle_continue(:additional_setup, state) do
+    local_store = Name.local_storage(state.hub_id)
+
     PartitionToleranceStrategy.init(
-      Storage.get(state.hub_id, StorageKey.strpart()),
+      Storage.get(local_store, StorageKey.strpart()),
       state.hub_id
     )
 
-    schedule_hub_discovery(Storage.get(state.hub_id, StorageKey.hdi()))
-    schedule_sync(Storage.get(state.hub_id, StorageKey.strsyn()))
+    schedule_hub_discovery(Storage.get(local_store, StorageKey.hdi()))
+    schedule_sync(Storage.get(local_store, StorageKey.strsyn()))
 
     coordinator = Name.coordinator(state.hub_id)
 
@@ -116,6 +122,7 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  @impl true
   def handle_cast({:start_children, children, start_opts}, state) do
     if length(children) > 0 do
       Task.Supervisor.start_child(
@@ -135,6 +142,7 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  @impl true
   def handle_cast({:stop_children, children}, state) do
     Task.Supervisor.start_child(
       Name.task_supervisor(state.hub_id),
@@ -151,26 +159,31 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  @impl true
   def handle_call(:ping, _from, state) do
     {:reply, :bong, state}
   end
 
+  @impl true
   def handle_info({@event_cluster_leave, node}, state) do
     {:noreply, handle_node_down(state, node)}
   end
 
+  @impl true
   def handle_info({:nodeup, node}, state) do
     Cluster.propagate_self(state.hub_id, node)
 
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({:nodedown, node}, state) do
     Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, node, %{members: :local})
 
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({@event_distribute_children, node}, state) do
     Task.Supervisor.start_child(
       Name.task_supervisor(state.hub_id),
@@ -187,44 +200,41 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  def handle_info({@event_cluster_join, node}, state) do
+  @impl true
+  def handle_info({@event_cluster_join, node}, %{hub_id: hub_id} = state) do
     hub_nodes = Cluster.nodes(state.hub_id, [:include_local])
 
-    state =
-      if Cluster.new_node?(hub_nodes, node) and node() !== node do
-        Cluster.add_hub_node(state.hub_id, node)
+    if Cluster.new_node?(hub_nodes, node) and node() !== node do
+      Cluster.add_hub_node(hub_id, node)
 
-        HookManager.dispatch_hook(state.hub_id, Hook.pre_cluster_join(), node)
+      HookManager.dispatch_hook(hub_id, Hook.pre_cluster_join(), node)
 
-        unlock_status =
-          PartitionToleranceStrategy.toggle_unlock?(
-            Storage.get(state.hub_id, StorageKey.strpart()),
-            state.hub_id,
-            node
-          )
+      unlock_status =
+        PartitionToleranceStrategy.toggle_unlock?(
+          Storage.get(Name.local_storage(hub_id), StorageKey.strpart()),
+          state.hub_id,
+          node
+        )
 
-        if unlock_status do
-          State.toggle_quorum_success(state.hub_id)
-        end
-
-        # Atomic dispatch with locking.
-        Dispatcher.propagate_event(state.hub_id, @event_distribute_children, node, %{
-          members: :local
-        })
-
-        State.lock_event_handler(state.hub_id)
-
-        Cluster.propagate_self(state.hub_id, node)
-        HookManager.dispatch_hook(state.hub_id, Hook.post_cluster_join(), node)
-
-        state
-      else
-        state
+      if unlock_status do
+        State.toggle_quorum_success(hub_id)
       end
+
+      # Atomic dispatch with locking.
+      Dispatcher.propagate_event(hub_id, @event_distribute_children, node, %{
+        members: :local
+      })
+
+      State.lock_event_handler(hub_id)
+
+      Cluster.propagate_self(hub_id, node)
+      HookManager.dispatch_hook(hub_id, Hook.post_cluster_join(), node)
+    end
 
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({@event_sync_remote_children, {child_specs, node}}, state) do
     Task.Supervisor.start_child(
       Name.task_supervisor(state.hub_id),
@@ -242,6 +252,7 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({@event_migration_add, {children, start_opts}}, state) do
     if length(children) > 0 do
       State.lock_event_handler(state.hub_id)
@@ -263,6 +274,7 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({@event_children_registration, {post_start_results, _node}}, state) do
     Task.Supervisor.async(
       Name.task_supervisor(state.hub_id),
@@ -280,6 +292,7 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({@event_children_unregistration, {children, node}}, state) do
     Task.Supervisor.async(
       Name.task_supervisor(state.hub_id),
@@ -298,27 +311,43 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  def handle_info(:sync_processes, state) do
-    Task.Supervisor.start_child(
-      Name.task_supervisor(state.hub_id),
-      Synchronization.IntervalSyncInit,
-      :handle,
-      [
-        %Synchronization.IntervalSyncInit{
-          hub_id: state.hub_id
-        }
-      ]
-    )
+  @impl true
+  def handle_info({@event_child_failure_restart, {child_id, {node, pid}}}, state) do
+    {cs, nodes_pids} = ProcessRegistry.lookup(:my_hub, child_id)
+    node_pids = Keyword.put(nodes_pids, node, pid)
 
-    schedule_sync(Storage.get(state.hub_id, StorageKey.strsyn()))
+    ProcessRegistry.insert(:my_hub, cs, node_pids)
 
     {:noreply, state}
   end
 
-  def handle_info(:propagate, state) do
-    schedule_hub_discovery(Storage.get(state.hub_id, StorageKey.hdi()))
+  @impl true
+  def handle_info(:sync_processes, %{hub_id: hub_id} = state) do
+    Task.Supervisor.start_child(
+      Name.task_supervisor(hub_id),
+      Synchronization.IntervalSyncInit,
+      :handle,
+      [
+        %Synchronization.IntervalSyncInit{
+          hub_id: hub_id
+        }
+      ]
+    )
 
-    Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), %{
+    Name.local_storage(hub_id)
+    |> Storage.get(StorageKey.strsyn())
+    |> schedule_sync()
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:propagate, %{hub_id: hub_id} = state) do
+    Name.local_storage(hub_id)
+    |> Storage.get(StorageKey.hdi())
+    |> schedule_hub_discovery()
+
+    Dispatcher.propagate_event(hub_id, @event_cluster_join, node(), %{
       members: :external,
       priority: PriorityLevel.locked()
     })
@@ -326,10 +355,12 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({:EXIT, _pid, :normal}, state) do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info(msg, state) do
     Logger.warning("Unhandled message: #{inspect(msg)}")
 
@@ -396,25 +427,27 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp setup_local_storage(hub_id, %ProcessHub{} = settings, hub_nodes) do
-    Storage.insert(hub_id, StorageKey.hn(), hub_nodes)
-    Storage.insert(hub_id, StorageKey.strred(), settings.redundancy_strategy)
-    Storage.insert(hub_id, StorageKey.strdist(), settings.distribution_strategy)
-    Storage.insert(hub_id, StorageKey.strmigr(), settings.migration_strategy)
+    local_storage = Name.local_storage(hub_id)
+
+    Storage.insert(local_storage, StorageKey.hn(), hub_nodes)
+    Storage.insert(local_storage, StorageKey.strred(), settings.redundancy_strategy)
+    Storage.insert(local_storage, StorageKey.strdist(), settings.distribution_strategy)
+    Storage.insert(local_storage, StorageKey.strmigr(), settings.migration_strategy)
 
     Storage.insert(
-      hub_id,
+      local_storage,
       StorageKey.strsyn(),
       settings.synchronization_strategy
     )
 
     Storage.insert(
-      hub_id,
+      local_storage,
       StorageKey.strpart(),
       settings.partition_tolerance_strategy
     )
 
-    Storage.insert(hub_id, StorageKey.hdi(), settings.hubs_discover_interval)
-    Storage.insert(hub_id, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
+    Storage.insert(local_storage, StorageKey.hdi(), settings.hubs_discover_interval)
+    Storage.insert(local_storage, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
   end
 
   defp register_handlers(%{event_queue: eq}) do
@@ -425,6 +458,7 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_children_registration)
     Blockade.add_handler(eq, @event_children_unregistration)
     Blockade.add_handler(eq, @event_migration_add)
+    Blockade.add_handler(eq, @event_child_failure_restart)
   end
 
   defp register_handlers(hub_id, hooks) when is_map(hooks) do

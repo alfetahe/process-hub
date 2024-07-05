@@ -38,6 +38,11 @@ defmodule ProcessHub.Constant.Event do
   """
   @type event_sync_remote_children() :: :sync_remote_children_event
 
+  @typedoc """
+  Child process is restarted by the local supervisordue to a failure.
+  """
+  @type event_child_failure_restart() :: :child_failure_restart_event
+
   defmacro __using__(_) do
     quote do
       @event_distribute_children :distribute_children_event
@@ -47,6 +52,7 @@ defmodule ProcessHub.Constant.Event do
       @event_children_unregistration :children_unregistration_event
       @event_sync_remote_children :sync_remote_children_event
       @event_migration_add :migration_add_event
+      @event_child_failure_restart :child_failure_restart_event
     end
   end
 end

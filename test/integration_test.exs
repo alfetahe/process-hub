@@ -18,6 +18,56 @@ defmodule Test.IntegrationTest do
     Test.Helper.Bootstrap.bootstrap(context)
   end
 
+  # @tag hub_id: :child_failure_restart_test
+  # @tag listed_hooks: [
+  #        {Hook.post_cluster_join(), :local},
+  #        {Hook.registry_pid_inserted(), :global},
+  #        {Hook.registry_pid_removed(), :global}
+  #      ]
+  # test "process failure restarting", %{hub_id: hub_id} = context do
+  #   child_count = 1
+  #   child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+
+  #   # Starts children on all nodes.
+  #   Common.sync_base_test(context, child_specs, :add, scope: :global)
+
+  #   pids = Enum.map(child_specs, fn child_spec ->
+  #     ProcessHub.get_pid(hub_id, child_spec.id)
+  #   end) |> IO.inspect(label: "REGISTRY")
+
+  #   :erlang.processes()
+  #   |> Enum.each(fn pid ->
+  #     case Process.info(pid, :registered_name) do
+  #       {:registered_name, name} when is_atom(name) ->
+  #         IO.puts("PID: #{inspect(pid)} - Registered Name: #{inspect(name)}")
+  #       _ ->
+  #         IO.puts("PID: #{inspect(pid)} - Registered Name: None")
+  #     end
+  #   end)
+
+  #   # Send a `kill` message to the processes.
+  #   Enum.each(pids, fn pid ->
+  #     GenServer.cast(pid, {:stop, :err})
+  #     # Process.exit(pid, :tra)
+  #   end)
+
+  #   Process.sleep(1000)
+
+  #   :erlang.processes()
+  #   |> Enum.each(fn pid ->
+  #     case Process.info(pid, :registered_name) do
+  #       {:registered_name, name} when is_atom(name) ->
+  #         IO.puts("PID: #{inspect(pid)} - Registered Name: #{inspect(name)}")
+  #       _ ->
+  #         IO.puts("PID: #{inspect(pid)} - Registered Name: None")
+  #     end
+  #   end)
+
+  #   pids = Enum.map(child_specs, fn child_spec ->
+  #     ProcessHub.get_pid(hub_id, child_spec.id)
+  #   end) |> IO.inspect(label: "REGISTRY NEW")
+  # end
+
   @tag hub_id: :guided_pubsub_add_rem_test
   @tag sync_strategy: :pubsub
   @tag dist_strategy: :guided

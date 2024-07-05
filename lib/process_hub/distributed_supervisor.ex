@@ -7,21 +7,38 @@ defmodule ProcessHub.DistributedSupervisor do
   child processes.
   """
 
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Utility.Name
+  alias ProcessHub.Constant.PriorityLevel
 
-  use Supervisor
+  use ProcessHub.Constant.Event
 
-  @type pname() :: atom()
+  use ProcessHub.Injector,
+    override: [:init, :start_link, :terminate_child, :start_child],
+    base_module: :supervisor
 
-  def start_link({hub_id, managers}) do
-    Supervisor.start_link(__MODULE__, hub_id, name: managers.distributed_supervisor)
+  @doc """
+  Starts the distributed supervisor with the given arguments.
+
+  We will call the `GenServer.start_link/3` and register our current module
+  as the base module, this way we can overwrite the `handle_info/2` function
+  on the `:supervisor` module to handle the `:EXIT` messages our selves.
+  """
+  def start_link({hub_id, %{distributed_supervisor: sup}}) do
+    GenServer.start_link(__MODULE__, {sup, __MODULE__, hub_id}, name: sup)
   end
 
-  @impl true
-  def init(hub_id) do
-    children = children(hub_id)
+  @doc """
+  Initializes the distributed supervisor with the given arguments.
 
-    Supervisor.init(children, strategy: :one_for_one)
+  We will call the Erlang `:supervisor.init/1` function with the given arguments.
+  this in turn will call the `init/1`
+  """
+  def init({sup, mod, args}), do: :supervisor.init({sup, mod, args})
+
+  def init(hub_id) do
+    Supervisor.init(children(hub_id), strategy: :one_for_one)
   end
 
   @doc "Starts a child process on local node."
@@ -69,5 +86,58 @@ defmodule ProcessHub.DistributedSupervisor do
 
   defp children(hub_id) do
     ProcessRegistry.local_child_specs(hub_id)
+  end
+
+  @doc """
+  Handles the process exit messages for the child processes.
+
+  We delegate the work the the `:supervisor.handle_info/2` function and then
+  propagate the event to the `Dispatcher` module to notify the other nodes
+  about the child process failure.
+  """
+  def handle_info({:EXIT, pid, reason} = request, state) do
+    case :supervisor.handle_info(request, state) do
+      {:noreply, new_state} ->
+        old_child_info =
+          case reason do
+            :normal -> nil
+            _ -> extract_child_info(state, pid)
+          end
+
+        case old_child_info do
+          {child_id, info} ->
+            new_pid = elem(info, 1)
+
+            Process.sleep(500)
+
+            Dispatcher.propagate_event(
+              Name.extract_hub_id(elem(state, 1)),
+              @event_child_failure_restart,
+              {child_id, {node(), new_pid}},
+              %{
+                members: :global,
+                priority: PriorityLevel.locked()
+              }
+            )
+
+          _ ->
+            nil
+        end
+
+        {:noreply, new_state}
+
+      {:shutdown, new_state} ->
+        {:shutdown, new_state}
+    end
+  end
+
+  defp extract_child_info(state, down_pid) do
+    state
+    |> elem(3)
+    |> elem(1)
+    |> Enum.find(fn {_key, child_info} ->
+      prev_pid = elem(child_info, 1)
+      down_pid === prev_pid
+    end)
   end
 end

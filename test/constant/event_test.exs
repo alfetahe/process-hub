@@ -29,4 +29,8 @@ defmodule Test.Constant.EventTest do
   test "event migration add" do
     assert @event_migration_add === :migration_add_event
   end
+
+  test "event child failure restart" do
+    assert @event_child_failure_restart === :child_failure_restart_event
+  end
 end
