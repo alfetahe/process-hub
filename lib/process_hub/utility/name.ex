@@ -72,6 +72,12 @@ defmodule ProcessHub.Utility.Name do
     concat_name([hub_id, "hook_registry"], ".")
   end
 
+  @doc "The name of the janitor process."
+  @spec janitor(ProcessHub.hub_id()) :: atom()
+  def janitor(hub_id) do
+    concat_name([hub_id, "janitor"], ".")
+  end
+
   @doc "Extracts the `hub_id` from the given name."
   @spec extract_hub_id(atom()) :: String.t()
   def extract_hub_id(name) do

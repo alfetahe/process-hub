@@ -45,7 +45,8 @@ defmodule ProcessHub.Initializer do
         dist_sup(hub_id, managers),
         {Task.Supervisor, name: managers.task_supervisor},
         {ProcessHub.Coordinator, {hub_id, hub, managers}},
-        {ProcessHub.WorkerQueue, Name.worker_queue(hub_id)}
+        {ProcessHub.WorkerQueue, Name.worker_queue(hub_id)},
+        {ProcessHub.Janitor, hub_id}
       ]
 
     opts = [strategy: :one_for_one]

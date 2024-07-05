@@ -41,6 +41,10 @@ defmodule Test.Utility.NameTest do
     assert Name.hook_registry(:test) === :"hub.test.hook_registry"
   end
 
+  test "janitor" do
+    assert Name.janitor(:test) === :"hub.test.janitor"
+  end
+
   test "extract hub_id" do
     assert Name.extract_hub_id(:"hub.test.hook_registry") === "test"
     assert Name.extract_hub_id(:"hub.test.coordinator") === "test"

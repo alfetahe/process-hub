@@ -63,8 +63,12 @@ defmodule ProcessHub.Service.Storage do
     ttl = Keyword.get(opts, :ttl, nil)
 
     case is_integer(ttl) do
-      true -> ETS.insert(table, {key, value, ttl: ttl})
-      false -> ETS.insert(table, {key, value})
+      true ->
+        expire = (DateTime.utc_now() |> DateTime.to_unix(:millisecond)) + ttl
+        ETS.insert(table, {key, value, ttl: expire})
+
+      false ->
+        ETS.insert(table, {key, value})
     end
   end
 
