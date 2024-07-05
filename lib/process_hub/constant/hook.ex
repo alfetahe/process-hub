@@ -104,4 +104,11 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec process_startups() :: :process_startups_hook
   def process_startups(), do: :process_startups_hook
+
+  @doc """
+  Hook triggered right after process has been restarted by local supervisor
+  and the pid has been updated.
+  """
+  @spec child_process_pid_update() :: :child_process_pid_update_hook
+  def child_process_pid_update(), do: :child_process_pid_update_hook
 end

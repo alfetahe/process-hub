@@ -312,11 +312,17 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_child_failure_restart, {child_id, {node, pid}}}, state) do
-    {cs, nodes_pids} = ProcessRegistry.lookup(:my_hub, child_id)
-    node_pids = Keyword.put(nodes_pids, node, pid)
+  def handle_info({@event_child_process_pid_update, {child_id, {node, pid}}}, state) do
+    {cs, nodes_pids} = ProcessRegistry.lookup(state.hub_id, child_id)
+    new_node_pids = Keyword.put(nodes_pids, node, pid)
 
-    ProcessRegistry.insert(:my_hub, cs, node_pids)
+    ProcessRegistry.insert(state.hub_id, cs, new_node_pids)
+
+    HookManager.dispatch_hook(
+      state.hub_id,
+      Hook.child_process_pid_update(),
+      {node, pid}
+    )
 
     {:noreply, state}
   end
@@ -458,7 +464,7 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_children_registration)
     Blockade.add_handler(eq, @event_children_unregistration)
     Blockade.add_handler(eq, @event_migration_add)
-    Blockade.add_handler(eq, @event_child_failure_restart)
+    Blockade.add_handler(eq, @event_child_process_pid_update)
   end
 
   defp register_handlers(hub_id, hooks) when is_map(hooks) do

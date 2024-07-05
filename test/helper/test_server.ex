@@ -50,8 +50,12 @@ defmodule Test.Helper.TestServer do
     {:stop, reason, nil}
   end
 
-  def handle_cast(:fail, _state) do
-    {:stop, :err, nil}
+  def handle_cast(:throw, _state) do
+    throw("intentional throw")
+  end
+
+  def handle_cast(:raise, _state) do
+    raise("intentional raise")
   end
 
   def handle_info({:process_hub, :redundancy_signal, mode}, state) do

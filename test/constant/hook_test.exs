@@ -66,4 +66,8 @@ defmodule Test.Constant.HookTest do
   test "process startups" do
     assert Hook.process_startups() === :process_startups_hook
   end
+
+  test "process restart pid update" do
+    assert Hook.child_process_pid_update() === :child_process_pid_update_hook
+  end
 end

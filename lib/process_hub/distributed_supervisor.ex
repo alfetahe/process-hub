@@ -38,7 +38,12 @@ defmodule ProcessHub.DistributedSupervisor do
   def init({sup, mod, args}), do: :supervisor.init({sup, mod, args})
 
   def init(hub_id) do
-    Supervisor.init(children(hub_id), strategy: :one_for_one)
+    Supervisor.init(children(hub_id),
+      strategy: :one_for_one,
+      auto_shutdown: :never,
+      max_restarts: 100,
+      max_seconds: 4
+    )
   end
 
   @doc "Starts a child process on local node."
@@ -95,49 +100,55 @@ defmodule ProcessHub.DistributedSupervisor do
   propagate the event to the `Dispatcher` module to notify the other nodes
   about the child process failure.
   """
-  def handle_info({:EXIT, pid, reason} = request, state) do
+  def handle_info({:EXIT, pid, _reason} = request, state) do
     case :supervisor.handle_info(request, state) do
       {:noreply, new_state} ->
-        old_child_info =
-          case reason do
-            :normal -> nil
-            _ -> extract_child_info(state, pid)
-          end
-
-        case old_child_info do
-          {child_id, info} ->
-            new_pid = elem(info, 1)
-
-            Process.sleep(500)
-
-            Dispatcher.propagate_event(
-              Name.extract_hub_id(elem(state, 1)),
-              @event_child_failure_restart,
-              {child_id, {node(), new_pid}},
-              %{
-                members: :global,
-                priority: PriorityLevel.locked()
-              }
-            )
-
-          _ ->
-            nil
-        end
-
+        handle_process_restart(state, new_state, pid)
         {:noreply, new_state}
 
-      {:shutdown, new_state} ->
-        {:shutdown, new_state}
+      {:stop, reason, new_state} ->
+        handle_process_restart(state, new_state, pid)
+        {:stop, reason, new_state}
     end
   end
 
-  defp extract_child_info(state, down_pid) do
+  defp handle_process_restart(old_state, new_state, pid) do
+    cid = find_cid_from_pid(old_state, pid)
+    old_pid = find_pid_from_cid(old_state, cid)
+    new_pid = find_pid_from_cid(new_state, cid)
+
+    if old_pid !== new_pid do
+      Dispatcher.propagate_event(
+        Name.extract_hub_id(elem(old_state, 1)),
+        @event_child_process_pid_update,
+        {cid, {node(), new_pid}},
+        %{
+          members: :global,
+          priority: PriorityLevel.locked()
+        }
+      )
+    end
+  end
+
+  defp find_cid_from_pid(state, compare_pid) do
     state
     |> elem(3)
     |> elem(1)
     |> Enum.find(fn {_key, child_info} ->
-      prev_pid = elem(child_info, 1)
-      down_pid === prev_pid
+      pid_from_state = elem(child_info, 1)
+      pid_from_state === compare_pid
     end)
+    |> elem(0)
+  end
+
+  defp find_pid_from_cid(state, compare_cid) do
+    state
+    |> elem(3)
+    |> elem(1)
+    |> Enum.find(fn {state_cid, _} ->
+      state_cid === compare_cid
+    end)
+    |> elem(1)
+    |> elem(1)
   end
 end
