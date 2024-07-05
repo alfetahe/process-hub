@@ -58,4 +58,55 @@ defmodule Test.Service.StorageTest do
     assert res2 === true
     assert res3 === true
   end
+
+  test "remove", _context do
+    Storage.insert(@local_storage, :test_remove_1, "test_value_delete_1")
+    Storage.insert(@local_storage, :test_remove_2, "test_value_delete_2")
+    Storage.insert(@local_storage, "test_remove_3", "test_value_delete_3")
+    Storage.insert(@local_storage, "test_remove_4", "test_value_delete_4")
+
+    assert Storage.get(@local_storage, :test_remove_1) === "test_value_delete_1"
+    assert Storage.get(@local_storage, :test_remove_2) === "test_value_delete_2"
+    assert Storage.get(@local_storage, "test_remove_3") === "test_value_delete_3"
+    assert Storage.get(@local_storage, "test_remove_4") === "test_value_delete_4"
+
+    Storage.remove(@local_storage, :test_remove_1)
+    Storage.remove(@local_storage, :test_remove_2)
+    Storage.remove(@local_storage, "test_remove_3")
+
+    assert Storage.get(@local_storage, :test_remove_1) === nil
+    assert Storage.get(@local_storage, :test_remove_2) === nil
+    assert Storage.get(@local_storage, "test_remove_3") === nil
+    assert Storage.get(@local_storage, "test_remove_4") === "test_value_delete_4"
+  end
+
+  test "clear all", _context do
+    # Were not using local storage because this would result in error.
+    process_storage = ProcessHub.Utility.Name.registry(@hub_id)
+
+    Storage.insert(process_storage, "test_clear_1", "my_value")
+    Storage.insert(process_storage, "test_clear_2", "my_value")
+
+    assert Storage.get(process_storage, "test_clear_1") === "my_value"
+    assert Storage.get(process_storage, "test_clear_2") === "my_value"
+
+    Storage.clear_all(process_storage)
+
+    assert Storage.export_all(process_storage) === []
+  end
+
+  test "export all", _context do
+    # Were not using local storage because it has other required elements inside it.
+    process_storage = ProcessHub.Utility.Name.registry(@hub_id)
+
+    assert Storage.export_all(process_storage) === []
+
+    Storage.insert(process_storage, "test_export_1", "my_value")
+    Storage.insert(process_storage, "test_export_2", "my_value")
+
+    assert Storage.export_all(process_storage) === [
+             {"test_export_2", "my_value"},
+             {"test_export_1", "my_value"}
+           ]
+  end
 end

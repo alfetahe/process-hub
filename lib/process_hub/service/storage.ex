@@ -68,8 +68,6 @@ defmodule ProcessHub.Service.Storage do
     end
   end
 
-  # TODO: add tests later
-
   @doc """
   Removes an entry from the storage.
   """
@@ -78,7 +76,11 @@ defmodule ProcessHub.Service.Storage do
     ETS.delete(table, key)
   end
 
-  @doc "Deletes all objects from the ETS table."
+  @doc """
+  Deletes all objects from the ETS table.
+
+  Never use in custom code. Should only be used for testing purposes.
+  """
   @spec clear_all(table_id()) :: boolean()
   def clear_all(table) do
     ETS.delete_all_objects(table)
