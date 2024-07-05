@@ -1,6 +1,22 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.2.6-alpha - 2024-07-06
+This version includes bug fixes, new API functions, and minor improvements to the documentation.
+
+### Changed
+- Replaced `Cachex` with our custom implementation to enhance performance.
+- Updated the default values for `max_restarts` and `max_seconds` to 100 and 4, respectively.
+- Storage module now accepts the table identifier as the first parameter, allowing
+ it to be used with multiple tables.
+
+### Added
+- Introduced new API functions `get_pids/2` and `get_pid/2` to get the pid/s by `child_id`.
+- New guide page for interacting with the process registry.
+
+### Fixed
+- Corrected an issue where local supervisor restarts were not properly updating the global registry.
+- Fixed various typos and errors in the documentation.
 
 ## v0.2.5-alpha - 2024-06-21
 Bugfixes and documentation improvements.
