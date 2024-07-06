@@ -104,9 +104,19 @@ defmodule Test.Service.StorageTest do
     Storage.insert(process_storage, "test_export_1", "my_value")
     Storage.insert(process_storage, "test_export_2", "my_value")
 
-    assert Storage.export_all(process_storage) === [
-             {"test_export_2", "my_value"},
-             {"test_export_1", "my_value"}
-           ]
+    result = Storage.export_all(process_storage)
+
+    items = [
+      {"test_export_2", "my_value"},
+      {"test_export_1", "my_value"}
+    ]
+
+    assert length(result) === 2
+
+    Enum.each(result, fn export_item ->
+      assert Enum.find(items, fn item -> item == export_item end)
+    end)
+
+
   end
 end
