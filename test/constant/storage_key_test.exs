@@ -58,4 +58,8 @@ defmodule Test.Constant.StorageKeyTest do
   test "storage key handover data wait" do
     assert StorageKey.hodw() === :handover_data_wait
   end
+
+  test "storage key static child specs" do
+    assert StorageKey.staticcs() === :static_child_specs
+  end
 end

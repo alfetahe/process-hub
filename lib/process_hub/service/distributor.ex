@@ -168,8 +168,7 @@ defmodule ProcessHub.Service.Distributor do
 
       true ->
         fn ->
-          receiveable(startup_children)
-          |> Mailbox.receive_start_resp(opts)
+          receiveable(startup_children) |> Mailbox.receive_start_resp(opts)
         end
     end
   end

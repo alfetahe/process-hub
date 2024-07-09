@@ -4,6 +4,7 @@ defmodule ProcessHub.Constant.StorageKey do
   def strmigr, do: :migration_strategy
   def strdist, do: :distribution_strategy
   def strpart, do: :partition_tolerance_strategy
+  def staticcs, do: :static_child_specs
 
   def hdi, do: :hubs_discover_interval
   def hn, do: :hub_nodes

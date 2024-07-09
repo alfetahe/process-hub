@@ -75,29 +75,6 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def terminate(reason, state) do
-    HookManager.dispatch_hook(
-      state.hub_id,
-      Hook.coordinator_shutdown(),
-      reason
-    )
-
-    # Notify all the nodes in the cluster that this node is leaving the hub.
-    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, node(), %{
-      members: :external,
-      priority: PriorityLevel.locked()
-    })
-
-    # Terminate all the running tasks before shutting down the coordinator.
-    task_sup = Name.task_supervisor(state.hub_id)
-
-    Task.Supervisor.children(task_sup)
-    |> Enum.each(fn pid ->
-      Task.Supervisor.terminate_child(task_sup, pid)
-    end)
-  end
-
-  @impl true
   def handle_continue(:additional_setup, state) do
     local_store = Name.local_storage(state.hub_id)
 
@@ -120,6 +97,29 @@ defmodule ProcessHub.Coordinator do
     # Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), %{members: :external})
 
     {:noreply, state}
+  end
+
+  @impl true
+  def terminate(reason, state) do
+    HookManager.dispatch_hook(
+      state.hub_id,
+      Hook.coordinator_shutdown(),
+      reason
+    )
+
+    # Notify all the nodes in the cluster that this node is leaving the hub.
+    Dispatcher.propagate_event(state.hub_id, @event_cluster_leave, node(), %{
+      members: :external,
+      priority: PriorityLevel.locked()
+    })
+
+    # Terminate all the running tasks before shutting down the coordinator.
+    task_sup = Name.task_supervisor(state.hub_id)
+
+    Task.Supervisor.children(task_sup)
+    |> Enum.each(fn pid ->
+      Task.Supervisor.terminate_child(task_sup, pid)
+    end)
   end
 
   @impl true
@@ -439,6 +439,7 @@ defmodule ProcessHub.Coordinator do
     Storage.insert(local_storage, StorageKey.strred(), settings.redundancy_strategy)
     Storage.insert(local_storage, StorageKey.strdist(), settings.distribution_strategy)
     Storage.insert(local_storage, StorageKey.strmigr(), settings.migration_strategy)
+    Storage.insert(local_storage, StorageKey.staticcs(), settings.child_specs)
 
     Storage.insert(
       local_storage,

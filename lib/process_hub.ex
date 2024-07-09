@@ -75,6 +75,7 @@ defmodule ProcessHub do
   @typedoc """
   This is the base configuration structure for the hub and has to be passed to the `start_link/1` function.
   - `:hub_id` is the name of the hub and is required.
+  - `:child_specs` is optional and is used to define the child processes that will be started with the hub statically.
   - `:hooks` are optional and are used to define the hooks that can be triggered on specific events.
   - `:redundancy_strategy` is optional and is used to define the strategy for redundancy.
   The default is `ProcessHub.Strategy.Redundancy.Singularity`.
@@ -95,6 +96,7 @@ defmodule ProcessHub do
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
+          child_specs: [child_spec()],
           hooks: ProcessHub.Service.HookManager.hook_handlers(),
           redundancy_strategy:
             ProcessHub.Strategy.Redundancy.Singularity.t()
@@ -118,6 +120,7 @@ defmodule ProcessHub do
   @enforce_keys [:hub_id]
   defstruct [
     :hub_id,
+    child_specs: [],
     hooks: %{},
     redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
     migration_strategy: %ProcessHub.Strategy.Migration.ColdSwap{},

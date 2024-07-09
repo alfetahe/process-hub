@@ -21,6 +21,8 @@ defmodule ProcessHub.Service.Dispatcher do
 
   @doc """
   Sends the coordinator process a message to start the child processes passed in.
+
+  @TODO: should use the underlying PubSub or Gossip.
   """
   @spec children_start(ProcessHub.hub_id(), [{node(), [map()]}], keyword()) :: :ok
   def children_start(hub_id, children_nodes, opts) do

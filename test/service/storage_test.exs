@@ -116,7 +116,5 @@ defmodule Test.Service.StorageTest do
     Enum.each(result, fn export_item ->
       assert Enum.find(items, fn item -> item == export_item end)
     end)
-
-
   end
 end
