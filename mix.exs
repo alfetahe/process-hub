@@ -4,7 +4,7 @@ defmodule ProcessHub.MixProject do
   def project do
     [
       app: :process_hub,
-      version: "0.2.6-alpha",
+      version: "0.2.7-alpha",
       elixir: "~> 1.13",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -51,7 +51,7 @@ defmodule ProcessHub.MixProject do
     [
       {:blockade, "~> 0.2.1"},
       {:hash_ring, "~> 0.4.2"},
-      {:ex_doc, "~> 0.30.6", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
       {:benchee, "~> 1.2", only: :dev}
     ]
   end
