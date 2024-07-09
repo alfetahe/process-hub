@@ -20,10 +20,6 @@ The default distribution strategy is based on consistent hashing.
 
 Detailed documentation can be found at [https://hexdocs.pm/process_hub](https://hexdocs.pm/process_hub).
 
-> ProcessHub is built with scalability and availability in mind.
-> Most of the operations are asynchronous and non-blocking.
-> It can guarantee **eventual** consistency.
-
 ProcessHub provides a set of configurable strategies for building distributed
 applications in Elixir.
 
