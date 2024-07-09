@@ -1,6 +1,21 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.2.7-alpha - 2024-07-09
+Removed the requirement to start the Erlang node as a distributed node as 
+it is no longer needed anymore since the `blockade` library now handles only one event queue per node.
+Also added ability to start child processes statically.
+
+### Added
+- Ability to start child processes statically when starting up the ProcessHub.
+
+### Removed
+- Removed the requirement to start the Erlang node as distributed node as it is no longer
+needed anymore since the `blockade` library now handles only one event queue per node.
+
+## Updated
+- Hex docs from 0.30.6 -> 0.34.2
+
 ## v0.2.6-alpha - 2024-07-06
 This version includes bug fixes, new API functions, and minor improvements to the documentation.
 
