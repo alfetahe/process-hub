@@ -27,14 +27,13 @@ Detailed documentation can be found at [https://hexdocs.pm/process_hub](https://
 ProcessHub provides a set of configurable strategies for building distributed
 applications in Elixir.
 
-> #### ProcessHub requires a distributed node {: .info}
-> ProcessHub is distributed in its nature, and for that reason, it needs to
-> **operate in a distributed environment**.
-> This means that the Elixir instance has to be started as a distributed node.
-> For example: `iex --sname mynode --cookie mycookie -S mix`.
+> #### ProcessHub is eventually consistent {: .info}
+> ProcessHub is built with scalability and availability in mind. 
+> Most of the operations are asynchronous and non-blocking. It can guarantee **eventual consistency**.
 >
-> If the node is not started as a distributed node, starting the `ProcessHub` will fail
-> with the following error: `{:error, :local_node_not_alive}`
+> this means that the system may not be in a consistent state at all times, 
+> but it will eventually converge to a consistent state.
+
 
 ## Features
 
@@ -55,7 +54,7 @@ synchronization, distribution and more.
     ```elixir
     def deps do
       [
-        {:process_hub, "~> 0.2.6-alpha"}
+        {:process_hub, "~> 0.2.7-alpha"}
       ]
     end
     ```
