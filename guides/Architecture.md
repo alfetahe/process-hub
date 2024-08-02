@@ -28,8 +28,22 @@ the operations are carried out in the correct order. This process is the heart o
 is responsible for the overall functionality of the system.
 
 ## Supervision tree
-![supervision_tree](doc/assets/images/supervision-tree.png)
+![supervision_tree](https://raw.githubusercontent.com/alfetahe/process-hub/master/guides/assets/images/supervision-tree.png)
 
+## Processes
+
+- `coordinator` - The coordinator process is responsible for coordinating the operations and making sure that the operations are carried out in the correct order. This process is the heart of the system and is responsible for the overall functionality of the system. 
+All actions are dispatched to the coordinator process who then delegates the work to the correct handler process.
+
+- `distributed_supervisor` - The distributed supervisor process is responsible for starting, stopping, and monitoring the processes in its local cluster. It uses the `Supervisor` behavior to monitor the processes and restart them when they die unexpectedly.
+
+- `event_queue_sup` (external library) - The event queue process is responsible for queuing the events and processing them in order to preserve data integrity. It locks the local event queue by increasing its priority for some operations. This allows the system to queue events and process them in order to preserve data integrity. Other events can be processed once the priority level is set back to default.
+
+- `janitor` - The janitor process is responsible for cleaning up the system and removing any stale data. It periodically checks the system for any stale data and removes it to keep the system clean and efficient.
+
+- `task_supervisor` - The task supervisor process is responsible for supervising the task processes that are started on demand by the coordinator process. These processes are used to carry out the operations in the system and are supervised by the task supervisor process.
+
+- `worker_queue` - The worker queue process is used to synchronize the operations that may introduce race conditions.
 
 ## Cluster Discovery and Formation
 ProcessHub monitors connecting and disconnecting nodes and forms a cluster automatically
