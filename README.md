@@ -1,5 +1,7 @@
 # ProcessHub
 
+**NOTE: This library is still in alpha stage and is not recommended for production use.**
+
 ![example workflow](https://github.com/alfetahe/process-hub/actions/workflows/elixir.yml/badge.svg)  [![hex.pm version](https://img.shields.io/hexpm/v/coverex.svg?style=flat)](https://hex.pm/packages/process_hub) [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/process_hub)
 
 ## Description
@@ -26,12 +28,17 @@ The default distribution strategy is based on consistent hashing.
 Main features include:
 - Automatically or manually distribute processes within a cluster of nodes.
 - Distributed and synchronized process registry for fast process lookups.
-- Process state handover.
-- Strategies to handle network partitions, node failures, process migrations,
-synchronization, distribution and more.
+- Process monitoring and automatic restart on failures (`Supervisor`).
+- Process state handover on process migration.
+- Provides different strategies out of the box to handle: 
+  - Process migrations.
+  - Process distribution.
+  - Process synchronization.
+  - Process replication.
+  - Cluster partitioning.
 - Hooks for triggering events on specific actions and extend the functionality.
 - Automatic hub cluster forming and healing when nodes join or leave the cluster.
-- Ability to define custom strategies to alter the behavior of the system.
+- Customizable and extendable to alter the default behavior of the system by implementing custom hook handlers and strategies.
 
 ## Installation
 
@@ -69,6 +76,66 @@ synchronization, distribution and more.
   All hubs will be independent of each other.
 
   For example we can start two separate hubs with different configurations.
+
+## Dynamic process creation
+Dynamically create 2 distributed processes under the hub `:my_hub`. These processes are
+started asynchronously by default and are monitored by the hub.
+
+```elixir
+iex> ProcessHub.start_children(:my_hub, [
+  %{id: "process1", start: {MyProcess, :start_link, []}},
+  %{id: "process2", start: {MyProcess, :start_link, []}}
+])
+{:ok, :start_initiated}
+```
+
+## Static process creation
+Start the hub with 2 child specs. The hub will start the processes when it boots up.
+
+```elixir
+child_specs = [
+  %{
+    id: "my_process_1",
+    start: {MyProcess, :start_link, []}
+  },
+  %{
+    id: "my_process_2",
+    start: {MyProcess, :start_link, []}
+  }
+]
+
+# Start under the supervision tree.
+ProcessHub.child_spec(%ProcessHub{
+  hub_id: :my_hub,
+  child_specs: child_specs
+})
+```
+
+## Process lookup
+
+Query the whole registry for all processes under the hub `:my_hub`:
+```elixir
+iex> ProcessHub.process_list(:my_hub, :global)
+[
+  my_process_1: [node_two@host: #PID<23772.233.0>],
+  my_process_2: [node_two@user: #PID<0.250.0>],
+]
+```
+
+Query processes by `child_id`:
+```elixir
+iex> ProcessHub.child_lookup(:my_hub, :my_process_1)
+{
+  %{id: :my_process_1, start: {MyProcess, :start_link, []}},
+  [node_two@host: #PID<0.228.0>]
+}
+```
+
+Find `pid` of a process by `child_id`:
+```elixir
+iex> ProcessHub.get_pid(:my_hub, :my_process_1)
+#PID<0.228.0>
+```
 
 **See the [documentation](https://hexdocs.pm/process_hub) for more guides.**
 
