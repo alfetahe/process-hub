@@ -20,6 +20,7 @@ defmodule ProcessHub.MixProject do
           "Changelog" => "https://github.com/alfetahe/process-hub/blob/master/CHANGELOG.md"
         }
       ],
+      aliases: aliases(),
       docs: [
         main: "readme",
         extras: [
@@ -54,6 +55,14 @@ defmodule ProcessHub.MixProject do
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
       {:benchee, "~> 1.2", only: :dev}
     ]
+  end
+
+  defp aliases do
+    [docs: ["docs", &copy_images/1]]
+  end
+
+  defp copy_images(_) do
+    File.cp_r("guides/assets", "doc/assets")
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/helper"]

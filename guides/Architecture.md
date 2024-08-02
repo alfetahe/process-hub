@@ -27,6 +27,10 @@ The coordinator process is responsible for coordinating the operations and makin
 the operations are carried out in the correct order. This process is the heart of the system and
 is responsible for the overall functionality of the system.
 
+## Supervision tree
+![supervision_tree](doc/assets/images/supervision-tree.png)
+
+
 ## Cluster Discovery and Formation
 ProcessHub monitors connecting and disconnecting nodes and forms a cluster automatically
 from the connected nodes that share the same `hub_id`. It's not required to start
