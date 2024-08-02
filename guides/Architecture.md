@@ -37,7 +37,8 @@ All actions are dispatched to the coordinator process who then delegates the wor
 
 - `distributed_supervisor` - The distributed supervisor process is responsible for starting, stopping, and monitoring the processes in its local cluster. It uses the `Supervisor` behavior to monitor the processes and restart them when they die unexpectedly.
 
-- `event_queue_sup` (external library) - The event queue process is responsible for queuing the events and processing them in order to preserve data integrity. It locks the local event queue by increasing its priority for some operations. This allows the system to queue events and process them in order to preserve data integrity. Other events can be processed once the priority level is set back to default.
+- `event_queue_sup` (external library) - The event queue supervisor starts and supervises the event queue  processes. The event queue is used to dispatch events within the Erlang distribution system to all nodes in the cluster. This provides a way to communicate between nodes and synchronize the operations in the system.
+These processes are started by external library `blockade`.
 
 - `janitor` - The janitor process is responsible for cleaning up the system and removing any stale data. It periodically checks the system for any stale data and removes it to keep the system clean and efficient.
 
