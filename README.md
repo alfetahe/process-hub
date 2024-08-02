@@ -40,7 +40,7 @@ synchronization, distribution and more.
     ```elixir
     def deps do
       [
-        {:process_hub, "~> 0.2.7-alpha"}
+        {:process_hub, "~> 0.2.8-alpha"}
       ]
     end
     ```
