@@ -1,8 +1,8 @@
 # ProcessHub
 
-**NOTE: This library is still in alpha stage and is not recommended for production use.**
-
 ![example workflow](https://github.com/alfetahe/process-hub/actions/workflows/elixir.yml/badge.svg)  [![hex.pm version](https://img.shields.io/hexpm/v/coverex.svg?style=flat)](https://hex.pm/packages/process_hub) [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/process_hub)
+
+**NOTE: This library is still in alpha stage and is not recommended for production use.**
 
 ## Description
 
