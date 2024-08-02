@@ -1,6 +1,9 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.2.8-alpha - 2024-08-02
+Minor improvements on documentation.
+
 ## v0.2.7-alpha - 2024-07-09
 Removed the requirement to start the Erlang node as a distributed node as 
 it is no longer needed anymore since the `blockade` library now handles only one event queue per node.
