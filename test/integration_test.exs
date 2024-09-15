@@ -519,11 +519,13 @@ defmodule Test.IntegrationTest do
        %{hub_id: hub_id, listed_hooks: lh, hub: hub} = context do
     nodes_count = @nr_of_peers
     child_count = 1000
-    child_specs = Bag.gen_child_specs(
-      child_count,
-      prefix: Atom.to_string(hub_id),
-      id_type: :string
-    )
+
+    child_specs =
+      Bag.gen_child_specs(
+        child_count,
+        prefix: Atom.to_string(hub_id),
+        id_type: :string
+      )
 
     # Node ups.
     Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),

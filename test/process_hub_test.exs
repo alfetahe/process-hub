@@ -9,7 +9,8 @@ defmodule ProcessHubTest do
   test "start children", %{hub_id: hub_id} do
     assert ProcessHub.start_children(hub_id, [], []) === {:error, :no_children}
 
-    [cs1, cs2, cs3, cs4, cs5, cs6, cs7] = ProcessHub.Utility.Bag.gen_child_specs(7)
+    [cs1, cs2, cs3, cs4, cs5, cs6, cs7] =
+      ProcessHub.Utility.Bag.gen_child_specs(7, id_type: :atom)
 
     assert ProcessHub.start_children(hub_id, [cs1], async_wait: false) ===
              {:ok, :start_initiated}
@@ -76,26 +77,26 @@ defmodule ProcessHubTest do
     assert is_function(ref)
     {:ok, child_response} = ref.()
     assert is_tuple(child_response)
-    assert elem(child_response, 0) === :child2
+    assert elem(child_response, 0) === "child2"
     [{node, pid}] = elem(child_response, 1)
     assert node === node()
     assert is_pid(pid)
 
     {:ok, _} = ProcessHub.start_child(hub_id, cs3, async_wait: true) |> ProcessHub.await()
-    assert ProcessHub.start_child(hub_id, cs3) === {:error, {:already_started, [:child3]}}
+    assert ProcessHub.start_child(hub_id, cs3) === {:error, {:already_started, ["child3"]}}
 
     assert ProcessHub.start_child(hub_id, cs4, async_wait: true, timeout: 0)
            |> ProcessHub.await() ===
-             {:error, {:child4, [error: {node(), :child_start_timeout}]}}
+             {:error, {"child4", [error: {node(), :child_start_timeout}]}}
 
-    {:error, {:child2, [{_node, {:error, {:already_started, _}}}]}} =
+    {:error, {"child2", [{_node, {:error, {:already_started, _}}}]}} =
       ProcessHub.start_child(hub_id, cs2, async_wait: true, check_existing: false, timeout: 1000)
       |> ProcessHub.await()
 
     ProcessHub.Service.Dispatcher.reply_respondents(
       [self()],
       :child_start_resp,
-      :child5,
+      "child5",
       {:ok, :nopid},
       node()
     )
@@ -105,11 +106,11 @@ defmodule ProcessHubTest do
              check_mailbox: false,
              timeout: 10
            )
-           |> ProcessHub.await() === {:error, {:child5, [{node(), :nopid}]}}
+           |> ProcessHub.await() === {:error, {"child5", [{node(), :nopid}]}}
   end
 
   test "stop children", %{hub_id: hub_id} = _context do
-    child_specs = ProcessHub.Utility.Bag.gen_child_specs(3)
+    child_specs = ProcessHub.Utility.Bag.gen_child_specs(3, id_type: :atom)
 
     ProcessHub.start_children(hub_id, child_specs, async_wait: true) |> ProcessHub.await()
 
@@ -127,7 +128,7 @@ defmodule ProcessHubTest do
   end
 
   test "stop child", %{hub_id: hub_id} = _context do
-    child_specs = ProcessHub.Utility.Bag.gen_child_specs(3)
+    child_specs = ProcessHub.Utility.Bag.gen_child_specs(3, id_type: :atom)
 
     ProcessHub.start_children(hub_id, child_specs, async_wait: true) |> ProcessHub.await()
 
@@ -159,7 +160,7 @@ defmodule ProcessHubTest do
   end
 
   test "which children", %{hub_id: hub_id} = _context do
-    child_specs = ProcessHub.Utility.Bag.gen_child_specs(2)
+    child_specs = ProcessHub.Utility.Bag.gen_child_specs(2, id_type: :atom)
 
     ProcessHub.start_children(hub_id, child_specs, async_wait: true) |> ProcessHub.await()
 
@@ -264,7 +265,8 @@ defmodule ProcessHubTest do
     [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
     ProcessHub.start_children(hub_id, [cs1, cs2], async_wait: true) |> ProcessHub.await()
 
-    %{child1: {^cs1, nodepids1}, child2: {^cs2, nodepids2}} = ProcessHub.process_registry(hub_id)
+    %{"child1" => {^cs1, nodepids1}, "child2" => {^cs2, nodepids2}} =
+      ProcessHub.process_registry(hub_id)
 
     assert is_list(nodepids1)
     assert length(nodepids1) === 1
@@ -278,7 +280,7 @@ defmodule ProcessHubTest do
   end
 
   test "get pids", %{hub_id: hub_id} = _context do
-    [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
+    [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2, id_type: :atom)
     ProcessHub.start_children(hub_id, [cs1, cs2], async_wait: true) |> ProcessHub.await()
 
     c1_pids = ProcessHub.get_pids(hub_id, :child1)
@@ -300,9 +302,9 @@ defmodule ProcessHubTest do
     [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
     ProcessHub.start_children(hub_id, [cs1, cs2], async_wait: true) |> ProcessHub.await()
 
-    c1_pid = ProcessHub.get_pid(hub_id, :child1)
-    c2_pid = ProcessHub.get_pid(hub_id, :child2)
-    not_existing = ProcessHub.get_pid(hub_id, :child3)
+    c1_pid = ProcessHub.get_pid(hub_id, "child1")
+    c2_pid = ProcessHub.get_pid(hub_id, "child2")
+    not_existing = ProcessHub.get_pid(hub_id, "child3")
 
     assert is_pid(c1_pid)
     assert is_pid(c2_pid)

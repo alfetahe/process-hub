@@ -63,7 +63,7 @@ defmodule ProcessHub.Utility.Bag do
   @spec gen_child_specs(integer, gen_child_specs_opts()) :: list
   def gen_child_specs(count, opts \\ []) do
     prefix = Keyword.get(opts, :prefix, "child")
-    id_type = Keyword.get(opts, :id_type, :atom)
+    id_type = Keyword.get(opts, :id_type, :string)
 
     for x <- 1..count do
       id =

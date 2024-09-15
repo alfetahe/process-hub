@@ -230,7 +230,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             format_start_resp(child_data, local_node, pid, startup_result)
 
           res ->
-            Logger.error("Child start failed with #{inspect(res)}. Enable SASL logs for more information.")
+            Logger.error(
+              "Child start failed with #{inspect(res)}. Enable SASL logs for more information."
+            )
+
             nil
         end
       end)

@@ -173,7 +173,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
       redun_data =
         Enum.map(children, fn %{child_spec: cs, child_nodes: cn} ->
-          {cs.id, cn, {:pid, children_pids[cs.id]}}
+          x = Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil} |> elem(1)
+
+          {cs.id, cn, {:pid, x}}
         end)
 
       HookManager.dispatch_hook(
