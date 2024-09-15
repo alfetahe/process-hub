@@ -252,14 +252,14 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     state_data = Storage.get(Name.local_storage(hub_id), StorageKey.msk()) || []
 
     Enum.each(cpids, fn %{cid: cid, pid: pid} ->
-      pstate = Keyword.get(state_data, cid, nil)
+      pstate = Enum.find(state_data, fn {child_id, _} -> child_id === cid end)
 
-      unless pstate === nil do
-        send(pid, {:process_hub, :handover, pstate})
+      if is_tuple(pstate) do
+        send(pid, {:process_hub, :handover, pstate |> elem(1)})
       end
     end)
 
-    rem_states(hub_id, Keyword.keys(state_data))
+    rem_states(hub_id, Enum.map(state_data, fn {cid, _} -> cid end))
   end
 
   def handle_process_startups(_struct, _hub_id, _pids), do: nil
@@ -305,8 +305,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
       migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
       node_data = Map.get(acc, migration_node, [])
+      migr_data = Enum.find(states, fn {child_id, _} -> child_id === cid end) || {nil, nil} |> elem(1)
 
-      Map.put(acc, migration_node, [{cid, Keyword.get(states, cid)} | node_data])
+      Map.put(acc, migration_node, [{cid, migr_data} | node_data])
     end)
   end
 
