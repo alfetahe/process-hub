@@ -47,7 +47,7 @@ Main features include:
     ```elixir
     def deps do
       [
-        {:process_hub, "~> 0.2.8-alpha"}
+        {:process_hub, "~> 0.2.9-alpha"}
       ]
     end
     ```
