@@ -50,7 +50,7 @@ defmodule MyApp.Application do
 end
 ```
 
-Pay attention to the `retention` and `handover` options. The `retention` option is the time in milliseconds that the process state will be kept in the hub after the process has been stopped. The `handover` option is a boolean that indicates whether the process state should be handed over to another node when the process is going to be stopped.
+Pay attention to the `retention` and `handover` options. The `retention` option is the max time in milliseconds that the old process will be kept alive when migrating. The `handover` option is a boolean that indicates whether the process state should be handed over to another node when the process is going to be stopped.
 
 
 > #### Retention option {: .info}
