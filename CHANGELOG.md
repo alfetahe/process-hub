@@ -1,6 +1,21 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.2.9-alpha - 2024-09-15
+Bug fixes, minor documentation improvements.
+
+### Changed
+- All tests are generating binary child_id's by default instead of atoms to avoid future issues
+with Keyword lists.
+
+### Fixed
+- Hotswap migration was not working properly when child_id was a binary type due to the 
+`Keyword.get/3` calls.
+- Cluster update was throwing errors when child_id was a binary.
+
+### Change
+- Minor documentation improvements and logging.
+
 ## v0.2.8-alpha - 2024-08-02
 Minor improvements on documentation.
 
