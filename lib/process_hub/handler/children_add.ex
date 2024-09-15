@@ -229,11 +229,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           {:error, {:already_started, pid}} ->
             format_start_resp(child_data, local_node, pid, startup_result)
 
-          _ ->
-            Logger.error(
-              "Unexpected message received while starting child: #{inspect(child_data)}"
-            )
-
+          res ->
+            Logger.error("Child start failed with #{inspect(res)}. Enable SASL logs for more information.")
             nil
         end
       end)
