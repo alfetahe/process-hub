@@ -42,7 +42,7 @@ defmodule ProcessHub.Initializer do
     children =
       [
         {Blockade, %{name: managers.event_queue, priority_sync: false}},
-        dist_sup(hub_id, managers),
+        dist_sup(hub, managers),
         {Task.Supervisor, name: managers.task_supervisor},
         {ProcessHub.Coordinator, {hub_id, hub, managers}},
         {ProcessHub.WorkerQueue, hub_id},
@@ -54,11 +54,18 @@ defmodule ProcessHub.Initializer do
     Supervisor.init(children, opts)
   end
 
-  defp dist_sup(hub_id, managers) do
+  defp dist_sup(%ProcessHub{} = hub, managers) do
+    args = {
+      hub.hub_id,
+      managers.distributed_supervisor,
+      hub.dsup_max_restarts,
+      hub.dsup_max_seconds
+    }
+
     %{
       id: :distributed_supervisor,
-      start: {ProcessHub.DistributedSupervisor, :start_link, [{hub_id, managers}]},
-      shutdown: 60_000
+      start: {ProcessHub.DistributedSupervisor, :start_link, [args]},
+      shutdown: hub.dsup_shutdown_timeout
     }
   end
 

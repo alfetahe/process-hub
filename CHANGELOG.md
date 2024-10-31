@@ -9,6 +9,12 @@ Added new configuration options for timeout values.
 for purging the storage table from old data (ttl based).
 - `migr_base_timeout` option added to the configuration to allow the user to set the timeout
 for the migration process to complete before it is considered failed.
+- `dsup_max_restarts` option added to the configuration to allow the user to set the maximum
+number of restarts for the distributed supervisor.
+- `dsup_max_seconds` option added to the configuration to allow the user to set the maximum
+number of seconds for the distributed supervisor to be running before it is considered failed.
+- `dsup_shutdown_timeout` option added to the configuration to allow the user to set the timeout
+for the distributed supervisor to shutdown before forcefully killing it when receiving a shutdown signal.
 
 ## v0.2.9-alpha - 2024-09-15
 Bug fixes, minor documentation improvements.

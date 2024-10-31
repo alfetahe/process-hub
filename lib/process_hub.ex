@@ -98,6 +98,15 @@ defmodule ProcessHub do
   - `:migr_base_timeout` is optional and is used to define the base timeout in milliseconds
   for the migration process to complete before the hub considers it as a failure.
   The default is `15000` (15 seconds).
+  - `:dsup_max_restarts` is optional and is used to define the maximum number of restarts
+  for the distributed supervisor. See `Supervisor` child specification for more information.
+  The default is `100`.
+  - `:dsup_max_seconds` is optional and is used to define the maximum number of seconds
+  for the distributed supervisor to restart the child process.
+  See `Supervisor` child specification for more information. The default is `4`.
+  - `:dsup_shutdown_timeout` is optional and is used to define the timeout in milliseconds
+  for the distributed supervisor to wait before forcefully terminating itself
+   when receiving a shutdown signal.
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -118,10 +127,13 @@ defmodule ProcessHub do
           distribution_strategy:
             ProcessHub.Strategy.Distribution.ConsistentHashing.t()
             | ProcessHub.Strategy.Distribution.Guided.t(),
-          hubs_discover_interval: non_neg_integer(),
-          deadlock_recovery_timeout: non_neg_integer(),
-          storage_purge_interval: non_neg_integer(),
-          migr_base_timeout: non_neg_integer()
+          hubs_discover_interval: pos_integer(),
+          deadlock_recovery_timeout: pos_integer(),
+          storage_purge_interval: pos_integer(),
+          migr_base_timeout: pos_integer(),
+          dsup_max_restarts: pos_integer(),
+          dsup_max_seconds: pos_integer(),
+          dsup_shutdown_timeout: pos_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -137,7 +149,10 @@ defmodule ProcessHub do
     hubs_discover_interval: 60000,
     deadlock_recovery_timeout: 60000,
     storage_purge_interval: 15000,
-    migr_base_timeout: 15000
+    migr_base_timeout: 15000,
+    dsup_max_restarts: 100,
+    dsup_max_seconds: 4,
+    dsup_shutdown_timeout: 60000
   ]
 
   alias ProcessHub.Service.Distributor
@@ -147,7 +162,7 @@ defmodule ProcessHub do
   alias ProcessHub.Utility.Name
 
   # 10 seconds
-  @timeout 10000
+  @default_init_timeout 10000
 
   @doc """
   Starts a child process that will be distributed across the cluster.
@@ -463,7 +478,7 @@ defmodule ProcessHub do
   defdelegate nodes(hub_id, opts \\ []), to: Cluster
 
   defp default_init_opts(opts) do
-    Keyword.put_new(opts, :timeout, @timeout)
+    Keyword.put_new(opts, :timeout, @default_init_timeout)
     |> Keyword.put_new(:async_wait, false)
     |> Keyword.put_new(:check_mailbox, true)
     |> Keyword.put_new(:check_existing, true)

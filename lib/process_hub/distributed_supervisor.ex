@@ -25,8 +25,14 @@ defmodule ProcessHub.DistributedSupervisor do
   as the base module, this way we can overwrite the `handle_info/2` function
   on the `:supervisor` module to handle the `:EXIT` messages our selves.
   """
-  def start_link({hub_id, %{distributed_supervisor: sup}}) do
-    GenServer.start_link(__MODULE__, {sup, __MODULE__, hub_id}, name: sup)
+  def start_link({hub_id, dsup_name, max_restarts, max_seconds}) do
+    args = %{
+      hub_id: hub_id,
+      max_restarts: max_restarts,
+      max_seconds: max_seconds
+    }
+
+    GenServer.start_link(__MODULE__, {dsup_name, __MODULE__, args}, name: dsup_name)
   end
 
   @doc """
@@ -37,12 +43,12 @@ defmodule ProcessHub.DistributedSupervisor do
   """
   def init({sup, mod, args}), do: :supervisor.init({sup, mod, args})
 
-  def init(hub_id) do
-    Supervisor.init(children(hub_id),
+  def init(args) do
+    Supervisor.init(children(args.hub_id),
       strategy: :one_for_one,
       auto_shutdown: :never,
-      max_restarts: 100,
-      max_seconds: 4
+      max_restarts: args.max_restarts,
+      max_seconds: args.max_seconds
     )
   end
 
