@@ -1,6 +1,13 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.2.10-alpha - 2024-xx-xx
+Added new configuration options for timeout values.
+
+### Added
+- `storage_purge_interval` option added to the configuration to allow the user to set the interval
+for purging the storage table from old data (ttl based).
+
 ## v0.2.9-alpha - 2024-09-15
 Bug fixes, minor documentation improvements.
 

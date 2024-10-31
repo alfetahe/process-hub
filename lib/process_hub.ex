@@ -93,6 +93,8 @@ defmodule ProcessHub do
   to recover from locked hub. Hub locking can happen for different reasons
   such as updating internal data, migrating processes or handling network partitions.
   The default is `60000` (1 minute).
+  - `:storage_purge_interval` is optional and is used to define the interval in milliseconds
+  for the janitor to clean up the old cache records when the TTL expires. The default is `15000` (15 seconds).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -114,7 +116,8 @@ defmodule ProcessHub do
             ProcessHub.Strategy.Distribution.ConsistentHashing.t()
             | ProcessHub.Strategy.Distribution.Guided.t(),
           hubs_discover_interval: non_neg_integer(),
-          deadlock_recovery_timeout: non_neg_integer()
+          deadlock_recovery_timeout: non_neg_integer(),
+          storage_purge_interval: non_neg_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -128,7 +131,8 @@ defmodule ProcessHub do
     partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
     distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
     hubs_discover_interval: 60000,
-    deadlock_recovery_timeout: 60000
+    deadlock_recovery_timeout: 60000,
+    storage_purge_interval: 15000
   ]
 
   alias ProcessHub.Service.Distributor

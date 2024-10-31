@@ -4,29 +4,27 @@ defmodule ProcessHub.Janitor do
 
   use GenServer
 
-  @ttl_cleanup_interval 15000
-
-  def start_link(hub_id) do
-    GenServer.start_link(__MODULE__, hub_id, name: Name.janitor(hub_id))
+  def start_link({hub_id, purge_interval}) do
+    GenServer.start_link(__MODULE__, {hub_id, purge_interval}, name: Name.janitor(hub_id))
   end
 
   @impl true
-  def init(hub_id) do
-    schedule_cleanup()
+  def init({hub_id, purge_interval}) do
+    schedule_cleanup(purge_interval)
 
-    {:ok, %{hub_id: hub_id}}
+    {:ok, %{hub_id: hub_id, purge_interval: purge_interval}}
   end
 
   @impl true
   def handle_info(:ttl_cleanup, state) do
     purge_cache(state.hub_id)
-    schedule_cleanup()
+    schedule_cleanup(state.purge_interval)
 
     {:noreply, state}
   end
 
-  defp schedule_cleanup() do
-    Process.send_after(self(), :ttl_cleanup, @ttl_cleanup_interval)
+  defp schedule_cleanup(purge_interval) do
+    Process.send_after(self(), :ttl_cleanup, purge_interval)
   end
 
   defp purge_cache(hub_id) do

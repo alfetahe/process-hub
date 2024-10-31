@@ -46,7 +46,7 @@ defmodule ProcessHub.Initializer do
         {Task.Supervisor, name: managers.task_supervisor},
         {ProcessHub.Coordinator, {hub_id, hub, managers}},
         {ProcessHub.WorkerQueue, hub_id},
-        {ProcessHub.Janitor, hub_id}
+        {ProcessHub.Janitor, {hub_id, hub.storage_purge_interval}}
       ]
 
     opts = [strategy: :one_for_one]
