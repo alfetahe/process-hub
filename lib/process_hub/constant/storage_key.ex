@@ -15,4 +15,5 @@ defmodule ProcessHub.Constant.StorageKey do
   def gct, do: :gossip_node_timestamps
   def dlrt, do: :deadlock_recovery_timeout
   def hodw, do: :handover_data_wait
+  def mbt, do: :migration_base_timeout
 end

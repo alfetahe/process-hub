@@ -101,7 +101,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   - `:child_migration_timeout` - An integer value in milliseconds is used to specify the timeout for single
   child process migration. If the child process migration does not complete within this time, the migration
-  for single child process will be considered failed but the migration for other child processes will continue.
+  for this child process will be considered failed but the migration for other child processes will continue.
     The default value is `10000`.
   """
   @type t() :: %__MODULE__{

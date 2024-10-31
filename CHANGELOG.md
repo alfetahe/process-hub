@@ -7,6 +7,8 @@ Added new configuration options for timeout values.
 ### Added
 - `storage_purge_interval` option added to the configuration to allow the user to set the interval
 for purging the storage table from old data (ttl based).
+- `migr_base_timeout` option added to the configuration to allow the user to set the timeout
+for the migration process to complete before it is considered failed.
 
 ## v0.2.9-alpha - 2024-09-15
 Bug fixes, minor documentation improvements.

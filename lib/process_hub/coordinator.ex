@@ -455,6 +455,7 @@ defmodule ProcessHub.Coordinator do
 
     Storage.insert(local_storage, StorageKey.hdi(), settings.hubs_discover_interval)
     Storage.insert(local_storage, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
+    Storage.insert(local_storage, StorageKey.mbt(), settings.migr_base_timeout)
   end
 
   defp register_handlers(%{event_queue: eq}) do

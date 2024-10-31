@@ -37,6 +37,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             local_children: list(),
             keep: list(),
             migrate: list(),
+            migr_base_timeout: pos_integer(),
             async_tasks: list()
           }
 
@@ -55,12 +56,13 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                   :sync_strat,
                   :partition_strat,
                   :dist_strat,
+                  :migr_base_timeout,
                   async_tasks: []
                 ]
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = arg) do
-      arg = add_strategies(arg)
+      arg = attach_data(arg)
 
       # Dispatch the nodes pre redistribution event.
       HookManager.dispatch_hook(arg.hub_id, Hook.pre_nodes_redistribution(), {:nodeup, arg.node})
@@ -90,7 +92,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       |> wait_for_tasks()
     end
 
-    defp add_strategies(arg) do
+    defp attach_data(arg) do
       local_storage = Name.local_storage(arg.hub_id)
 
       %__MODULE__{
@@ -99,7 +101,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           redun_strat: Storage.get(local_storage, StorageKey.strred()),
           dist_strat: Storage.get(local_storage, StorageKey.strdist()),
           migr_strat: Storage.get(local_storage, StorageKey.strmigr()),
-          partition_strat: Storage.get(local_storage, StorageKey.strpart())
+          partition_strat: Storage.get(local_storage, StorageKey.strpart()),
+          migr_base_timeout: Storage.get(local_storage, StorageKey.mbt())
       }
     end
 
@@ -115,8 +118,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       )
     end
 
-    defp wait_for_tasks(%__MODULE__{async_tasks: async_tasks, migr_strat: migr_strat} = _arg) do
-      Task.await_many(async_tasks, migration_timeout(migr_strat))
+    defp wait_for_tasks(
+           %__MODULE__{
+             async_tasks: async_tasks,
+             migr_strat: migr_strat,
+             migr_base_timeout: migr_base_timeout
+           } = _arg
+         ) do
+      Task.await_many(async_tasks, migration_timeout(migr_strat, migr_base_timeout))
 
       #  %__MODULE__{arg | async_tasks: []}
 
@@ -230,16 +239,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       %__MODULE__{arg | keep: keep, migrate: migrate}
     end
 
-    defp migration_timeout(migr_strategy) do
-      default_timeout = 15000
-
+    defp migration_timeout(migr_strategy, migr_base_timeout) do
       if Map.has_key?(migr_strategy, :retention) do
         case Map.get(migr_strategy, :retention, :none) do
-          :none -> default_timeout
-          timeout -> timeout + default_timeout
+          :none -> migr_base_timeout
+          timeout -> timeout + migr_base_timeout
         end
       else
-        default_timeout
+        migr_base_timeout
       end
     end
   end

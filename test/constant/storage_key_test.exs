@@ -62,4 +62,8 @@ defmodule Test.Constant.StorageKeyTest do
   test "storage key static child specs" do
     assert StorageKey.staticcs() === :static_child_specs
   end
+
+  test "migration base timeout" do
+    assert StorageKey.mbt() === :migration_base_timeout
+  end
 end

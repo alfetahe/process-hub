@@ -95,6 +95,9 @@ defmodule ProcessHub do
   The default is `60000` (1 minute).
   - `:storage_purge_interval` is optional and is used to define the interval in milliseconds
   for the janitor to clean up the old cache records when the TTL expires. The default is `15000` (15 seconds).
+  - `:migr_base_timeout` is optional and is used to define the base timeout in milliseconds
+  for the migration process to complete before the hub considers it as a failure.
+  The default is `15000` (15 seconds).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -117,7 +120,8 @@ defmodule ProcessHub do
             | ProcessHub.Strategy.Distribution.Guided.t(),
           hubs_discover_interval: non_neg_integer(),
           deadlock_recovery_timeout: non_neg_integer(),
-          storage_purge_interval: non_neg_integer()
+          storage_purge_interval: non_neg_integer(),
+          migr_base_timeout: non_neg_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -132,7 +136,8 @@ defmodule ProcessHub do
     distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
     hubs_discover_interval: 60000,
     deadlock_recovery_timeout: 60000,
-    storage_purge_interval: 15000
+    storage_purge_interval: 15000,
+    migr_base_timeout: 15000
   ]
 
   alias ProcessHub.Service.Distributor
