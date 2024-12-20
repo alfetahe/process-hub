@@ -11,7 +11,7 @@ defmodule ProcessHub do
   @typedoc """
   The `hub_id` defines the name of the hub. It is used to identify the hub.
   """
-  @type hub_id() :: atom()
+  @type hub_id() :: atom() | String.t()
 
   @typedoc """
   The `child_id` defines the name of the child. It is used to identify the child.
