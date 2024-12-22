@@ -41,7 +41,7 @@ defmodule ProcessHub.Janitor do
       [] ->
         []
 
-      {cache_key, ttl_expire} ->
+      [cache_key, ttl_expire] ->
         if curr_timestamp > ttl_expire do
           Storage.remove(local_storage, cache_key)
         end

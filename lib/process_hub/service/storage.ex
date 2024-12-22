@@ -65,7 +65,7 @@ defmodule ProcessHub.Service.Storage do
     case is_integer(ttl) do
       true ->
         expire = (DateTime.utc_now() |> DateTime.to_unix(:millisecond)) + ttl
-        ETS.insert(table, {key, value, ttl: expire})
+        ETS.insert(table, {key, value, expire})
 
       false ->
         ETS.insert(table, {key, value})
