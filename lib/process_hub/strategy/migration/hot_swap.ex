@@ -307,7 +307,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       node_data = Map.get(acc, migration_node, [])
 
       migr_data =
-        Enum.find(states, fn {child_id, _} -> child_id === cid end) || {nil, nil} |> elem(1)
+        (Enum.find(states, fn {child_id, _} -> child_id === cid end) || {nil, nil}) |> elem(1)
 
       Map.put(acc, migration_node, [{cid, migr_data} | node_data])
     end)

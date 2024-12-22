@@ -125,7 +125,8 @@ defmodule ProcessHub.DistributedSupervisor do
 
     if old_pid !== new_pid do
       Dispatcher.propagate_event(
-        Name.extract_hub_id(elem(old_state, 1)),
+        # TODO: refactor this
+        Name.extract_hub_id(elem(old_state, 1)) |> String.to_atom(),
         @event_child_process_pid_update,
         {cid, {node(), new_pid}},
         %{

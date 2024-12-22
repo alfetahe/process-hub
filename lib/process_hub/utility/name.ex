@@ -16,6 +16,7 @@ defmodule ProcessHub.Utility.Name do
       end
     end)
     |> Enum.join(separator)
+    # TODO: we may want to use strings instead of creating atoms.
     |> String.to_atom()
   end
 
