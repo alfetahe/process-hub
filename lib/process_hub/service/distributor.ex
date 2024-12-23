@@ -78,6 +78,7 @@ defmodule ProcessHub.Service.Distributor do
     redun_strat = Storage.get(local_storage, StorageKey.strred())
     dist_strat = Storage.get(local_storage, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
+    self = self()
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
       child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, repl_fact)
@@ -85,7 +86,7 @@ defmodule ProcessHub.Service.Distributor do
 
       child_data =
         case Keyword.get(opts, :async_wait, false) do
-          true -> Map.put(child_data, :reply_to, [self()])
+          true -> Map.put(child_data, :reply_to, [self])
           false -> child_data
         end
 
@@ -224,6 +225,7 @@ defmodule ProcessHub.Service.Distributor do
 
   defp init_compose_data(hub_id, children, opts) do
     async_await = Keyword.get(opts, :async_wait, false)
+    self = self()
 
     {:ok,
      Enum.reduce(children, [], fn {child_spec, child_nodes}, acc ->
@@ -231,7 +233,7 @@ defmodule ProcessHub.Service.Distributor do
 
        child_data =
          case async_await do
-           true -> Map.put(child_data, :reply_to, [self()])
+           true -> Map.put(child_data, :reply_to, [self])
            false -> child_data
          end
 
