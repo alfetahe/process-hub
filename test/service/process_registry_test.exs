@@ -217,10 +217,10 @@ defmodule Test.Service.ProcessRegistryTest do
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
       2 =>
         {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}},
-         [{:"ex_unit@127.0.0.1", "pid3"}, {:node4, "pid4"}, {:node5, "pid5"}]},
+         [{:"process_hub@127.0.0.1", "pid3"}, {:node4, "pid4"}, {:node5, "pid5"}]},
       3 =>
         {%{id: 3, start: {:thirdmod, :thirdfunc, [5, 6]}},
-         [{:"ex_unit@127.0.0.1", :pid5}, {:node6, "pid6"}]}
+         [{:"process_hub@127.0.0.1", :pid5}, {:node6, "pid6"}]}
     }
 
     Enum.each(children, fn {_key, {child_spec, child_nodes}} ->

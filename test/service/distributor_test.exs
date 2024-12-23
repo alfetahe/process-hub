@@ -11,7 +11,7 @@ defmodule Test.Service.DistributorTest do
   end
 
   test "local supevisor children", %{hub_id: hub_id} = _context do
-    assert Distributor.which_children_local(hub_id, []) === {:"ex_unit@127.0.0.1", []}
+    assert Distributor.which_children_local(hub_id, []) === {:"process_hub@127.0.0.1", []}
 
     {:ok, _pid} =
       Name.distributed_supervisor(hub_id)
@@ -27,7 +27,7 @@ defmodule Test.Service.DistributorTest do
         start: {Test.Helper.TestServer, :start_link, [%{name: :test_local_sup_child2}]}
       })
 
-    {:"ex_unit@127.0.0.1", children} = Distributor.which_children_local(hub_id, [])
+    {:"process_hub@127.0.0.1", children} = Distributor.which_children_local(hub_id, [])
 
     assert length(children) === 2
     assert Enum.all?(children, fn {_, pid, _, _} -> is_pid(pid) end)
@@ -41,7 +41,7 @@ defmodule Test.Service.DistributorTest do
   end
 
   test "global supevisor children", %{hub_id: hub_id} = _context do
-    assert Distributor.which_children_global(hub_id, []) === [{:"ex_unit@127.0.0.1", []}]
+    assert Distributor.which_children_global(hub_id, []) === [{:"process_hub@127.0.0.1", []}]
 
     {:ok, _pid} =
       Name.distributed_supervisor(hub_id)
@@ -57,7 +57,7 @@ defmodule Test.Service.DistributorTest do
         start: {Test.Helper.TestServer, :start_link, [%{name: :test_global_sup_child2}]}
       })
 
-    [{:"ex_unit@127.0.0.1", children}] = Distributor.which_children_global(hub_id, [])
+    [{:"process_hub@127.0.0.1", children}] = Distributor.which_children_global(hub_id, [])
 
     assert length(children) === 2
     assert Enum.all?(children, fn {_, pid, _, _} -> is_pid(pid) end)

@@ -29,8 +29,8 @@ defmodule Test.Service.RingTest do
     assert HashRing.get_node_count(hash_ring) === 2
 
     assert HashRing.get_nodes(hash_ring) === %{
-             "ex_unit@127.0.0.1":
-               {:hash_ring_node, :"ex_unit@127.0.0.1", :"ex_unit@127.0.0.1", 1},
+             "process_hub@127.0.0.1":
+               {:hash_ring_node, :"process_hub@127.0.0.1", :"process_hub@127.0.0.1", 1},
              node: {:hash_ring_node, :node, :node, 1}
            }
   end
@@ -43,15 +43,15 @@ defmodule Test.Service.RingTest do
     assert HashRing.get_node_count(hash_ring) === 1
 
     assert HashRing.get_nodes(hash_ring) === %{
-             "ex_unit@127.0.0.1": {:hash_ring_node, :"ex_unit@127.0.0.1", :"ex_unit@127.0.0.1", 1}
+             "process_hub@127.0.0.1": {:hash_ring_node, :"process_hub@127.0.0.1", :"process_hub@127.0.0.1", 1}
            }
   end
 
   test "key to nodes", %{hub_id: hub_id} = _context do
     hash_ring = Ring.get_ring(hub_id)
 
-    assert Ring.key_to_nodes(hash_ring, "key1", 1) === [:"ex_unit@127.0.0.1"]
-    assert Ring.key_to_nodes(hash_ring, "key2", 1) === [:"ex_unit@127.0.0.1"]
+    assert Ring.key_to_nodes(hash_ring, "key1", 1) === [:"process_hub@127.0.0.1"]
+    assert Ring.key_to_nodes(hash_ring, "key2", 1) === [:"process_hub@127.0.0.1"]
 
     hash_ring =
       Ring.add_node(hash_ring, :node1)
@@ -65,7 +65,7 @@ defmodule Test.Service.RingTest do
     assert length(nodes) === 4
 
     Enum.each(nodes, fn node ->
-      Enum.member?([:node1, :node2, :node3, :"ex_unit@127.0.0.1"], node)
+      Enum.member?([:node1, :node2, :node3, :"process_hub@127.0.0.1"], node)
     end)
 
     assert Ring.key_to_nodes(hash_ring, 5000, 1) === Enum.take(nodes, 1)
@@ -77,8 +77,8 @@ defmodule Test.Service.RingTest do
   test "key to node", %{hub_id: hub_id} = _context do
     hash_ring = Ring.get_ring(hub_id)
 
-    assert Ring.key_to_node(hash_ring, "key1", 1) === :"ex_unit@127.0.0.1"
-    assert Ring.key_to_node(hash_ring, "key2", 1) === :"ex_unit@127.0.0.1"
+    assert Ring.key_to_node(hash_ring, "key1", 1) === :"process_hub@127.0.0.1"
+    assert Ring.key_to_node(hash_ring, "key2", 1) === :"process_hub@127.0.0.1"
 
     hash_ring =
       Ring.add_node(hash_ring, :node1)
@@ -99,6 +99,6 @@ defmodule Test.Service.RingTest do
   test "nodes", %{hub_id: hub_id} = _context do
     hash_ring = Ring.get_ring(hub_id)
 
-    assert Ring.nodes(hash_ring) === [:"ex_unit@127.0.0.1"]
+    assert Ring.nodes(hash_ring) === [:"process_hub@127.0.0.1"]
   end
 end
