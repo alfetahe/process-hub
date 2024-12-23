@@ -1,7 +1,7 @@
 defmodule Test.Helper.TestNode do
-  @spec local_node() :: :"ex_unit@127.0.0.1"
+  @spec local_node() :: :"process_hub@127.0.0.1"
   def local_node() do
-    :"ex_unit@127.0.0.1"
+    :"process_hub@127.0.0.1"
   end
 
   def start_nodes(amount, options \\ [])

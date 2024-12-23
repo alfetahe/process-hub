@@ -30,6 +30,12 @@ defmodule Test.Helper.TestServer do
   #   :ok
   # end
 
+  def handle_call({:exec, func}, _from, state) do
+    res = func.()
+
+    {:reply, res, state}
+  end
+
   def handle_call(:get_state, _from, state) do
     {:reply, state, state}
   end

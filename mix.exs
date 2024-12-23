@@ -53,7 +53,7 @@ defmodule ProcessHub.MixProject do
       {:blockade, "~> 0.2.1"},
       {:hash_ring, "~> 0.4.2"},
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
-      {:benchee, "~> 1.2", only: :dev}
+      {:benchee, "~> 1.2", only: [:dev, :test]}
     ]
   end
 
@@ -65,6 +65,6 @@ defmodule ProcessHub.MixProject do
     File.cp_r("guides/assets", "doc/assets")
   end
 
-  defp elixirc_paths(:test), do: ["lib", "test/helper"]
-  defp elixirc_paths(_), do: ["lib"]
+  defp elixirc_paths(:prod), do: ["lib"]
+  defp elixirc_paths(_), do: ["lib", "test/helper"]
 end
