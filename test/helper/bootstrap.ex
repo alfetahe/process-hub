@@ -137,11 +137,13 @@ defmodule Test.Helper.Bootstrap do
         true -> length(nodes)
       end
 
-    Bag.receive_multiple(
-      msg_count,
-      Hook.post_cluster_join(),
-      error_msg: "Bootstrap timeout."
-    )
+    if nodes_count > 1 do
+      Bag.receive_multiple(
+        msg_count,
+        Hook.post_cluster_join(),
+        error_msg: "Bootstrap timeout."
+      )
+    end
   end
 
   defp migr_strategy(context) do

@@ -10,19 +10,47 @@ defmodule Mix.Tasks.Benchmark do
 
   @impl Mix.Task
   def run([nr_of_peers, nr_of_processes]) do
+    # from = self()
+    # Enum.map(1..100_000, fn _ ->
+    #   pid = spawn(fn() ->
+    #     receive do
+    #       {:hello, from} -> send(from, :world)
+    #     end
+    #   end)
+
+    #   send(pid, {:hello, from})
+    # end)
+
+    # Enum.map(1..50_000, fn _ ->
+    #   receive do
+    #     :world -> :ok
+    #   end
+    # end)
+
+
     nr_of_peers = String.to_integer(nr_of_peers)
     nr_of_processes = String.to_integer(nr_of_processes)
 
     bootstrap(nr_of_peers)
 
+    {total_start, _} = :timer.tc(fn () ->
+      start_processes(@hub_id, nr_of_processes)
+    end, :millisecond)
+
+    dbg(total_start)
+    # # benchmark(@hub_id, nr_of_processes)
+
+  end
+
+  defp benchmark(hub_id, nr_of_processes) do
     Benchee.run(
       %{
         "start_processes" => fn ->
-          start_processes(@hub_id, nr_of_processes)
+          start_processes(hub_id, nr_of_processes)
         end
       },
-      warmup: 4,
-      time: 5,
+      warmup: 2,
+      time: 3,
       parallel: 1
     )
   end
@@ -49,6 +77,8 @@ defmodule Mix.Tasks.Benchmark do
 
   defp start_processes(hub_id, nr_of_processes) do
     child_specs = ProcessHub.Utility.Bag.gen_child_specs(nr_of_processes)
+
+    :os.system_time(:millisecond) |> IO.inspect(label: "START TIME")
 
     ProcessHub.start_children(hub_id, child_specs, async_wait: true) |> ProcessHub.await()
   end
