@@ -30,7 +30,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             for_node: {
               node(),
               [
-                {:reply_to, ProcessHub.reply_to()},
                 {:migration, boolean()}
               ]
             }
@@ -54,48 +53,62 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     @type t :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
-            post_start_results: [%PostStartData{}]
+            post_start_results: [%PostStartData{}],
+            start_opts: keyword()
           }
 
     @enforce_keys [
       :hub_id,
-      :post_start_results
+      :post_start_results,
+      :start_opts
     ]
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{hub_id: hub_id, post_start_results: psr}) do
-      children_formatted =
-        Enum.map(psr, fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn} ->
-          {cid, {cs, cn}}
-        end)
-        |> Map.new()
+    def handle(%__MODULE__{hub_id: hub_id, post_start_results: psr, start_opts: start_opts}) do
+      ProcessRegistry.bulk_insert(hub_id, store_format(psr))
 
-      ProcessRegistry.bulk_insert(hub_id, children_formatted)
+      send_collect_results(psr, start_opts)
+    end
 
+    defp send_collect_results(post_start_results, start_opts) do
+      reply_to = Keyword.get(start_opts, :reply_to, nil)
       local_node = node()
 
-      # Not all nodes should handle the reply_to options or we will end up with multiple replies.
-      Enum.each(psr, fn %PostStartData{cid: cid, result: rs, for_node: {for_node, opts}} ->
-        if for_node === local_node do
-          handle_reply_to(opts, cid, rs, for_node)
-        end
-      end)
-    end
+      # Each node sends only their own child process startup results.
+      filtered_data =
+        Enum.filter(post_start_results, fn %PostStartData{for_node: {for_node, _}} ->
+          for_node === local_node
+        end)
 
-    defp handle_reply_to(opts, child_id, startup_res, local_node) do
-      reply_to = Keyword.get(opts, :reply_to, nil)
-
-      if is_list(reply_to) and length(reply_to) > 0 do
-        Dispatcher.reply_respondents(
-          reply_to,
-          :child_start_resp,
-          child_id,
-          startup_res,
-          local_node
-        )
+      if reply_to do
+        Enum.each(reply_to, fn respondent ->
+          send(respondent, {:collect_start_results, filtered_data, local_node})
+        end)
       end
     end
+
+    defp store_format(post_start_results) do
+      Enum.map(post_start_results, fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn} ->
+        {cid, {cs, cn}}
+      end)
+      |> Map.new()
+    end
+
+    # TODO: remove
+    # defp handle_reply_to(opts, child_id, startup_res, local_node) do
+    #   reply_to = Keyword.get(opts, :reply_to, nil)
+
+    #   if is_list(reply_to) and length(reply_to) > 0 do
+    #     Dispatcher.reply_respondents(
+    #       reply_to,
+    #       :child_start_resp,
+    #       child_id,
+    #       startup_res,
+    #       local_node
+    #     )
+    #   end
+    # end
   end
 
   defmodule StartHandle do
@@ -106,8 +119,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             hub_id: ProcessHub.hub_id(),
             children: [
               %{
-                child_spec: ProcessHub.child_spec(),
-                reply_to: ProcessHub.reply_to()
+                child_spec: ProcessHub.child_spec()
               }
             ],
             dist_sup: atom(),
@@ -188,7 +200,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp update_registry(%__MODULE__{hub_id: hub_id, process_data: pd} = arg) do
+    defp update_registry(%__MODULE__{hub_id: hub_id, process_data: pd, start_opts: so} = arg) do
       Task.Supervisor.async(
         Name.task_supervisor(hub_id),
         SyncHandle,
@@ -196,7 +208,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         [
           %SyncHandle{
             hub_id: hub_id,
-            post_start_results: pd
+            post_start_results: pd,
+            start_opts: so
           }
         ]
       )
@@ -251,7 +264,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         for_node: {
           local_node,
           [
-            {:reply_to, Map.get(child_data, :reply_to, [])},
             {:migration, Map.get(child_data, :migration, false)}
           ]
         }
@@ -285,6 +297,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         {:error, {:already_started, pid}} ->
           {:error, {:already_started, pid}}
 
+        # TODO: Replace with new resp sending
         any ->
           Map.get(child_data, :reply_to, [])
           |> Dispatcher.reply_respondents(:child_start_resp, cid, any, local_node)

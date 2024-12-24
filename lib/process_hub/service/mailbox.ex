@@ -1,4 +1,7 @@
 defmodule ProcessHub.Service.Mailbox do
+  alias ProcessHub.Service.Cluster
+  alias ProcessHub.Handler.ChildrenAdd.PostStartData
+
   @moduledoc """
   The messenger service provides API functions for receiving messages from other processes.
   """
@@ -6,35 +9,46 @@ defmodule ProcessHub.Service.Mailbox do
   @doc """
   Waits for multiple child process startup results.
   """
-  @spec receive_start_resp([{node(), [ProcessHub.child_id()]}], keyword()) ::
+  @spec collect_start_results(atom(), keyword()) ::
           {:ok, list()} | {:error, list()}
-  def receive_start_resp(receivables, opts) do
-    handler = fn _child_id, resp, node ->
+  def collect_start_results(hub_id, opts) do
+    handler = fn resp, node ->
       case resp do
         {:ok, child_pid} -> {node, child_pid}
         error -> {node, error}
       end
     end
 
-    startup_responses =
-      receive_child_resp(
-        receivables,
-        :child_start_resp,
-        handler,
-        :child_start_timeout,
-        Keyword.get(opts, :timeout)
-      )
+    nodes_results =
+      Enum.map(Cluster.nodes(hub_id, [:include_local]), fn node ->
+        {node,
+         receive do
+           {:collect_start_results, start_results, node} ->
+             Enum.map(start_results, fn %PostStartData{result: result, cid: cid} ->
+               {cid, handler.(result, node)}
+             end)
+         after
+           Keyword.get(opts, :timeout) -> [{:error, "timeout"}]
+         end}
+      end)
 
-    any_errors =
-      Enum.all?(startup_responses, fn {_node, child_responses} ->
-        Enum.all?(child_responses, fn {_child_id, resp} ->
-          is_pid(resp)
+    start_results =
+      Enum.reduce(nodes_results, %{}, fn {_node, results}, acc ->
+        Enum.reduce(results, acc, fn {cid, result}, acc ->
+          Map.put(acc, cid, Map.get(acc, cid, []) ++ [result])
         end)
       end)
 
-    startup_responses = extract_first(startup_responses, opts)
+    errors =
+      Enum.any?(start_results, fn {_cid, results} ->
+        Enum.any?(results, fn result ->
+          !is_pid(result)
+        end)
+      end)
 
-    case any_errors do
+    startup_responses = extract_first(start_results, opts)
+
+    case errors do
       true -> {:ok, startup_responses}
       false -> {:error, startup_responses}
     end

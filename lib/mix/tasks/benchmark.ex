@@ -27,19 +27,22 @@ defmodule Mix.Tasks.Benchmark do
     #   end
     # end)
 
-
     nr_of_peers = String.to_integer(nr_of_peers)
     nr_of_processes = String.to_integer(nr_of_processes)
 
     bootstrap(nr_of_peers)
 
-    {total_start, _} = :timer.tc(fn () ->
-      start_processes(@hub_id, nr_of_processes)
-    end, :millisecond)
+    {total_start, _} =
+      :timer.tc(
+        fn ->
+          :os.system_time(:millisecond) |> IO.inspect(label: "START TIME")
+          start_processes(@hub_id, nr_of_processes)
+        end,
+        :millisecond
+      )
 
     dbg(total_start)
     # # benchmark(@hub_id, nr_of_processes)
-
   end
 
   defp benchmark(hub_id, nr_of_processes) do
@@ -77,8 +80,6 @@ defmodule Mix.Tasks.Benchmark do
 
   defp start_processes(hub_id, nr_of_processes) do
     child_specs = ProcessHub.Utility.Bag.gen_child_specs(nr_of_processes)
-
-    :os.system_time(:millisecond) |> IO.inspect(label: "START TIME")
 
     ProcessHub.start_children(hub_id, child_specs, async_wait: true) |> ProcessHub.await()
   end

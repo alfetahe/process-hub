@@ -275,7 +275,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_children_registration, {post_start_results, _node}}, state) do
+  def handle_info({@event_children_registration, {post_start_results, _node, start_opts}}, state) do
     Task.Supervisor.async(
       Name.task_supervisor(state.hub_id),
       ChildrenAdd.SyncHandle,
@@ -283,7 +283,8 @@ defmodule ProcessHub.Coordinator do
       [
         %ChildrenAdd.SyncHandle{
           hub_id: state.hub_id,
-          post_start_results: post_start_results
+          post_start_results: post_start_results,
+          start_opts: start_opts
         }
       ]
     )

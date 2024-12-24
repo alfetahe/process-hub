@@ -63,7 +63,7 @@ defmodule ProcessHub.Service.Distributor do
          :ok <- init_registry_check(hub_id, child_specs, opts),
          {:ok, children_nodes} <- init_attach_nodes(hub_id, child_specs, strategies),
          :ok <- init_mailbox_cleanup(children_nodes, opts),
-         {:ok, composed_data} <- init_compose_data(hub_id, children_nodes, opts) do
+         {:ok, composed_data} <- init_compose_data(hub_id, children_nodes) do
       pre_start_children(composed_data, hub_id, opts)
     else
       err -> err
@@ -161,15 +161,18 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp pre_start_children(startup_children, hub_id, opts) do
-    Dispatcher.children_start(hub_id, startup_children, opts)
-
     case Keyword.get(opts, :async_wait, false) do
       false ->
+        Dispatcher.children_start(hub_id, startup_children, opts)
+
         {:ok, :start_initiated}
 
       true ->
+        opts = Keyword.put(opts, :reply_to, [self()])
+        Dispatcher.children_start(hub_id, startup_children, opts)
+
         fn ->
-          receiveable(startup_children) |> Mailbox.receive_start_resp(opts)
+          Mailbox.collect_start_results(hub_id, opts)
         end
     end
   end
@@ -223,19 +226,10 @@ defmodule ProcessHub.Service.Distributor do
     }
   end
 
-  defp init_compose_data(hub_id, children, opts) do
-    async_await = Keyword.get(opts, :async_wait, false)
-    self = self()
-
+  defp init_compose_data(hub_id, children) do
     {:ok,
      Enum.reduce(children, [], fn {child_spec, child_nodes}, acc ->
        child_data = init_data(child_nodes, hub_id, child_spec)
-
-       child_data =
-         case async_await do
-           true -> Map.put(child_data, :reply_to, [self])
-           false -> child_data
-         end
 
        append_items =
          Enum.map(child_nodes, fn child_node ->
@@ -257,6 +251,7 @@ defmodule ProcessHub.Service.Distributor do
      end)}
   end
 
+  # TODO: update with new
   defp init_mailbox_cleanup(children, opts) do
     case Keyword.get(opts, :check_mailbox) do
       true ->

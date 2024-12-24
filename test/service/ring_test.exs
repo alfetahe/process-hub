@@ -43,7 +43,8 @@ defmodule Test.Service.RingTest do
     assert HashRing.get_node_count(hash_ring) === 1
 
     assert HashRing.get_nodes(hash_ring) === %{
-             "process_hub@127.0.0.1": {:hash_ring_node, :"process_hub@127.0.0.1", :"process_hub@127.0.0.1", 1}
+             "process_hub@127.0.0.1":
+               {:hash_ring_node, :"process_hub@127.0.0.1", :"process_hub@127.0.0.1", 1}
            }
   end
 

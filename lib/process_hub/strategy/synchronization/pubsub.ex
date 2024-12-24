@@ -33,7 +33,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       Blockade.dispatch_sync(
         Name.event_queue(hub_id),
         @event_children_registration,
-        {children, node},
+        {children, node, opts},
         %{
           priority: PriorityLevel.locked(),
           members: Keyword.get(opts, :members, :global)
