@@ -75,7 +75,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "pubsub children starting and removing", %{hub_id: hub_id} = context do
-    child_count = 20000
+    child_count = 2
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.

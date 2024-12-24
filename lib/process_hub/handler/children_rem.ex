@@ -18,17 +18,18 @@ defmodule ProcessHub.Handler.ChildrenRem do
             hub_id: ProcessHub.hub_id(),
             children: [
               %{
-                child_id: ProcessHub.child_id(),
-                reply_to: ProcessHub.reply_to()
+                child_id: ProcessHub.child_id()
               }
             ],
             dist_sup: atom(),
-            sync_strategy: SynchronizationStrategy.t()
+            sync_strategy: SynchronizationStrategy.t(),
+            stop_opts: keyword()
           }
 
     @enforce_keys [
       :hub_id,
-      :children
+      :children,
+      :stop_opts
     ]
     defstruct @enforce_keys ++
                 [
@@ -49,17 +50,12 @@ defmodule ProcessHub.Handler.ChildrenRem do
           {:error, :partitioned}
 
         false ->
-          {cids, reply_opts} =
-            Enum.reduce(arg.children, {[], []}, fn child_data, {cids, reply_opts} ->
-              cid = child_data.child_id
-
-              {
-                [cid | cids],
-                [{cid, Map.get(child_data, :reply_to, [])} | reply_opts]
-              }
+          cids =
+            Enum.reduce(arg.children, [], fn child_data, cids ->
+              [child_data.child_id | cids]
             end)
 
-          Distributor.children_terminate(arg.hub_id, cids, arg.sync_strategy, reply_opts)
+          Distributor.children_terminate(arg.hub_id, cids, arg.sync_strategy, arg.stop_opts)
 
           :ok
       end
@@ -76,26 +72,24 @@ defmodule ProcessHub.Handler.ChildrenRem do
     @type t :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
             children: [
-              {
-                ProcessHub.child_id(),
-                {
-                  :ok | {:error, :not_found},
-                  ProcessHub.reply_to()
-                }
-              }
+              {ProcessHub.child_id(), :ok | {:error, :not_found}}
             ],
-            node: node()
+            node: node(),
+            stop_opts: keyword()
           }
 
     @enforce_keys [
       :hub_id,
       :children,
-      :node
+      :node,
+      :stop_opts
     ]
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = args) do
+      reply_to = Keyword.get(args.stop_opts, :reply_to, nil)
+
       children_nodes =
         Enum.map(args.children, fn {child_id, _} ->
           {child_id, [args.node]}
@@ -104,15 +98,11 @@ defmodule ProcessHub.Handler.ChildrenRem do
 
       ProcessRegistry.bulk_delete(args.hub_id, children_nodes)
 
-      local_node = node()
-
-      Enum.each(args.children, fn {child_id, {stop_res, reply_to}} ->
-        if is_list(reply_to) do
-          Enum.each(reply_to, fn respondent ->
-            send(respondent, {:child_stop_resp, child_id, stop_res, local_node})
-          end)
-        end
-      end)
+      if reply_to do
+        Enum.each(reply_to, fn respondent ->
+          send(respondent, {:collect_stop_results, args.children, node()})
+        end)
+      end
 
       :ok
     end

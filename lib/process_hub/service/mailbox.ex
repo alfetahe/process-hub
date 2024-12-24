@@ -23,20 +23,23 @@ defmodule ProcessHub.Service.Mailbox do
       Enum.map(Cluster.nodes(hub_id, [:include_local]), fn node ->
         {node,
          receive do
-           {:collect_start_results, start_results, node} ->
+           {:collect_start_results, start_results, ^node} ->
              Enum.map(start_results, fn %PostStartData{result: result, cid: cid} ->
                {cid, handler.(result, node)}
              end)
          after
-           Keyword.get(opts, :timeout) -> [{:error, "timeout"}]
+           # TODO: fix this format later.
+           Keyword.get(opts, :timeout) ->
+             {:error, "failed to receive startup results from #{node}"}
          end}
       end)
 
     start_results =
-      Enum.reduce(nodes_results, %{}, fn {_node, results}, acc ->
-        Enum.reduce(results, acc, fn {cid, result}, acc ->
-          Map.put(acc, cid, Map.get(acc, cid, []) ++ [result])
-        end)
+      Enum.reduce(nodes_results, %{}, fn
+        {_node, results}, acc ->
+          Enum.reduce(results, acc, fn {cid, result}, acc ->
+            Map.put(acc, cid, Map.get(acc, cid, []) ++ [result])
+          end)
       end)
 
     errors =

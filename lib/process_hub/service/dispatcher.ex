@@ -56,12 +56,12 @@ defmodule ProcessHub.Service.Dispatcher do
   @doc """
   Sends the coordinator process a message to stop the child processes passed in.
   """
-  @spec children_stop(ProcessHub.hub_id(), [{node(), [ProcessHub.child_id()]}]) :: :ok
-  def children_stop(hub_id, children_nodes) do
+  @spec children_stop(ProcessHub.hub_id(), [{node(), [ProcessHub.child_id()]}], keyword()) :: :ok
+  def children_stop(hub_id, children_nodes, stop_opts) do
     coordinator = Name.coordinator(hub_id)
 
     Enum.each(children_nodes, fn {child_node, children} ->
-      GenServer.cast({coordinator, child_node}, {:stop_children, children})
+      GenServer.cast({coordinator, child_node}, {:stop_children, children, stop_opts})
     end)
   end
 

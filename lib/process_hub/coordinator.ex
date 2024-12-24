@@ -143,7 +143,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_cast({:stop_children, children}, state) do
+  def handle_cast({:stop_children, children, stop_opts}, state) do
     Task.Supervisor.start_child(
       Name.task_supervisor(state.hub_id),
       ChildrenRem.StopHandle,
@@ -151,7 +151,8 @@ defmodule ProcessHub.Coordinator do
       [
         %ChildrenRem.StopHandle{
           hub_id: state.hub_id,
-          children: children
+          children: children,
+          stop_opts: stop_opts
         }
       ]
     )
@@ -294,7 +295,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_children_unregistration, {children, node}}, state) do
+  def handle_info({@event_children_unregistration, {children, node, stop_opts}}, state) do
     Task.Supervisor.async(
       Name.task_supervisor(state.hub_id),
       ChildrenRem.SyncHandle,
@@ -303,7 +304,8 @@ defmodule ProcessHub.Coordinator do
         %ChildrenRem.SyncHandle{
           hub_id: state.hub_id,
           children: children,
-          node: node
+          node: node,
+          stop_opts: stop_opts
         }
       ]
     )

@@ -78,17 +78,10 @@ defmodule ProcessHub.Service.Distributor do
     redun_strat = Storage.get(local_storage, StorageKey.strred())
     dist_strat = Storage.get(local_storage, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
-    self = self()
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
       child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, repl_fact)
       child_data = %{nodes: child_nodes, child_id: child_id}
-
-      child_data =
-        case Keyword.get(opts, :async_wait, false) do
-          true -> Map.put(child_data, :reply_to, [self])
-          false -> child_data
-        end
 
       append_items =
         Enum.map(child_nodes, fn child_node ->
@@ -110,17 +103,16 @@ defmodule ProcessHub.Service.Distributor do
           ProcessHub.hub_id(),
           [ProcessHub.child_id()],
           ProcessHub.Strategy.Synchronization.Base,
-          nil | [{ProcessHub.child_id(), [pid()]}]
+          keyword()
         ) :: [StopHandle.t()]
-  def children_terminate(hub_id, child_ids, sync_strategy, reply_opts \\ []) do
+  def children_terminate(hub_id, child_ids, sync_strategy, stop_opts \\ []) do
     dist_sup = Name.distributed_supervisor(hub_id)
 
     shutdown_results =
       Enum.map(child_ids, fn child_id ->
         result = DistributedSupervisor.terminate_child(dist_sup, child_id)
 
-        {^child_id, found_child_reply_opt} = List.keyfind(reply_opts, child_id, 0, {child_id, []})
-        {child_id, {result, found_child_reply_opt}}
+        {child_id, result}
       end)
 
     SynchronizationStrategy.propagate(
@@ -129,7 +121,7 @@ defmodule ProcessHub.Service.Distributor do
       shutdown_results,
       node(),
       :rem,
-      []
+      stop_opts
     )
 
     shutdown_results
@@ -192,13 +184,16 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp pre_stop_children(stop_children, hub_id, opts) do
-    Dispatcher.children_stop(hub_id, stop_children)
-
     case Keyword.get(opts, :async_wait, false) do
       false ->
+        Dispatcher.children_stop(hub_id, stop_children, opts)
+
         {:ok, :stop_initiated}
 
       true ->
+        opts = Keyword.put(opts, :reply_to, [self()])
+        Dispatcher.children_stop(hub_id, stop_children, opts)
+
         fn ->
           receiveable(stop_children)
           |> Mailbox.receive_stop_resp(opts)
