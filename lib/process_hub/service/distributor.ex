@@ -164,7 +164,14 @@ defmodule ProcessHub.Service.Distributor do
         Dispatcher.children_start(hub_id, startup_children, opts)
 
         fn ->
-          Mailbox.collect_start_results(hub_id, opts)
+          handler = fn _cid, resp, node ->
+            case resp do
+              {:ok, child_pid} -> {node, child_pid}
+              error -> {node, error}
+            end
+          end
+
+          Mailbox.collect_start_results(hub_id, handler, opts)
         end
     end
   end

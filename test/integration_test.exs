@@ -502,59 +502,6 @@ defmodule Test.IntegrationTest do
   #   )
   # end
 
-  # @tag hub_id: :migr_hotswap_shutdown_test
-  # @tag migr_strategy: :hot
-  # @tag migr_handover: true
-  # @tag listed_hooks: [
-  #        {Hook.post_cluster_join(), :local},
-  #        {Hook.post_cluster_leave(), :local},
-  #        {Hook.registry_pid_inserted(), :global},
-  #        {Hook.registry_pid_removed(), :global},
-  #        {Hook.post_nodes_redistribution(), :local},
-  #        {Hook.children_migrated(), :global},
-  #        {Hook.forwarded_migration(), :global}
-  #      ]
-  # test "migration hotswap shutdown", %{hub_id: hub_id} = context do
-  #   child_count = 1000
-  #   child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
-
-  #   Common.sync_base_test(context, child_specs, :add, scope: :global)
-
-  #   # Node ups.
-  #   Bag.receive_multiple(@nr_of_peers, Hook.post_nodes_redistribution(),
-  #     error_msg: "Post redistribution timeout"
-  #   )
-
-  #   ProcessHub.process_registry(hub_id)
-  #   |> Enum.each(fn {_child_id, {_, nodes}} ->
-  #     pid = List.first(nodes) |> elem(1)
-  #     GenServer.call(pid, {:set_value, :shutdown, true})
-  #   end)
-
-  #   # Stop hubs on peer nodes.
-  #   # Enum.each(Node.list(), fn node ->
-  #   :erpc.call(Node.list() |> List.first(), ProcessHub.Initializer, :stop, [hub_id])
-  #   # end)
-
-  #   # Node downs
-  #   Bag.receive_multiple(1, Hook.post_nodes_redistribution(),
-  #     error_msg: "Post redistribution timeout"
-  #   )
-
-  #   # Confirm that hubs are stopped.
-  #   Bag.receive_multiple(1, Hook.post_cluster_leave(), error_msg: "Cluster leave timeout")
-
-  #   # Confirm that all processes have their states migrated.
-  #   ProcessHub.process_registry(hub_id)
-  #   |> Enum.each(fn {child_id, {_, nodes}} ->
-  #     pid = List.first(nodes) |> elem(1)
-  #     state = GenServer.call(pid, :get_state)
-
-  #     assert Map.get(state, :shutdown, false) === true,
-  #            "Child #{child_id} invalid state: #{inspect(state)}"
-  #   end)
-  # end
-
   @tag migr_strategy: :hot
   @tag dist_strategy: :consistent_hashing
   @tag hub_id: :migration_hotswap_test
@@ -610,9 +557,6 @@ defmodule Test.IntegrationTest do
       GenServer.call(pid, {:set_value, :handoff_data, child_spec.id})
     end)
 
-    IO.puts("NOW RESTARTING NODES AGAIN")
-    Process.sleep(1000)
-
     # Restart hubs on peer nodes and confirm they are up and running.
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(Node.list(), lh, true)
@@ -658,4 +602,57 @@ defmodule Test.IntegrationTest do
              "Child #{child_id} invalid data: #{inspect(handover_data)}"
     end)
   end
+
+  # @tag hub_id: :migr_hotswap_shutdown_test
+  # @tag migr_strategy: :hot
+  # @tag migr_handover: true
+  # @tag listed_hooks: [
+  #        {Hook.post_cluster_join(), :local},
+  #        {Hook.post_cluster_leave(), :local},
+  #        {Hook.registry_pid_inserted(), :global},
+  #        {Hook.registry_pid_removed(), :global},
+  #        {Hook.post_nodes_redistribution(), :local},
+  #        {Hook.children_migrated(), :global},
+  #        {Hook.forwarded_migration(), :global}
+  #      ]
+  # test "migration hotswap shutdown", %{hub_id: hub_id} = context do
+  #   child_count = 1000
+  #   child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+
+  #   Common.sync_base_test(context, child_specs, :add, scope: :global)
+
+  #   # Node ups.
+  #   Bag.receive_multiple(@nr_of_peers, Hook.post_nodes_redistribution(),
+  #     error_msg: "Post redistribution timeout"
+  #   )
+
+  #   ProcessHub.process_registry(hub_id)
+  #   |> Enum.each(fn {_child_id, {_, nodes}} ->
+  #     pid = List.first(nodes) |> elem(1)
+  #     GenServer.call(pid, {:set_value, :shutdown, true})
+  #   end)
+
+  #   # Stop hubs on peer nodes.
+  #   # Enum.each(Node.list(), fn node ->
+  #   :erpc.call(Node.list() |> List.first(), ProcessHub.Initializer, :stop, [hub_id])
+  #   # end)
+
+  #   # Node downs
+  #   Bag.receive_multiple(1, Hook.post_nodes_redistribution(),
+  #     error_msg: "Post redistribution timeout"
+  #   )
+
+  #   # Confirm that hubs are stopped.
+  #   Bag.receive_multiple(1, Hook.post_cluster_leave(), error_msg: "Cluster leave timeout")
+
+  #   # Confirm that all processes have their states migrated.
+  #   ProcessHub.process_registry(hub_id)
+  #   |> Enum.each(fn {child_id, {_, nodes}} ->
+  #     pid = List.first(nodes) |> elem(1)
+  #     state = GenServer.call(pid, :get_state)
+
+  #     assert Map.get(state, :shutdown, false) === true,
+  #            "Child #{child_id} invalid state: #{inspect(state)}"
+  #   end)
+  # end
 end

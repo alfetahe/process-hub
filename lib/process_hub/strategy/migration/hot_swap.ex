@@ -172,7 +172,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       local_pids = DistributedSupervisor.local_children(dist_sup)
       opts = [timeout: strategy.child_migration_timeout, collect_from: [added_node]]
       handler = fn _cid, resp, _node -> resp end
-      {_status, start_results} = Mailbox.collect_start_results_m(hub_id, handler, opts)
+      {_status, start_results} = Mailbox.collect_start_results(hub_id, handler, opts)
 
       Enum.map(child_specs, fn child_spec ->
         child_id = child_spec.id
@@ -180,9 +180,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         case Map.get(start_results, child_id) do
           nil ->
             nil
-          nodes_results ->
-            cid_start_result = List.first(nodes_results) # Should accept only one node at a time.
 
+          nodes_results ->
+            # Should accept only one node at a time.
+            cid_start_result = List.first(nodes_results)
             handle_started(strategy, child_id, local_pids, cid_start_result)
         end
       end)

@@ -10,16 +10,9 @@ defmodule ProcessHub.Service.Mailbox do
   # TODO: refactor later.
   Waits for multiple child process startup results.
   """
-  @spec collect_start_results(atom(), keyword()) ::
+  @spec collect_start_results(atom(), function(), keyword()) ::
           {:ok, list()} | {:error, list()}
-  def collect_start_results(hub_id, opts) do
-    handler = fn _cid, resp, node ->
-      case resp do
-        {:ok, child_pid} -> {node, child_pid}
-        error -> {node, error}
-      end
-    end
-
+  def collect_start_results(hub_id, handler, opts) do
     collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
 
     nodes_results =
@@ -59,52 +52,6 @@ defmodule ProcessHub.Service.Mailbox do
       false -> {:error, startup_responses}
     end
   end
-
-
-
-  # TODO: merge with the other function and make sure both process starting and migration work.
-  def collect_start_results_m(hub_id, handler, opts) do
-    collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
-
-    nodes_results =
-      Enum.map(collect_from, fn node ->
-        {node,
-         receive do
-           {:collect_start_results, start_results, ^node} ->
-             Enum.map(start_results, fn %PostStartData{result: result, cid: cid} ->
-               {cid, handler.(nil, result, node)}
-             end)
-         after
-           # TODO: fix this format later.
-           Keyword.get(opts, :timeout) ->
-             {:error, "failed to receive startup results from #{node}"}
-         end}
-      end)
-
-    start_results =
-      Enum.reduce(nodes_results, %{}, fn
-        {_node, results}, acc ->
-          Enum.reduce(results, acc, fn {cid, result}, acc ->
-            Map.put(acc, cid, Map.get(acc, cid, []) ++ [result])
-          end)
-      end)
-
-    errors =
-      Enum.any?(start_results, fn {_cid, results} ->
-        Enum.any?(results, fn result ->
-          !is_pid(result)
-        end)
-      end)
-
-    startup_responses = extract_first(start_results, opts)
-
-    case errors do
-      true -> {:ok, startup_responses}
-      false -> {:error, startup_responses}
-    end
-  end
-
-
 
   @doc """
   Waits for multiple child process termination results.
