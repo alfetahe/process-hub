@@ -11,7 +11,7 @@ defmodule ProcessHub.Service.Mailbox do
   Waits for multiple child process startup results.
   """
   @spec collect_start_results(atom(), function(), keyword()) ::
-          {:ok, list()} | {:error, list()}
+          {:ok, map()} | {:error, map()}
   def collect_start_results(hub_id, handler, opts) do
     collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
 
