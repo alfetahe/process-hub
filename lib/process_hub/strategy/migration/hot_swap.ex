@@ -170,42 +170,38 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       dist_sup = Name.distributed_supervisor(hub_id)
 
       local_pids = DistributedSupervisor.local_children(dist_sup)
+      opts = [timeout: strategy.child_migration_timeout, collect_from: [added_node]]
+      handler = fn _cid, resp, _node -> resp end
+      {_status, start_results} = Mailbox.collect_start_results_m(hub_id, handler, opts)
 
-      Enum.map(1..length(child_specs), fn _x ->
-        start_resp =
-          Mailbox.receive_response(
-            :child_start_resp,
-            receive_handler(),
-            strategy.child_migration_timeout
-          )
+      Enum.map(child_specs, fn child_spec ->
+        child_id = child_spec.id
 
-        case start_resp do
-          {:error, _reason} ->
-            Logger.error("Migration failed to start on node #{inspect(added_node)}")
+        case Map.get(start_results, child_id) do
+          nil ->
             nil
+          nodes_results ->
+            cid_start_result = List.first(nodes_results) # Should accept only one node at a time.
 
-          {child_id, result} ->
-            # Notify the peer process about the migration.
-            case start_handover(strategy, child_id, local_pids, result) do
-              nil -> nil
-              _ -> child_id
-            end
+            handle_started(strategy, child_id, local_pids, cid_start_result)
         end
       end)
       |> Enum.filter(&(&1 != nil))
       |> retention_switch(strategy)
     end
 
+    defp handle_started(strategy, child_id, local_pids, result) do
+      # Notify the peer process about the migration.
+      case start_handover(strategy, child_id, local_pids, result) do
+        nil -> nil
+        _ -> child_id
+      end
+    end
+
     defp retention_switch(child_ids, strategy) do
       Process.send_after(self(), {:process_hub, :retention_over}, strategy.retention)
 
       child_ids
-    end
-
-    defp receive_handler() do
-      fn _child_id, resp, _node ->
-        resp
-      end
     end
 
     defp start_handover(strategy, child_id, local_pids, result) do

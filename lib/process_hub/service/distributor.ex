@@ -195,6 +195,7 @@ defmodule ProcessHub.Service.Distributor do
         Dispatcher.children_stop(hub_id, stop_children, opts)
 
         fn ->
+          # TODO: fix with new bulk receiving
           receiveable(stop_children)
           |> Mailbox.receive_stop_resp(opts)
         end

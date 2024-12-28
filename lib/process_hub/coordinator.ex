@@ -227,7 +227,6 @@ defmodule ProcessHub.Coordinator do
       })
 
       State.lock_event_handler(hub_id)
-
       Cluster.propagate_self(hub_id, node)
       HookManager.dispatch_hook(hub_id, Hook.post_cluster_join(), node)
     end
