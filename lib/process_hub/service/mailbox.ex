@@ -7,7 +7,6 @@ defmodule ProcessHub.Service.Mailbox do
   """
 
   @doc """
-  # TODO: refactor later.
   Waits for multiple child process startup results.
   """
   @spec collect_start_results(atom(), function(), keyword()) ::
@@ -24,7 +23,7 @@ defmodule ProcessHub.Service.Mailbox do
                {cid, handler.(nil, result, node)}
              end)
          after
-           # TODO: fix this format later.
+           # TODO: Make sure returning error from here does not affect the caller.
            Keyword.get(opts, :timeout) ->
              {:error, "failed to receive startup results from #{node}"}
          end}

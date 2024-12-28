@@ -140,7 +140,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   def handle_propagation_type(hub_id, children, updated_node, :add) do
     try do
       Name.coordinator(hub_id)
-      |> send({@event_children_registration, {children, updated_node}})
+      |> send({@event_children_registration, {children, updated_node, []}})
     catch
       _, _ -> :ok
     end
@@ -149,7 +149,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   def handle_propagation_type(hub_id, children, updated_node, :rem) do
     try do
       Name.coordinator(hub_id)
-      |> send({@event_children_unregistration, {children, updated_node}})
+      |> send({@event_children_unregistration, {children, updated_node, []}})
     catch
       _, _ -> :ok
     end
