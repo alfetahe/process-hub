@@ -112,7 +112,7 @@ defmodule ProcessHub.Service.Distributor do
       Enum.map(child_ids, fn child_id ->
         result = DistributedSupervisor.terminate_child(dist_sup, child_id)
 
-        {child_id, result}
+        {child_id, result, node()}
       end)
 
     SynchronizationStrategy.propagate(
@@ -202,9 +202,16 @@ defmodule ProcessHub.Service.Distributor do
         Dispatcher.children_stop(hub_id, stop_children, opts)
 
         fn ->
+          handler = fn _child_id, resp, node ->
+            case resp do
+              :ok -> node
+              error -> {node, error}
+            end
+          end
+
           # TODO: fix with new bulk receiving
           receiveable(stop_children)
-          |> Mailbox.receive_stop_resp(opts)
+          |> Mailbox.collect_stop_results(handler, opts)
         end
     end
   end

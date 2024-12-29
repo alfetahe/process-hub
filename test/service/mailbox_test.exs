@@ -40,12 +40,12 @@ defmodule Test.Service.MailboxTest do
   end
 
   test "receive stop resp" do
-    assert Mailbox.receive_stop_resp([{:node, [:none]}], timeout: 1) ===
+    assert Mailbox.collect_stop_results([{:node, [:none]}], timeout: 1) ===
              {:error, [none: [error: {:node, :child_stop_timeout}]]}
 
     send(self(), {:child_stop_resp, :child_id, :ok, node()})
 
-    assert Mailbox.receive_stop_resp([{node(), [:child_id]}], timeout: 1) ===
+    assert Mailbox.collect_stop_results([{node(), [:child_id]}], timeout: 1) ===
              {:ok, [child_id: [node()]]}
   end
 

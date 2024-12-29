@@ -9,7 +9,7 @@ defmodule ProcessHub.Service.Mailbox do
   @doc """
   Waits for multiple child process startup results.
   """
-  @spec collect_start_results(atom(), function(), keyword()) ::
+  @spec collect_start_results(ProcessHub.hub_id(), function(), keyword()) ::
           {:ok, map()} | {:error, map()}
   def collect_start_results(hub_id, handler, opts) do
     collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
@@ -55,35 +55,44 @@ defmodule ProcessHub.Service.Mailbox do
   @doc """
   Waits for multiple child process termination results.
   """
-  @spec receive_stop_resp([{node(), [ProcessHub.child_id()]}], keyword()) ::
-          {:ok, list()} | {:error, list()}
-  def receive_stop_resp(receivables, opts) do
-    handler = fn _child_id, resp, node ->
-      case resp do
-        :ok -> node
-        error -> {node, error}
-      end
-    end
+  @spec collect_stop_results(ProcessHub.hub_id(), function(), keyword()) ::
+          {:ok, map()} | {:error, map()}
+  def collect_stop_results(hub_id, handler, opts) do
+    collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
 
-    stop_responses =
-      receive_child_resp(
-        receivables,
-        :child_stop_resp,
-        handler,
-        :child_stop_timeout,
-        Keyword.get(opts, :timeout)
-      )
+    nodes_results =
+      Enum.map(collect_from, fn node ->
+        {node,
+         receive do
+           {:collect_stop_results, stop_results, ^node} ->
+             Enum.map(stop_results, fn {cid, result, _node} ->
+               {cid, handler.(nil, result, node)}
+             end)
+         after
+           # TODO: Make sure returning error from here does not affect the caller.
+           Keyword.get(opts, :timeout) ->
+             {:error, "failed to receive stop results from #{node}"}
+         end}
+      end)
 
-    any_errors =
-      Enum.all?(stop_responses, fn {_node, child_responses} ->
+    stop_results =
+      Enum.reduce(nodes_results, %{}, fn
+        {_node, results}, acc ->
+          Enum.reduce(results, acc, fn {cid, result}, acc ->
+            Map.put(acc, cid, Map.get(acc, cid, []) ++ [result])
+          end)
+      end)
+
+    errors =
+      Enum.all?(stop_results, fn {_node, child_responses} ->
         Enum.all?(child_responses, fn resp ->
           is_atom(resp)
         end)
       end)
 
-    stop_responses = extract_first(stop_responses, opts)
+    stop_responses = extract_first(stop_results, opts)
 
-    case any_errors do
+    case errors do
       true -> {:ok, stop_responses}
       false -> {:error, stop_responses}
     end

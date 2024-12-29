@@ -94,21 +94,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end)
       |> Map.new()
     end
-
-    # TODO: remove
-    # defp handle_reply_to(opts, child_id, startup_res, local_node) do
-    #   reply_to = Keyword.get(opts, :reply_to, nil)
-
-    #   if is_list(reply_to) and length(reply_to) > 0 do
-    #     Dispatcher.reply_respondents(
-    #       reply_to,
-    #       :child_start_resp,
-    #       child_id,
-    #       startup_res,
-    #       local_node
-    #     )
-    #   end
-    # end
   end
 
   defmodule StartHandle do
