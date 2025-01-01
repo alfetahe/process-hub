@@ -18,9 +18,9 @@ defmodule ProcessHubTest do
     {:ok, _} = ProcessHub.start_children(hub_id, [cs3], async_wait: true) |> ProcessHub.await()
     assert ProcessHub.start_children(hub_id, [cs3]) === {:error, {:already_started, [:child3]}}
 
-    ref = ProcessHub.start_children(hub_id, [cs2], async_wait: true, timeout: 1000)
-    assert is_function(ref)
-    {:ok, children} = ref.()
+    receiver = ProcessHub.start_children(hub_id, [cs2], async_wait: true, timeout: 1000)
+    assert is_tuple(receiver)
+    {:ok, children} = ProcessHub.await(receiver)
     assert is_list(children)
     assert length(children) === 1
     assert List.first(children) |> elem(0) === :child2
@@ -30,26 +30,25 @@ defmodule ProcessHubTest do
 
     assert ProcessHub.start_children(hub_id, [cs4], async_wait: true, timeout: 0)
            |> ProcessHub.await() ===
-             {:error, [child4: [error: {node(), :child_start_timeout}]]}
+             {:error, {[node_receive_timeout: node()], []}}
 
-    {status, children} =
+    {status, results} =
       ProcessHub.start_children(hub_id, [cs5, cs5], async_wait: true, timeout: 1000)
       |> ProcessHub.await()
 
+    errors = elem(results, 0)
+    success_results = elem(results, 1)
+
     assert status === :error
+    assert length(success_results) === 1
+    assert length(errors) > 0
 
-    Enum.each(children, fn {child_id, results} ->
+    Enum.each(errors, fn {child_id, node, result} ->
       assert child_id === :child5
-
-      {node, result} = Enum.at(results, 0)
-      assert node === node()
-      assert is_pid(result)
-
-      {node, result} = Enum.at(results, 1)
       assert node === node()
       assert is_tuple(result)
-      assert elem(result, 0) === :error
-      assert elem(result, 1) |> elem(0) === :already_started
+      assert elem(result, 0) === :already_started
+      assert is_pid(elem(result, 1))
     end)
 
     {status, children} =
@@ -73,9 +72,9 @@ defmodule ProcessHubTest do
     assert ProcessHub.start_child(hub_id, cs1, async_wait: false) ===
              {:ok, :start_initiated}
 
-    ref = ProcessHub.start_child(hub_id, cs2, async_wait: true, timeout: 1000)
-    assert is_function(ref)
-    {:ok, child_response} = ref.()
+    receiver = ProcessHub.start_child(hub_id, cs2, async_wait: true, timeout: 1000)
+    assert is_tuple(receiver)
+    {:ok, child_response} = ProcessHub.await(receiver)
     assert is_tuple(child_response)
     assert elem(child_response, 0) === "child2"
     [{node, pid}] = elem(child_response, 1)
@@ -107,7 +106,7 @@ defmodule ProcessHubTest do
         timeout: 10
       )
 
-    res5 = ProcessHub.await(res5) |> IO.inspect()
+    res5 = ProcessHub.await(res5)
 
     assert is_tuple(res5)
     assert elem(res5, 0) === :ok

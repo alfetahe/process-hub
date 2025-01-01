@@ -324,12 +324,18 @@ defmodule ProcessHub do
       iex> ProcessHub.await(ref)
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
-  @spec await(function()) :: term()
-  def await(init_func) when is_function(init_func) do
-    init_func.()
+  @spec await({pid(), reference(), integer()}) :: term()
+  def await({collector_pid, ref, timeout}) when is_pid(collector_pid) do
+    receive do
+      {:process_hub, :async_results, ^ref, results} ->
+        results
+    after
+      timeout + 5000 ->
+        {:error, :timeout}
+    end
   end
 
-  def await(init_func), do: init_func
+  def await(_), do: {:error, :invalid_collector_pid}
 
   @doc """
   Returns the child specification for the `ProcessHub.Initializer` supervisor.

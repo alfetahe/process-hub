@@ -160,13 +160,44 @@ defmodule ProcessHub.Service.Distributor do
         {:ok, :start_initiated}
 
       true ->
-        opts = Keyword.put(opts, :reply_to, [self()])
+        recv = {receiver_pid, _, _} = spawn_collector(hub_id, :start, opts)
+        opts = Keyword.put(opts, :reply_to, [receiver_pid])
         Dispatcher.children_start(hub_id, startup_children, opts)
-
-        fn ->
-          Mailbox.collect_start_results(hub_id, opts)
-        end
+        recv
     end
+  end
+
+  defp pre_stop_children(stop_children, hub_id, opts) do
+    case Keyword.get(opts, :async_wait, false) do
+      false ->
+        Dispatcher.children_stop(hub_id, stop_children, opts)
+        {:ok, :stop_initiated}
+
+      true ->
+        recv = {receiver_pid, _, _} = spawn_collector(hub_id, :stop, opts)
+        opts = Keyword.put(opts, :reply_to, [receiver_pid])
+        Dispatcher.children_stop(hub_id, stop_children, opts)
+        recv
+    end
+  end
+
+  defp spawn_collector(hub_id, start_or_stop, opts) do
+    caller_pid = self()
+    ref = make_ref()
+    timeout = Keyword.get(opts, :timeout, 5000)
+
+    pid =
+      spawn(fn ->
+        results =
+          case start_or_stop do
+            :start -> Mailbox.collect_start_results(hub_id, opts)
+            :stop -> Mailbox.collect_stop_results(hub_id, opts)
+          end
+
+        send(caller_pid, {:process_hub, :async_results, ref, results})
+      end)
+
+    {pid, ref, timeout}
   end
 
   defp init_distribution(hub_id, child_specs, opts, %{distribution: strategy}) do
@@ -181,22 +212,6 @@ defmodule ProcessHub.Service.Distributor do
        distribution: Storage.get(local_storage, StorageKey.strdist()),
        redundancy: Storage.get(local_storage, StorageKey.strred())
      }}
-  end
-
-  defp pre_stop_children(stop_children, hub_id, opts) do
-    case Keyword.get(opts, :async_wait, false) do
-      false ->
-        Dispatcher.children_stop(hub_id, stop_children, opts)
-        {:ok, :stop_initiated}
-
-      true ->
-        opts = Keyword.put(opts, :reply_to, [self()])
-        Dispatcher.children_stop(hub_id, stop_children, opts)
-
-        fn ->
-          Mailbox.collect_stop_results(hub_id, opts)
-        end
-    end
   end
 
   defp init_data(child_nodes, hub_id, child_spec) do
