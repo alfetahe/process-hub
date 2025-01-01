@@ -32,7 +32,7 @@ defmodule ProcessHub.Service.Mailbox do
           {:ok, list()} | {:error, list()}
   def collect_stop_results(hub_id, opts) do
     result_handler =
-      Keyword.get(opts, :result_handler, fn _child_id, resp, _node ->
+      Keyword.get(opts, :result_handler, fn _child_id, _node, resp ->
         case resp do
           :ok -> :ok
           error -> error
@@ -122,7 +122,7 @@ defmodule ProcessHub.Service.Mailbox do
           Enum.reduce(
             recv_results,
             {sresults, errors},
-            fn %PostStartData{result: result, cid: cid}, {sres, _errs} ->
+            fn {cid, result}, {sres, _errs} ->
               handle_collect_result(cid, node, result, sres, errors, res_handler)
             end
           )
@@ -152,6 +152,18 @@ defmodule ProcessHub.Service.Mailbox do
 
             existing_results ->
               List.keyreplace(success_results, cid, 0, {cid, [{node, res} | existing_results]})
+          end
+
+        {updated_succ_results, errors}
+
+      :ok ->
+        updated_succ_results =
+          case List.keyfind(success_results, cid, 0, nil) do
+            nil ->
+              [{cid, [node]} | success_results]
+
+            existing_results ->
+              List.keyreplace(success_results, cid, 0, {cid, [node | existing_results]})
           end
 
         {updated_succ_results, errors}

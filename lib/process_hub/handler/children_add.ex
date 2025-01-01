@@ -76,14 +76,17 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       local_node = node()
 
       # Each node sends only their own child process startup results.
-      filtered_data =
+      receiver_data =
         Enum.filter(post_start_results, fn %PostStartData{for_node: {for_node, _}} ->
           for_node === local_node
+        end)
+        |> Enum.map(fn %PostStartData{cid: cid, result: res} ->
+          {cid, res}
         end)
 
       if reply_to do
         Enum.each(reply_to, fn respondent ->
-          send(respondent, {:collect_start_results, filtered_data, local_node})
+          send(respondent, {:collect_start_results, receiver_data, local_node})
         end)
       end
     end
