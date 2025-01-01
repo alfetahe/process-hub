@@ -164,14 +164,7 @@ defmodule ProcessHub.Service.Distributor do
         Dispatcher.children_start(hub_id, startup_children, opts)
 
         fn ->
-          handler = fn _cid, resp, node ->
-            case resp do
-              {:ok, child_pid} -> {node, child_pid}
-              error -> {node, error}
-            end
-          end
-
-          Mailbox.collect_start_results(hub_id, handler, opts)
+          Mailbox.collect_start_results(hub_id, opts)
         end
     end
   end
@@ -194,7 +187,6 @@ defmodule ProcessHub.Service.Distributor do
     case Keyword.get(opts, :async_wait, false) do
       false ->
         Dispatcher.children_stop(hub_id, stop_children, opts)
-
         {:ok, :stop_initiated}
 
       true ->
@@ -202,29 +194,9 @@ defmodule ProcessHub.Service.Distributor do
         Dispatcher.children_stop(hub_id, stop_children, opts)
 
         fn ->
-          handler = fn _child_id, resp, node ->
-            case resp do
-              :ok -> node
-              error -> {node, error}
-            end
-          end
-
-          # TODO: fix with new bulk receiving
-          receiveable(stop_children)
-          |> Mailbox.collect_stop_results(handler, opts)
+          Mailbox.collect_stop_results(hub_id, opts)
         end
     end
-  end
-
-  defp receiveable(nodes_children) do
-    Enum.reduce(nodes_children, [], fn {node, children}, acc ->
-      node_receivable =
-        Enum.map(children, fn child ->
-          child.child_id
-        end)
-
-      Keyword.put(acc, node, node_receivable)
-    end)
   end
 
   defp init_data(child_nodes, hub_id, child_spec) do

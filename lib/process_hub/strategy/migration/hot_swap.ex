@@ -177,11 +177,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       Enum.map(child_specs, fn child_spec ->
         child_id = child_spec.id
 
-        case Map.get(start_results, child_id) do
+        case List.keyfind(start_results, child_id, 0, nil) do
           nil ->
             nil
 
-          nodes_results ->
+          {_cid, nodes_results} ->
             # Should accept only one node at a time.
             cid_start_result = List.first(nodes_results)
             handle_started(strategy, child_id, local_pids, cid_start_result)

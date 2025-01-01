@@ -9,93 +9,39 @@ defmodule ProcessHub.Service.Mailbox do
   @doc """
   Waits for multiple child process startup results.
   """
-  @spec collect_start_results(ProcessHub.hub_id(), function(), keyword()) ::
-          {:ok, map()} | {:error, map()}
-  def collect_start_results(hub_id, handler, opts) do
-    collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
-
-    nodes_results =
-      Enum.map(collect_from, fn node ->
-        {node,
-         receive do
-           {:collect_start_results, start_results, ^node} ->
-             Enum.map(start_results, fn %PostStartData{result: result, cid: cid} ->
-               {cid, handler.(nil, result, node)}
-             end)
-         after
-           # TODO: Make sure returning error from here does not affect the caller.
-           Keyword.get(opts, :timeout) ->
-             {:error, "failed to receive startup results from #{node}"}
-         end}
+  @spec collect_start_results(ProcessHub.hub_id(), keyword()) ::
+          {:ok, list()} | {:error, list()}
+  def collect_start_results(hub_id, opts) do
+    result_handler =
+      Keyword.get(opts, :result_handler, fn _cid, _node, result ->
+        case result do
+          {:ok, pid} -> {:ok, pid}
+          {:error, err} -> {:error, err}
+        end
       end)
 
-    start_results =
-      Enum.reduce(nodes_results, %{}, fn
-        {_node, results}, acc ->
-          Enum.reduce(results, acc, fn {cid, result}, acc ->
-            Map.put(acc, cid, Map.get(acc, cid, []) ++ [result])
-          end)
-      end)
+    opts = Keyword.put(opts, :receive_key, :collect_start_results)
 
-    errors =
-      Enum.any?(start_results, fn {_cid, results} ->
-        Enum.any?(results, fn result ->
-          !is_pid(result)
-        end)
-      end)
-
-    startup_responses = extract_first(start_results, opts)
-
-    case errors do
-      true -> {:ok, startup_responses}
-      false -> {:error, startup_responses}
-    end
+    collect_transition_results(hub_id, result_handler, opts)
   end
 
   @doc """
   Waits for multiple child process termination results.
   """
-  @spec collect_stop_results(ProcessHub.hub_id(), function(), keyword()) ::
-          {:ok, map()} | {:error, map()}
-  def collect_stop_results(hub_id, handler, opts) do
-    collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
-
-    nodes_results =
-      Enum.map(collect_from, fn node ->
-        {node,
-         receive do
-           {:collect_stop_results, stop_results, ^node} ->
-             Enum.map(stop_results, fn {cid, result, _node} ->
-               {cid, handler.(nil, result, node)}
-             end)
-         after
-           # TODO: Make sure returning error from here does not affect the caller.
-           Keyword.get(opts, :timeout) ->
-             {:error, "failed to receive stop results from #{node}"}
-         end}
+  @spec collect_stop_results(ProcessHub.hub_id(), keyword()) ::
+          {:ok, list()} | {:error, list()}
+  def collect_stop_results(hub_id, opts) do
+    result_handler =
+      Keyword.get(opts, :result_handler, fn _child_id, resp, _node ->
+        case resp do
+          :ok -> :ok
+          error -> error
+        end
       end)
 
-    stop_results =
-      Enum.reduce(nodes_results, %{}, fn
-        {_node, results}, acc ->
-          Enum.reduce(results, acc, fn {cid, result}, acc ->
-            Map.put(acc, cid, Map.get(acc, cid, []) ++ [result])
-          end)
-      end)
+    opts = Keyword.put(opts, :receive_key, :collect_stop_results)
 
-    errors =
-      Enum.all?(stop_results, fn {_node, child_responses} ->
-        Enum.all?(child_responses, fn resp ->
-          is_atom(resp)
-        end)
-      end)
-
-    stop_responses = extract_first(stop_results, opts)
-
-    case errors do
-      true -> {:ok, stop_responses}
-      false -> {:error, stop_responses}
-    end
+    collect_transition_results(hub_id, result_handler, opts)
   end
 
   @doc """
@@ -141,10 +87,77 @@ defmodule ProcessHub.Service.Mailbox do
     end
   end
 
-  defp extract_first(results, opts) do
-    case Keyword.get(opts, :return_first, false) do
-      false -> results
-      true -> List.first(results)
+  defp collect_transition_results(hub_id, result_handler, opts) do
+    timeout = Keyword.get(opts, :timeout)
+    recv_key = Keyword.get(opts, :receive_key)
+    collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
+
+    {_, _, success_results, errors} =
+      Enum.reduce(1..length(collect_from), {:continue, collect_from, [], []}, fn
+        _, {:continue, cf, nres, errors} ->
+          handle_continue_recv(cf, nres, errors, timeout, recv_key, result_handler)
+
+        _, {:err, cf, nres, errors} ->
+          handle_err_recv(cf, nres, errors)
+      end)
+
+    success_results =
+      case Keyword.get(opts, :return_first, false) do
+        false -> success_results
+        true -> List.first(success_results) || []
+      end
+
+    case length(errors) > 0 do
+      false -> {:ok, success_results}
+      true -> {:error, {errors, success_results}}
+    end
+  end
+
+  defp handle_continue_recv(collect_from, sresults, errors, timeout, recv_key, res_handler) do
+    receive do
+      {^recv_key, recv_results, node} ->
+        collect_from = Enum.reject(collect_from, fn n -> n == node end)
+
+        {success_results, errors} =
+          Enum.reduce(
+            recv_results,
+            {sresults, errors},
+            fn %PostStartData{result: result, cid: cid}, {sres, _errs} ->
+              handle_collect_result(cid, node, result, sres, errors, res_handler)
+            end
+          )
+
+        {:continue, collect_from, success_results, errors}
+    after
+      timeout ->
+        handle_err_recv(collect_from, sresults, errors)
+    end
+  end
+
+  defp handle_err_recv(unhandled_nodes, nodes_result, errors) do
+    [err_node | unhandled_nodes] = unhandled_nodes
+
+    errors = [{:node_receive_timeout, err_node} | errors]
+
+    {:err, unhandled_nodes, nodes_result, errors}
+  end
+
+  defp handle_collect_result(cid, node, result, success_results, errors, result_handler) do
+    case result_handler.(cid, node, result) do
+      {:ok, res} ->
+        updated_succ_results =
+          case List.keyfind(success_results, cid, 0, nil) do
+            nil ->
+              [{cid, [{node, res}]} | success_results]
+
+            existing_results ->
+              List.keyreplace(success_results, cid, 0, {cid, [{node, res} | existing_results]})
+          end
+
+        {updated_succ_results, errors}
+
+      {:error, err} ->
+        {success_results, [{cid, node, err} | errors]}
     end
   end
 end
