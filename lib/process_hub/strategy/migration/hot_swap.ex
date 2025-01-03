@@ -141,7 +141,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       Distributor.children_redist_init(hub_id, added_node, child_specs, reply_to: [self()])
 
       if length(child_specs) > 0 do
-        migration_cids = migration_cids(hub_id, struct, added_node)
+        migration_cids = migration_cids(hub_id, struct, child_specs, added_node)
 
         handle_retentions(hub_id, struct, sync_strategy, migration_cids)
 
@@ -166,7 +166,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
     end
 
-    defp migration_cids(hub_id, %HotSwap{} = strategy, added_node) do
+    defp migration_cids(hub_id, %HotSwap{} = strategy, child_specs, added_node) do
       dist_sup = Name.distributed_supervisor(hub_id)
       local_pids = DistributedSupervisor.local_children(dist_sup)
 
@@ -181,7 +181,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       opts = [
         timeout: strategy.child_migration_timeout,
         collect_from: [added_node],
-        result_handler: handler
+        result_handler: handler,
+        required_cids: Enum.map(child_specs, fn %{id: cid} -> cid end)
       ]
 
       success_results =

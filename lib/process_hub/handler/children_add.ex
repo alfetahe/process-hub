@@ -221,7 +221,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
       validate_children(arg)
       |> Enum.map(fn child_data ->
-        startup_result = child_start_result(child_data, ds, local_node)
+        startup_result = DistributedSupervisor.start_child(ds, child_data.child_spec)
 
         case startup_result do
           {:ok, pid} ->
@@ -235,7 +235,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
               "Child start failed with #{inspect(res)}. Enable SASL logs for more information."
             )
 
-            nil
+            res
         end
       end)
       |> Enum.filter(&(&1 !== nil))
@@ -273,23 +273,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       HookManager.dispatch_hook(arg.hub_id, Hook.post_children_start(), post_data)
 
       arg
-    end
-
-    defp child_start_result(child_data, dist_sup, local_node) do
-      cid = child_data.child_spec.id
-
-      case DistributedSupervisor.start_child(dist_sup, child_data.child_spec) do
-        {:ok, pid} ->
-          {:ok, pid}
-
-        {:error, {:already_started, pid}} ->
-          {:error, {:already_started, pid}}
-
-        # TODO: Replace with new resp sending
-        any ->
-          Map.get(child_data, :reply_to, [])
-          |> Dispatcher.reply_respondents(:child_start_resp, cid, any, local_node)
-      end
     end
 
     defp validate_children(%__MODULE__{

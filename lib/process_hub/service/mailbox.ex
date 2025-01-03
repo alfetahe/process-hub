@@ -90,15 +90,10 @@ defmodule ProcessHub.Service.Mailbox do
     timeout = Keyword.get(opts, :timeout)
     recv_key = Keyword.get(opts, :receive_key)
     collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
+    required_cids = Keyword.get(opts, :required_cids, [])
 
-    {_, _, success_results, errors} =
-      Enum.reduce(1..length(collect_from), {:continue, collect_from, [], []}, fn
-        _, {:continue, cf, nres, errors} ->
-          handle_continue_recv(cf, nres, errors, timeout, recv_key, result_handler)
-
-        _, {:err, cf, nres, errors} ->
-          handle_err_recv(cf, nres, errors)
-      end)
+    {success_results, errors} =
+      recursive_collect({[], []}, collect_from, recv_key, result_handler, timeout, required_cids)
 
     success_results =
       case Keyword.get(opts, :return_first, false) do
@@ -109,6 +104,37 @@ defmodule ProcessHub.Service.Mailbox do
     case length(errors) > 0 do
       false -> {:ok, success_results}
       true -> {:error, {errors, success_results}}
+    end
+  end
+
+  defp recursive_collect({s, r}, collect_from, recv_key, result_handler, timeout, required_cids) do
+    {_, _, success_results, errors} =
+      Enum.reduce(1..length(collect_from), {:continue, collect_from, [], []}, fn
+        _, {:continue, cf, nres, errors} ->
+          handle_continue_recv(cf, nres, errors, timeout, recv_key, result_handler)
+
+        _, {:err, cf, nres, errors} ->
+          handle_err_recv(cf, nres, errors)
+      end)
+
+    # When starting a child, we have have to wait for the response from another node.
+    # This occurs when the child is started on a different node due to forwarding.
+    # In such cases, we need to wait for the response from the node where the child was started.
+    # By defining required_cids, we can wait for the response from the node where the child was started.
+    required_cids =
+      Enum.filter(required_cids, fn cid ->
+        List.keyfind(success_results, cid, 0, nil) === nil &&
+          List.keyfind(errors, cid, 0, nil) === nil
+      end)
+
+    results = {success_results ++ s, errors ++ r}
+
+    case length(required_cids) > 0 do
+      false ->
+        results
+
+      true ->
+        recursive_collect(results, collect_from, recv_key, result_handler, timeout, required_cids)
     end
   end
 
