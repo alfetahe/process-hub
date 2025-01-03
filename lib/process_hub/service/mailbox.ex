@@ -1,6 +1,5 @@
 defmodule ProcessHub.Service.Mailbox do
   alias ProcessHub.Service.Cluster
-  alias ProcessHub.Handler.ChildrenAdd.PostStartData
 
   @moduledoc """
   The messenger service provides API functions for receiving messages from other processes.
@@ -10,7 +9,7 @@ defmodule ProcessHub.Service.Mailbox do
   Waits for multiple child process startup results.
   """
   @spec collect_start_results(ProcessHub.hub_id(), keyword()) ::
-          {:ok, list()} | {:error, list()}
+          {:ok, list()} | {:error, {list(), list()}}
   def collect_start_results(hub_id, opts) do
     result_handler =
       Keyword.get(opts, :result_handler, fn _cid, _node, result ->
@@ -29,7 +28,7 @@ defmodule ProcessHub.Service.Mailbox do
   Waits for multiple child process termination results.
   """
   @spec collect_stop_results(ProcessHub.hub_id(), keyword()) ::
-          {:ok, list()} | {:error, list()}
+          {:ok, list()} | {:error, {list(), list()}}
   def collect_stop_results(hub_id, opts) do
     result_handler =
       Keyword.get(opts, :result_handler, fn _child_id, _node, resp ->

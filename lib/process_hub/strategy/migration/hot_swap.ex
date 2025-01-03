@@ -141,7 +141,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       Distributor.children_redist_init(hub_id, added_node, child_specs, reply_to: [self()])
 
       if length(child_specs) > 0 do
-        migration_cids = migration_cids(hub_id, struct, child_specs, added_node)
+        migration_cids = migration_cids(hub_id, struct, added_node)
 
         handle_retentions(hub_id, struct, sync_strategy, migration_cids)
 
@@ -166,26 +166,43 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
     end
 
-    defp migration_cids(hub_id, %HotSwap{} = strategy, child_specs, added_node) do
+    defp migration_cids(hub_id, %HotSwap{} = strategy, added_node) do
       dist_sup = Name.distributed_supervisor(hub_id)
-
       local_pids = DistributedSupervisor.local_children(dist_sup)
-      opts = [timeout: strategy.child_migration_timeout, collect_from: [added_node]]
-      handler = fn _cid, resp, _node -> resp end
-      {_status, start_results} = Mailbox.collect_start_results(hub_id, handler, opts)
 
-      Enum.map(child_specs, fn child_spec ->
-        child_id = child_spec.id
-
-        case List.keyfind(start_results, child_id, 0, nil) do
-          nil ->
-            nil
-
-          {_cid, nodes_results} ->
-            # Should accept only one node at a time.
-            cid_start_result = List.first(nodes_results)
-            handle_started(strategy, child_id, local_pids, cid_start_result)
+      handler = fn _cid, _node, result ->
+        case result do
+          {:ok, pid} -> {:ok, pid}
+          {:error, {:already_started, pid}} -> {:ok, pid}
+          {:error, err} -> {:error, err}
         end
+      end
+
+      opts = [
+        timeout: strategy.child_migration_timeout,
+        collect_from: [added_node],
+        result_handler: handler
+      ]
+
+      success_results =
+        case Mailbox.collect_start_results(hub_id, opts) do
+          {:ok, results} ->
+            results
+
+          {:error, {errors, sresults}} ->
+            Enum.each(errors, fn {error, node} ->
+              Logger.error("Child process migration failed on node #{node}: #{inspect(error)}")
+            end)
+
+            sresults
+        end
+
+      Enum.map(success_results, fn {child_id, child_results} ->
+        # Because we are migrating we only expect one node result which we
+        # have to format as {:ok, pid}.
+        pid = List.first(child_results) |> elem(1)
+
+        handle_started(strategy, child_id, local_pids, {:ok, pid})
       end)
       |> Enum.filter(&(&1 != nil))
       |> retention_switch(strategy)
