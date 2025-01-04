@@ -108,7 +108,7 @@ defmodule ProcessHub.Service.Mailbox do
   end
 
   defp recursive_collect({s, r}, collect_from, recv_key, result_handler, timeout, required_cids) do
-    {_, _, success_results, errors} =
+    {status, _, success_results, errors} =
       Enum.reduce(1..length(collect_from), {:continue, collect_from, [], []}, fn
         _, {:continue, cf, nres, errors} ->
           handle_continue_recv(cf, nres, errors, timeout, recv_key, result_handler)
@@ -129,7 +129,7 @@ defmodule ProcessHub.Service.Mailbox do
 
     results = {success_results ++ s, errors ++ r}
 
-    case length(required_cids) > 0 do
+    case length(required_cids) > 0 && status !== :err do
       false ->
         results
 

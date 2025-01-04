@@ -29,24 +29,80 @@ defmodule Test.Service.MailboxTest do
              {:child_id, {:handler_resp, :child_id, {:ok, self()}, node()}}
   end
 
-  test "receives start resp" do
-    assert Mailbox.receive_start_resp([{node(), [:none]}], timeout: 1) ===
-             {:error, [none: [error: {node(), :child_start_timeout}]]}
+  test "collect start" do
+    assert Mailbox.collect_start_results(:messenger_test, timeout: 1) ===
+             {:error, {[node_receive_timeout: node()], []}}
 
-    send(self(), {:child_start_resp, :child_id, {:ok, self()}, node()})
+    send(self(), {:collect_start_results, [{"child_id1", {:ok, :somepid}}], node()})
+    send(self(), {:collect_start_results, [{"child_id2", {:ok, :somepid}}], :somenode})
+    send(self(), {:collect_start_results, [{"child_id2", {:ok, :somepid}}], :no_collect})
+    opts = [collect_from: [node(), :somenode], timeout: 1]
 
-    assert Mailbox.receive_start_resp([{node(), [:child_id]}], timeout: 1) ===
-             {:ok, [child_id: [{node(), self()}]]}
+    assert Mailbox.collect_start_results(:messenger_test, opts) ===
+             {:ok, [{"child_id2", [somenode: :somepid]}, {"child_id1", [{node(), :somepid}]}]}
+
+    opts = [{:receive_key, :custom_recv_key} | opts]
+    send(self(), {:custom_recv_key, [{"child_id1", {:error, :someerror}}], node()})
+    send(self(), {:custom_recv_key, [{"child_id2", {:ok, :somepid}}], :somenode})
+
+    assert Mailbox.collect_start_results(:messenger_test, opts) ===
+             {:error, {[node_receive_timeout: node()], [{"child_id2", [no_collect: :somepid]}]}}
+
+    handler = fn _cid, _node, result ->
+      case result do
+        {:ok, _pid} -> {:ok, :myok}
+        {:error, err} -> {:error, err}
+      end
+    end
+
+    opts = [
+      {:required_cids, ["child_id1", "timeout_cid"]},
+      {:result_handler, handler},
+      {:timeout, 1}
+    ]
+
+    send(self(), {:collect_start_results, [{"child_id1", {:ok, :pid}}], node()})
+
+    assert Mailbox.collect_start_results(:messenger_test, opts) ===
+             {:error, {[node_receive_timeout: node()], [{"child_id1", [{node(), :myok}]}]}}
   end
 
-  test "receive stop resp" do
-    assert Mailbox.collect_stop_results([{:node, [:none]}], timeout: 1) ===
-             {:error, [none: [error: {:node, :child_stop_timeout}]]}
+  test "collect stop" do
+    assert Mailbox.collect_stop_results(:messenger_test, timeout: 1) ===
+             {:error, {[node_receive_timeout: node()], []}}
 
-    send(self(), {:child_stop_resp, :child_id, :ok, node()})
+    send(self(), {:collect_stop_results, [{"child_id1", :ok}], node()})
+    send(self(), {:collect_stop_results, [{"child_id2", :ok}], :somenode})
+    send(self(), {:collect_stop_results, [{"child_id2", :ok}], :no_collect})
+    opts = [collect_from: [node(), :somenode], timeout: 1]
 
-    assert Mailbox.collect_stop_results([{node(), [:child_id]}], timeout: 1) ===
-             {:ok, [child_id: [node()]]}
+    assert Mailbox.collect_stop_results(:messenger_test, opts) ===
+             {:ok, [{"child_id2", [:somenode]}, {"child_id1", [node()]}]}
+
+    opts = [{:receive_key, :custom_recv_key} | opts]
+    send(self(), {:custom_recv_key, [{"child_id1", {:error, :someerror}}], node()})
+    send(self(), {:custom_recv_key, [{"child_id2", :ok}], :somenode})
+
+    assert Mailbox.collect_stop_results(:messenger_test, opts) ===
+             {:error, {[node_receive_timeout: node()], [{"child_id2", [:no_collect]}]}}
+
+    handler = fn _cid, _node, result ->
+      case result do
+        :custom_ok -> :ok
+        :err -> :err
+      end
+    end
+
+    opts = [
+      {:required_cids, ["child_id1", "timeout_cid"]},
+      {:result_handler, handler},
+      {:timeout, 1}
+    ]
+
+    send(self(), {:collect_stop_results, [{"child_id1", :custom_ok}], node()})
+
+    assert Mailbox.collect_stop_results(:messenger_test, opts) ===
+             {:error, {[node_receive_timeout: node()], [{"child_id1", [node()]}]}}
   end
 
   test "receive child resp" do
