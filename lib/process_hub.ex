@@ -190,9 +190,9 @@ defmodule ProcessHub do
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
-          (-> {:ok, list})
+          {:ok, :start_initiated}
           | {:error, :no_children | {:already_started, [atom | binary, ...]}}
-          | {:ok, :start_initiated}
+          | {pid(), reference(), integer()}
   def start_child(hub_id, child_spec, opts \\ []) do
     start_children(hub_id, [child_spec], Keyword.put(opts, :return_first, true))
   end
@@ -210,12 +210,12 @@ defmodule ProcessHub do
   > When `async_wait: true`, you **must await** the response from the function.
   """
   @spec start_children(hub_id(), [child_spec()], init_opts()) ::
-          (-> {:ok, list})
-          | {:ok, :start_initiated}
+          {:ok, :start_initiated}
           | {:error,
              :no_children
              | {:error, :children_not_list}
              | {:already_started, [atom | binary, ...]}}
+          | {pid(), reference(), integer()}
   def start_children(hub_id, child_specs, opts \\ []) when is_list(child_specs) do
     Distributor.init_children(hub_id, child_specs, default_init_opts(opts))
   end
@@ -238,7 +238,7 @@ defmodule ProcessHub do
       {:ok, {:my_child, [:mynode]}}
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
-          (-> {:ok, list}) | {:ok, :stop_initiated}
+          {:ok, :stop_initiated} | {pid(), reference(), integer()}
   def stop_child(hub_id, child_id, opts \\ []) do
     stop_children(hub_id, [child_id], Keyword.put(opts, :return_first, true))
   end
@@ -255,7 +255,7 @@ defmodule ProcessHub do
   > especially when stopping a large number of child processes.
   """
   @spec stop_children(hub_id(), [child_id()], stop_opts()) ::
-          (-> {:ok, list}) | {:ok, :stop_initiated} | {:error, list}
+          {:ok, :stop_initiated} | {:error, list} | {pid(), reference(), integer()}
   def stop_children(hub_id, child_ids, opts \\ []) do
     Distributor.stop_children(hub_id, child_ids, default_init_opts(opts))
   end

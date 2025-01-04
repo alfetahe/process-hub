@@ -27,22 +27,26 @@ defmodule Mix.Tasks.Benchmark do
     #   end
     # end)
 
+    IO.puts("--------- BENCHMARK START ---------")
+
     nr_of_peers = String.to_integer(nr_of_peers)
     nr_of_processes = String.to_integer(nr_of_processes)
 
     bootstrap(nr_of_peers)
+    benchmark(@hub_id, nr_of_processes)
 
-    {total_start, _} =
-      :timer.tc(
-        fn ->
-          :os.system_time(:millisecond) |> IO.inspect(label: "START TIME")
-          start_processes(@hub_id, nr_of_processes)
-        end,
-        :millisecond
-      )
+    # {total_start, _} =
+    #   :timer.tc(
+    #     fn ->
+    #       :os.system_time(:millisecond)
+    #       start_processes(@hub_id, nr_of_processes)
+    #     end,
+    #     :millisecond
+    #   )
 
-    dbg(total_start)
-    # # benchmark(@hub_id, nr_of_processes)
+    # dbg(total_start)
+
+    IO.puts("--------- BENCHMARK END ---------")
   end
 
   defp benchmark(hub_id, nr_of_processes) do
@@ -52,8 +56,8 @@ defmodule Mix.Tasks.Benchmark do
           start_processes(hub_id, nr_of_processes)
         end
       },
-      warmup: 2,
-      time: 3,
+      warmup: 5,
+      time: 20,
       parallel: 1
     )
   end
@@ -84,12 +88,3 @@ defmodule Mix.Tasks.Benchmark do
     ProcessHub.start_children(hub_id, child_specs, async_wait: true) |> ProcessHub.await()
   end
 end
-
-# alias :hash_ring, as: HashRing
-# alias :hash_ring_node, as: HashRingNode
-
-# Cachex.start_link(:test_cachex)
-
-# Cachex.put(:test_cachex, :key, :val)
-# :ets.new(:test_ets, [:set, :public, :named_table])
-# :ets.insert(:test_ets, {:key, :val})
