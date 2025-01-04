@@ -43,15 +43,15 @@ defmodule Test.Service.DispatcherTest do
            child_spec: %{
              id: :propagate_init_test,
              start: {Test.Helper.TestServer, :start_link, [%{name: :propagate_init_test}]}
-           },
-           reply_to: [self()]
+           }
          }
        ]}
     ]
 
-    Dispatcher.children_start(hub_id, event_data, [])
+    Dispatcher.children_start(hub_id, event_data, reply_to: [self()])
 
-    assert_receive {:child_start_resp, :propagate_init_test, _, _}, @default_receive_timeout
+    assert_receive {:collect_start_results, [propagate_init_test: {:ok, _pid}], _node},
+                   @default_receive_timeout
   end
 
   test "propagate migrate", %{hub_id: hub_id} = _context do
@@ -67,19 +67,19 @@ defmodule Test.Service.DispatcherTest do
            child_spec: %{
              id: :propagate_migrate_test,
              start: {Test.Helper.TestServer, :start_link, [%{name: :propagate_migrate_test}]}
-           },
-           reply_to: [self()]
+           }
          }
        ]}
     ]
 
-    Dispatcher.children_migrate(hub_id, event_data, [])
+    Dispatcher.children_migrate(hub_id, event_data, reply_to: [self()])
 
     # Reset priority.
     GenServer.call(Name.coordinator(hub_id), :ping)
     :blockade.set_priority(Name.event_queue(hub_id), 0)
 
-    assert_receive {:child_start_resp, :propagate_migrate_test, _, _}, @default_receive_timeout
+    assert_receive {:collect_start_results, [propagate_migrate_test: {:ok, _}], _node},
+                   @default_receive_timeout
   end
 
   test "propagate stop", %{hub_id: hub_id} = _context do
@@ -91,14 +91,14 @@ defmodule Test.Service.DispatcherTest do
          %{
            hub_id: hub_id,
            nodes: [local_node],
-           child_id: :propagate_stop_test,
-           reply_to: [self()]
+           child_id: :propagate_stop_test
          }
        ]}
     ]
 
-    Dispatcher.children_stop(hub_id, event_data)
+    Dispatcher.children_stop(hub_id, event_data, reply_to: [self()])
 
-    assert_receive {:child_stop_resp, :propagate_stop_test, _, _}, @default_receive_timeout
+    assert_receive {:collect_stop_results, [propagate_stop_test: {:error, :not_found}], _node},
+                   @default_receive_timeout
   end
 end
