@@ -79,36 +79,39 @@ defmodule Test.Helper.Common do
            "The length of registry(#{registry_len}) does not match length of child specs(#{child_spec_len})"
   end
 
-  def validate_redundancy_mode(%{hub_id: hub_id, replication_model: rm, hub: hub} = _context) do
+  def validate_redundancy_mode(
+        %{hub_id: hub_id, replication_model: rep_model, hub: hub} = _context
+      ) do
     registry = ProcessHub.process_registry(hub_id)
     dist_strat = hub.distribution_strategy
     redun_strat = hub.redundancy_strategy
     repl_fact = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes}} ->
-      for {node, pid} <- nodes do
-        child_nodes =
-          ProcessHub.Strategy.Distribution.Base.belongs_to(
-            dist_strat,
-            hub_id,
-            child_id,
-            repl_fact
-          )
+      child_nodes =
+        ProcessHub.Strategy.Distribution.Base.belongs_to(
+          dist_strat,
+          hub_id,
+          child_id,
+          repl_fact
+        )
 
-        master_node = RedundancyStrategy.master_node(redun_strat, hub_id, child_id, child_nodes)
+      master_node = RedundancyStrategy.master_node(redun_strat, hub_id, child_id, child_nodes)
+
+      assert length(nodes) === repl_fact,
+             "The length of nodes does not match replication factor"
+
+      assert length(child_nodes) === repl_fact,
+             "The length of belongs_to call does not match replication factor"
+
+      for {node, pid} <- nodes do
         state = GenServer.call(pid, :get_state)
 
-        assert length(nodes) === repl_fact,
-               "The length of nodes does not match replication factor"
-
-        assert length(child_nodes) === repl_fact,
-               "The length of belongs_to call does not match replication factor"
-
         cond do
-          rm === :active_active ->
+          rep_model === :active_active ->
             assert state[:redun_mode] === :active, "Expected active recived #{state[:redun_mode]}"
 
-          rm === :active_passive ->
+          rep_model === :active_passive ->
             case state[:redun_mode] do
               :active ->
                 assert master_node === node, "Exptected #{node} to match #{master_node}"

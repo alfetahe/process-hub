@@ -271,8 +271,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     defp post_start_hook(%__MODULE__{process_data: ps} = arg) do
       post_data =
-        Enum.reduce(ps, [], fn %PostStartData{cid: cid, result: rs, nodes: n}, acc ->
-          [{cid, rs, n} | acc]
+        Enum.reduce(ps, [], fn %PostStartData{cid: cid, result: rs, pid: pid, nodes: n}, acc ->
+          [{cid, rs, pid, n} | acc]
         end)
 
       HookManager.dispatch_hook(arg.hub_id, Hook.post_children_start(), post_data)

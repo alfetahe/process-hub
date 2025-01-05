@@ -126,7 +126,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   def handle_post_start(%__MODULE__{redundancy_signal: :none}, _, _), do: :ok
 
   def handle_post_start(strategy, hub_id, post_start_data) do
-    Enum.each(post_start_data, fn {child_id, child_pid, child_nodes} ->
+    Enum.each(post_start_data, fn {child_id, _res, child_pid, child_nodes} ->
       mode = process_mode(strategy, hub_id, child_id, child_nodes)
 
       cond do
