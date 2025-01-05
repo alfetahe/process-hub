@@ -102,7 +102,6 @@ defmodule ProcessHubTest do
     res5 =
       ProcessHub.start_child(hub_id, cs5,
         async_wait: true,
-        check_mailbox: false,
         timeout: 10
       )
 

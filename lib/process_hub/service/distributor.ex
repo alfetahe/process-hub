@@ -62,7 +62,6 @@ defmodule ProcessHub.Service.Distributor do
          :ok <- init_distribution(hub_id, child_specs, opts, strategies),
          :ok <- init_registry_check(hub_id, child_specs, opts),
          {:ok, children_nodes} <- init_attach_nodes(hub_id, child_specs, strategies),
-         :ok <- init_mailbox_cleanup(children_nodes, opts),
          {:ok, composed_data} <- init_compose_data(hub_id, children_nodes) do
       pre_start_children(composed_data, hub_id, opts)
     else
@@ -246,27 +245,6 @@ defmodule ProcessHub.Service.Distributor do
      Enum.map(child_specs, fn child_spec ->
        {child_spec, DistributionStrategy.belongs_to(dist, hub_id, child_spec.id, repl_fact)}
      end)}
-  end
-
-  # TODO: update with new
-  defp init_mailbox_cleanup(children, opts) do
-    case Keyword.get(opts, :check_mailbox) do
-      true ->
-        Enum.each(children, fn {%{id: child_id}, nodes} ->
-          Enum.each(nodes, fn node ->
-            receive do
-              {:child_start_resp, ^child_id, _, ^node} -> nil
-            after
-              0 -> nil
-            end
-          end)
-        end)
-
-      false ->
-        nil
-    end
-
-    :ok
   end
 
   defp init_registry_check(hub_id, child_specs, opts) do

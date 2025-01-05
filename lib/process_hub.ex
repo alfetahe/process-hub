@@ -42,20 +42,12 @@ defmodule ProcessHub do
   can be used to wait for the children to start or stop. The default is `false`.
   - `:timeout` is optional and is used to define the timeout for the function. The timeout option
   should be used with `async_wait: true`. The default is `5000` (5 seconds).
-  - `:check_mailbox` - is optional and is used to define whether the function should clear
-  the mailbox of any existing messages that may overlap. It is recommended to keep this
-  option `true` to avoid any unexpected behavior where `start_child/3` or `start_children/3`
-  call timeout but eventually the calling process receives the start responses later. These messages
-  will stay in that process's mailbox, and when the same process calls start child functions again with the
-  same `child_id()`s, it will receive the old responses.This option should be used with `async_wait: true`.
-   The default is `true`.
   - `:check_existing` - is optional and is used to define whether the function should check if the children
   are already started. The default is `true`.
   """
   @type init_opts() :: [
           async_wait: boolean(),
           timeout: non_neg_integer(),
-          check_mailbox: boolean(),
           check_existing: boolean()
         ]
 
@@ -486,7 +478,6 @@ defmodule ProcessHub do
   defp default_init_opts(opts) do
     Keyword.put_new(opts, :timeout, @default_init_timeout)
     |> Keyword.put_new(:async_wait, false)
-    |> Keyword.put_new(:check_mailbox, true)
     |> Keyword.put_new(:check_existing, true)
     |> Keyword.put_new(:return_first, false)
   end
