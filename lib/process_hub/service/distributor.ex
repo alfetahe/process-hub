@@ -63,7 +63,7 @@ defmodule ProcessHub.Service.Distributor do
          :ok <- init_registry_check(hub_id, child_specs, opts),
          {:ok, children_nodes} <- init_attach_nodes(hub_id, child_specs, strategies),
          {:ok, composed_data} <- init_compose_data(hub_id, children_nodes) do
-      pre_start_children(composed_data, hub_id, opts)
+      pre_start_children(hub_id, composed_data, opts)
     else
       err -> err
     end
@@ -151,20 +151,20 @@ defmodule ProcessHub.Service.Distributor do
     |> Enum.map(fn {_status, result} -> result end)
   end
 
-  defp pre_start_children(startup_children, hub_id, opts) do
-    cond do
-      Keyword.get(opts, :async_wait, false) === true ->
-        {receiver_pid, _, await_func} = spawn_collector(hub_id, :start, opts)
-        opts = Keyword.put(opts, :reply_to, [receiver_pid])
-        Dispatcher.children_start(hub_id, startup_children, opts)
-        await_func
+  defp pre_start_children(hub_id, startup_children, opts) do
+    case Keyword.get(opts, :on_failure, :continue) do
+      :continue ->
+        case Keyword.get(opts, :async_wait, false) do
+          true ->
+            async_wait_startup(hub_id, startup_children, self(), opts)
 
-      Keyword.get(opts, :on_failure) === :rollback ->
-        spawn_collector(hub_id, :start, opts)
+          false ->
+            Dispatcher.children_start(hub_id, startup_children, opts)
+            {:ok, :start_initiated}
+        end
 
-      true ->
-        Dispatcher.children_start(hub_id, startup_children, opts)
-        {:ok, :start_initiated}
+      :rollback ->
+        spawn_failure_handler(hub_id, startup_children, opts)
     end
   end
 
@@ -175,15 +175,69 @@ defmodule ProcessHub.Service.Distributor do
         {:ok, :stop_initiated}
 
       true ->
-        {receiver_pid, _, await_func} = spawn_collector(hub_id, :stop, opts)
+        {receiver_pid, _, await_func} = spawn_collector(hub_id, :stop, self(), opts)
         opts = Keyword.put(opts, :reply_to, [receiver_pid])
         Dispatcher.children_stop(hub_id, stop_children, opts)
         await_func
     end
   end
 
-  defp spawn_collector(hub_id, start_or_stop, opts) do
+  defp async_wait_startup(hub_id, startup_children, caller_pid, opts) do
+    {receiver_pid, _, await_func} = spawn_collector(hub_id, :start, caller_pid, opts)
+    opts = Keyword.put(opts, :reply_to, [receiver_pid])
+    Dispatcher.children_start(hub_id, startup_children, opts)
+
+    await_func
+  end
+
+  defp spawn_failure_handler(hub_id, startup_children, opts) do
     caller_pid = self()
+    ref = make_ref()
+
+    spawn(fn ->
+      await_func = async_wait_startup(hub_id, startup_children, self(), opts)
+      results = handle_failures(hub_id, await_func.())
+
+      case Keyword.get(opts, :async_wait, false) do
+        true ->
+          send(caller_pid, {:process_hub_failure_handler, ref, results})
+
+        false ->
+          nil
+      end
+    end)
+
+    case Keyword.get(opts, :async_wait, false) do
+      true ->
+        receive do
+          {:process_hub_failure_handler, ^ref, results} ->
+            fn -> results end
+        after
+          Keyword.get(opts, :timeout, 5000) + 5000 ->
+            {:error, :timeout}
+        end
+
+      false ->
+        {:ok, :start_initiated}
+    end
+  end
+
+  defp handle_failures(hub_id, startup_results) do
+    case startup_results do
+      {:ok, results} ->
+        {:ok, results}
+
+      {:error, {errs, success_results}} ->
+        success_cids = Enum.map(success_results, fn {cid, _} -> cid end)
+
+        # Stop the children that were started successfully.
+        ProcessHub.stop_children(hub_id, success_cids, async_wait: true) |> ProcessHub.await()
+
+        {:error, {errs, success_results}, :rollback}
+    end
+  end
+
+  defp spawn_collector(hub_id, start_or_stop, caller_pid, opts) do
     ref = make_ref()
     timeout = Keyword.get(opts, :timeout, 5000)
 

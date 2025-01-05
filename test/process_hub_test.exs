@@ -126,13 +126,15 @@ defmodule ProcessHubTest do
     opts = [on_failure: :rollback, async_wait: true, disable_logging: true]
 
     start_res =
-      ProcessHub.start_children(hub_id, [error_spec, working_spec], opts) |> ProcessHub.await()
+      ProcessHub.start_children(hub_id, [error_spec, working_spec], opts)
+      |> ProcessHub.await()
 
     assert is_tuple(start_res)
     assert elem(start_res, 0) === :error
     assert length(elem(start_res, 1) |> elem(0)) === 1
     assert length(elem(start_res, 1) |> elem(1)) === 1
-    # assert elem(start_res, 2) === :rollback
+    assert ProcessHub.process_list(hub_id, :global) === []
+    assert elem(start_res, 2) === :rollback
   end
 
   # test "stop children", %{hub_id: hub_id} = _context do
