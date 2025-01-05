@@ -44,11 +44,16 @@ defmodule ProcessHub do
   should be used with `async_wait: true`. The default is `5000` (5 seconds).
   - `:check_existing` - is optional and is used to define whether the function should check if the children
   are already started. The default is `true`.
+  - `:on_failure` - is optional and is used to define the action to take when the start operation fails.
+  The default is `:continue` which will continue to start the next child. The other option is `:rollback`
+  which will stop all the children that have been started.
+
   """
   @type init_opts() :: [
           async_wait: boolean(),
           timeout: non_neg_integer(),
-          check_existing: boolean()
+          check_existing: boolean(),
+          on_failure: :continue | :rollback
         ]
 
   @typedoc """
@@ -63,6 +68,12 @@ defmodule ProcessHub do
           async_wait: boolean(),
           timeout: non_neg_integer()
         ]
+
+  @typedoc """
+  The `success()` and `failures()` types are used to define the results of the child start or stop functions.
+  """
+  @type success() :: list()
+  @type failures() :: list()
 
   @typedoc """
   This is the base configuration structure for the hub and has to be passed to the `start_link/1` function.
@@ -184,7 +195,8 @@ defmodule ProcessHub do
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
           {:ok, :start_initiated}
           | {:error, :no_children | {:already_started, [atom | binary, ...]}}
-          | {pid(), reference(), integer()}
+          | (-> {:ok, ProcessHub.success()})
+          | (-> {:error, ProcessHub.failures()} | {:error, ProcessHub.failures(), :rollback})
   def start_child(hub_id, child_spec, opts \\ []) do
     start_children(hub_id, [child_spec], Keyword.put(opts, :return_first, true))
   end
@@ -207,7 +219,8 @@ defmodule ProcessHub do
              :no_children
              | {:error, :children_not_list}
              | {:already_started, [atom | binary, ...]}}
-          | {pid(), reference(), integer()}
+          | (-> {:ok, ProcessHub.success()})
+          | (-> {:error, ProcessHub.failures()} | {:error, ProcessHub.failures(), :rollback})
   def start_children(hub_id, child_specs, opts \\ []) when is_list(child_specs) do
     Distributor.init_children(hub_id, child_specs, default_init_opts(opts))
   end
@@ -230,7 +243,9 @@ defmodule ProcessHub do
       {:ok, {:my_child, [:mynode]}}
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
-          {:ok, :stop_initiated} | {pid(), reference(), integer()}
+          {:ok, :stop_initiated}
+          | (-> {:ok, ProcessHub.success()})
+          | (-> {:error, ProcessHub.failures()})
   def stop_child(hub_id, child_id, opts \\ []) do
     stop_children(hub_id, [child_id], Keyword.put(opts, :return_first, true))
   end
@@ -247,7 +262,10 @@ defmodule ProcessHub do
   > especially when stopping a large number of child processes.
   """
   @spec stop_children(hub_id(), [child_id()], stop_opts()) ::
-          {:ok, :stop_initiated} | {:error, list} | {pid(), reference(), integer()}
+          {:ok, :stop_initiated}
+          | {:error, list}
+          | (-> {:ok, ProcessHub.success()})
+          | (-> {:error, ProcessHub.failures()})
   def stop_children(hub_id, child_ids, opts \\ []) do
     Distributor.stop_children(hub_id, child_ids, default_init_opts(opts))
   end
@@ -316,18 +334,15 @@ defmodule ProcessHub do
       iex> ProcessHub.await(ref)
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
-  @spec await({pid(), reference(), integer()}) :: term()
-  def await({collector_pid, ref, timeout}) when is_pid(collector_pid) do
-    receive do
-      {:process_hub, :async_results, ^ref, results} ->
-        results
-    after
-      timeout + 5000 ->
-        {:error, :timeout}
-    end
+  @spec await({pid(), reference(), integer()}) ::
+          {:ok, ProcessHub.success()}
+          | {:error, {ProcessHub.success(), ProcessHub.failures()}}
+          | {:error, {ProcessHub.success(), ProcessHub.failures()}, :rollback}
+  def await(func) when is_function(func) do
+    func.()
   end
 
-  def await(_), do: {:error, :invalid_collector_pid}
+  def await(_), do: {:error, :invalid_await_input}
 
   @doc """
   Returns the child specification for the `ProcessHub.Initializer` supervisor.
@@ -480,5 +495,6 @@ defmodule ProcessHub do
     |> Keyword.put_new(:async_wait, false)
     |> Keyword.put_new(:check_existing, true)
     |> Keyword.put_new(:return_first, false)
+    |> Keyword.put_new(:on_failure, :continue)
   end
 end

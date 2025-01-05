@@ -27,6 +27,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             result: {:ok, pid()} | {:error, term()} | term(),
             child_nodes: [{node(), pid()}],
             nodes: [node()],
+            has_errors: boolean(),
             for_node: {
               node(),
               [
@@ -42,6 +43,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       :result,
       :for_node,
       :child_nodes,
+      :has_errors,
       :nodes
     ]
   end
@@ -92,7 +94,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     end
 
     defp store_format(post_start_results) do
-      Enum.map(post_start_results, fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn} ->
+      post_start_results
+      |> Enum.filter(fn %PostStartData{has_errors: has_err} -> has_err === false end)
+      |> Enum.map(fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn} ->
         {cid, {cs, cn}}
       end)
       |> Map.new()
@@ -214,7 +218,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp start_children(%__MODULE__{hub_id: hub_id, dist_sup: ds} = arg) do
+    defp start_children(%__MODULE__{hub_id: hub_id, dist_sup: ds, start_opts: so} = arg) do
+      # Used only for testing purposes.
+      disable_logging = Keyword.get(so, :disable_logging, false)
+
       HookManager.dispatch_hook(hub_id, Hook.pre_children_start(), arg)
 
       local_node = node()
@@ -230,18 +237,21 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           {:error, {:already_started, pid}} ->
             format_start_resp(child_data, local_node, pid, startup_result)
 
-          res ->
-            Logger.error(
-              "Child start failed with #{inspect(res)}. Enable SASL logs for more information."
-            )
+          err ->
+            if disable_logging === false do
+              Logger.error(
+                "Child start failed with #{inspect(err)}. Enable SASL logs for more information."
+              )
+            end
 
-            res
+            format_start_resp(child_data, local_node, nil, startup_result)
         end
       end)
-      |> Enum.filter(&(&1 !== nil))
     end
 
     defp format_start_resp(child_data, local_node, pid, startup_result) do
+      has_errors = !is_pid(pid)
+
       %PostStartData{
         cid: child_data.child_spec.id,
         pid: pid,
@@ -249,6 +259,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         result: startup_result,
         nodes: child_data.nodes,
         child_nodes: [{local_node, pid}],
+        has_errors: has_errors,
         for_node: {
           local_node,
           [
@@ -260,14 +271,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     defp post_start_hook(%__MODULE__{process_data: ps} = arg) do
       post_data =
-        Enum.reduce(ps, [], fn %PostStartData{cid: cid, pid: pid, result: rs, nodes: n}, acc ->
-          case rs do
-            {:ok, _} ->
-              [{cid, pid, n} | acc]
-
-            _ ->
-              acc
-          end
+        Enum.reduce(ps, [], fn %PostStartData{cid: cid, result: rs, nodes: n}, acc ->
+          [{cid, rs, n} | acc]
         end)
 
       HookManager.dispatch_hook(arg.hub_id, Hook.post_children_start(), post_data)

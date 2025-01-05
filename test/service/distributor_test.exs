@@ -83,7 +83,6 @@ defmodule Test.Service.DistributorTest do
     Distributor.init_children(hub_id, [cs1, cs2],
       async_wait: true,
       check_existing: true,
-      check_mailbox: false,
       timeout: 5000
     )
     |> ProcessHub.await()
@@ -109,7 +108,6 @@ defmodule Test.Service.DistributorTest do
     Distributor.init_children(hub_id, [child_spec, child_spec2],
       async_wait: true,
       check_existing: false,
-      check_mailbox: false,
       timeout: 5000
     )
     |> ProcessHub.await()
@@ -135,7 +133,6 @@ defmodule Test.Service.DistributorTest do
     Distributor.init_children(hub_id, [child_spec],
       async_wait: true,
       check_existing: true,
-      check_mailbox: false,
       timeout: 1000
     )
     |> ProcessHub.await()
@@ -143,7 +140,6 @@ defmodule Test.Service.DistributorTest do
     Distributor.stop_children(hub_id, [child_spec.id],
       async_wait: true,
       check_existing: true,
-      check_mailbox: false,
       timeout: 1000
     )
     |> ProcessHub.await()

@@ -152,17 +152,19 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp pre_start_children(startup_children, hub_id, opts) do
-    case Keyword.get(opts, :async_wait, false) do
-      false ->
-        Dispatcher.children_start(hub_id, startup_children, opts)
-
-        {:ok, :start_initiated}
-
-      true ->
-        recv = {receiver_pid, _, _} = spawn_collector(hub_id, :start, opts)
+    cond do
+      Keyword.get(opts, :async_wait, false) === true ->
+        {receiver_pid, _, await_func} = spawn_collector(hub_id, :start, opts)
         opts = Keyword.put(opts, :reply_to, [receiver_pid])
         Dispatcher.children_start(hub_id, startup_children, opts)
-        recv
+        await_func
+
+      Keyword.get(opts, :on_failure) === :rollback ->
+        spawn_collector(hub_id, :start, opts)
+
+      true ->
+        Dispatcher.children_start(hub_id, startup_children, opts)
+        {:ok, :start_initiated}
     end
   end
 
@@ -173,10 +175,10 @@ defmodule ProcessHub.Service.Distributor do
         {:ok, :stop_initiated}
 
       true ->
-        recv = {receiver_pid, _, _} = spawn_collector(hub_id, :stop, opts)
+        {receiver_pid, _, await_func} = spawn_collector(hub_id, :stop, opts)
         opts = Keyword.put(opts, :reply_to, [receiver_pid])
         Dispatcher.children_stop(hub_id, stop_children, opts)
-        recv
+        await_func
     end
   end
 
@@ -196,7 +198,17 @@ defmodule ProcessHub.Service.Distributor do
         send(caller_pid, {:process_hub, :async_results, ref, results})
       end)
 
-    {pid, ref, timeout}
+    func = fn ->
+      receive do
+        {:process_hub, :async_results, ^ref, results} ->
+          results
+      after
+        timeout + 5000 ->
+          {:error, :timeout}
+      end
+    end
+
+    {pid, ref, func}
   end
 
   defp init_distribution(hub_id, child_specs, opts, %{distribution: strategy}) do

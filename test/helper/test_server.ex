@@ -20,6 +20,10 @@ defmodule Test.Helper.TestServer do
     GenServer.start_link(__MODULE__, args, name: valid_genserver_name)
   end
 
+  def start_link_err(_args) do
+    {:error, :start_link_err}
+  end
+
   def init(args) do
     # Process.flag(:trap_exit, true)
 

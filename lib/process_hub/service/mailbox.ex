@@ -15,7 +15,7 @@ defmodule ProcessHub.Service.Mailbox do
       Keyword.get(opts, :result_handler, fn _cid, _node, result ->
         case result do
           {:ok, pid} -> {:ok, pid}
-          {:error, err} -> {:error, err}
+          err -> err
         end
       end)
 
@@ -147,8 +147,8 @@ defmodule ProcessHub.Service.Mailbox do
           Enum.reduce(
             recv_results,
             {sresults, errors},
-            fn {cid, result}, {sres, _errs} ->
-              handle_collect_result(cid, node, result, sres, errors, res_handler)
+            fn {cid, result}, {sres, errs} ->
+              handle_collect_result(cid, node, result, sres, errs, res_handler)
             end
           )
 

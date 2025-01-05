@@ -236,13 +236,16 @@ defmodule Test.Helper.Common do
   def periodic_sync_base(%{hub_id: hub_id} = _context, child_specs, :add) do
     registry_data =
       Enum.map(child_specs, fn child_spec ->
-        {:ok, pid} =
+        start_res =
           ProcessHub.DistributedSupervisor.start_child(
             Name.distributed_supervisor(hub_id),
             child_spec
           )
 
-        {child_spec.id, {child_spec, [{node(), pid}]}}
+        case start_res do
+          {:ok, pid} -> {child_spec.id, {child_spec, [{node(), pid}]}}
+          unexpected -> {child_spec.id, unexpected}
+        end
       end)
       |> Map.new()
 
