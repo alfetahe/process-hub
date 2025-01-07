@@ -69,7 +69,7 @@ defmodule Test.Helper.TestServer do
   end
 
   def handle_info({:process_hub, :redundancy_signal, mode}, state) do
-    # IO.puts("redundancy_signal: #{inspect(mode)}")
+    # IO.puts("redundancy_signal: #{inspect(mode)} on node #{node()}")
 
     {:noreply, Map.put(state, :redun_mode, mode)}
   end

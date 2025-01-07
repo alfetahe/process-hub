@@ -109,21 +109,26 @@ defmodule Test.Helper.Common do
 
         cond do
           rep_model === :active_active ->
-            assert state[:redun_mode] === :active, "Expected active recived #{state[:redun_mode]}"
+            assert state[:redun_mode] === :active,
+                   "Exptected cid #{child_id} on node #{node} active recived #{state[:redun_mode]}"
 
           rep_model === :active_passive ->
             case state[:redun_mode] do
               :active ->
-                assert master_node === node, "Exptected #{node} to match #{master_node}"
+                assert master_node === node,
+                       "Exptected cid #{child_id} on node #{node} to match #{master_node}"
 
               :passive ->
-                assert master_node !== node, "Exptected #{node} to not match #{master_node}"
+                assert master_node !== node,
+                       "Exptected cid #{child_id} on node #{node} to not match #{master_node}"
             end
         end
       end
     end)
   end
 
+  @spec sync_base_test(%{:hub_id => any(), optional(any()) => any()}, any(), :add | :rem, any()) ::
+          :ok
   def sync_base_test(%{hub_id: hub_id} = _context, child_specs, type, opts \\ []) do
     case type do
       :add ->
