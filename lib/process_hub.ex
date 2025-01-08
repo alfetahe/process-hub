@@ -337,7 +337,7 @@ defmodule ProcessHub do
       iex> ProcessHub.await(ref)
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
-  @spec await({pid(), reference(), integer()}) ::
+  @spec await(function() | {:error, term()}) ::
           {:ok, [start_result() | stop_result()]}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]}}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]},
@@ -345,6 +345,8 @@ defmodule ProcessHub do
   def await(func) when is_function(func) do
     func.()
   end
+
+  def await({:error, msg}), do: {:error, msg}
 
   def await(_), do: {:error, :invalid_await_input}
 

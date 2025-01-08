@@ -33,17 +33,18 @@ defmodule Mix.Tasks.Benchmark do
   end
 
   defp benchmark(hub_id, nr_of_processes) do
-    # start_processes(hub_id, nr_of_processes) |> IO.inspect()
+    child_specs = ProcessHub.Utility.Bag.gen_child_specs(nr_of_processes)
+    cids = Enum.map(child_specs, fn %{id: id} -> id end)
 
     Benchee.run(
       %{
-        "start_processes" => fn ->
-          start_processes(hub_id, nr_of_processes)
+        "start_&_stop_processes" => fn ->
+          start_stop_processes(hub_id, child_specs, cids)
         end
       },
       memory_time: 5,
       warmup: 5,
-      time: 10,
+      time: 5,
       parallel: 1
     )
 
@@ -70,10 +71,11 @@ defmodule Mix.Tasks.Benchmark do
     Test.Helper.Bootstrap.start_hubs(hub, [node() | Node.list()], listed_hooks)
   end
 
-  defp start_processes(hub_id, nr_of_processes) do
-    child_specs = ProcessHub.Utility.Bag.gen_child_specs(nr_of_processes)
+  defp start_stop_processes(hub_id, child_specs, cids) do
+    ProcessHub.start_children(hub_id, child_specs, async_wait: true, timeout: 60_000)
+    |> ProcessHub.await()
 
-    ProcessHub.start_children(hub_id, child_specs, async_wait: true, timeout: 10_000)
+    ProcessHub.stop_children(hub_id, cids, async_wait: true, timeout: 60_000)
     |> ProcessHub.await()
   end
 end
