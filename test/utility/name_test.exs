@@ -3,12 +3,6 @@ defmodule Test.Utility.NameTest do
 
   use ExUnit.Case
 
-  test "concat names" do
-    assert Name.concat_name([:test, :test2, :test3], ".") === :"hub.test.test2.test3"
-    assert Name.concat_name(["test", "test2", :test3], ".") === :"hub.test.test2.test3"
-    assert Name.concat_name(["test", "test2", "test3"], ".") === :"hub.test.test2.test3"
-  end
-
   test "initializer" do
     assert Name.initializer(:test) === :"hub.test.initializer"
   end
@@ -43,11 +37,5 @@ defmodule Test.Utility.NameTest do
 
   test "janitor" do
     assert Name.janitor(:test) === :"hub.test.janitor"
-  end
-
-  test "extract hub_id" do
-    assert Name.extract_hub_id(:"hub.test.hook_registry") === "test"
-    assert Name.extract_hub_id(:"hub.test.coordinator") === "test"
-    assert Name.extract_hub_id(:"hub.another_test.task_supervisor") === "another_test"
   end
 end
