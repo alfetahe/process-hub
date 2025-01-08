@@ -56,8 +56,9 @@ defmodule Mix.Tasks.Benchmark do
           start_processes(hub_id, nr_of_processes)
         end
       },
+      memory_time: 5,
       warmup: 5,
-      time: 20,
+      time: 10,
       parallel: 1
     )
   end
