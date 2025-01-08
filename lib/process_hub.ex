@@ -72,8 +72,10 @@ defmodule ProcessHub do
   @typedoc """
   The `success()` and `failures()` types are used to define the results of the child start or stop functions.
   """
-  @type success() :: list()
-  @type failures() :: list()
+  @type start_result() :: {child_id(), [{node(), pid()}]}
+  @type start_failure() :: {child_id(), [term()]}
+  @type stop_result() :: {child_id(), [node()]}
+  @type stop_failure() :: {child_id(), [term()]}
 
   @typedoc """
   This is the base configuration structure for the hub and has to be passed to the `start_link/1` function.
@@ -195,8 +197,8 @@ defmodule ProcessHub do
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
           {:ok, :start_initiated}
           | {:error, :no_children | {:already_started, [atom | binary, ...]}}
-          | (-> {:ok, ProcessHub.success()})
-          | (-> {:error, ProcessHub.failures()} | {:error, ProcessHub.failures(), :rollback})
+          | (-> {:ok, start_result()})
+          | (-> {:error, start_failure()} | {:error, start_failure(), start_result(), :rollback})
   def start_child(hub_id, child_spec, opts \\ []) do
     start_children(hub_id, [child_spec], Keyword.put(opts, :return_first, true))
   end
@@ -219,8 +221,9 @@ defmodule ProcessHub do
              :no_children
              | {:error, :children_not_list}
              | {:already_started, [atom | binary, ...]}}
-          | (-> {:ok, ProcessHub.success()})
-          | (-> {:error, ProcessHub.failures()} | {:error, ProcessHub.failures(), :rollback})
+          | (-> {:ok, [start_result()]})
+          | (-> {:error, [start_failure()], [start_result()]}
+                | {:error, [start_failure()], [start_result()], :rollback})
   def start_children(hub_id, child_specs, opts \\ []) when is_list(child_specs) do
     Distributor.init_children(hub_id, child_specs, default_init_opts(opts))
   end
@@ -244,8 +247,8 @@ defmodule ProcessHub do
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
           {:ok, :stop_initiated}
-          | (-> {:ok, ProcessHub.success()})
-          | (-> {:error, ProcessHub.failures()})
+          | (-> {:ok, stop_result()})
+          | (-> {:error, stop_failure()})
   def stop_child(hub_id, child_id, opts \\ []) do
     stop_children(hub_id, [child_id], Keyword.put(opts, :return_first, true))
   end
@@ -264,8 +267,8 @@ defmodule ProcessHub do
   @spec stop_children(hub_id(), [child_id()], stop_opts()) ::
           {:ok, :stop_initiated}
           | {:error, list}
-          | (-> {:ok, ProcessHub.success()})
-          | (-> {:error, ProcessHub.failures()})
+          | (-> {:ok, [stop_result()]})
+          | (-> {:error, [stop_failure()], [stop_result()]})
   def stop_children(hub_id, child_ids, opts \\ []) do
     Distributor.stop_children(hub_id, child_ids, default_init_opts(opts))
   end
@@ -335,9 +338,10 @@ defmodule ProcessHub do
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
   @spec await({pid(), reference(), integer()}) ::
-          {:ok, ProcessHub.success()}
-          | {:error, {ProcessHub.success(), ProcessHub.failures()}}
-          | {:error, {ProcessHub.success(), ProcessHub.failures()}, :rollback}
+          {:ok, [start_result() | stop_result()]}
+          | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]}}
+          | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]},
+             :rollback}
   def await(func) when is_function(func) do
     func.()
   end
