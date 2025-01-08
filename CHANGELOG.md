@@ -1,6 +1,28 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.3.0-alpha - 2025-01-08
+Performance improvements, bugfixes and other minor improvements including one new feature.
+
+### Breaking changes
+- `Hook.post_children_start()` now returns: `[{child_id(), result(), pid(), [node()]}]`
+- Fixed error handling on process startups and stoppings. Returning more information about the failures and partial successes. Example:`ProcessHub.start_children/3`, `ProcessHub.stop_children/3` with `async_wait: true` now on failures return: `{:error, list_of_failures(), list_of_partial_successes()}`. This does not affect successful operations.
+
+### Added
+- Added new option `on_failure: :continue | :rollback` to the `ProcessHub.start_children/3`, `ProcessHub.stop_children/3` functions. This option allows the user to specify what should happen if the operation fails.
+
+### Fixed
+- `ProcessHub.Strategy.Redundancy.Replication` was not properly updating the redundancy_signal value on some occasions
+due to race condition.
+- Fixed issue with `ProcessHub.Janitor` not purging the cache properly when using Gossip protocol.
+- State passing on hotswap migration with graceful shutdown fixed.
+- Timeout option was not properly used in some cases.
+
+### Changed
+- Improved typespecs across the codebase.
+- Improved overall performance of start/stop/hotswap migration operations which involved synchronization and large
+amount of message passing by using bulk operations.
+
 ## v0.2.10-alpha - 2024-11-01
 Added new configuration options for timeout and other static values.
 
