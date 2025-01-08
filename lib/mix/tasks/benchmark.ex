@@ -10,23 +10,6 @@ defmodule Mix.Tasks.Benchmark do
 
   @impl Mix.Task
   def run([nr_of_peers, nr_of_processes]) do
-    # from = self()
-    # Enum.map(1..100_000, fn _ ->
-    #   pid = spawn(fn() ->
-    #     receive do
-    #       {:hello, from} -> send(from, :world)
-    #     end
-    #   end)
-
-    #   send(pid, {:hello, from})
-    # end)
-
-    # Enum.map(1..50_000, fn _ ->
-    #   receive do
-    #     :world -> :ok
-    #   end
-    # end)
-
     IO.puts("--------- BENCHMARK START ---------")
 
     nr_of_peers = String.to_integer(nr_of_peers)
@@ -50,6 +33,8 @@ defmodule Mix.Tasks.Benchmark do
   end
 
   defp benchmark(hub_id, nr_of_processes) do
+    # start_processes(hub_id, nr_of_processes) |> IO.inspect()
+
     Benchee.run(
       %{
         "start_processes" => fn ->
@@ -61,6 +46,8 @@ defmodule Mix.Tasks.Benchmark do
       time: 10,
       parallel: 1
     )
+
+    :ok
   end
 
   defp bootstrap(nr_of_peers) do
@@ -86,6 +73,7 @@ defmodule Mix.Tasks.Benchmark do
   defp start_processes(hub_id, nr_of_processes) do
     child_specs = ProcessHub.Utility.Bag.gen_child_specs(nr_of_processes)
 
-    ProcessHub.start_children(hub_id, child_specs, async_wait: true) |> ProcessHub.await()
+    ProcessHub.start_children(hub_id, child_specs, async_wait: true, timeout: 10_000)
+    |> ProcessHub.await()
   end
 end

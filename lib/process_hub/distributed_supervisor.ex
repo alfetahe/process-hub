@@ -9,7 +9,6 @@ defmodule ProcessHub.DistributedSupervisor do
 
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.PriorityLevel
 
   use ProcessHub.Constant.Event

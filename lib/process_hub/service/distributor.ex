@@ -183,9 +183,23 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp async_wait_startup(hub_id, startup_children, caller_pid, opts) do
+    {collect_from, required_cids} =
+      Enum.reduce(startup_children, {[], []}, fn {node, children}, {cf, rc} ->
+        {[node | cf], rc ++ Enum.map(children, &Map.get(&1, :child_id))}
+      end)
+
+    opts =
+      opts
+      |> Keyword.put(:collect_from, Enum.uniq(collect_from))
+      |> Keyword.put(:required_cids, Enum.uniq(required_cids))
+
     {receiver_pid, _, await_func} = spawn_collector(hub_id, :start, caller_pid, opts)
-    opts = Keyword.put(opts, :reply_to, [receiver_pid])
-    Dispatcher.children_start(hub_id, startup_children, opts)
+
+    Dispatcher.children_start(
+      hub_id,
+      startup_children,
+      Keyword.put(opts, :reply_to, [receiver_pid])
+    )
 
     await_func
   end
