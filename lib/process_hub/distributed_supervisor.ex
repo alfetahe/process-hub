@@ -119,14 +119,14 @@ defmodule ProcessHub.DistributedSupervisor do
   end
 
   defp handle_process_restart(old_state, new_state, pid) do
+    hub_id = elem(old_state, 11) |> Map.get(:hub_id)
     cid = find_cid_from_pid(old_state, pid)
     old_pid = find_pid_from_cid(old_state, cid)
     new_pid = find_pid_from_cid(new_state, cid)
 
     if old_pid !== new_pid do
       Dispatcher.propagate_event(
-        # TODO: refactor this. Do not create atoms dynamically.
-        Name.extract_hub_id(elem(old_state, 1)) |> String.to_atom(),
+        hub_id,
         @event_child_process_pid_update,
         {cid, {node(), new_pid}},
         %{
