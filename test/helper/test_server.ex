@@ -52,12 +52,16 @@ defmodule Test.Helper.TestServer do
     {:reply, :ok, Map.put(state, key, value)}
   end
 
+  def handle_call({:stop, reason}, _from, state) do
+    {:stop, reason, state}
+  end
+
   def handle_call(:ping, _from, state) do
     {:reply, :pong, state}
   end
 
-  def handle_cast({:stop, reason}, _state) do
-    {:stop, reason, nil}
+  def handle_cast({:stop, reason}, state) do
+    {:stop, reason, state}
   end
 
   def handle_cast(:throw, _state) do
