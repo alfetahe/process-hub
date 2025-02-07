@@ -77,7 +77,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
     @type t :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
             children: [
-              {ProcessHub.child_id(), :ok | {:error, :not_found}}
+              {ProcessHub.child_id(), :ok | {:error, :not_found}, node()}
             ],
             node: node(),
             stop_opts: keyword()

@@ -29,10 +29,7 @@ defmodule ProcessHub do
   @typedoc """
   The `child_spec` defines the specification of a child process.
   """
-  @type child_spec() :: %{
-          id: child_id(),
-          start: {module(), atom(), [any()]}
-        }
+  @type child_spec() :: Supervisor.child_spec()
 
   @typedoc """
   The `init_opts()` defines the options that can be passed to the `start_children/3`, `start_child/3`,
