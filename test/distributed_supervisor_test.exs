@@ -17,21 +17,28 @@ defmodule Test.Service.DistributedSupervisorTest do
 
     HookManager.register_handler(@hub_id, Hook.registry_pid_removed(), handler)
 
-    child_spec = %{
-      id: :self_shutdown,
-      start: {Test.Helper.TestServer, :start_link, [%{name: :self_shutdown}]},
+    child_spec1 = %{
+      id: :self_shutdown_1,
+      start: {Test.Helper.TestServer, :start_link, [%{name: :self_shutdown_1}]},
       restart: :transient
     }
 
-    ProcessHub.start_child(@hub_id, child_spec,
+    child_spec2 = %{
+      id: :self_shutdown_2,
+      start: {Test.Helper.TestServer, :start_link, [%{name: :self_shutdown_2}]},
+      restart: :transient
+    }
+
+    ProcessHub.start_children(@hub_id, [child_spec1, child_spec2],
       async_wait: true,
       timeout: 4000
     )
     |> ProcessHub.await()
 
-    GenServer.cast(:self_shutdown, {:stop, :normal})
+    GenServer.cast(:self_shutdown_1, {:stop, :normal})
+    GenServer.cast(:self_shutdown_2, {:stop, :shutdown})
 
-    Bag.receive_multiple(1, Hook.registry_pid_removed())
+    Bag.receive_multiple(2, Hook.registry_pid_removed())
 
     # Make sure the child has been removed from registry
     assert ProcessHub.process_list(@hub_id, :global) === []
