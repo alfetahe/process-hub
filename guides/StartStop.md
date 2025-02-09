@@ -84,13 +84,14 @@ ProcessHub.stop_children(:my_hub, ["child_id1", "child_id2"])
 See `ProcessHub.stop_opts/0` for more information on the options that can be passed to the stop functions.
 
 ### Self stopping processes
-Processes can also stop themselves by returning `{:stop, :normal, state}` or `{:stop, :shutdown, state}`. This is useful when the process has to stop itself based on some condition.
+Processes can also stop themselves by sending exit signals to the linked processes (supervisor).
+This is useful when the process has to stop itself based on some condition.
 
 For processes to be eligible for self-stopping, they have to be started with a `:restart` option set to `:transient`
 
 This will also update the registry accordingly for all the nodes in the cluster. Keep in mind that the operation is **asynchronous**.
 
-### Example self-stopping process
+### Example self-stopping GenServer process
 ```elixir
 child_spec1 = %{
       id: :self_shutdown_1,
@@ -112,8 +113,7 @@ defmodule MyProcess do
     {:ok, nil}
   end
 
-  # The process will stop itself when it receives the :stop message.
-  def handle_info(:stop, state) do
+  def handle_info(msg, state) do
     {:stop, :normal, state} # Return the stop tuple
   end
 end
