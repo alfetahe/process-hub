@@ -1,6 +1,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.3.1-alpha - 2025-02-09
+New feature to self-shutdown a child process and documentation improvements.
+
+### Added
+- Added ability to self-shutdown a child process by calling returning an exit signal from the child process.
+- New guide page for process starting and stopping.
+
+### Fixed
+- Minor documentation fixes.
+
 ## v0.3.0-alpha - 2025-01-08
 Performance improvements, bugfixes and other minor improvements including one new feature.
 
