@@ -89,6 +89,8 @@ This is useful when the process has to stop itself based on some condition.
 
 For processes to be eligible for self-stopping, they have to be started with a `:restart` option set to `:transient`
 
+If the `:restart` option is anything other than `:transient` and the stop code is not either `shutdown`or `normal` the supervisor will try to **restart** the process when it stops.
+
 This will also update the registry accordingly for all the nodes in the cluster. Keep in mind that the operation is **asynchronous**.
 
 ### Example self-stopping GenServer process
@@ -118,8 +120,6 @@ defmodule MyProcess do
   end
 end
 ```
-
-If the `:restart` option is anything other than `:transient` and the stop code is not either `shutdown`or `normal` the supervisor will try to **restart** the process when it stops.
 
 ## Asynchronous operations
 All operations by default are asynchronous and can be made synchronous by passing the `async_wait: true` option. The same options works for starting and stopping processes.
