@@ -27,13 +27,14 @@ defmodule ProcessHub.MixProject do
           "README.md",
           "guides/Introduction.md",
           "guides/ProcessRegistry.md",
-          "guides/Architecture.md",
+          "guides/StartStop.md",
           "guides/Configuration.md",
           "guides/StateHandover.md",
+          "guides/Hooks.cheatmd",
           "guides/ManualDistribution.md",
           "guides/ReplicatingProcesses.md",
-          "guides/Hooks.cheatmd",
-          "guides/CustomStrategy.md"
+          "guides/CustomStrategy.md",
+          "guides/Architecture.md"
         ],
         authors: ["Anuar Alfetahe"]
       ]
