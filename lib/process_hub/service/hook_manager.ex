@@ -35,7 +35,7 @@ defmodule ProcessHub.Service.HookManager do
           m: module(),
           f: atom(),
           a: [any()],
-          p: handler_priority()
+          p: handler_priority() | nil
         }
 
   @type hook_handlers() :: %{

@@ -5,7 +5,6 @@ defmodule Test.Helper.Bootstrap do
   alias Test.Helper.TestNode
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Utility.Bag
-  alias ProcessHub.Service.HookManager
 
   use ExUnit.Case, async: false
 
@@ -96,12 +95,7 @@ defmodule Test.Helper.Bootstrap do
           handler = {
             hook_key,
             [
-              %HookManager{
-                id: hook_key,
-                m: ProcessHub.Utility.Bag,
-                f: :hook_erlang_send,
-                a: [:_, host_pid, hook_key]
-              }
+              Bag.recv_hook(hook_key, host_pid)
             ]
           }
 

@@ -3,6 +3,8 @@ defmodule ProcessHub.Utility.Bag do
   Utility functions.
   """
 
+  alias ProcessHub.Service.HookManager
+
   @default_timeout 5000
 
   @doc """
@@ -85,6 +87,19 @@ defmodule ProcessHub.Utility.Bag do
   @spec all_messages :: [term()]
   def all_messages() do
     all_messages([])
+  end
+
+  @doc """
+  Generates a hook manager for receiving messages.
+  """
+  @spec recv_hook(atom(), pid()) :: HookManager.t()
+  def recv_hook(key, recv_pid) do
+    %HookManager{
+      id: key,
+      m: ProcessHub.Utility.Bag,
+      f: :hook_erlang_send,
+      a: [:_, recv_pid, key]
+    }
   end
 
   defp all_messages(messages) do

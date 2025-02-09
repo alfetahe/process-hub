@@ -1,5 +1,6 @@
 defmodule Test.Utility.BagTest do
   alias ProcessHub.Utility.Bag
+  alias ProcessHub.Service.HookManager
 
   use ExUnit.Case
 
@@ -48,5 +49,17 @@ defmodule Test.Utility.BagTest do
     end)
 
     assert Bag.all_messages() === messages
+  end
+
+  test "generate hook receiver" do
+    self = self()
+
+    assert Bag.recv_hook(:recv_hook_key, self) === %HookManager{
+             id: :recv_hook_key,
+             m: ProcessHub.Utility.Bag,
+             f: :hook_erlang_send,
+             a: [:_, self, :recv_hook_key],
+             p: 0
+           }
   end
 end

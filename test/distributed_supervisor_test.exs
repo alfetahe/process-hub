@@ -1,5 +1,8 @@
 defmodule Test.Service.DistributedSupervisorTest do
   alias ProcessHub.Utility.Name
+  alias ProcessHub.Utility.Bag
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.HookManager
 
   use ExUnit.Case
 
@@ -10,6 +13,10 @@ defmodule Test.Service.DistributedSupervisorTest do
   end
 
   test "process self shutdown" do
+    handler = Bag.recv_hook(Hook.registry_pid_removed(), self())
+
+    HookManager.register_handler(@hub_id, Hook.registry_pid_removed(), handler)
+
     child_spec = %{
       id: :self_shutdown,
       start: {Test.Helper.TestServer, :start_link, [%{name: :self_shutdown}]},
@@ -18,13 +25,13 @@ defmodule Test.Service.DistributedSupervisorTest do
 
     ProcessHub.start_child(@hub_id, child_spec,
       async_wait: true,
-      timeout: 1000
+      timeout: 4000
     )
     |> ProcessHub.await()
 
     GenServer.cast(:self_shutdown, {:stop, :normal})
 
-    Process.sleep(1000)
+    Bag.receive_multiple(1, Hook.registry_pid_removed())
 
     # Make sure the child has been removed from registry
     assert ProcessHub.process_list(@hub_id, :global) === []
