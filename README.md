@@ -118,7 +118,7 @@ Query the whole registry for all processes under the hub `:my_hub`:
 iex> ProcessHub.process_list(:my_hub, :global)
 [
   my_process_1: [node_two@host: #PID<23772.233.0>],
-  my_process_2: [node_two@user: #PID<0.250.0>],
+  my_process_2: [node_one@user: #PID<0.250.0>],
 ]
 ```
 

@@ -404,8 +404,8 @@ defmodule ProcessHub do
   Returns a list of pids for the given child_id.
 
   ## Example
-    iex> ProcessHub.get_pids(:my_hub, :my_child)
-    [#PID<0.123.0>]
+      iex> ProcessHub.get_pids(:my_hub, :my_child)
+      [#PID<0.123.0>]
   """
   @spec get_pids(ProcessHub.hub_id(), ProcessHub.child_id()) :: [pid()]
   defdelegate get_pids(hub_id, child_id), to: ProcessRegistry, as: :get_pids
@@ -417,8 +417,8 @@ defmodule ProcessHub do
   not recommended to use with replication strategies as it will return the first pid only.
 
   ## Example
-    iex> ProcessHub.get_pid(:my_hub, :my_child)
-    #PID<0.123.0>
+      iex> ProcessHub.get_pid(:my_hub, :my_child)
+      #PID<0.123.0>
   """
   @spec get_pid(ProcessHub.hub_id(), ProcessHub.child_id()) :: pid() | nil
   defdelegate get_pid(hub_id, child_id), to: ProcessRegistry, as: :get_pid
