@@ -186,6 +186,9 @@ defmodule ProcessHub.DistributedSupervisor do
   end
 
   defp find_pid_from_cid(state, compare_cid) do
+    # Format of the state is defined as a staterecord in the `:supervisor` module.
+    # {_, _, _, {_, %{^child_id =>  {_, pid, _cid, _, _, _, _, _, _}}}, _, _, _, _, _, _, _, _} = state
+
     state
     |> elem(3)
     |> elem(1)
