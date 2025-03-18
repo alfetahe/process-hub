@@ -67,5 +67,5 @@ defmodule ProcessHub.MixProject do
   end
 
   defp elixirc_paths(:prod), do: ["lib"]
-  defp elixirc_paths(_), do: ["lib", "test/helper"]
+  defp elixirc_paths(_), do: ["lib", "test/helper", "priv/mix/tasks"]
 end
