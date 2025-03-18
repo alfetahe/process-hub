@@ -13,7 +13,11 @@ It is possible to register a hook handler with a wildcard argument `:_`, which w
 
 ## Hook registration examples
 
-Example dynamic hook registration using the `t:ProcessHub.t/0` configuration struct:
+### Static hook registration
+Static hook registration occurs when all hook handlers are known at the time of hub initialization
+using the `t:ProcessHub.t/0` configuration struct.
+
+Example:
 ```elixir
 # Register a hook handler for the `:pre_cluster_join_hook` event with a wildcard argument.
 defmodule MyApp.Application do
@@ -59,7 +63,10 @@ defmodule MyApp.Application do
 end
 ```
 
-Example hook registration using the `ProcessHub.Service.HookManager` module:
+### Dynamic hook registration
+Dynamic hook registration is useful when modifying hook handlers at runtime. It allows us to add new handlers or remove existing ones.
+
+Example:
 ```elixir
 alias ProcessHub.Service.HookManager
 alias ProcessHub.Constant.Hook
