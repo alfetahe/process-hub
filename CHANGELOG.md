@@ -1,6 +1,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.3.2-alpha - 2025-03-25
+Error handling improvements and documentation fixes
+
+### Fixed
+- Improved error handling. Single child start/stop operation error result no longer returns list.
+- Fix: Prevent mix tasks from being included in production build. [https://github.com/alfetahe/process-hub/issues/10]
+- Documentation typespecs and some comments.
+
 ## v0.3.1-alpha - 2025-02-09
 New feature to self-shutdown a child process and documentation improvements.
 

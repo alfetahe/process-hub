@@ -67,11 +67,27 @@ defmodule ProcessHub do
         ]
 
   @typedoc """
-  The `success()` and `failures()` types are used to define the results of the child start or stop functions.
+  Defines the success result for a single child start operation.
   """
   @type start_result() :: {child_id(), [{node(), pid()}]}
-  @type start_failure() :: {child_id(), [term()]}
+
+  @typedoc """
+  Defines the failure result for a single child start operation.
+
+  The `term()` can be any term that describes the failure reason.
+  """
+  @type start_failure() :: {child_id(), node(), term()}
+
+  @typedoc """
+  Defines the success result for a single child stop operation.
+  """
   @type stop_result() :: {child_id(), [node()]}
+
+  @typedoc """
+  Defines the failure result for a single child stop operation.
+
+  The `term()` can be any term that describes the failure reason.
+  """
   @type stop_failure() :: {child_id(), [term()]}
 
   @typedoc """

@@ -93,17 +93,32 @@ defmodule ProcessHub.Service.Mailbox do
     required_cids = Keyword.get(opts, :required_cids, [])
 
     {success_results, errors} =
-      recursive_collect({[], []}, collect_from, recv_key, result_handler, timeout, required_cids)
+      recursive_collect(
+        {[], []},
+        collect_from,
+        recv_key,
+        result_handler,
+        timeout,
+        required_cids
+      )
 
-    success_results =
-      case Keyword.get(opts, :return_first, false) do
-        false -> success_results
-        true -> List.first(success_results) || []
-      end
+    success_results = filter_transition_result(success_results, opts)
 
     case length(errors) > 0 do
-      false -> {:ok, success_results}
-      true -> {:error, {errors, success_results}}
+      false ->
+        {:ok, success_results}
+
+      true ->
+        {:error, {filter_transition_result(errors, opts), success_results}}
+    end
+  end
+
+  # Get the first result if the return_first option is set to true.
+  # This is used for single child process operations.
+  defp filter_transition_result(results, opts) do
+    case Keyword.get(opts, :return_first, false) do
+      false -> results
+      true -> List.first(results) || []
     end
   end
 
@@ -162,7 +177,7 @@ defmodule ProcessHub.Service.Mailbox do
   defp handle_err_recv(unhandled_nodes, nodes_result, errors) do
     [err_node | unhandled_nodes] = unhandled_nodes
 
-    errors = [{:node_receive_timeout, err_node} | errors]
+    errors = [{:undefined, err_node, :node_receive_timeout} | errors]
 
     {:err, unhandled_nodes, nodes_result, errors}
   end

@@ -31,7 +31,7 @@ defmodule Test.Service.MailboxTest do
 
   test "collect start" do
     assert Mailbox.collect_start_results(:messenger_test, timeout: 1) ===
-             {:error, {[node_receive_timeout: node()], []}}
+             {:error, {[{:undefined, node(), :node_receive_timeout}], []}}
 
     send(self(), {:collect_start_results, [{"child_id1", {:ok, :somepid}}], node()})
     send(self(), {:collect_start_results, [{"child_id2", {:ok, :somepid}}], :somenode})
@@ -46,7 +46,9 @@ defmodule Test.Service.MailboxTest do
     send(self(), {:custom_recv_key, [{"child_id2", {:ok, :somepid}}], :somenode})
 
     assert Mailbox.collect_start_results(:messenger_test, opts) ===
-             {:error, {[node_receive_timeout: node()], [{"child_id2", [no_collect: :somepid]}]}}
+             {:error,
+              {[{:undefined, node(), :node_receive_timeout}],
+               [{"child_id2", [no_collect: :somepid]}]}}
 
     handler = fn _cid, _node, result ->
       case result do
@@ -64,12 +66,13 @@ defmodule Test.Service.MailboxTest do
     send(self(), {:collect_start_results, [{"child_id1", {:ok, :pid}}], node()})
 
     assert Mailbox.collect_start_results(:messenger_test, opts) ===
-             {:error, {[node_receive_timeout: node()], [{"child_id1", [{node(), :myok}]}]}}
+             {:error,
+              {[{:undefined, node(), :node_receive_timeout}], [{"child_id1", [{node(), :myok}]}]}}
   end
 
   test "collect stop" do
     assert Mailbox.collect_stop_results(:messenger_test, timeout: 1) ===
-             {:error, {[node_receive_timeout: node()], []}}
+             {:error, {[{:undefined, node(), :node_receive_timeout}], []}}
 
     send(self(), {:collect_stop_results, [{"child_id1", :ok}], node()})
     send(self(), {:collect_stop_results, [{"child_id2", :ok}], :somenode})
@@ -84,7 +87,8 @@ defmodule Test.Service.MailboxTest do
     send(self(), {:custom_recv_key, [{"child_id2", :ok}], :somenode})
 
     assert Mailbox.collect_stop_results(:messenger_test, opts) ===
-             {:error, {[node_receive_timeout: node()], [{"child_id2", [:no_collect]}]}}
+             {:error,
+              {[{:undefined, node(), :node_receive_timeout}], [{"child_id2", [:no_collect]}]}}
 
     handler = fn _cid, _node, result ->
       case result do
@@ -102,7 +106,7 @@ defmodule Test.Service.MailboxTest do
     send(self(), {:collect_stop_results, [{"child_id1", :custom_ok}], node()})
 
     assert Mailbox.collect_stop_results(:messenger_test, opts) ===
-             {:error, {[node_receive_timeout: node()], [{"child_id1", [node()]}]}}
+             {:error, {[{:undefined, node(), :node_receive_timeout}], [{"child_id1", [node()]}]}}
   end
 
   test "receive child resp" do

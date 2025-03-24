@@ -30,7 +30,7 @@ defmodule ProcessHubTest do
 
     assert ProcessHub.start_children(hub_id, [cs4], async_wait: true, timeout: 0)
            |> ProcessHub.await() ===
-             {:error, {[node_receive_timeout: node()], []}}
+             {:error, {[{:undefined, node(), :node_receive_timeout}], []}}
 
     {status, results} =
       ProcessHub.start_children(hub_id, [cs5, cs5], async_wait: true, timeout: 1000)
@@ -66,6 +66,42 @@ defmodule ProcessHubTest do
     end)
   end
 
+  test "start children error results", %{hub_id: hub_id} do
+    err_spec = %{
+      id: :error_cid,
+      start: {Test.Helper.NonExisting, :start_link, [nil]}
+    }
+
+    {status1, {failure, success}} =
+      ProcessHub.start_child(hub_id, err_spec,
+        async_wait: true,
+        disable_logging: true
+      )
+      |> ProcessHub.await()
+
+    err_spec2 = Map.put(err_spec, :id, :error_cid2)
+    err_spec3 = Map.put(err_spec, :id, :error_cid3)
+
+    {status2, {failures, success_results}} =
+      ProcessHub.start_children(hub_id, [err_spec2, err_spec3],
+        async_wait: true,
+        disable_logging: true
+      )
+      |> ProcessHub.await()
+
+    assert status1 === :error
+    assert success === []
+    assert tuple_size(failure) === 3
+    assert elem(failure, 0) === :error_cid
+    assert elem(failure, 1) === node()
+    assert elem(failure, 2) |> elem(0) |> elem(0) === :EXIT
+
+    assert status2 === :error
+    assert success_results === []
+    assert is_list(failures)
+    assert length(failures) === 2
+  end
+
   test "start child", %{hub_id: hub_id} do
     [cs1, cs2, cs3, cs4, cs5] = ProcessHub.Utility.Bag.gen_child_specs(5)
 
@@ -84,12 +120,12 @@ defmodule ProcessHubTest do
     {:ok, _} = ProcessHub.start_child(hub_id, cs3, async_wait: true) |> ProcessHub.await()
     assert ProcessHub.start_child(hub_id, cs3) === {:error, {:already_started, ["child3"]}}
 
-    {:error, {[{"child2", _node, {:already_started, _pid}}], []}} =
+    {:error, {{"child2", _node, {:already_started, _pid}}, []}} =
       ProcessHub.start_child(hub_id, cs2, async_wait: true, check_existing: false, timeout: 1000)
       |> ProcessHub.await()
 
     assert ProcessHub.start_child(hub_id, cs4, async_wait: true, timeout: 0)
-           |> ProcessHub.await() === {:error, {[node_receive_timeout: node()], []}}
+           |> ProcessHub.await() === {:error, {{:undefined, node(), :node_receive_timeout}, []}}
 
     ProcessHub.Service.Dispatcher.reply_respondents(
       [self()],
@@ -164,7 +200,7 @@ defmodule ProcessHubTest do
     assert ProcessHub.stop_child(hub_id, :child2) === {:ok, :stop_initiated}
 
     assert ProcessHub.stop_child(hub_id, :non_existing, async_wait: true, timeout: 100)
-           |> ProcessHub.await() === {:error, {[{:non_existing, node(), :not_found}], []}}
+           |> ProcessHub.await() === {:error, {{:non_existing, node(), :not_found}, []}}
 
     assert ProcessHub.stop_child(hub_id, :child3, async_wait: true, timeout: 100)
            |> ProcessHub.await() === {:ok, {:child3, [node()]}}
@@ -179,7 +215,7 @@ defmodule ProcessHubTest do
     assert ProcessHub.stop_child(hub_id, "child2") === {:ok, :stop_initiated}
 
     assert ProcessHub.stop_child(hub_id, "non_existing", async_wait: true, timeout: 100)
-           |> ProcessHub.await() === {:error, {[{"non_existing", node(), :not_found}], []}}
+           |> ProcessHub.await() === {:error, {{"non_existing", node(), :not_found}, []}}
 
     assert ProcessHub.stop_child(hub_id, "child3", async_wait: true, timeout: 100)
            |> ProcessHub.await() === {:ok, {"child3", [node()]}}
