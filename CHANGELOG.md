@@ -3,11 +3,16 @@ All notable changes to this project will be documented in this file.
 
 ## v0.3.2-alpha - 2025-03-25
 Error handling improvements and documentation fixes
+Includes breaking changes!
 
 ### Fixed
 - Improved error handling. Single child start/stop operation error result no longer returns list.
 - Fix: Prevent mix tasks from being included in production build. [https://github.com/alfetahe/process-hub/issues/10]
 - Documentation typespecs and some comments.
+- Minor code refactors.
+
+### Breaking changes
+- The process state handover has been unified for different types of migrations. Users who previously used HotSwap migration with process state handover and implemented their own custom callbacks instead of using the provided macro, will need to update their callback functions. See `ProcessHub.Strategy.Migration.HotSwap` for examples. This also removes the need to have a separate callback to handle `{:process_hub, :get_state, cid, from}` graceful shutdown migrations.
 
 ## v0.3.1-alpha - 2025-02-09
 New feature to self-shutdown a child process and documentation improvements.
