@@ -20,6 +20,19 @@ defmodule Test.Service.HookManagerTest do
     assert HookManager.registered_handlers(hub_id, :test) === [handler]
   end
 
+  test "register handler string id", %{hub_id: hub_id} = _context do
+    handler = %HookManager{
+      id: "hook_manager_test_register_handler",
+      m: :m,
+      f: :f,
+      a: []
+    }
+
+    HookManager.register_handler(hub_id, :test, handler)
+
+    assert HookManager.registered_handlers(hub_id, :test) === [handler]
+  end
+
   test "register handler duplicate", %{hub_id: hub_id} = _context do
     handler = %HookManager{
       id: :hook_manager_test_register_handler,

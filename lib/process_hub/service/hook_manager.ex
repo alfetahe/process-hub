@@ -26,7 +26,7 @@ defmodule ProcessHub.Service.HookManager do
           | :coordinator_shutdown_hook
           | :process_startups_hook
 
-  @type handler_id() :: atom()
+  @type handler_id() :: atom() | String.t()
 
   @type handler_priority() :: integer()
 
