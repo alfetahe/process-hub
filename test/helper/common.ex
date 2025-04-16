@@ -265,4 +265,9 @@ defmodule Test.Helper.Common do
       error_msg: "Child add timeout."
     )
   end
+
+  def sync_start(hub_id, child_specs) do
+    ProcessHub.start_children(hub_id, child_specs, async_wait: true)
+    |> ProcessHub.await()
+  end
 end

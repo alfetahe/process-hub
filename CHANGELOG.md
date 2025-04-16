@@ -1,8 +1,8 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.3.2-alpha - 2025-04-02
-Error handling improvements and documentation fixes
+## v0.3.2-alpha - 2025-04-16
+Includes new feature and a breaking change. Minor improvements on documentations and other fixes.
 
 ### Breaking changes
 - The process state handover has been unified for different types of migrations. Users who previously used HotSwap migration with process state handover and implemented their own custom callbacks instead of using the provided macro, will need to update their callback functions. See `ProcessHub.Strategy.Migration.HotSwap` for examples. This also removes the need to have a separate callback to handle `{:process_hub, :get_state, cid, from}` graceful shutdown migrations.
@@ -15,6 +15,7 @@ Error handling improvements and documentation fixes
 
 ### Added
 - Adjusted `HookManager` documentation to allow `String.t()` as hook handler keys.
+- Added new function `ProcessHub.promote_to_node/2` to handle updating the process registry after turning node node into distributed node. Useful when the node has been started as none distributed and later made into one by calling `Node.start/3` function.
 
 ## v0.3.1-alpha - 2025-02-09
 New feature to self-shutdown a child process and documentation improvements.

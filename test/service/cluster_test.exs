@@ -1,6 +1,10 @@
 defmodule Test.Service.ClusterTest do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Utility.Name
+  alias Test.Helper.TestNode
+  alias Test.Helper.Bootstrap
+  alias Test.Helper.Common
+  alias ProcessHub.Utility.Bag
 
   use ProcessHub.Constant.Event
   use ExUnit.Case
@@ -59,5 +63,33 @@ defmodule Test.Service.ClusterTest do
     assert Cluster.new_node?([:existing, :second], :existing) === false
     assert Cluster.new_node?([:existing, :second], :noexisting) === true
     assert Cluster.new_node?([], :noexisting) === true
+  end
+
+  test "promote to node", _context do
+    hub_id = :promote_test
+    new_node_name = :promote_node_new
+
+    [{peer_node, peer_pid}] = TestNode.start_nodes(1, prefix: :promote)
+    hub = Bootstrap.gen_hub(%{hub_id: hub_id})
+    Bootstrap.start_hubs(hub, [peer_node], [], true)
+
+    child_specs = Bag.gen_child_specs(10, prefix: Atom.to_string(hub_id))
+
+    :erpc.call(peer_node, Common, :sync_start, [hub_id, child_specs])
+    :erpc.call(peer_node, ProcessHub, :process_list, [hub_id, :global])
+    :erpc.call(peer_node, ProcessHub, :promote_to_node, [hub_id, new_node_name])
+
+    children = :erpc.call(peer_node, ProcessHub, :process_list, [hub_id, :global])
+    hub_nodes = :erpc.call(peer_node, ProcessHub, :nodes, [hub_id, [:include_local]])
+
+    children_result =
+      Enum.all?(children, fn {_child_id, [{n, _p}]} ->
+        n === new_node_name
+      end)
+
+    assert children_result == true
+    assert hub_nodes === [new_node_name]
+
+    :peer.stop(peer_pid)
   end
 end

@@ -4,6 +4,7 @@ defmodule ProcessHub.Service.Cluster do
   The cluster service provides API functions for managing the cluster.
   """
 
+  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Event
@@ -65,5 +66,33 @@ defmodule ProcessHub.Service.Cluster do
   @spec propagate_self(ProcessHub.hub_id(), node()) :: term()
   def propagate_self(hub_id, node) do
     Dispatcher.propagate_event(hub_id, @event_cluster_join, node(), %{members: [node]})
+  end
+
+  @doc "Promotes the current node to a cluster node."
+  @spec promote_to_node(ProcessHub.hub_id(), node()) :: :ok | {:error, :not_alive}
+  def promote_to_node(hub_id, node_name) do
+    case Node.alive?() do
+      false ->
+        {:error, :not_alive}
+
+      true ->
+        Storage.insert(Name.local_storage(hub_id), StorageKey.hn(), [node_name])
+
+        children = ProcessRegistry.registry(hub_id)
+
+        Enum.each(children, fn {_child_id, {child_spec, node_pids}} ->
+          new_node_pids = Enum.map(node_pids, fn {_node, pid} -> {node_name, pid} end)
+
+          ProcessRegistry.insert(
+            hub_id,
+            child_spec,
+            new_node_pids,
+            table: Name.registry(hub_id),
+            skip_hooks: true
+          )
+        end)
+
+        :ok
+    end
   end
 end

@@ -509,6 +509,21 @@ defmodule ProcessHub do
   @spec nodes(hub_id(), [:include_local] | nil) :: [node()]
   defdelegate nodes(hub_id, opts \\ []), to: Cluster
 
+  @doc """
+  Promotes the `ProcessHub` with the given `t:hub_id/0` to a node.
+
+  This function should be used when the `ProcessHub` has been started in a
+  non-node mode and you want to promote it to a node.
+
+  The function will update all existing child processes
+  on the registry to match the new node name.
+
+  Optionally, you can pass the `node_name` argument to specify the name of the node.
+  By default, the current node name will be used.
+  """
+  @spec promote_to_node(hub_id()) :: :ok | {:error, :not_alive}
+  defdelegate promote_to_node(hub_id, node_name \\ node()), to: Cluster
+
   defp default_init_opts(opts) do
     Keyword.put_new(opts, :timeout, @default_init_timeout)
     |> Keyword.put_new(:async_wait, false)
