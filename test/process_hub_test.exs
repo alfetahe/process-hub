@@ -322,13 +322,13 @@ defmodule ProcessHubTest do
   end
 
   test "registry", %{hub_id: hub_id} = _context do
-    assert ProcessHub.process_registry(hub_id) === %{}
+    assert ProcessHub.registry_dump(hub_id) === %{}
 
     [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
     ProcessHub.start_children(hub_id, [cs1, cs2], async_wait: true) |> ProcessHub.await()
 
-    %{"child1" => {^cs1, nodepids1}, "child2" => {^cs2, nodepids2}} =
-      ProcessHub.process_registry(hub_id)
+    %{"child1" => {^cs1, nodepids1, _}, "child2" => {^cs2, nodepids2, _}} =
+      ProcessHub.registry_dump(hub_id)
 
     assert is_list(nodepids1)
     assert length(nodepids1) === 1
@@ -343,7 +343,7 @@ defmodule ProcessHubTest do
 
   test "dump", %{hub_id: hub_id} = _context do
     metadata = %{tag: "dump_test_tag"}
-    assert ProcessHub.dump_registry(hub_id) === %{}
+    assert ProcessHub.registry_dump(hub_id) === %{}
 
     [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
 
@@ -356,7 +356,7 @@ defmodule ProcessHubTest do
     |> ProcessHub.await()
 
     %{"child1" => {^cs1, nodepids1, metadata1}, "child2" => {^cs2, nodepids2, metadata2}} =
-      ProcessHub.dump_registry(hub_id)
+      ProcessHub.registry_dump(hub_id)
 
     assert is_list(nodepids1)
     assert length(nodepids1) === 1

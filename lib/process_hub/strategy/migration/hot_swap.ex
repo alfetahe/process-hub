@@ -316,7 +316,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       Storage.get(local_storage, StorageKey.strred())
       |> RedundancyStrategy.replication_factor()
 
-    Enum.reduce(local_data, %{}, fn {cid, {_, cn}}, acc ->
+    Enum.reduce(local_data, %{}, fn {cid, {_, cn, _m}}, acc ->
       nodes = Keyword.keys(cn)
       new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
       migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
@@ -333,7 +333,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     local_node = node()
     self = self()
 
-    Enum.each(local_data, fn {child_id, {_cs, cn}} ->
+    Enum.each(local_data, fn {child_id, {_cs, cn, _m}} ->
       local_pid = Keyword.get(cn, local_node)
 
       if is_pid(local_pid) do

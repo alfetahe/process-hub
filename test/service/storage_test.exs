@@ -43,6 +43,24 @@ defmodule Test.Service.StorageTest do
     assert Storage.get(@local_storage, :non_exist) === nil
   end
 
+  test "match", _context do
+    match = {:"$1", {:"$2", %{some_key: "some_value"}}}
+
+    assert Storage.match(@local_storage, match) === []
+
+    Storage.insert(@local_storage, :test1, {:test_value1, %{some_key: "some_value"}})
+    Storage.insert(@local_storage, :test2, {:test_value2, %{some_key: "some_value"}})
+    Storage.insert(@local_storage, :test3, {:test_value3, %{other_key: "some_value"}})
+    Storage.insert(@local_storage, :test4, :test_value4)
+
+    assert Storage.match(@local_storage, match) === [
+             {:test2, :test_value2},
+             {:test1, :test_value1}
+           ]
+
+    assert Storage.match(@local_storage, {:"$1", :"$2", %{some_key: "no_existing"}}) === []
+  end
+
   test "update", _context do
     res1 = Storage.update(@local_storage, :not_exist_update1, fn val -> val end)
     res2 = Storage.update(@local_storage, :not_exist_update2, fn _val -> 5000 end)

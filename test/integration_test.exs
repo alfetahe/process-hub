@@ -84,7 +84,7 @@ defmodule Test.IntegrationTest do
       start_opts: [child_mapping: child_mappings]
     )
 
-    registry_data = ProcessHub.dump_registry(hub_id)
+    registry_data = ProcessHub.registry_dump(hub_id)
 
     assert length(Map.keys(registry_data)) === length(Map.keys(child_mappings))
 
@@ -94,7 +94,7 @@ defmodule Test.IntegrationTest do
 
     Common.sync_base_test(context, child_specs, :rem, scope: :global)
 
-    assert ProcessHub.dump_registry(hub_id) === %{}
+    assert ProcessHub.registry_dump(hub_id) === %{}
   end
 
   @tag hub_id: :pubsub_interval_test
@@ -632,7 +632,7 @@ defmodule Test.IntegrationTest do
       error_msg: "Post redistribution timeout"
     )
 
-    ProcessHub.dump_registry(hub_id)
+    ProcessHub.registry_dump(hub_id)
     |> Enum.each(fn {_child_id, {_, nodes, _}} ->
       pid = List.first(nodes) |> elem(1)
       GenServer.call(pid, {:set_value, :shutdown, true})
@@ -652,7 +652,7 @@ defmodule Test.IntegrationTest do
     Bag.receive_multiple(1, Hook.post_cluster_leave(), error_msg: "Cluster leave timeout")
 
     # Confirm that all processes have their states migrated.
-    ProcessHub.dump_registry(hub_id)
+    ProcessHub.registry_dump(hub_id)
     |> Enum.each(fn {child_id, {_, nodes, metadata}} ->
       pid = List.first(nodes) |> elem(1)
       state = GenServer.call(pid, :get_state)

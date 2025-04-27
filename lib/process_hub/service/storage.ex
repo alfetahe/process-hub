@@ -40,6 +40,18 @@ defmodule ProcessHub.Service.Storage do
   end
 
   @doc """
+  Matches the given expression against the ETS table.
+
+  The `match_expr` is a tuple that specifies the pattern.
+  """
+  @spec match(table_id(), term()) :: term()
+  def match(table, match_expr) do
+    table
+    |> ETS.match(match_expr)
+    |> Enum.map(fn list_matches -> List.to_tuple(list_matches) end)
+  end
+
+  @doc """
   Updates the value for the key in local storage.
 
   The `func` function is expected to take the current value as an argument and

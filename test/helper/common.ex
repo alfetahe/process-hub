@@ -34,7 +34,7 @@ defmodule Test.Helper.Common do
   end
 
   def validate_singularity(%{hub_id: hub_id} = _context) do
-    registry = ProcessHub.dump_registry(hub_id)
+    registry = ProcessHub.registry_dump(hub_id)
 
     Enum.each(registry, fn {child_id, {_, nodes, _}} ->
       ring = Ring.get_ring(hub_id)
@@ -48,7 +48,7 @@ defmodule Test.Helper.Common do
   end
 
   def validate_replication(%{hub_id: hub_id, hub: hub, replication_factor: _rf} = _context) do
-    registry = ProcessHub.dump_registry(hub_id)
+    registry = ProcessHub.registry_dump(hub_id)
     replication_factor = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes, _}} ->
@@ -70,7 +70,7 @@ defmodule Test.Helper.Common do
   end
 
   def validate_registry_length(%{hub_id: hub_id} = _context, child_specs) do
-    registry = ProcessHub.dump_registry(hub_id) |> Map.to_list()
+    registry = ProcessHub.registry_dump(hub_id) |> Map.to_list()
 
     child_spec_len = length(child_specs)
     registry_len = length(registry)
@@ -82,7 +82,7 @@ defmodule Test.Helper.Common do
   def validate_redundancy_mode(
         %{hub_id: hub_id, replication_model: rep_model, hub: hub} = _context
       ) do
-    registry = ProcessHub.dump_registry(hub_id)
+    registry = ProcessHub.registry_dump(hub_id)
     dist_strat = hub.distribution_strategy
     redun_strat = hub.redundancy_strategy
     repl_fact = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
@@ -160,12 +160,12 @@ defmodule Test.Helper.Common do
   end
 
   def validate_sync(%{hub_id: hub_id} = _context) do
-    registry_data = ProcessHub.dump_registry(hub_id)
+    registry_data = ProcessHub.registry_dump(hub_id)
 
     Enum.each(Node.list(), fn node ->
       remote_registry =
         :erpc.call(node, fn ->
-          ProcessHub.dump_registry(hub_id)
+          ProcessHub.registry_dump(hub_id)
         end)
 
       Enum.each(registry_data, fn {id, {child_spec, nodes, _metadata}} ->
@@ -187,7 +187,7 @@ defmodule Test.Helper.Common do
   end
 
   def compare_started_children(children, hub_id) do
-    local_registry = ProcessHub.dump_registry(hub_id) |> Map.new()
+    local_registry = ProcessHub.registry_dump(hub_id) |> Map.new()
 
     Enum.each(children, fn child_spec ->
       {lchild_spec, _nodes, _metadata} = Map.get(local_registry, child_spec.id, {nil, nil, nil})

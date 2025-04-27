@@ -2,14 +2,18 @@
 All notable changes to this project will be documented in this file.
 
 ## v0.3.3-alpha - YYYY-MM-DD
+Includes new features, soft deprecations and unit test improvements and code refactors.
 
 ### Added
 - Ability to start child processes with metadata attached to them.
+- Child processes can now be started with additional metadata that will be stored in the process registry
+and synced to other nodes.
 - `ProcessHub.child_lookup/3` now accepts opts parameter to allow returning the metadata.
+- `ProcessHub.registry_dump/1`dumps the whole process registry. Will supersede `ProcessHub.process_registry/1` in the future.
+- `ProcessHub.tag_query/2` allows querying the process registry by tag. 
 
-### Deprecation warnings
-- `ProcessHub.process_Registry/1` will be deprecated in favour of `ProcessHub.dump_registry/1` due to not returning associated metadata with the processes.
-
+### Soft Deprecations
+- `ProcessHub.process_registry/1` will be deprecated in favour of `ProcessHub.registry_dump/1` due to not returning associated metadata with the processes.
 
 ## v0.3.2-alpha - 2025-04-16
 Includes new feature and a breaking change. Minor improvements on documentations and other fixes.

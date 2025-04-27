@@ -426,13 +426,28 @@ defmodule ProcessHub do
   defdelegate child_lookup(hub_id, child_id, opts \\ []), to: ProcessRegistry, as: :lookup
 
   @doc """
-  Returns all information in the registry.
+  Returns all processes that are registered with the given tag.
 
-  This function queries results from the local `ets` table and does not make any network calls.
+  This function queries the process registry and returns all children that
+  are registered with the given tag.
+  Useful when you need to group processes by a specific tag.
+
+  To register a child with a tag, you can pass the `metadata` option to the `start_child/3` function
+  with the `:tag` key.
+
+  ## Example
+      iex> ref = ProcessHub.start_child(:my_hub, child_spec, [metadata: %{tag: "my_tag"}])
+      {:ok, :start_initiated}
+
+      iex> Process.sleep(300) # We did not use the async_wait option so we need to wait.
+      iex> ProcessHub.tag_query(:my_hub, "my_tag")
+      [
+        {:my_child, [{:mynode, #PID<0.123.0>}],
+        {:my_child2, [{:mynode2, #PID<0.124.0>}]}
+      ]
   """
-  @deprecated "Use `ProcessHub.dump_registry/1` instead"
-  @spec process_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry()
-  defdelegate process_registry(hub_id), to: ProcessRegistry, as: :registry
+  @spec tag_query(hub_id(), String.t()) :: [{child_id(), [{node(), pid()}]}]
+  defdelegate tag_query(hub_id, tag), to: ProcessRegistry, as: :match_tag
 
   @doc """
   Dumps all information in the registry.
@@ -440,8 +455,17 @@ defmodule ProcessHub do
   Returns all information in the registry such as the child specification, pids,
   nodes, and metadata.
   """
-  @spec dump_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry_dump()
-  defdelegate dump_registry(hub_id), to: ProcessRegistry, as: :dump
+  @spec registry_dump(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry_dump()
+  defdelegate registry_dump(hub_id), to: ProcessRegistry, as: :dump
+
+  @doc """
+  Returns all information in the registry.
+
+  This function queries results from the local `ets` table and does not make any network calls.
+  """
+  @deprecated "Use `ProcessHub.registry_dump/1` instead"
+  @spec process_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry()
+  defdelegate process_registry(hub_id), to: ProcessRegistry, as: :registry
 
   @doc """
   Returns a list of pids for the given child_id.

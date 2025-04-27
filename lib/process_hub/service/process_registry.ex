@@ -62,8 +62,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
           {ProcessHub.child_id(), [{node(), pid()}] | pid()}
         ]
   def process_list(hub_id, :global) do
-    registry(hub_id)
-    |> Enum.map(fn {child_id, {_child_spec, nodes}} ->
+    dump(hub_id)
+    |> Enum.map(fn {child_id, {_child_spec, nodes, _metadata}} ->
       {child_id, nodes}
     end)
   end
@@ -81,13 +81,23 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec contains_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
   @doc "Returns a list of child_ids that match the given `child_ids` variable."
   def contains_children(hub_id, child_ids) do
-    Enum.reduce(registry(hub_id), [], fn {child_id, _}, acc ->
+    Enum.reduce(dump(hub_id), [], fn {child_id, _}, acc ->
       case Enum.member?(child_ids, child_id) do
         true -> [child_id | acc]
         false -> acc
       end
     end)
     |> Enum.reverse()
+  end
+
+  @doc "Returns all children that match the given tag."
+  @spec match_tag(ProcessHub.hub_id(), String.t()) :: [
+          {PrcocessHub.child_id(), [{node(), pid()}]}
+        ]
+  def match_tag(hub_id, tag) do
+    match_expr = {:"$1", {:"$2", :"$3", %{tag: tag}}}
+
+    Storage.match(Name.registry(hub_id), match_expr)
   end
 
   @doc "Deletes all objects from the process registry."
@@ -103,8 +113,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def local_data(hub_id) do
     local_node = node()
 
-    registry(hub_id)
-    |> Enum.filter(fn {_, {_, nodes}} ->
+    dump(hub_id)
+    |> Enum.filter(fn {_, {_, nodes, _}} ->
       Enum.member?(Keyword.keys(nodes), local_node)
     end)
   end
@@ -114,7 +124,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def local_child_specs(hub_id) do
     local_data(hub_id)
     |> Enum.map(fn
-      {_, {child_spec, _}} -> child_spec
+      {_, {child_spec, _, _}} -> child_spec
     end)
   end
 

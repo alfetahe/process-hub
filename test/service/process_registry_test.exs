@@ -197,6 +197,21 @@ defmodule Test.Service.ProcessRegistryTest do
     assert ProcessRegistry.lookup(hub_id, "none_exist") === nil
   end
 
+  test "with tag", %{hub_id: hub_id} = _context do
+    tag = "match_tag_test"
+
+    child_spec = %{id: "match_tagg_test", start: {:firstmod, :firstfunc, [1, 2]}}
+    child_nodes = [{:node1, :pid1}, {:node2, :pid2}, {:node3, "pid3"}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: %{tag: tag})
+
+    assert ProcessRegistry.match_tag(hub_id, "match_tag_test") === [
+             {"match_tag_test", %{id: "match_tag_test", start: {:firstmod, :firstfunc, [1, 2]}},
+              [node1: :pid1, node2: :pid2, node3: "pid3"]}
+           ]
+
+    assert ProcessRegistry.match_tag(hub_id, "none_exist") === []
+  end
+
   test "registry", %{hub_id: hub_id} = _context do
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
@@ -251,29 +266,32 @@ defmodule Test.Service.ProcessRegistryTest do
     local_node = node()
 
     remote = %{
-      1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
+      1 =>
+        {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}],
+         %{}},
       2 =>
-        {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}}, [{:node3, :pid3}, {:node4, :pid4}]}
+        {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}}, [{:node3, :pid3}, {:node4, :pid4}],
+         %{}}
     }
 
     local = %{
-      3 => {%{id: 3, start: {:firstmod, :firstfunc, [1, 2]}}, [{local_node, :pid2}]},
-      4 => {%{id: 4, start: {:secondmod, :secondfunc, [3, 4]}}, [{local_node, :pid1}]}
+      3 => {%{id: 3, start: {:firstmod, :firstfunc, [1, 2]}}, [{local_node, :pid2}], %{}},
+      4 => {%{id: 4, start: {:secondmod, :secondfunc, [3, 4]}}, [{local_node, :pid1}], %{}}
     }
 
     local_n_remote = %{
       5 =>
         {%{id: 5, start: {:firstmod, :firstfunc, [1, 2]}},
-         [{local_node, :pid1}, {:node2, "pid2"}]},
+         [{local_node, :pid1}, {:node2, "pid2"}], %{}},
       6 =>
         {%{id: 6, start: {:secondmod, :secondfunc, [3, 4]}},
-         [{local_node, :pid3}, {:node4, "pid4"}]}
+         [{local_node, :pid3}, {:node4, "pid4"}], %{}}
     }
 
     Map.merge(remote, local)
     |> Map.merge(local_n_remote)
-    |> Enum.each(fn {_key, {child_spec, child_nodes}} ->
-      ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+    |> Enum.each(fn {_key, {child_spec, child_nodes, metadata}} ->
+      ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: metadata)
     end)
 
     assert Enum.sort(ProcessRegistry.local_data(hub_id)) ===
