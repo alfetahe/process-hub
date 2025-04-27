@@ -43,8 +43,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Dumps the whole registry.
 
   Returns all information about all registered processes including metadata.
-
-  TODO: Add tests for this function.
   """
   @spec dump(ProcessHub.hub_id()) :: registry_dump()
   def dump(hub_id) do

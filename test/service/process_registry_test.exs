@@ -227,6 +227,26 @@ defmodule Test.Service.ProcessRegistryTest do
     assert ProcessRegistry.registry(hub_id) === children
   end
 
+  test "dump", %{hub_id: hub_id} = _context do
+    children = %{
+      1 =>
+        {%{id: 1, start: {:firstmodx, :firstfuncx, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}],
+         %{}},
+      2 =>
+        {%{id: 2, start: {:secondmodx, :secondfuncx, [3, 4]}},
+         [{:node3, "pid3"}, {:node4, "pid4"}], %{}},
+      3 =>
+        {%{id: 3, start: {:thirdmodx, :thirdfuncx, [5, 6]}}, [{:node5, :pid5}, {:node6, "pid6"}],
+         %{}}
+    }
+
+    Enum.each(children, fn {_key, {child_spec, child_nodes, metadata}} ->
+      ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: metadata)
+    end)
+
+    assert ProcessRegistry.dump(hub_id) === children
+  end
+
   test "process list local", %{hub_id: hub_id} = _context do
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
