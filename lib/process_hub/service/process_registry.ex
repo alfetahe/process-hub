@@ -52,8 +52,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
     |> Storage.export_all()
     |> Enum.map(fn
       {key, values} -> {key, values}
-      # TODO: check if ttl used at all.
-      {key, values, _ttl} -> {key, values}
     end)
     |> Map.new()
   end

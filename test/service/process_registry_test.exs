@@ -200,7 +200,7 @@ defmodule Test.Service.ProcessRegistryTest do
   test "with tag", %{hub_id: hub_id} = _context do
     tag = "match_tag_test"
 
-    child_spec = %{id: "match_tagg_test", start: {:firstmod, :firstfunc, [1, 2]}}
+    child_spec = %{id: "match_tag_test", start: {:firstmod, :firstfunc, [1, 2]}}
     child_nodes = [{:node1, :pid1}, {:node2, :pid2}, {:node3, "pid3"}]
     ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: %{tag: tag})
 
