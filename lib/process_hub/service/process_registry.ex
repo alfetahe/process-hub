@@ -88,7 +88,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   @doc "Returns all children that match the given tag."
   @spec match_tag(ProcessHub.hub_id(), String.t()) :: [
-          {PrcocessHub.child_id(), [{node(), pid()}]}
+          {ProcessHub.child_id(), [{node(), pid()}]}
         ]
   def match_tag(hub_id, tag) do
     match_expr = {:"$1", {:"$2", :"$3", %{tag: tag}}}
