@@ -346,11 +346,14 @@ defmodule ProcessHubTest do
     assert ProcessHub.dump_registry(hub_id) === %{}
 
     [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
+
     ProcessHub.start_children(
       hub_id,
       [cs1, cs2],
-      [async_wait: true, metadata: metadata]
-    ) |> ProcessHub.await()
+      async_wait: true,
+      metadata: metadata
+    )
+    |> ProcessHub.await()
 
     %{"child1" => {^cs1, nodepids1, metadata1}, "child2" => {^cs2, nodepids2, metadata2}} =
       ProcessHub.dump_registry(hub_id)

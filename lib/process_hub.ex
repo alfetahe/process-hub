@@ -51,9 +51,9 @@ defmodule ProcessHub do
   - `:on_failure` - is optional and is used to define the action to take when the start operation fails.
   The default is `:continue` which will continue to start the next child. The other option is `:rollback`
   which will stop all the children that have been started.
-  - `:metadata` - is optional and is used to define the metadata that will be passed to the child process
-  when it is started. This metadata is used to identify the child process and can be used to store
-  additional information about the child process.
+  - `:metadata` - is optional and is used to define the metadata that will be stored in the process registry
+  when the child is started. The metadata can be used to store any information that is needed to identify
+  the child process.
   """
   @type init_opts() :: [
           async_wait: boolean(),
@@ -411,12 +411,19 @@ defmodule ProcessHub do
   The return results contain the `t:child_spec/0` and a list of tuples where the first element is the node
   where the child is started, and the second element is the `pid()` of the started child.
 
+  Optionally, you can pass the `with_metadata` option to include the metadata
+  that was passed to the child process when it was started.
+
   ## Example
       iex> {_child_spec, _node_pid_tuples} = ProcessHub.child_lookup(:my_hub, :my_child)
       {%{id: :my_child, start: {MyProcess, :start_link, []}}, [{:mynode, #PID<0.123.0>}]}
+
+      iex> {_child_spec, _node_pid_tuples, _metadata} = ProcessHub.child_lookup(:my_hub, :my_child, with_metadata: true)
+      {%{id: :my_child, start: {MyProcess, :start_link, []}}, [{:mynode, #PID<0.123.0>}], %{tag: "my_metadata"}}
   """
-  @spec child_lookup(hub_id(), child_id()) :: {child_spec(), [{node(), pid()}]} | nil
-  defdelegate child_lookup(hub_id, child_id), to: ProcessRegistry, as: :lookup
+  @spec child_lookup(hub_id(), child_id(), with_metadata: boolean()) ::
+          {child_spec(), [{node(), pid()}]} | nil
+  defdelegate child_lookup(hub_id, child_id, opts \\ []), to: ProcessRegistry, as: :lookup
 
   @doc """
   Returns all information in the registry.
@@ -433,7 +440,7 @@ defmodule ProcessHub do
   Returns all information in the registry such as the child specification, pids,
   nodes, and metadata.
   """
-  @spec dump_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.dump()
+  @spec dump_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry_dump()
   defdelegate dump_registry(hub_id), to: ProcessRegistry, as: :dump
 
   @doc """

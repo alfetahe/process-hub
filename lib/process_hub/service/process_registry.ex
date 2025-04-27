@@ -134,15 +134,31 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @doc "Return the child_spec, nodes, and pids for the given child_id."
-  @spec lookup(ProcessHub.hub_id(), ProcessHub.child_id(), [table: atom()] | nil) ::
-          nil | {ProcessHub.child_spec(), [{node(), pid()}]}
+  @spec lookup(
+          ProcessHub.hub_id(),
+          ProcessHub.child_id(),
+          table: atom(),
+          with_metadata: boolean()
+        ) ::
+          {ProcessHub.child_spec(), [{node(), pid()}]}
+          | {ProcessHub.child_spec(), [{node(), pid()}], ProcessHub.child_metadata()}
+          | nil
   def lookup(hub_id, child_id, opts) do
     table = Keyword.get(opts, :table, Name.registry(hub_id))
+    with_metadata = Keyword.get(opts, :with_metadata, false)
 
     case Storage.get(table, child_id) do
-      nil -> nil
-      {child_spec, child_nodes} -> {child_spec, child_nodes}
-      {child_spec, child_nodes, _metadata} -> {child_spec, child_nodes}
+      nil ->
+        nil
+
+      {child_spec, child_nodes, metadata} ->
+        case with_metadata do
+          true ->
+            {child_spec, child_nodes, metadata}
+
+          false ->
+            {child_spec, child_nodes}
+        end
     end
   end
 
@@ -254,18 +270,25 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
     hooks =
       Enum.map(children, fn {child_id, rem_nodes} ->
-        case lookup(hub_id, child_id, table: table) do
+        case lookup(hub_id, child_id, table: table, with_metadata: true) do
           nil ->
             nil
 
-          {child_spec, nodes} ->
+          {child_spec, nodes, metadata} ->
             new_nodes =
               Enum.filter(nodes, fn {node, _pid} ->
                 !Enum.member?(rem_nodes, node)
               end)
 
             if length(new_nodes) > 0 do
-              insert(hub_id, child_spec, new_nodes, skip_hooks: true, table: table)
+              insert(
+                hub_id,
+                child_spec,
+                new_nodes,
+                skip_hooks: true,
+                table: table,
+                metadata: metadata
+              )
             else
               delete(hub_id, child_id, skip_hooks: true, table: table)
             end

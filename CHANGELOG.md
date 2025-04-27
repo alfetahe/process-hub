@@ -1,6 +1,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.3.3-alpha - YYYY-MM-DD
+
+### Added
+- Ability to start child processes with metadata attached to them.
+- `ProcessHub.child_lookup/3` now accepts opts parameter to allow returning the metadata.
+
+### Deprecation warnings
+- `ProcessHub.process_Registry/1` will be deprecated in favour of `ProcessHub.dump_registry/1` due to not returning associated metadata with the processes.
+
+
 ## v0.3.2-alpha - 2025-04-16
 Includes new feature and a breaking change. Minor improvements on documentations and other fixes.
 

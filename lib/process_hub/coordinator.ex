@@ -315,10 +315,19 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_child_process_pid_update, {child_id, {node, pid}}}, state) do
-    {cs, nodes_pids} = ProcessRegistry.lookup(state.hub_id, child_id)
-    new_node_pids = Keyword.put(nodes_pids, node, pid)
+    {cs, nodes_pids, metadata} =
+      ProcessRegistry.lookup(
+        state.hub_id,
+        child_id,
+        with_metadata: true
+      )
 
-    ProcessRegistry.insert(state.hub_id, cs, new_node_pids)
+    ProcessRegistry.insert(
+      state.hub_id,
+      cs,
+      Keyword.put(nodes_pids, node, pid),
+      metadata: metadata
+    )
 
     HookManager.dispatch_hook(
       state.hub_id,
