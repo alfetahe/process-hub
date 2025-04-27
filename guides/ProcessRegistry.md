@@ -8,6 +8,10 @@ It's recommended to interact with `ProcessRegistry` through the main `ProcessHub
 By default `ProcessRegistry` is using pubs/subs mechanism to notify subscribers about changes in the registry. This implementation can be replaced with `ProcessHub.Strategy.Synchronization.Gossip` or
 custom implementation.
 
+ProcessRegistry can also be used to store metadata about the processes, such as tags or other information. 
+This can be useful to group processes, query them by tags or distribute data among them and trigger any custom logic.
+The metadata is synchronized across the cluster, so all nodes will have the same information about the processes.
+
 We will skip the boiler plate code for starting the child processes and focus on the registry itself.
 
 ## Querying the whole registry
@@ -153,3 +157,51 @@ iex> ProcessHub.child_lookup(:my_hub, :my_process_10)
     [one@anuar: #PID<0.228.0>]
 }
  ```
+
+## Process metadata
+We can store metadata in the registry by starting the process with `:metadata` option.
+
+```elixir
+# First we need to start the process with metadata
+iex> ProcessHub.start_child(
+  :my_hub, 
+  %{id: :my_process_1, start: {MyProcess, :start_link, []}}, 
+  [metadata: %{some_info: "my data"}, async_wait: true]
+) |> ProcessHub.await()
+{:ok, #PID<0.228.0>}
+
+# Now we can query the process with metadata
+iex> ProcessHub.child_lookup(:my_hub, :my_process_1, [with_metadata: true])
+{
+  %{id: :my_process_1, start: {MyProcess, :start_link, []}},
+  [one@anuar: #PID<0.228.0>],
+  %{some_info: "my data"}
+}
+```
+
+We can also get all the metadata stored for all the processes in the registry by using
+`ProcessHub.registry_dump/1` function.
+
+```elixir
+iex> ProcessHub.registry_dump(:my_hub)
+%{
+  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, []}},
+   [one@anuar: #PID<0.228.0>], %{some_info: "my data"}},
+  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, []}},
+   [one@anuar: #PID<0.250.0>], %{}},
+  my_process_3: {%{id: :my_process_3, start: {MyProcess, :start_link, []}},
+   [one@anuar: #PID<0.253.0>], %{}}
+}
+```
+
+`ProcessHub` is also internally using `:metadata` to tag processes which is then used
+to query the processes by tags.
+```elixir
+iex> ProcessHub.tag_query(:my_hub, "MY_TAG")
+[
+  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, []}},
+   [one@anuar: #PID<0.228.0>]},
+  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, []}},
+   [one@anuar: #PID<0.250.0>]}
+]
+```
