@@ -53,7 +53,7 @@ defmodule Test.Service.ProcessRegistryTest do
 
     HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), hook)
 
-    assert ProcessRegistry.registry(hub_id) === %{}
+    assert ProcessRegistry.dump(hub_id) === %{}
 
     insert_data = [
       {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}], %{}}},
@@ -102,7 +102,7 @@ defmodule Test.Service.ProcessRegistryTest do
       assert_receive :bulk_delete
     end)
 
-    assert ProcessRegistry.registry(hub_id) === %{}
+    assert ProcessRegistry.dump(hub_id) === %{}
   end
 
   test "clear all", %{hub_id: hub_id} = _context do
@@ -117,7 +117,7 @@ defmodule Test.Service.ProcessRegistryTest do
     ProcessRegistry.bulk_insert(hub_id, some_data)
     ProcessRegistry.clear_all(hub_id)
 
-    assert ProcessRegistry.registry(hub_id) === %{}
+    assert ProcessRegistry.dump(hub_id) === %{}
   end
 
   test "insert", %{hub_id: hub_id} = _context do
@@ -131,27 +131,35 @@ defmodule Test.Service.ProcessRegistryTest do
     HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), handler)
 
     children = %{
-      1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
+      1 =>
+        {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}],
+         %{}},
       2 =>
-        {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}}, [{:node3, "pid3"}, {:node4, "pid4"}]},
-      3 => {%{id: 3, start: {:thirdmod, :thirdfunc, [5, 6]}}, [{:node5, "pid5"}, {:node6, :pid6}]}
+        {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}}, [{:node3, "pid3"}, {:node4, "pid4"}],
+         %{}},
+      3 =>
+        {%{id: 3, start: {:thirdmod, :thirdfunc, [5, 6]}}, [{:node5, "pid5"}, {:node6, :pid6}],
+         %{}}
     }
 
-    Enum.each(children, fn {key, {child_spec, child_nodes}} ->
+    Enum.each(children, fn {key, {child_spec, child_nodes, metadata}} ->
       skip_hooks =
         case Integer.is_odd(key) do
           true -> false
           false -> true
         end
 
-      ProcessRegistry.insert(hub_id, child_spec, child_nodes, skip_hooks: skip_hooks)
+      ProcessRegistry.insert(hub_id, child_spec, child_nodes,
+        skip_hooks: skip_hooks,
+        metadata: metadata
+      )
     end)
 
     Enum.each(1..2, fn _ ->
       assert_receive :insert_test
     end)
 
-    assert ProcessRegistry.registry(hub_id) === children
+    assert ProcessRegistry.dump(hub_id) === children
   end
 
   test "delete child", %{hub_id: hub_id} = _context do
@@ -185,7 +193,7 @@ defmodule Test.Service.ProcessRegistryTest do
       assert_receive :delete_test
     end)
 
-    assert ProcessRegistry.registry(hub_id) === %{}
+    assert ProcessRegistry.dump(hub_id) === %{}
   end
 
   test "child lookup", %{hub_id: hub_id} = _context do
@@ -214,17 +222,22 @@ defmodule Test.Service.ProcessRegistryTest do
 
   test "registry", %{hub_id: hub_id} = _context do
     children = %{
-      1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
+      1 =>
+        {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}],
+         %{}},
       2 =>
-        {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}}, [{:node3, "pid3"}, {:node4, "pid4"}]},
-      3 => {%{id: 3, start: {:thirdmod, :thirdfunc, [5, 6]}}, [{:node5, :pid5}, {:node6, "pid6"}]}
+        {%{id: 2, start: {:secondmod, :secondfunc, [3, 4]}}, [{:node3, "pid3"}, {:node4, "pid4"}],
+         %{}},
+      3 =>
+        {%{id: 3, start: {:thirdmod, :thirdfunc, [5, 6]}}, [{:node5, :pid5}, {:node6, "pid6"}],
+         %{}}
     }
 
-    Enum.each(children, fn {_key, {child_spec, child_nodes}} ->
-      ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+    Enum.each(children, fn {_key, {child_spec, child_nodes, metadata}} ->
+      ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: metadata)
     end)
 
-    assert ProcessRegistry.registry(hub_id) === children
+    assert ProcessRegistry.dump(hub_id) === children
   end
 
   test "dump", %{hub_id: hub_id} = _context do

@@ -113,7 +113,7 @@ defmodule Test.Service.DistributorTest do
     |> ProcessHub.await()
 
     local_node = node()
-    res = ProcessRegistry.registry(hub_id) |> Keyword.new()
+    res = ProcessRegistry.dump(hub_id) |> Keyword.new()
 
     assert length(res) === 2
 
@@ -121,7 +121,7 @@ defmodule Test.Service.DistributorTest do
              Enum.member?([:dist_child_add, :dist_child_add2], child_id)
            end)
 
-    assert Enum.all?(res, fn {_, {_, [{^local_node, pid}]}} -> is_pid(pid) end)
+    assert Enum.all?(res, fn {_, {_, [{^local_node, pid}], _}} -> is_pid(pid) end)
   end
 
   test "stop child", %{hub_id: hub_id} = _context do
@@ -144,7 +144,7 @@ defmodule Test.Service.DistributorTest do
     )
     |> ProcessHub.await()
 
-    assert ProcessRegistry.registry(hub_id) === %{}
+    assert ProcessRegistry.dump(hub_id) === %{}
   end
 
   test "children redist init", %{hub_id: hub_id} = _context do

@@ -51,31 +51,31 @@ iex> ProcessHub.process_list(:my_hub, :local)
 ```
 
 
-Another similar option is `ProcessHub.process_registry/1` which dumps the whole registry into a map
-including other metadata stored in the registry.
+Another similar option is `ProcessHub.registry_dump/1` which dumps the whole registry into a map
+including metadata stored in the registry.
 ```elixir
-iex> ProcessHub.process_registry(:my_hub)
+iex> ProcessHub.registry_dump(:my_hub)
 %{
   my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, []}},
-   [two@anuar: #PID<23772.233.0>]},
+   [two@anuar: #PID<23772.233.0>], %{tag: "Some tag"}},
   my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, []}},
-   [one@anuar: #PID<0.250.0>]},
+   [one@anuar: #PID<0.250.0>], %{custom_data: "Some data"}},
   my_process_3: {%{id: :my_process_3, start: {MyProcess, :start_link, []}},
-   [one@anuar: #PID<0.253.0>]},
+   [one@anuar: #PID<0.253.0>], %{}},
   my_process_4: {%{id: :my_process_4, start: {MyProcess, :start_link, []}},
-   [one@anuar: #PID<0.256.0>]},
+   [one@anuar: #PID<0.256.0>], %{}},
   my_process_5: {%{id: :my_process_5, start: {MyProcess, :start_link, []}},
-   [one@anuar: #PID<0.259.0>]},
+   [one@anuar: #PID<0.259.0>], %{}},
   my_process_6: {%{id: :my_process_6, start: {MyProcess, :start_link, []}},
-   [one@anuar: #PID<0.262.0>]},
+   [one@anuar: #PID<0.262.0>], %{}},
   my_process_7: {%{id: :my_process_7, start: {MyProcess, :start_link, []}},
-   [one@anuar: #PID<0.265.0>]},
+   [one@anuar: #PID<0.265.0>], %{}},
   my_process_8: {%{id: :my_process_8, start: {MyProcess, :start_link, []}},
-   [two@anuar: #PID<23772.254.0>]},
+   [two@anuar: #PID<23772.254.0>], %{}},
   my_process_9: {%{id: :my_process_9, start: {MyProcess, :start_link, []}},
-   [one@anuar: #PID<0.271.0>]},
+   [one@anuar: #PID<0.271.0>], %{}},
   my_process_10: {%{id: :my_process_10, start: {MyProcess, :start_link, []}},
-   [one@anuar: #PID<0.274.0>]}
+   [one@anuar: #PID<0.274.0>], %{}}
 }
 ```
 
