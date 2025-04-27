@@ -81,7 +81,7 @@ defmodule ProcessHub.Handler.Synchronization do
 
     @type t() :: %__MODULE__{
             hub_id: ProcessHub.hub_id(),
-            remote_children: [{ProcessHub.child_spec(), pid()}],
+            remote_children: [{ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}],
             remote_node: node()
           }
 
@@ -93,14 +93,14 @@ defmodule ProcessHub.Handler.Synchronization do
     defstruct @enforce_keys
 
     def handle(%__MODULE__{} = args) do
-      local_data = ProcessRegistry.registry(args.hub_id)
+      local_data = ProcessRegistry.dump(args.hub_id)
 
       # Add all new processes to the local process table or update their nodes list.
       updated_data =
-        Enum.reduce(args.remote_children, [], fn {child_spec, child_pid}, acc ->
+        Enum.reduce(args.remote_children, [], fn {child_spec, child_pid, metadata}, acc ->
           append_mismatches(
             Map.get(local_data, child_spec.id),
-            {child_spec.id, {child_spec, [{args.remote_node, child_pid}]}},
+            {child_spec.id, {child_spec, [{args.remote_node, child_pid}], metadata}},
             acc
           )
         end)
@@ -110,11 +110,15 @@ defmodule ProcessHub.Handler.Synchronization do
       end
     end
 
-    defp append_mismatches(nil, {child_id, {child_spec, child_nodes}}, data_list) do
-      [{child_id, {child_spec, child_nodes}} | data_list]
+    defp append_mismatches(nil, {child_id, {child_spec, child_nodes, metadata}}, data_list) do
+      [{child_id, {child_spec, child_nodes, metadata}} | data_list]
     end
 
-    defp append_mismatches(local_child_data, {child_id, {child_spec, child_nodes}}, data_list) do
+    defp append_mismatches(
+           local_child_data,
+           {child_id, {child_spec, child_nodes, metadata}},
+           data_list
+         ) do
       local_nodes = elem(local_child_data, 1) |> Enum.sort()
 
       remote_nodes =
@@ -125,7 +129,7 @@ defmodule ProcessHub.Handler.Synchronization do
 
       if local_nodes !== remote_nodes do
         combined_nodes = (local_nodes ++ remote_nodes) |> Enum.uniq()
-        [{child_id, {child_spec, combined_nodes}} | data_list]
+        [{child_id, {child_spec, combined_nodes, metadata}} | data_list]
       else
         data_list
       end

@@ -144,12 +144,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
          ) do
       task =
         Task.async(fn ->
-          child_specs =
-            Enum.map(data, fn %{child_spec: child_spec} ->
-              child_spec
+          child_data =
+            Enum.map(data, fn %{child_spec: cs, metadata: m} ->
+              {cs, m}
             end)
 
-          MigrationStrategy.handle_migration(migr_strat, hub_id, child_specs, node, sync_strat)
+          MigrationStrategy.handle_migration(migr_strat, hub_id, child_data, node, sync_strat)
         end)
 
       %__MODULE__{arg | async_tasks: [task | async_tasks]}
@@ -170,7 +170,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           Distributor.children_redist_init(
             hub_id,
             node,
-            Enum.map(keep, fn %{child_spec: cs} -> cs end)
+            Enum.map(keep, fn %{child_spec: cs, metadata: m} -> {cs, m} end)
           )
         end)
 
@@ -198,8 +198,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       local_node = node()
 
       local_children =
-        ProcessRegistry.registry(hub_id)
-        |> Enum.filter(fn {_child_id, {_child_spec, child_nodes}} ->
+        ProcessRegistry.dump(hub_id)
+        |> Enum.filter(fn {_child_id, {_child_spec, child_nodes, _metadata}} ->
           Enum.member?(Keyword.keys(child_nodes), local_node)
         end)
 
@@ -218,17 +218,17 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       local_node = node()
 
       {keep, migrate} =
-        Enum.reduce(lc, {[], []}, fn {child_id, {child_spec, _}}, {keep, migrate} = acc ->
-          child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, rp)
+        Enum.reduce(lc, {[], []}, fn {child_id, {cs, _, m}}, {keep, migrate} = acc ->
+          cn = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, rp)
 
-          case Enum.member?(child_nodes, node) do
+          case Enum.member?(cn, node) do
             true ->
-              case Enum.member?(child_nodes, local_node) do
+              case Enum.member?(cn, local_node) do
                 true ->
-                  {[%{child_spec: child_spec, child_nodes: child_nodes} | keep], migrate}
+                  {[%{child_spec: cs, child_nodes: cn, metadata: m} | keep], migrate}
 
                 false ->
-                  {keep, [%{child_spec: child_spec, child_nodes: child_nodes} | migrate]}
+                  {keep, [%{child_spec: cs, child_nodes: cn, metadata: m} | migrate]}
               end
 
             false ->
@@ -345,7 +345,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
       {redun, redist, cids} =
         removed_node_processes(arg)
-        |> Enum.reduce({[], [], []}, fn {cid, cspec, nlist1, nlist2}, {redun, redist, cids} ->
+        |> Enum.reduce({[], [], []}, fn {cid, cspec, m, nlist1, nlist2}, {redun, redist, cids} ->
           case Enum.member?(nlist1, local_node) do
             true ->
               {[{cid, nlist2, []} | redun], redist, [cid | cids]}
@@ -353,7 +353,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             false ->
               case Enum.member?(nlist2, local_node) do
                 true ->
-                  {redun, [cspec | redist], [cid | cids]}
+                  {redun, [{cspec, m} | redist], [cid | cids]}
 
                 false ->
                   {redun, redist, [cid | cids]}
@@ -367,10 +367,10 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       Map.put(arg, :rem_node_cids, cids)
     end
 
-    defp handle_redistribution(hub_id, child_specs) do
+    defp handle_redistribution(hub_id, children_data) do
       # Local node is part of the new nodes and therefore we need to start
       # the child process locally.
-      Distributor.children_redist_init(hub_id, node(), child_specs)
+      Distributor.children_redist_init(hub_id, node(), children_data)
     end
 
     defp handle_redundancy(arg, children) do
@@ -384,8 +384,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp removed_node_processes(arg) do
       repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
 
-      ProcessRegistry.registry(arg.hub_id)
-      |> Enum.reduce([], fn {child_id, {child_spec, node_pids}}, acc ->
+      ProcessRegistry.dump(arg.hub_id)
+      |> Enum.reduce([], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
         nodes_orig = Keyword.keys(node_pids)
 
         if Enum.member?(nodes_orig, arg.removed_node) do
@@ -397,7 +397,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
               repl_fact
             )
 
-          [{child_id, child_spec, nodes_orig, nodes_updated} | acc]
+          [{child_id, child_spec, metadata, nodes_orig, nodes_updated} | acc]
         else
           acc
         end

@@ -235,7 +235,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_sync_remote_children, {child_specs, node}}, state) do
+  def handle_info({@event_sync_remote_children, {children_data, node}}, state) do
     Task.Supervisor.start_child(
       Name.task_supervisor(state.hub_id),
       Synchronization.ProcessEmitHandle,
@@ -244,7 +244,7 @@ defmodule ProcessHub.Coordinator do
         %Synchronization.ProcessEmitHandle{
           hub_id: state.hub_id,
           remote_node: node,
-          remote_children: child_specs
+          remote_children: children_data
         }
       ]
     )

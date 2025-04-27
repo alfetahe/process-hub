@@ -10,19 +10,50 @@ defmodule ProcessHub.Service.ProcessRegistry do
           }
         }
 
+  @type registry_dump() :: %{
+          ProcessHub.child_id() => {
+            ProcessHub.child_spec(),
+            [{node(), pid()}],
+            metadata()
+          }
+        }
+
+  @type metadata() :: %{
+          tag: String.t()
+        }
+
   alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
 
-  @doc "Returns information about all registered processes."
+  @doc "Returns information about all registered processes. Will be deprecated in the future."
   @spec registry(ProcessHub.hub_id()) :: registry()
   def registry(hub_id) do
     Name.registry(hub_id)
     |> Storage.export_all()
     |> Enum.map(fn
-      {key, value} -> {key, value}
-      {key, value, _ttl} -> {key, value}
+      {key, {c, n, _m}} -> {key, {c, n}}
+      {key, {c, n, _m}, _ttl} -> {key, {c, n}}
+    end)
+    |> Map.new()
+  end
+
+  @doc """
+  Dumps the whole registry.
+
+  Returns all information about all registered processes including metadata.
+
+  TODO: Add tests for this function.
+  """
+  @spec dump(ProcessHub.hub_id()) :: registry_dump()
+  def dump(hub_id) do
+    Name.registry(hub_id)
+    |> Storage.export_all()
+    |> Enum.map(fn
+      {key, values} -> {key, values}
+      # TODO: check if ttl used at all.
+      {key, values, _ttl} -> {key, values}
     end)
     |> Map.new()
   end
@@ -110,7 +141,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
     case Storage.get(table, child_id) do
       nil -> nil
-      result -> result
+      {child_spec, child_nodes} -> {child_spec, child_nodes}
+      {child_spec, child_nodes, _metadata} -> {child_spec, child_nodes}
     end
   end
 
@@ -126,8 +158,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec insert(ProcessHub.hub_id(), ProcessHub.child_spec(), [{node(), pid()}], keyword() | nil) ::
           :ok
   def insert(hub_id, child_spec, child_nodes, opts \\ []) do
+    metadata = Keyword.get(opts, :metadata, %{})
+
     Keyword.get(opts, :table, Name.registry(hub_id))
-    |> Storage.insert(child_spec.id, {child_spec, child_nodes}, opts)
+    |> Storage.insert(child_spec.id, {child_spec, child_nodes, metadata}, opts)
 
     unless Keyword.get(opts, :skip_hooks, false) do
       HookManager.dispatch_hook(
@@ -163,21 +197,36 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Calling this function will dispatch the `:registry_pid_insert_hook` hook unless the `:skip_hooks` option is set to `true`.
   """
   @spec bulk_insert(ProcessHub.hub_id(), %{
-          ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
+          ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}], metadata()}
         }) :: :ok
   def bulk_insert(hub_id, children) do
     table = Name.registry(hub_id)
 
     hooks =
-      Enum.map(children, fn {child_id, {child_spec, child_nodes}} ->
+      Enum.map(children, fn {child_id, {child_spec, child_nodes, metadata}} ->
         diff =
           case lookup(hub_id, child_id, table: table) do
             nil ->
-              insert(hub_id, child_spec, child_nodes, skip_hooks: true, table: table)
+              insert(
+                hub_id,
+                child_spec,
+                child_nodes,
+                skip_hooks: true,
+                table: table,
+                metadata: metadata
+              )
+
               child_nodes
 
             {_child_spec, existing_nodes} ->
-              merge_insert(child_nodes, existing_nodes, hub_id, child_spec, table)
+              merge_insert(
+                child_nodes,
+                existing_nodes,
+                hub_id,
+                child_spec,
+                table,
+                metadata
+              )
           end
 
         if is_list(diff) && length(diff) > 0 do
@@ -229,19 +278,28 @@ defmodule ProcessHub.Service.ProcessRegistry do
     HookManager.dispatch_hooks(hub_id, hooks)
   end
 
-  defp merge_insert(nodes_new, nodes_existing, hub_id, child_spec, table) do
+  defp merge_insert(nodes_new, nodes_existing, hub_id, child_spec, table, metadata) do
     cond do
       Enum.sort(nodes_new) !== Enum.sort(nodes_existing) ->
         merged_data = Keyword.merge(nodes_existing, nodes_new)
-        insert(hub_id, child_spec, merged_data, skip_hooks: true, table: table)
-        insert_diff(nodes_new, nodes_existing)
+
+        insert(
+          hub_id,
+          child_spec,
+          merged_data,
+          skip_hooks: true,
+          table: table,
+          metadata: metadata
+        )
+
+        get_insert_diff(nodes_new, nodes_existing)
 
       true ->
         nil
     end
   end
 
-  defp insert_diff(nodes_new, nodes_existing) do
+  defp get_insert_diff(nodes_new, nodes_existing) do
     Enum.reduce(nodes_new, [], fn {node, pid}, acc ->
       case nodes_existing[node] do
         nil ->

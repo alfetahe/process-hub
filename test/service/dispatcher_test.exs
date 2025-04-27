@@ -43,7 +43,8 @@ defmodule Test.Service.DispatcherTest do
            child_spec: %{
              id: :propagate_init_test,
              start: {Test.Helper.TestServer, :start_link, [%{name: :propagate_init_test}]}
-           }
+           },
+           metadata: %{}
          }
        ]}
     ]
@@ -67,7 +68,8 @@ defmodule Test.Service.DispatcherTest do
            child_spec: %{
              id: :propagate_migrate_test,
              start: {Test.Helper.TestServer, :start_link, [%{name: :propagate_migrate_test}]}
-           }
+           },
+           metadata: %{}
          }
        ]}
     ]

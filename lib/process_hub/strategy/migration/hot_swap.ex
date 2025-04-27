@@ -132,16 +132,17 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     @impl true
-    def handle_migration(struct, hub_id, child_specs, added_node, sync_strategy) do
-      Distributor.children_redist_init(hub_id, added_node, child_specs, reply_to: [self()])
+    def handle_migration(struct, hub_id, children_data, added_node, sync_strategy) do
+      Distributor.children_redist_init(hub_id, added_node, children_data, reply_to: [self()])
 
-      if length(child_specs) > 0 do
+      if length(children_data) > 0 do
+        child_specs = Enum.map(children_data, fn {cspec, _m} -> cspec end)
         migration_cids = migration_cids(hub_id, struct, child_specs, added_node)
 
         handle_retentions(hub_id, struct, sync_strategy, migration_cids)
 
         if length(migration_cids) > 0 do
-          HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, child_specs})
+          HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, children_data})
         end
       end
 

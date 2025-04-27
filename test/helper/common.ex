@@ -34,9 +34,9 @@ defmodule Test.Helper.Common do
   end
 
   def validate_singularity(%{hub_id: hub_id} = _context) do
-    registry = ProcessHub.process_registry(hub_id)
+    registry = ProcessHub.dump_registry(hub_id)
 
-    Enum.each(registry, fn {child_id, {_, nodes}} ->
+    Enum.each(registry, fn {child_id, {_, nodes, _}} ->
       ring = Ring.get_ring(hub_id)
       ring_nodes = Ring.key_to_nodes(ring, child_id, 1)
 
@@ -48,10 +48,10 @@ defmodule Test.Helper.Common do
   end
 
   def validate_replication(%{hub_id: hub_id, hub: hub, replication_factor: _rf} = _context) do
-    registry = ProcessHub.process_registry(hub_id)
+    registry = ProcessHub.dump_registry(hub_id)
     replication_factor = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
 
-    Enum.each(registry, fn {child_id, {_, nodes}} ->
+    Enum.each(registry, fn {child_id, {_, nodes, _}} ->
       ring = Ring.get_ring(hub_id)
       ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
 
@@ -70,7 +70,7 @@ defmodule Test.Helper.Common do
   end
 
   def validate_registry_length(%{hub_id: hub_id} = _context, child_specs) do
-    registry = ProcessHub.process_registry(hub_id) |> Map.to_list()
+    registry = ProcessHub.dump_registry(hub_id) |> Map.to_list()
 
     child_spec_len = length(child_specs)
     registry_len = length(registry)
@@ -82,12 +82,12 @@ defmodule Test.Helper.Common do
   def validate_redundancy_mode(
         %{hub_id: hub_id, replication_model: rep_model, hub: hub} = _context
       ) do
-    registry = ProcessHub.process_registry(hub_id)
+    registry = ProcessHub.dump_registry(hub_id)
     dist_strat = hub.distribution_strategy
     redun_strat = hub.redundancy_strategy
     repl_fact = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
 
-    Enum.each(registry, fn {child_id, {_, nodes}} ->
+    Enum.each(registry, fn {child_id, {_, nodes, _}} ->
       child_nodes =
         ProcessHub.Strategy.Distribution.Base.belongs_to(
           dist_strat,
@@ -160,15 +160,15 @@ defmodule Test.Helper.Common do
   end
 
   def validate_sync(%{hub_id: hub_id} = _context) do
-    registry_data = ProcessHub.process_registry(hub_id)
+    registry_data = ProcessHub.dump_registry(hub_id)
 
     Enum.each(Node.list(), fn node ->
       remote_registry =
         :erpc.call(node, fn ->
-          ProcessHub.process_registry(hub_id)
+          ProcessHub.dump_registry(hub_id)
         end)
 
-      Enum.each(registry_data, fn {id, {child_spec, nodes}} ->
+      Enum.each(registry_data, fn {id, {child_spec, nodes, _metadata}} ->
         if remote_registry[id] do
           remote_child_spec = elem(remote_registry[id], 0)
           remote_nodes = elem(remote_registry[id], 1)
@@ -187,10 +187,10 @@ defmodule Test.Helper.Common do
   end
 
   def compare_started_children(children, hub_id) do
-    local_registry = ProcessHub.process_registry(hub_id) |> Map.new()
+    local_registry = ProcessHub.dump_registry(hub_id) |> Map.new()
 
     Enum.each(children, fn child_spec ->
-      {lchild_spec, _nodes} = Map.get(local_registry, child_spec.id, {nil, nil})
+      {lchild_spec, _nodes, _metadata} = Map.get(local_registry, child_spec.id, {nil, nil, nil})
 
       assert lchild_spec === child_spec, "Child spec mismatch for #{child_spec.id}"
     end)
@@ -251,7 +251,7 @@ defmodule Test.Helper.Common do
           )
 
         case start_res do
-          {:ok, pid} -> {child_spec.id, {child_spec, [{node(), pid}]}}
+          {:ok, pid} -> {child_spec.id, {child_spec, [{node(), pid}], %{}}}
           unexpected -> {child_spec.id, unexpected}
         end
       end)

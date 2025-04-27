@@ -23,9 +23,9 @@ defmodule Test.Service.ProcessRegistryTest do
   test "contains children", %{hub_id: hub_id} = _context do
     insert_data =
       [
-        {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}]}},
-        {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}]}},
-        {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}]}}
+        {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}], %{}}},
+        {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}], %{}}},
+        {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}], %{}}}
       ]
       |> Map.new()
 
@@ -56,10 +56,10 @@ defmodule Test.Service.ProcessRegistryTest do
     assert ProcessRegistry.registry(hub_id) === %{}
 
     insert_data = [
-      {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}]}},
-      {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}]}},
-      {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}]}},
-      {:child4, {%{id: :child4, start: :mfa}, [{:node7, :pid1}, {:node8, :pid2}]}}
+      {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}], %{}}},
+      {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}], %{}}},
+      {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}], %{}}},
+      {:child4, {%{id: :child4, start: :mfa}, [{:node7, :pid1}, {:node8, :pid2}], %{}}}
     ]
 
     ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data))
@@ -68,7 +68,7 @@ defmodule Test.Service.ProcessRegistryTest do
       assert_receive :bulk_insert_test
     end)
 
-    assert ProcessRegistry.registry(hub_id) === insert_data |> Map.new()
+    assert ProcessRegistry.dump(hub_id) === insert_data |> Map.new()
   end
 
   test "bulk delete", %{hub_id: hub_id} = _context do
@@ -81,16 +81,16 @@ defmodule Test.Service.ProcessRegistryTest do
 
     HookManager.register_handler(hub_id, Hook.registry_pid_removed(), handler)
 
-    assert ProcessRegistry.registry(hub_id) === %{}
+    assert ProcessRegistry.dump(hub_id) === %{}
 
     insert_data = [
-      {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}]}},
-      {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}]}},
-      {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}]}}
+      {:child1, {%{id: :child1, start: :mfa}, [{:node1, :pid1}, {:node2, :pid2}], %{}}},
+      {:child2, {%{id: :child2, start: :mfa}, [{:node3, :pid1}, {:node4, :pid2}], %{}}},
+      {:child3, {%{id: :child3, start: :mfa}, [{:node5, :pid1}, {:node6, :pid2}], %{}}}
     ]
 
     del_data =
-      Enum.map(insert_data, fn {child_id, {_, child_nodes}} ->
+      Enum.map(insert_data, fn {child_id, {_, child_nodes, _}} ->
         {child_id, Enum.map(child_nodes, fn {node, _pid} -> node end)}
       end)
       |> Map.new()
@@ -108,9 +108,9 @@ defmodule Test.Service.ProcessRegistryTest do
   test "clear all", %{hub_id: hub_id} = _context do
     some_data =
       [
-        {:child1, {%{id: :child1, start: :mfa}, :child_nodes1}},
-        {:child2, {%{id: :child2, start: :mfa}, :child_nodes2}},
-        {:child3, {%{id: :child3, start: :mfa}, :child_nodes3}}
+        {:child1, {%{id: :child1, start: :mfa}, :child_nodes1, %{}}},
+        {:child2, {%{id: :child2, start: :mfa}, :child_nodes2, %{}}},
+        {:child3, {%{id: :child3, start: :mfa}, :child_nodes3, %{}}}
       ]
       |> Map.new()
 

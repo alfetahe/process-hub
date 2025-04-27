@@ -24,9 +24,9 @@ defprotocol ProcessHub.Strategy.Migration.Base do
   @spec handle_migration(
           __MODULE__.t(),
           ProcessHub.hub_id(),
-          [ProcessHub.child_spec()],
+          [{ProcessHub.child_spec(), map()}],
           node(),
           ProcessHub.Strategy.Synchronization.Base.t()
         ) :: :ok
-  def handle_migration(struct, hub_id, child_specs, added_node, sync_strategy)
+  def handle_migration(struct, hub_id, children_data, added_node, sync_strategy)
 end

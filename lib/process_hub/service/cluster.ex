@@ -78,9 +78,9 @@ defmodule ProcessHub.Service.Cluster do
       true ->
         Storage.insert(Name.local_storage(hub_id), StorageKey.hn(), [node_name])
 
-        children = ProcessRegistry.registry(hub_id)
+        children = ProcessRegistry.dump(hub_id)
 
-        Enum.each(children, fn {_child_id, {child_spec, node_pids}} ->
+        Enum.each(children, fn {_child_id, {child_spec, node_pids, metadata}} ->
           new_node_pids = Enum.map(node_pids, fn {_node, pid} -> {node_name, pid} end)
 
           ProcessRegistry.insert(
@@ -88,7 +88,8 @@ defmodule ProcessHub.Service.Cluster do
             child_spec,
             new_node_pids,
             table: Name.registry(hub_id),
-            skip_hooks: true
+            skip_hooks: true,
+            metadata: metadata
           )
         end)
 

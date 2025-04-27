@@ -341,6 +341,33 @@ defmodule ProcessHubTest do
     assert Enum.at(nodepids2, 0) |> elem(1) |> is_pid()
   end
 
+  test "dump", %{hub_id: hub_id} = _context do
+    metadata = %{tag: "dump_test_tag"}
+    assert ProcessHub.dump_registry(hub_id) === %{}
+
+    [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
+    ProcessHub.start_children(
+      hub_id,
+      [cs1, cs2],
+      [async_wait: true, metadata: metadata]
+    ) |> ProcessHub.await()
+
+    %{"child1" => {^cs1, nodepids1, metadata1}, "child2" => {^cs2, nodepids2, metadata2}} =
+      ProcessHub.dump_registry(hub_id)
+
+    assert is_list(nodepids1)
+    assert length(nodepids1) === 1
+    assert Enum.at(nodepids1, 0) |> elem(0) === node()
+    assert Enum.at(nodepids1, 0) |> elem(1) |> is_pid()
+    assert metadata1 === metadata
+
+    assert is_list(nodepids2)
+    assert length(nodepids2) === 1
+    assert Enum.at(nodepids2, 0) |> elem(0) === node()
+    assert Enum.at(nodepids2, 0) |> elem(1) |> is_pid()
+    assert metadata2 === metadata
+  end
+
   test "get pids", %{hub_id: hub_id} = _context do
     [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2, id_type: :atom)
     ProcessHub.start_children(hub_id, [cs1, cs2], async_wait: true) |> ProcessHub.await()

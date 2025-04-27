@@ -32,6 +32,13 @@ defmodule ProcessHub do
   @type child_spec() :: Supervisor.child_spec()
 
   @typedoc """
+  Defines the metadata that can be passed to the child process when it is started.
+  """
+  @type child_metadata() :: %{
+          :tag => String.t()
+        }
+
+  @typedoc """
   The `init_opts()` defines the options that can be passed to the `start_children/3`, `start_child/3`,
   `stop_children/3`, and `stop_child/3` functions.
 
@@ -44,13 +51,16 @@ defmodule ProcessHub do
   - `:on_failure` - is optional and is used to define the action to take when the start operation fails.
   The default is `:continue` which will continue to start the next child. The other option is `:rollback`
   which will stop all the children that have been started.
-
+  - `:metadata` - is optional and is used to define the metadata that will be passed to the child process
+  when it is started. This metadata is used to identify the child process and can be used to store
+  additional information about the child process.
   """
   @type init_opts() :: [
           async_wait: boolean(),
           timeout: non_neg_integer(),
           check_existing: boolean(),
-          on_failure: :continue | :rollback
+          on_failure: :continue | :rollback,
+          metadata: child_metadata()
         ]
 
   @typedoc """
@@ -413,8 +423,18 @@ defmodule ProcessHub do
 
   This function queries results from the local `ets` table and does not make any network calls.
   """
+  @deprecated "Use `ProcessHub.dump_registry/1` instead"
   @spec process_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry()
   defdelegate process_registry(hub_id), to: ProcessRegistry, as: :registry
+
+  @doc """
+  Dumps all information in the registry.
+
+  Returns all information in the registry such as the child specification, pids,
+  nodes, and metadata.
+  """
+  @spec dump_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.dump()
+  defdelegate dump_registry(hub_id), to: ProcessRegistry, as: :dump
 
   @doc """
   Returns a list of pids for the given child_id.
@@ -530,5 +550,6 @@ defmodule ProcessHub do
     |> Keyword.put_new(:check_existing, true)
     |> Keyword.put_new(:return_first, false)
     |> Keyword.put_new(:on_failure, :continue)
+    |> Keyword.put_new(:metadata, %{})
   end
 end

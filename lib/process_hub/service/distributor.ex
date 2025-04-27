@@ -20,18 +20,18 @@ defmodule ProcessHub.Service.Distributor do
   @spec children_redist_init(
           ProcessHub.hub_id(),
           node(),
-          [ProcessHub.child_spec()],
+          [{ProcessHub.child_spec(), ProcessHub.child_metadata()}],
           keyword() | nil
         ) ::
           {:ok, :redistribution_initiated} | {:ok, :no_children_to_redistribute}
-  def children_redist_init(hub_id, node, child_specs, opts \\ []) do
+  def children_redist_init(hub_id, node, children_data, opts \\ []) do
     # Migration expects the `:migration_add` true flag otherwise the
     # remote node wont release the lock.
     opts = Keyword.put(opts, :migration_add, true)
 
     redist_children =
-      Enum.map(child_specs, fn child_spec ->
-        init_data([node], hub_id, child_spec)
+      Enum.map(children_data, fn {child_spec, metadata} ->
+        init_data([node], hub_id, child_spec, metadata)
         |> Map.merge(Map.new(opts))
       end)
 
@@ -62,7 +62,7 @@ defmodule ProcessHub.Service.Distributor do
          :ok <- init_distribution(hub_id, child_specs, opts, strategies),
          :ok <- init_registry_check(hub_id, child_specs, opts),
          {:ok, children_nodes} <- init_attach_nodes(hub_id, child_specs, strategies),
-         {:ok, composed_data} <- init_compose_data(hub_id, children_nodes) do
+         {:ok, composed_data} <- init_compose_data(hub_id, children_nodes, opts) do
       pre_start_children(hub_id, composed_data, opts)
     else
       err -> err
@@ -293,19 +293,22 @@ defmodule ProcessHub.Service.Distributor do
      }}
   end
 
-  defp init_data(child_nodes, hub_id, child_spec) do
+  defp init_data(child_nodes, hub_id, child_spec, metadata) do
     %{
       hub_id: hub_id,
       nodes: child_nodes,
       child_id: child_spec.id,
-      child_spec: child_spec
+      child_spec: child_spec,
+      metadata: metadata
     }
   end
 
-  defp init_compose_data(hub_id, children) do
+  defp init_compose_data(hub_id, children, opts) do
+    metadata = Keyword.get(opts, :metadata, %{})
+
     {:ok,
      Enum.reduce(children, [], fn {child_spec, child_nodes}, acc ->
-       child_data = init_data(child_nodes, hub_id, child_spec)
+       child_data = init_data(child_nodes, hub_id, child_spec, metadata)
 
        append_items =
          Enum.map(child_nodes, fn child_node ->

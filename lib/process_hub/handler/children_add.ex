@@ -28,6 +28,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             child_nodes: [{node(), pid()}],
             nodes: [node()],
             has_errors: boolean(),
+            metadata: map(),
             for_node: {
               node(),
               [
@@ -44,7 +45,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       :for_node,
       :child_nodes,
       :has_errors,
-      :nodes
+      :nodes,
+      metadata: %{}
     ]
   end
 
@@ -96,8 +98,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     defp store_format(post_start_results) do
       post_start_results
       |> Enum.filter(fn %PostStartData{has_errors: has_err} -> has_err === false end)
-      |> Enum.map(fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn} ->
-        {cid, {cs, cn}}
+      |> Enum.map(fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn, metadata: m} ->
+        {cid, {cs, cn, m}}
       end)
       |> Map.new()
     end
@@ -111,7 +113,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             hub_id: ProcessHub.hub_id(),
             children: [
               %{
-                child_spec: ProcessHub.child_spec()
+                child_spec: ProcessHub.child_spec(),
+                metadata: ProcessHub.child_metadata()
               }
             ],
             dist_sup: atom(),
@@ -259,6 +262,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         result: startup_result,
         nodes: child_data.nodes,
         child_nodes: [{local_node, pid}],
+        metadata: child_data.metadata,
         has_errors: has_errors,
         for_node: {
           local_node,
