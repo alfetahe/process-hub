@@ -11,6 +11,8 @@ defmodule Test.IntegrationTest do
   @nr_of_peers 5
 
   setup_all context do
+    context = Map.put(context, :validate_metadata, false)
+
     Map.merge(Test.Helper.Bootstrap.init_nodes(@nr_of_peers), context)
   end
 
@@ -20,6 +22,7 @@ defmodule Test.IntegrationTest do
 
   @tag hub_id: :pubsub_start_rem_test
   @tag sync_strategy: :pubsub
+  @tag validate_metadata: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
@@ -129,13 +132,14 @@ defmodule Test.IntegrationTest do
 
   @tag hub_id: :gossip_start_rem_test
   @tag sync_strategy: :gossip
+  @tag validate_metadata: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
   test "gossip children starting and removing", %{hub_id: hub_id} = context do
-    child_count = 10
+    child_count = 100
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.
@@ -227,6 +231,7 @@ defmodule Test.IntegrationTest do
   @tag redun_strategy: :replication
   @tag hub_id: :redunc_activ_pass_test
   @tag replication_model: :active_passive
+  @tag validate_metadata: true
   @tag replication_factor: 4
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :local},
@@ -608,6 +613,7 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :migr_hotswap_shutdown_test
   @tag migr_strategy: :hot
   @tag migr_handover: true
+  @tag validate_metadata: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :local},
          {Hook.post_cluster_leave(), :local},
@@ -619,13 +625,10 @@ defmodule Test.IntegrationTest do
        ]
   test "migration hotswap shutdown", %{hub_id: hub_id} = context do
     child_count = 1000
-    default_metadata = %{tag: "migration_hotswap_shutdown_test"}
+    default_metadata = %{tag: hub_id |> Atom.to_string()}
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
-    Common.sync_base_test(context, child_specs, :add,
-      scope: :global,
-      start_opts: [metadata: default_metadata]
-    )
+    Common.sync_base_test(context, child_specs, :add, scope: :global)
 
     # Node ups.
     Bag.receive_multiple(@nr_of_peers, Hook.post_nodes_redistribution(),

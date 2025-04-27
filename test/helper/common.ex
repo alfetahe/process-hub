@@ -47,11 +47,17 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def validate_replication(%{hub_id: hub_id, hub: hub, replication_factor: _rf} = _context) do
+  def validate_replication(
+        %{hub_id: hub_id, hub: hub, replication_factor: _rf, validate_metadata: vm} = _context
+      ) do
     registry = ProcessHub.registry_dump(hub_id)
     replication_factor = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
 
-    Enum.each(registry, fn {child_id, {_, nodes, _}} ->
+    Enum.each(registry, fn {child_id, {_, nodes, metadata}} ->
+      if vm do
+        assert metadata === %{tag: hub_id |> Atom.to_string()}
+      end
+
       ring = Ring.get_ring(hub_id)
       ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
 
@@ -129,7 +135,17 @@ defmodule Test.Helper.Common do
 
   @spec sync_base_test(%{:hub_id => any(), optional(any()) => any()}, any(), :add | :rem, any()) ::
           :ok
-  def sync_base_test(%{hub_id: hub_id} = _context, child_specs, type, opts \\ []) do
+  def sync_base_test(%{hub_id: hub_id} = context, child_specs, type, opts \\ []) do
+    start_opts = Keyword.get(opts, :start_opts, [])
+
+    start_opts =
+      case Map.get(context, :validate_metadata, false) do
+        true -> [{:metadata, %{tag: hub_id |> Atom.to_string()}} | start_opts]
+        false -> start_opts
+      end
+
+    opts = Keyword.put(opts, :start_opts, start_opts)
+
     case type do
       :add ->
         [{:start_children, Hook.registry_pid_inserted(), "Child add timeout.", child_specs}]
@@ -159,7 +175,7 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def validate_sync(%{hub_id: hub_id} = _context) do
+  def validate_sync(%{hub_id: hub_id, validate_metadata: validate_metadata} = _context) do
     registry_data = ProcessHub.registry_dump(hub_id)
 
     Enum.each(Node.list(), fn node ->
@@ -168,7 +184,11 @@ defmodule Test.Helper.Common do
           ProcessHub.registry_dump(hub_id)
         end)
 
-      Enum.each(registry_data, fn {id, {child_spec, nodes, _metadata}} ->
+      Enum.each(registry_data, fn {id, {child_spec, nodes, metadata}} ->
+        if validate_metadata do
+          assert metadata === %{tag: hub_id |> Atom.to_string()}
+        end
+
         if remote_registry[id] do
           remote_child_spec = elem(remote_registry[id], 0)
           remote_nodes = elem(remote_registry[id], 1)
