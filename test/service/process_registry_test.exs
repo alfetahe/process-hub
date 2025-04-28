@@ -367,4 +367,33 @@ defmodule Test.Service.ProcessRegistryTest do
 
     assert Enum.sort(ProcessRegistry.local_child_specs(hub_id)) === formatted_data
   end
+
+  test "update", %{hub_id: hub_id} = _context do
+    cid = "child_update_id"
+    child_spec = %{id: cid, start_link: {:mod1, :fn1, [1, 2]}}
+    child_nodes = [{:node1, :pid1}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    init_res = ProcessRegistry.lookup(hub_id, cid, with_metadata: true)
+    err = ProcessRegistry.update(hub_id, "none", fn nil, nil, nil -> nil end)
+
+    result =
+      ProcessRegistry.update(hub_id, cid, fn child_spec, child_nodes, _m ->
+        {
+          Map.put(child_spec, :start_link, {:mod2, :fn2, [3, 4]}),
+          [{:node1, :pid1}, child_nodes],
+          %{update: "hello world"}
+        }
+      end)
+
+    {cs, cn, m} = ProcessRegistry.lookup(hub_id, cid, with_metadata: true)
+
+    assert init_res === {child_spec, child_nodes, %{}}
+    assert err === {:error, "No child found"}
+
+    assert result === :ok
+    assert cs === %{id: cid, start_link: {:mod2, :fn2, [3, 4]}}
+    assert cn === [{:node1, :pid1}, child_nodes]
+    assert m === %{update: "hello world"}
+  end
 end

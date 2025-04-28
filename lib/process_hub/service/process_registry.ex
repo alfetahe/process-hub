@@ -307,6 +307,40 @@ defmodule ProcessHub.Service.ProcessRegistry do
     HookManager.dispatch_hooks(hub_id, hooks)
   end
 
+  @doc """
+  Updates the row on the registry.
+
+  The `update_fn` must be a function that accepts 3 parameters containing the existing values:
+  - `child_spec` - the child specification in map format.
+  - `node_pids` - a keyword list containing a list of node pid pairs. Example: `[{:mynode, pid()}]`
+  - `metadata`- a map containing the additional information.
+
+  The function should return a tuple in the following format: `{child_spec, node_pids, metadata}`
+  and those values will be then used to update the row.
+
+  If no child is found for the given `child_id` an error will be returned: `{:error, "No child found"}`
+  On successful update the function returns `:ok`.
+
+  Use this function with care as any invalid data may corrupt the registry.
+  """
+  @spec update(ProcessHub.hub_id(), ProcessHub.child_id(), function()) ::
+          :ok | {:error, String.t()}
+  def update(hub_id, child_id, update_fn) do
+    table = Name.registry(hub_id)
+    opts = [table: table, with_metadata: true]
+
+    case lookup(hub_id, child_id, opts) do
+      nil ->
+        {:error, "No child found"}
+
+      {child_spec, node_pids, metadata} ->
+        {cs, cn, m} = update_fn.(child_spec, node_pids, metadata)
+        insert(hub_id, cs, cn, [{:metadata, m} | opts])
+
+        :ok
+    end
+  end
+
   defp merge_insert(nodes_new, nodes_existing, hub_id, child_spec, table, metadata) do
     cond do
       Enum.sort(nodes_new) !== Enum.sort(nodes_existing) ->

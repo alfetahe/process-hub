@@ -11,6 +11,7 @@ and synced to other nodes.
 - `ProcessHub.child_lookup/3` now accepts opts parameter to allow returning the metadata.
 - `ProcessHub.registry_dump/1`dumps the whole process registry. Will supersede `ProcessHub.process_registry/1` in the future.
 - `ProcessHub.tag_query/2` allows querying the process registry by tag. 
+- `ProcessRegistry.update/3` for advanced users who want to control the process registry updates.
 
 ### Soft Deprecations
 - `ProcessHub.process_registry/1` will be deprecated in favour of `ProcessHub.registry_dump/1` due to not returning associated metadata with the processes.
