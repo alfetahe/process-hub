@@ -10,6 +10,25 @@ defmodule ProcessHub.Service.Synchronizer do
   alias ProcessHub.Utility.Name
 
   # TODO: add tests
+  @doc """
+  Helper function to trigger interval synchronization.
+
+  The system will use the configured synchronization strategy.
+  """
+  def trigger_sync(hub_id) do
+    Task.Supervisor.start_child(
+      Name.task_supervisor(hub_id),
+      Synchronization.IntervalSyncInit,
+      :handle,
+      [
+        %Synchronization.IntervalSyncInit{
+          hub_id: hub_id
+        }
+      ]
+    )
+  end
+
+  # TODO: add tests
   def exec_interval_sync(hub_id, strategy, sync_data, remote_node) do
     Task.Supervisor.async_nolink(
       Name.task_supervisor(hub_id),

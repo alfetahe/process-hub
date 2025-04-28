@@ -34,6 +34,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.State
@@ -340,16 +341,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(:sync_processes, %{hub_id: hub_id} = state) do
-    Task.Supervisor.start_child(
-      Name.task_supervisor(hub_id),
-      Synchronization.IntervalSyncInit,
-      :handle,
-      [
-        %Synchronization.IntervalSyncInit{
-          hub_id: hub_id
-        }
-      ]
-    )
+    Synchronizer.trigger_sync(hub_id)
 
     Name.local_storage(hub_id)
     |> Storage.get(StorageKey.strsyn())
