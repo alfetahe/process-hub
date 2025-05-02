@@ -206,16 +206,13 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "with tag", %{hub_id: hub_id} = _context do
-    tag = "match_tag_test"
+    tag = "test_tag"
 
     child_spec = %{id: "match_tag_test", start: {:firstmod, :firstfunc, [1, 2]}}
     child_nodes = [{:node1, :pid1}, {:node2, :pid2}, {:node3, "pid3"}]
     ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: %{tag: tag})
 
-    assert ProcessRegistry.match_tag(hub_id, "match_tag_test") === [
-             {"match_tag_test", %{id: "match_tag_test", start: {:firstmod, :firstfunc, [1, 2]}},
-              [node1: :pid1, node2: :pid2, node3: "pid3"]}
-           ]
+    assert ProcessRegistry.match_tag(hub_id, tag) === [{"match_tag_test", [node1: :pid1, node2: :pid2, node3: "pid3"]}]
 
     assert ProcessRegistry.match_tag(hub_id, "none_exist") === []
   end

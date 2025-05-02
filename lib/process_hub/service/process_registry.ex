@@ -91,7 +91,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           {ProcessHub.child_id(), [{node(), pid()}]}
         ]
   def match_tag(hub_id, tag) do
-    match_expr = {:"$1", {:"$2", :"$3", %{tag: tag}}}
+    match_expr = {:"$1", {:_, :"$3", %{tag: tag}}}
 
     Storage.match(Name.registry(hub_id), match_expr)
   end
@@ -143,8 +143,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec lookup(
           ProcessHub.hub_id(),
           ProcessHub.child_id(),
-          table: atom(),
-          with_metadata: boolean()
+          keyword()
         ) ::
           {ProcessHub.child_spec(), [{node(), pid()}]}
           | {ProcessHub.child_spec(), [{node(), pid()}], ProcessHub.child_metadata()}
@@ -327,7 +326,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           :ok | {:error, String.t()}
   def update(hub_id, child_id, update_fn) do
     table = Name.registry(hub_id)
-    opts = [table: table, with_metadata: true]
+    opts = [table: table, with_metadata: true, skip_hooks: true]
 
     case lookup(hub_id, child_id, opts) do
       nil ->
@@ -338,6 +337,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
         insert(hub_id, cs, cn, [{:metadata, m} | opts])
 
         :ok
+
+      _any ->
+        {:error, "Invalid arguments returned from the update function"}
     end
   end
 
