@@ -13,6 +13,11 @@ and synced to other nodes.
 - `ProcessHub.tag_query/2` allows querying the process registry by tag. 
 - `ProcessRegistry.update/3` for advanced users who want to control the process registry updates.
 
+### Fixed
+- Using `HotSwap` migration strategy with graceful shutdown was when no other nodes were available
+causing the migration messages to be sent to `nil` node. This is now fixed and if no other nodes are available no migration
+messages are sent.
+
 ### Soft Deprecations
 - `ProcessHub.process_registry/1` will be deprecated in favour of `ProcessHub.registry_dump/1` due to not returning associated metadata with the processes.
 
