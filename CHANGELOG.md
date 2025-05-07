@@ -12,6 +12,9 @@ and synced to other nodes.
 - `ProcessHub.registry_dump/1`dumps the whole process registry. Will supersede `ProcessHub.process_registry/1` in the future.
 - `ProcessHub.tag_query/2` allows querying the process registry by tag. 
 - `ProcessRegistry.update/3` for advanced users who want to control the process registry updates.
+- Alter hooks to alter data before processing. Currently only one alter hook is available `child_data_alter_hook` which
+is called right before the supervisor starts the child process. This allows the user to alter child spec, metadata or nodes list
+on the same node that the process is going to be started on.
 
 ### Fixed
 - Using `HotSwap` migration strategy with graceful shutdown was when no other nodes were available

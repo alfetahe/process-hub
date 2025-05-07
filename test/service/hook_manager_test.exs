@@ -155,6 +155,21 @@ defmodule Test.Service.HookManagerTest do
     assert_receive :dispatch_hook_test_2
   end
 
+  test "dispatch alter hook", %{hub_id: hub_id} = _context do
+    handler = %HookManager{
+      id: :hook_manager_test_dispatch_hook,
+      m: Enum,
+      f: :sum,
+      a: [:_]
+    }
+
+    HookManager.register_handlers(hub_id, :test_1, [handler])
+
+    altered_data = HookManager.dispatch_alter_hook(hub_id, :test_1, [1, 2, 3])
+
+    assert altered_data == 6
+  end
+
   test "cancel handler", %{hub_id: hub_id} = _context do
     handler = %HookManager{
       id: :hook_manager_test_cancel_handler,

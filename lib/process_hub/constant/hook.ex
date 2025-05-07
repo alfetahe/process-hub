@@ -111,4 +111,12 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec child_process_pid_update() :: :child_process_pid_update_hook
   def child_process_pid_update(), do: :child_process_pid_update_hook
+
+  @doc """
+  Hook triggered right before the supervisor starts the child process.
+
+  This is used to update the child process data before it is started.
+  """
+  @spec child_data_alter() :: :child_data_alter_hook
+  def child_data_alter(), do: :child_data_alter_hook
 end

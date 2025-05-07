@@ -212,7 +212,9 @@ defmodule Test.Service.ProcessRegistryTest do
     child_nodes = [{:node1, :pid1}, {:node2, :pid2}, {:node3, "pid3"}]
     ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: %{tag: tag})
 
-    assert ProcessRegistry.match_tag(hub_id, tag) === [{"match_tag_test", [node1: :pid1, node2: :pid2, node3: "pid3"]}]
+    assert ProcessRegistry.match_tag(hub_id, tag) === [
+             {"match_tag_test", [node1: :pid1, node2: :pid2, node3: "pid3"]}
+           ]
 
     assert ProcessRegistry.match_tag(hub_id, "none_exist") === []
   end

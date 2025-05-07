@@ -119,6 +119,23 @@ defmodule ProcessHub.Service.HookManager do
     :ok
   end
 
+  @doc """
+  Executes the hook handlers and lets each handler modify the hook data.
+
+  It is possible to register a hook handler with a wildcard argument `:_` which
+  will be replaced with the hook data when the hook is dispatched.
+
+  Works similar to `dispatch_hook/3` but each handler is expected to return the modified
+  hook data. The hook data is passed to the next handler in the chain.
+  """
+  @spec dispatch_alter_hook(ProcessHub.hub_id(), hook_key(), any()) :: any()
+  def dispatch_alter_hook(hub_id, hook_key, hook_data) do
+    registered_handlers(hub_id, hook_key)
+    |> Enum.reduce(hook_data, fn hook_handler, acc ->
+      exec_hook(hook_handler, acc)
+    end)
+  end
+
   defp exec_hook(%__MODULE__{m: module, f: func, a: args}, hook_data) do
     args =
       Enum.map(args, fn arg ->

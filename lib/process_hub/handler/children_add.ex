@@ -231,6 +231,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
       validate_children(arg)
       |> Enum.map(fn child_data ->
+        child_data = HookManager.dispatch_alter_hook(hub_id, Hook.child_data_alter(), child_data)
+
         startup_result = DistributedSupervisor.start_child(ds, child_data.child_spec)
 
         case startup_result do

@@ -254,7 +254,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   def handle_shutdown(%__MODULE__{handover: true, handover_data_wait: hodw} = _struct, hub_id) do
     # Make sure there are other nodes in the cluster left.
-    if (ProcessHub.nodes(hub_id) |> length()) > 0 do
+    if ProcessHub.nodes(hub_id) |> length() > 0 do
       ProcessRegistry.local_data(hub_id)
       |> get_state_msgs()
       |> get_send_data(hodw)
@@ -328,12 +328,16 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       case migration_node do
         nil ->
           acc
-        _ ->
-          migr_data = (Enum.find(states,
-          fn {child_id, _} -> child_id === cid end
-        ) || {nil, nil}) |> elem(1)
 
-        Map.put(acc, migration_node, [{cid, migr_data} | node_data])
+        _ ->
+          migr_data =
+            (Enum.find(
+               states,
+               fn {child_id, _} -> child_id === cid end
+             ) || {nil, nil})
+            |> elem(1)
+
+          Map.put(acc, migration_node, [{cid, migr_data} | node_data])
       end
     end)
   end

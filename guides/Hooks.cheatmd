@@ -332,4 +332,28 @@ Although, it's not recommended to dispatch hooks manually as it can lead to unex
 | `:process_startups_hook`            | Processes have been startups                | `[%{cid: child_id, pid: pid()}]`                   |
 | `:child_process_pid_update`         | Child process restarted with new pid        | `{node(), child_id()}`                             |
 
+
+## Alter hooks
+
+Alter hooks differ from the other hooks in that they are used to modify the hook data
+before it is passed to the function that is using that data. This allows us to alter the data
+instead of just reacting to it and cause side effects as in the regular hooks.
+
+Registering an alter hook is exactly the same as registering a normal hook.
+
+Alter hooks **must return** the modified data in the same format as the original data.
+
+> ⚠️ **Warning**
+> Alter hooks should be used with caution as they can lead to unexpected behavior if not used properly.
+> For example, if you modify the hook data in an alter hook, it will be passed to the next hook handler
+> and can cause unexpected behavior if the next hook handler or the code is not expecting the modified data.
+> Never change the underlying data structure of the hook data such as from map to list etc.
+
+### List of alter hooks
+{: .width-100}
+| Event Key                           | Trigger                                     | Data                                               |
+| ----------------------------------- | ------------------------------------------- | -------------------------------------------------- |
+| `:child_data_alter_hook`            | Before supervisor starts the child process  | `map()` including child spec, metadata and nodes   |
+
+
 See `ProcessHub.Constant.Hook` module for more information on available hooks.
