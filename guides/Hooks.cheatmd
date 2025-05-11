@@ -329,7 +329,7 @@ Although, it's not recommended to dispatch hooks manually as it can lead to unex
 | `:post_children_start`              | After child process is started              | `[{child_id(), result(), pid(), [node()]}]`        |
 | `:pre_children_redistribution_hook` | Before redistribution of children is called | `[{child_id(), node(), {:pid, pid()}}]`            |
 | `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `any()`                                            |
-| `:process_startups_hook`            | Processes have been startups                | `[%{cid: child_id, pid: pid()}]`                   |
+| `:process_startups_hook`            | Processes have been started                 | `[%{cid: child_id, pid: pid()}]`                   |
 | `:child_process_pid_update`         | Child process restarted with new pid        | `{node(), child_id()}`                             |
 
 

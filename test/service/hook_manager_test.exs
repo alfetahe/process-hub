@@ -163,9 +163,9 @@ defmodule Test.Service.HookManagerTest do
       a: [:_]
     }
 
-    HookManager.register_handlers(hub_id, :test_1, [handler])
+    HookManager.register_handlers(hub_id, :test_alter, [handler])
 
-    altered_data = HookManager.dispatch_alter_hook(hub_id, :test_1, [1, 2, 3])
+    altered_data = HookManager.dispatch_alter_hook(hub_id, :test_alter, [1, 2, 3])
 
     assert altered_data == 6
   end
