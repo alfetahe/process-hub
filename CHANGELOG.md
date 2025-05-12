@@ -2,7 +2,7 @@
 All notable changes to this project will be documented in this file.
 
 ## v0.3.3-alpha - YYYY-MM-DD
-Includes new features, soft deprecations, unit test improvements, and code refactors.
+Includes new features, soft deprecations, unit test improvements, and bug fixes.
 
 ### Added
 - Ability to start child processes with attached metadata.
@@ -16,6 +16,7 @@ Includes new features, soft deprecations, unit test improvements, and code refac
 ### Fixed
 - Using the `HotSwap` migration strategy with graceful shutdown caused migration messages to be sent to a `nil` node when no other nodes were available. This is now fixed; no migration messages are sent if no other nodes are present.
 - The HotSwap shutdown migration could cause a timeout error on the shutting down node if the target node for takeover became unavailable. This has been resolved by sending an asynchronous message (`GenServer.cast/2`) instead of a synchronous one, avoiding process spawning on the receiving node and ensuring it receives data before starting the new children.
+- Hooks cheat sheet guide was pointing to wrong hook keys on some cases.
 
 ### Soft Deprecations
 - `ProcessHub.process_registry/1` will be deprecated in favour of `ProcessHub.registry_dump/1` due to not returning associated metadata with the processes.
