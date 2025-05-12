@@ -283,6 +283,15 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   def handle_process_startups(_struct, _hub_id, _pids), do: nil
 
+  def handle_storage_update(hub_id, data) do
+    Storage.update(Name.local_storage(hub_id), StorageKey.msk(), fn old_value ->
+      case old_value do
+        nil -> data
+        _ -> data ++ old_value
+      end
+    end)
+  end
+
   defp rem_states(hub_id, cids) do
     Name.local_storage(hub_id)
     |> Storage.update(StorageKey.msk(), fn
@@ -292,21 +301,17 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   end
 
   defp send_data(send_data, hub_id) do
+    coordinator = Name.coordinator(hub_id)
+
     # Send the data to each node now.
     Enum.each(send_data, fn {node, data} ->
       cluster_nodes = Cluster.nodes(hub_id)
 
-      if Enum.member?(cluster_nodes, node) do
-        # Need to be sure that this is sent and handled on the remote nodes
-        # before they start the new children.
-        :erpc.call(node, fn ->
-          Storage.update(Name.local_storage(hub_id), StorageKey.msk(), fn old_value ->
-            case old_value do
-              nil -> data
-              _ -> data ++ old_value
-            end
-          end)
-        end)
+      if Enum.member?(cluster_nodes, node) && Enum.member?(Node.list(), node) do
+        GenServer.cast(
+          {coordinator, node},
+          {:exec_cast, {__MODULE__, :handle_storage_update, [hub_id, data]}}
+        )
       end
     end)
   end

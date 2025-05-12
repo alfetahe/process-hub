@@ -162,6 +162,13 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_cast({:exec_cast, {m, f, a}}, state) do
+    apply(m, f, a)
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_call(:ping, _from, state) do
     {:reply, :bong, state}
   end

@@ -2,24 +2,20 @@
 All notable changes to this project will be documented in this file.
 
 ## v0.3.3-alpha - YYYY-MM-DD
-Includes new features, soft deprecations and unit test improvements and code refactors.
+Includes new features, soft deprecations, unit test improvements, and code refactors.
 
 ### Added
-- Ability to start child processes with metadata attached to them.
-- Child processes can now be started with additional metadata that will be stored in the process registry
-and synced to other nodes.
-- `ProcessHub.child_lookup/3` now accepts opts parameter to allow returning the metadata.
-- `ProcessHub.registry_dump/1`dumps the whole process registry. Will supersede `ProcessHub.process_registry/1` in the future.
-- `ProcessHub.tag_query/2` allows querying the process registry by tag. 
-- `ProcessRegistry.update/3` for advanced users who want to control the process registry updates.
-- Alter hooks to alter data before processing. Currently only one alter hook is available `child_data_alter_hook` which
-is called right before the supervisor starts the child process. This allows the user to alter child spec, metadata or nodes list
-on the same node that the process is going to be started on.
+- Ability to start child processes with attached metadata.
+- Child processes can now be started with additional metadata that is stored in the process registry and synced across nodes.
+- `ProcessHub.child_lookup/3` now accepts an `opts` parameter to allow returning metadata.
+- `ProcessHub.registry_dump/1` dumps the entire process registry. This will eventually supersede `ProcessHub.process_registry/1`.
+- `ProcessHub.tag_query/2` allows querying the process registry by tag.
+- `ProcessRegistry.update/3` enables advanced users to manually update the process registry.
+- Alter hooks to modify data before processing. Currently, only one alter hook is available: `child_data_alter_hook`, which is invoked right before the supervisor starts the child process. This allows altering the child spec, metadata, or node list on the node where the process will be started.
 
 ### Fixed
-- Using `HotSwap` migration strategy with graceful shutdown was when no other nodes were available
-causing the migration messages to be sent to `nil` node. This is now fixed and if no other nodes are available no migration
-messages are sent.
+- Using the `HotSwap` migration strategy with graceful shutdown caused migration messages to be sent to a `nil` node when no other nodes were available. This is now fixed; no migration messages are sent if no other nodes are present.
+- The HotSwap shutdown migration could cause a timeout error on the shutting down node if the target node for takeover became unavailable. This has been resolved by sending an asynchronous message (`GenServer.cast/2`) instead of a synchronous one, avoiding process spawning on the receiving node and ensuring it receives data before starting the new children.
 
 ### Soft Deprecations
 - `ProcessHub.process_registry/1` will be deprecated in favour of `ProcessHub.registry_dump/1` due to not returning associated metadata with the processes.
