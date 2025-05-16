@@ -361,7 +361,7 @@ defmodule ProcessHub do
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
   @spec await(function() | {:error, term()}) ::
-          {:ok, [start_result() | stop_result()]}
+          {:ok, start_result() | [start_result() | stop_result()]}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]}}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]},
              :rollback}

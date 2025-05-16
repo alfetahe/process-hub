@@ -2,7 +2,12 @@
 All notable changes to this project will be documented in this file.
 
 ## v0.3.3-alpha - YYYY-MM-DD
-Includes new features, soft deprecations, unit test improvements, and bug fixes.
+TODO: 
+
+### Fixed
+- Using the `HotSwap` migration strategy with graceful shutdown caused migration messages to be sent to a `nil` node when no other nodes were available. This is now fixed; no migration messages are sent if no other nodes are present.
+- The HotSwap shutdown migration could cause a timeout error on the shutting down node if the target node for takeover became unavailable. This has been resolved by sending an asynchronous message (`GenServer.cast/2`) instead of a synchronous one, avoiding process spawning on the receiving node and ensuring it receives data before starting the new children.
+- Hooks cheat sheet guide was pointing to wrong hook keys on some cases.
 
 ### Added
 - Ability to start child processes with attached metadata.
@@ -13,10 +18,8 @@ Includes new features, soft deprecations, unit test improvements, and bug fixes.
 - `ProcessRegistry.update/3` enables advanced users to manually update the process registry.
 - Alter hooks to modify data before processing. Currently, only one alter hook is available: `child_data_alter_hook`, which is invoked right before the supervisor starts the child process. This allows altering the child spec, metadata, or node list on the node where the process will be started.
 
-### Fixed
-- Using the `HotSwap` migration strategy with graceful shutdown caused migration messages to be sent to a `nil` node when no other nodes were available. This is now fixed; no migration messages are sent if no other nodes are present.
-- The HotSwap shutdown migration could cause a timeout error on the shutting down node if the target node for takeover became unavailable. This has been resolved by sending an asynchronous message (`GenServer.cast/2`) instead of a synchronous one, avoiding process spawning on the receiving node and ensuring it receives data before starting the new children.
-- Hooks cheat sheet guide was pointing to wrong hook keys on some cases.
+### Changed
+- Calling `ProcessHub.Service.Synchronizer.exec_interval_sync/4` has been made synchronous to avoid possible race conditions.
 
 ### Soft Deprecations
 - `ProcessHub.process_registry/1` will be deprecated in favour of `ProcessHub.registry_dump/1` due to not returning associated metadata with the processes.

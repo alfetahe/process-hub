@@ -184,7 +184,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
     Keyword.get(opts, :table, Name.registry(hub_id))
     |> Storage.insert(child_spec.id, {child_spec, child_nodes, metadata}, opts)
 
-    unless Keyword.get(opts, :skip_hooks, false) do
+    if !Keyword.get(opts, :skip_hooks, false) do
       HookManager.dispatch_hook(
         hub_id,
         Hook.registry_pid_inserted(),

@@ -383,8 +383,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   defmacro __using__(_) do
     quote do
-      require Logger
-
       def handle_info({:process_hub, :send_handover_state, receiver, cid, opts}, state) do
         if is_pid(receiver) do
           Process.send(receiver, {:process_hub, :handover, cid, state}, [])

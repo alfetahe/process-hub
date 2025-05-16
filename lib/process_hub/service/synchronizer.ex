@@ -16,7 +16,7 @@ defmodule ProcessHub.Service.Synchronizer do
   The system will use the configured synchronization strategy.
   """
   def trigger_sync(hub_id) do
-    Task.Supervisor.start_child(
+    Task.Supervisor.async(
       Name.task_supervisor(hub_id),
       Synchronization.IntervalSyncInit,
       :handle,
@@ -26,6 +26,7 @@ defmodule ProcessHub.Service.Synchronizer do
         }
       ]
     )
+    |> Task.await()
   end
 
   # TODO: add tests
