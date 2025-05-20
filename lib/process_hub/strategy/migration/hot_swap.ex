@@ -90,7 +90,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     The handler PID is passed in the `from` variable. The `retention_receiver` pid can be accessed from the `opts` variable.
     The default value is `false`.
 
-  - `:confirmed_handover` - A boolean value indicating if the state handover process should be performed synchronously.
+  - `:confirm_handover` - A boolean value indicating if the state handover process should be performed synchronously.
   This option only takes effect if `:handover` is turned on. Default value is `false`.
 
   - `:handover_data_wait` - An integer value in milliseconds is used to specify how long the handler process
@@ -105,13 +105,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   @type t() :: %__MODULE__{
           retention: pos_integer(),
           handover: boolean(),
-          confirmed_handover: boolean(),
+          confirm_handover: boolean(),
           handover_data_wait: pos_integer(),
           child_migration_timeout: pos_integer()
         }
   defstruct retention: 5000,
             handover: false,
-            confirmed_handover: false,
+            confirm_handover: false,
             handover_data_wait: 3000,
             child_migration_timeout: 10000
 
@@ -165,6 +165,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end)
 
       Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
+
+      # Wait for handover confirmation messages.
+      if strategy.confirm_handover do
+        Enum.each(migration_cids, fn cid -> confirm_handover(strategy, cid) end)
+      end
     end
 
     defp migration_cids(hub_id, %HotSwap{} = strategy, child_specs, added_node) do
@@ -203,15 +208,15 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         # Because we are migrating we only expect one node result.
         started_pid = List.first(child_results) |> elem(1)
 
-        handle_started(strategy, child_id, local_pids, started_pid)
+        handle_started(hub_id, strategy, child_id, local_pids, started_pid)
       end)
       |> Enum.filter(&(&1 != nil))
       |> retention_switch(strategy)
     end
 
-    defp handle_started(strategy, child_id, local_pids, started_pid) do
+    defp handle_started(hub_id, strategy, child_id, local_pids, started_pid) do
       # Notify the peer process about the migration.
-      case start_handover(strategy, child_id, local_pids, started_pid) do
+      case start_handover(hub_id, strategy, child_id, local_pids, started_pid) do
         nil -> nil
         _ -> child_id
       end
@@ -223,7 +228,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       child_ids
     end
 
-    defp start_handover(strategy, child_id, local_pids, handover_receiver) do
+    defp start_handover(hub_id, strategy, child_id, local_pids, handover_receiver) do
       case strategy.handover do
         true ->
           pid = Map.get(local_pids, child_id)
@@ -234,7 +239,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
               :send_handover_state,
               handover_receiver,
               child_id,
-              [retention_receiver: self()]
+              [
+                retention_receiver: self(),
+                confirm_handover: strategy.confirm_handover,
+                hub_id: hub_id
+              ]
             })
           end
 
@@ -253,6 +262,16 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       after
         strategy.retention ->
           :kill
+      end
+    end
+
+    def confirm_handover(strategy, child_id) do
+      receive do
+        {:process_hub, :handover_confirmed, ^child_id} ->
+          :ok
+      after
+        strategy.retention ->
+          {:error, "handover confirmation timeout"}
       end
     end
   end
@@ -391,7 +410,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       @impl true
       def handle_info({:process_hub, :send_handover_state, receiver, cid, opts}, state) do
         if is_pid(receiver) do
-          Process.send(receiver, {:process_hub, :handover, cid, state}, [])
+          Process.send(receiver, {:process_hub, :handover, cid, {state, opts}}, [])
         end
 
         if is_pid(opts[:retention_receiver]) do
@@ -402,7 +421,15 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
 
       @impl true
-      def handle_info({:process_hub, :handover, _cid, handover_state}, _state) do
+      def handle_info({:process_hub, :handover, cid, {handover_state}, opts}, _state) do
+        case Keyword.get(opts, :confirm_handover, false) do
+          true ->
+            Process.send(opts[:retention_receiver], {:process_hub, :handover_confirmed, cid}, [])
+
+          false ->
+            nil
+        end
+
         {:noreply, alter_handover_state(handover_state)}
       end
 
