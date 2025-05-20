@@ -19,6 +19,7 @@ defmodule Test.Helper.Bootstrap do
   # Migration options
   @default_migr_handover false
   @default_migr_retention 5000
+  @default_handover_confirm false
 
   # Partition tolerance options
   @default_quorum_size_static 4
@@ -145,7 +146,8 @@ defmodule Test.Helper.Bootstrap do
       :hot ->
         %ProcessHub.Strategy.Migration.HotSwap{
           retention: context[:migr_retention] || @default_migr_retention,
-          handover: context[:migr_handover] || @default_migr_handover
+          handover: context[:migr_handover] || @default_migr_handover,
+          confirm_handover: context[:handover_confirmation] || @default_handover_confirm
         }
 
       :cold ->

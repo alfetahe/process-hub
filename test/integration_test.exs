@@ -614,6 +614,7 @@ defmodule Test.IntegrationTest do
   @tag migr_strategy: :hot
   @tag migr_handover: true
   @tag validate_metadata: true
+  @tag handover_confirmation: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :local},
          {Hook.post_cluster_leave(), :local},

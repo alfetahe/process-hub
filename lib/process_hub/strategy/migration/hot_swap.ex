@@ -421,7 +421,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
 
       @impl true
-      def handle_info({:process_hub, :handover, cid, {handover_state}, opts}, _state) do
+      def handle_info({:process_hub, :handover, cid, {handover_state, opts}}, _state) do
         case Keyword.get(opts, :confirm_handover, false) do
           true ->
             Process.send(opts[:retention_receiver], {:process_hub, :handover_confirmed, cid}, [])
