@@ -90,6 +90,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     The handler PID is passed in the `from` variable. The `retention_receiver` pid can be accessed from the `opts` variable.
     The default value is `false`.
 
+  - `:confirmed_handover` - A boolean value indicating if the state handover process should be performed synchronously.
+  This option only takes effect if `:handover` is turned on. Default value is `false`.
+
   - `:handover_data_wait` - An integer value in milliseconds is used to specify how long the handler process
     should wait for the state of the remote process to be sent to the local node.
     The default value is `3000`.
@@ -102,11 +105,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   @type t() :: %__MODULE__{
           retention: pos_integer(),
           handover: boolean(),
+          confirmed_handover: boolean(),
           handover_data_wait: pos_integer(),
           child_migration_timeout: pos_integer()
         }
   defstruct retention: 5000,
             handover: false,
+            confirmed_handover: false,
             handover_data_wait: 3000,
             child_migration_timeout: 10000
 
