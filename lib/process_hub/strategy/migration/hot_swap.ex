@@ -383,6 +383,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   defmacro __using__(_) do
     quote do
+      @impl true
       def handle_info({:process_hub, :send_handover_state, receiver, cid, opts}, state) do
         if is_pid(receiver) do
           Process.send(receiver, {:process_hub, :handover, cid, state}, [])
@@ -395,9 +396,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         {:noreply, state}
       end
 
+      @impl true
       def handle_info({:process_hub, :handover, _cid, handover_state}, _state) do
-        {:noreply, handover_state}
+        {:noreply, alter_handover_state(handover_state)}
       end
+
+      # TODO: Make sure we're inserting this function only if it does not already exist.
+      def alter_handover_state(state), do: state
     end
   end
 end
