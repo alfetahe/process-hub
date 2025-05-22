@@ -9,6 +9,9 @@ TODO:
 - The HotSwap shutdown migration could cause a timeout error on the shutting down node if the target node for takeover became unavailable. This has been resolved by sending an asynchronous message (`GenServer.cast/2`) instead of a synchronous one, avoiding process spawning on the receiving node and ensuring it receives data before starting the new children.
 - Hooks cheat sheet guide was pointing to wrong hook keys on some cases.
 
+### Breaking changes
+- If you are using `ProcessHub.Strategy.Migration.HotSwap` with state handover and have implemented your own custom callbacks instead of using the provided macro, you will need add `use ProcessHub.Strategy.Migration.HotSwap` to your module and override the `alter_handover_state/1` function to handle the alter the state before it is set on the new process. Also remove the existing implementations as of now they are not needed anymore and provided by the macro.
+
 ### Added
 - Ability to start child processes with attached metadata.
 - Child processes can now be started with additional metadata that is stored in the process registry and synced across nodes.
@@ -17,6 +20,7 @@ TODO:
 - `ProcessHub.tag_query/2` allows querying the process registry by tag.
 - `ProcessRegistry.update/3` enables advanced users to manually update the process registry.
 - Alter hooks to modify data before processing. Currently, only one alter hook is available: `child_data_alter_hook`, which is invoked right before the supervisor starts the child process. This allows altering the child spec, metadata, or node list on the node where the process will be started.
+- New option `:confirm_handover` for `ProcessHub.Strategy.Migration.HotSwap`. Ability to confirm state handovers by waiting for synchronization messages from the target node. This is useful for ensuring that the state has been properly handed over before proceeding with any further operations. Specially useful when running tests.
 
 ### Changed
 - Calling `ProcessHub.Service.Synchronizer.exec_interval_sync/4` has been made synchronous to avoid possible race conditions.

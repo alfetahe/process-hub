@@ -19,36 +19,25 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   `:handover` option must be set to `true` in the migration strategy configuration, and
   necessary messages must be handled in the processes.
 
-  > #### Using the handover option {: .warning}
-  >
-  > When the `:handover` option is set to `true`, the peer process must handle the following message:
-  > `{:process_hub, :send_handover_state, receiver, child_id, opts}`.
-
-  Example migration with handover using `GenServer`:
-
-  ```elixir
-  def handle_info({:process_hub, :send_handover_state, receiver, child_id, opts}, state) do
-    if is_pid(receiver) do
-      Process.send(receiver, {:process_hub, :handover, child_id, state}, [])
-    end
-
-    if is_pid(opts[:retention_receiver]) do
-      Process.send(opts[:retention_receiver], {:process_hub, :retention_handled, child_id}, [])
-    end
-
-    {:noreply, state}
-  end
-
-  def handle_info({:process_hub, :handover, _child_id, handover_state}, _state) do
-    {:noreply, handover_state}
-  end
-  ```
-
   > #### Use HotSwap macro to provide the handover callbacks automatically.  {: .info}
-  > It's convenient to use the `HotSwap` macro to provide the handover callbacks automatically.
+  > If the `:handover` option is set to `true`, the process must implement the necessary callbacks.
+  > This can be done by using the `ProcessHub.Strategy.Migration.HotSwap` macro.
   >
   > ```elixir
   > use ProcessHub.Strategy.Migration.HotSwap
+  > ```
+  >
+  > Additionally, the user can override the `alter_handover_state/1` function to modify the state
+  > before it is set as the new state for the child process. The function must return the modified state.
+  > ```elixir
+  > defmodule MyProcess do
+  >   use ProcessHub.Strategy.Migration.HotSwap
+  >
+  >   def alter_handover_state(state) do
+  >     # Modify the state here
+  >     state
+  >   end
+  > end
   > ```
   """
 
@@ -433,8 +422,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         {:noreply, alter_handover_state(handover_state)}
       end
 
-      # TODO: Make sure we're inserting this function only if it does not already exist.
-      def alter_handover_state(state), do: state
+      if !Module.defines?(__MODULE__, {:alter_handover_state, 1}) do
+        def alter_handover_state(state), do: state
+      end
     end
   end
 end
