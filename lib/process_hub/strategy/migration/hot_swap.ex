@@ -396,10 +396,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   defmacro __using__(_) do
     quote do
+      @behaviour ProcessHub.Strategy.Migration.HotSwapBehaviour
+
       @impl true
       def handle_info({:process_hub, :send_handover_state, receiver, cid, opts}, state) do
         if is_pid(receiver) do
-          Process.send(receiver, {:process_hub, :handover, cid, {state, opts}}, [])
+          prepared_state = prepare_handover_state(state)
+          Process.send(receiver, {:process_hub, :handover, cid, {prepared_state, opts}}, [])
         end
 
         if is_pid(opts[:retention_receiver]) do
@@ -410,7 +413,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
 
       @impl true
-      def handle_info({:process_hub, :handover, cid, {handover_state, opts}}, _state) do
+      def handle_info({:process_hub, :handover, cid, {handover_state, opts}}, state) do
         case Keyword.get(opts, :confirm_handover, false) do
           true ->
             Process.send(opts[:retention_receiver], {:process_hub, :handover_confirmed, cid}, [])
@@ -419,12 +422,27 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             nil
         end
 
-        {:noreply, alter_handover_state(handover_state)}
+        {:noreply, alter_handover_state(state, handover_state)}
       end
 
-      if !Module.defines?(__MODULE__, {:alter_handover_state, 1}) do
-        def alter_handover_state(state), do: state
-      end
+      @impl true
+      def prepare_handover_state(state), do: state
+
+      @impl true
+      def alter_handover_state(_current_state, handover_state), do: handover_state
+
+      defoverridable [prepare_handover_state: 1, alter_handover_state: 2]
     end
   end
+end
+
+defmodule ProcessHub.Strategy.Migration.HotSwapBehaviour do
+  @moduledoc """
+  This module defines the behaviour for the hot swap migration strategy.
+  It provides the necessary callbacks that must be implemented by the processes
+  that use this strategy.
+  """
+
+  @callback prepare_handover_state(state :: term()) :: term()
+  @callback alter_handover_state(current_state :: term(), handover_state :: term()) :: term()
 end
