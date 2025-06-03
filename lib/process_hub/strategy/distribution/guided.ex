@@ -50,7 +50,8 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
         id: :dg_pre_start_handler,
         m: ProcessHub.Strategy.Distribution.Guided,
         f: :handle_children_start,
-        a: [hub_id, :_]
+        a: [hub_id, :_],
+        p: 100
       }
 
       HookManager.register_handler(hub_id, Hook.pre_children_start(), handler)

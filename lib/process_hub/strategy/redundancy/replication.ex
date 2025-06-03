@@ -76,14 +76,16 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         id: :rr_post_start,
         m: Replication,
         f: :handle_post_start,
-        a: [strategy, hub_id, :_]
+        a: [strategy, hub_id, :_],
+        p: 100
       })
 
       HookManager.register_handler(hub_id, Hook.pre_children_redistribution(), %HookManager{
         id: :rr_post_update,
         m: Replication,
         f: :handle_post_update,
-        a: [strategy, hub_id, :_]
+        a: [strategy, hub_id, :_],
+        p: 100
       })
     end
 

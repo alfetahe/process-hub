@@ -24,6 +24,7 @@ TODO:
 
 ### Changed
 - Calling `ProcessHub.Service.Synchronizer.exec_interval_sync/4` has been made synchronous to avoid possible race conditions.
+- Hooks registered by the `ProcessHub` have default priority of `100`.
 
 ### Soft Deprecations
 - `ProcessHub.process_registry/1` will be deprecated in favour of `ProcessHub.registry_dump/1` due to not returning associated metadata with the processes.

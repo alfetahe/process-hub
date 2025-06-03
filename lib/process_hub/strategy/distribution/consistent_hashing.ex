@@ -56,14 +56,16 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
         id: :ch_join,
         m: ProcessHub.Strategy.Distribution.ConsistentHashing,
         f: :handle_node_join,
-        a: [hub_id, :_]
+        a: [hub_id, :_],
+        p: 100
       }
 
       leave_handler = %HookManager{
         id: :ch_leave,
         m: ProcessHub.Strategy.Distribution.ConsistentHashing,
         f: :handle_node_leave,
-        a: [hub_id, :_]
+        a: [hub_id, :_],
+        p: 100
       }
 
       shutdown_handler = %HookManager{

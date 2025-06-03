@@ -111,14 +111,16 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         id: :mhs_shutdown,
         m: ProcessHub.Strategy.Migration.HotSwap,
         f: :handle_shutdown,
-        a: [struct, hub_id]
+        a: [struct, hub_id],
+        p: 100
       }
 
       process_startups_handler = %HookManager{
         id: :mhs_process_startups,
         m: ProcessHub.Strategy.Migration.HotSwap,
         f: :handle_process_startups,
-        a: [struct, hub_id, :_]
+        a: [struct, hub_id, :_],
+        p: 100
       }
 
       HookManager.register_handler(hub_id, Hook.process_startups(), process_startups_handler)
