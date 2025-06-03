@@ -123,8 +123,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         p: 100
       }
 
-      HookManager.register_handler(hub_id, Hook.process_startups(), process_startups_handler)
       HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
+      HookManager.register_handler(hub_id, Hook.process_startups(), process_startups_handler)
     end
 
     @impl true
@@ -223,6 +223,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       case strategy.handover do
         true ->
           pid = Map.get(local_pids, child_id)
+          confirmation_receiver = if strategy.confirm_handover, do: handover_receiver, else: nil
 
           if is_pid(pid) do
             send(pid, {
@@ -232,6 +233,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
               child_id,
               [
                 retention_receiver: self(),
+                confirmation_receiver: confirmation_receiver,
                 confirm_handover: strategy.confirm_handover,
                 hub_id: hub_id
               ]
@@ -418,7 +420,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       def handle_info({:process_hub, :handover, cid, {handover_state, opts}}, state) do
         case Keyword.get(opts, :confirm_handover, false) do
           true ->
-            Process.send(opts[:retention_receiver], {:process_hub, :handover_confirmed, cid}, [])
+            Process.send(opts[:confirmation_receiver], {:process_hub, :handover_confirmed, cid}, [])
 
           false ->
             nil
