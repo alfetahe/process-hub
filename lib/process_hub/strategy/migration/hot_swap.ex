@@ -420,7 +420,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       def handle_info({:process_hub, :handover, cid, {handover_state, opts}}, state) do
         case Keyword.get(opts, :confirm_handover, false) do
           true ->
-            Process.send(opts[:confirmation_receiver], {:process_hub, :handover_confirmed, cid}, [])
+            Process.send(
+              opts[:confirmation_receiver],
+              {:process_hub, :handover_confirmed, cid},
+              []
+            )
 
           false ->
             nil
@@ -435,7 +439,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       @impl true
       def alter_handover_state(_current_state, handover_state), do: handover_state
 
-      defoverridable [prepare_handover_state: 1, alter_handover_state: 2]
+      defoverridable prepare_handover_state: 1, alter_handover_state: 2
     end
   end
 end

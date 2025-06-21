@@ -6,16 +6,17 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
   start-up initialization. The child mappings are used to determine the nodes and
   processes mapping.
 
-  When processes are started using Guided distribution strategy, they will be
-  bound to the nodes specified in the child mappings. If the node goes down, the
-  processes won't be migrated to other nodes. They will stay on the same node
-  until the node is restarted.
+  > #### Bounded processes {: .info}
+  >
+  > Guided distribution strategy does not support process migration.
+  > If a node goes down, the processes will not be migrated to other nodes.
+  > They are bound to the nodes specified in the child mappings.
 
   Guided distribution strategy is useful when you want to have more control over
   the distribution of processes. For example, you can use it to ensure that
   processes are started on specific nodes.
 
-  > #### Required mappings {: .warning}
+  > #### Required mappings {: .info}
   >
   > When using Guided distribution strategy, you **must** provide the child mappings
   > during the initialization. If the child mappings are not provided, the

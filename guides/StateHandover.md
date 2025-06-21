@@ -53,6 +53,7 @@ end
 Pay attention to the `retention` and `handover` options. The `retention` option is the max time in milliseconds that the old process will be kept alive when migrating. The `handover` option is a boolean that indicates whether the process state should be handed over to another node when the process is going to be stopped.
 
 The HotSwap module also supports a option called `:confirm_handover` which works togather with the `:handover` option. The `:confirm_handover` option is a boolean that indicates whether the migration handler should wait for the confirmation message from the new process about the handover. If this option is set to `true`, the `:children_migrated_hook` hook will be called once the handover is confirmed, making it possible to react to the handover process.
+The `:confirm_handover` option is triggered on node join or leave events but not on node shutdown events.
 
 > #### Retention option {: .info}
 > The `retention` option does not mean that the old process will be kept that long alive.
@@ -63,7 +64,7 @@ The HotSwap module also supports a option called `:confirm_handover` which works
 ### 2. Implement the neccessary callbacks
 In order to handover the state our `MyProcess` have to implement the `ProcessHub.Strategy.Migration.Handover` behaviour or define the necessary callbacks.
 
-This can be achieved by using the `ProcessHub.Strategy.Migration.HotSwap` module that provides the necessary callbacks and the default implementation of the `alter_handover_state/1` callback.
+This can be achieved by using the `ProcessHub.Strategy.Migration.HotSwap` module that provides the necessary callbacks and the default implementation of the `prepare_handover_state/1` and `alter_handover_state/2` callbacks
 
 ```elixir
 defmodule MyProcess do
@@ -72,17 +73,30 @@ defmodule MyProcess do
 end
 ```
 
-Users are free to implement the `alter_handover_state/1` callback in order to modify the state of the process before it is handed over to another node.
+Users are free to implement the `alter_handover_state/2` callback in order to modify the state of the process before it is handed over to another node.
 
 ```elixir
 defmodule MyProcess do
   use GenServer
   use ProcessHub.Strategy.Migration.HotSwap # Provides the necessary callbacks
 
-  def alter_handover_state(old_state) do
+  # This is called on the process that is going to pass the state to another
+  # newly spawned process. The returned value of this function will be passed to the
+  # `alter_handover_state/2` function on the process that is going to accept the new state.
+  @impl true
+  def prepare_handover_state(state) do
+    state
+  end
+
+  # This is called on the process that is going to accept the new handover state.
+  # The process must return the new state that will be used by the process.
+  @impl true
+  def alter_handover_state(current_state, handover_state) do
+    new_value = Map.get(handover_state, :some_key)
+
     # Do something with the state before returning it
-    new_state = Map.put(old_state, :new_key, "new_value")
-    
+    new_state = Map.put(current_state, :some_key, new_value)
+
     # Do something else..
 
     # Return the new state
