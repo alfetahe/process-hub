@@ -1,33 +1,38 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.3.3-alpha - YYYY-MM-DD
-TODO: 
+## v0.3.3-alpha - 2025-06-21
+This release focuses on improving process migrations and the state handover mechanism.
+Users who previously implemented custom callbacks for the `HotSwap` migration strategy must update their code to use the new macro-based approach.
+
+This version also includes bug fixes, soft deprecations, documentation improvements, and new features.
+Notably, it introduces the ability to start child processes with attached metadata that is synchronized across nodes.
+Users can now query the process registry by tag and dump the entire process registry.
 
 ### Fixed
-- Using the `HotSwap` migration strategy with graceful shutdown caused migration messages to be sent to a `nil` node when no other nodes were available. This is now fixed; no migration messages are sent if no other nodes are present.
-- The HotSwap shutdown migration could cause a timeout error on the shutting down node if the target node for takeover became unavailable. This has been resolved by sending an asynchronous message (`GenServer.cast/2`) instead of a synchronous one, avoiding process spawning on the receiving node and ensuring it receives data before starting the new children.
-- Hooks cheat sheet guide was pointing to wrong hook keys on some cases.
+- Using the `HotSwap` migration strategy with graceful shutdown caused migration messages to be sent to a `nil` node when no other nodes were available. This has been fixed; no migration messages are sent if no other nodes are present.
+- The `HotSwap` shutdown migration could cause a timeout error on the shutting-down node if the target node for takeover became unavailable. This has been resolved by sending an asynchronous message (`GenServer.cast/2`) instead of a synchronous one, avoiding process spawning on the receiving node and ensuring it receives data before starting the new children.
+- The hooks cheat sheet guide was pointing to incorrect hook keys in some cases.
 
 ### Breaking changes
-- If you are using `ProcessHub.Strategy.Migration.HotSwap` with state handover and have implemented your own custom callbacks instead of using the provided macro, you will need add `use ProcessHub.Strategy.Migration.HotSwap` to your module and override the `alter_handover_state/1` function to handle the alter the state before it is set on the new process. Also remove the existing implementations as of now they are not needed anymore and provided by the macro.
+- If you are using `ProcessHub.Strategy.Migration.HotSwap` with state handover and have implemented your own custom callbacks instead of using the provided macro, you must add `use ProcessHub.Strategy.Migration.HotSwap` to your module and override the `prepare_handover_state/1` and `alter_handover_state/2` functions to modify the state before it is set on the new process. Remove the existing implementations as they are no longer needed and are now provided by the macro.
 
 ### Added
 - Ability to start child processes with attached metadata.
-- Child processes can now be started with additional metadata that is stored in the process registry and synced across nodes.
+- Child processes can now be started with additional metadata that is stored in the process registry and synchronized across nodes.
 - `ProcessHub.child_lookup/3` now accepts an `opts` parameter to allow returning metadata.
 - `ProcessHub.registry_dump/1` dumps the entire process registry. This will eventually supersede `ProcessHub.process_registry/1`.
 - `ProcessHub.tag_query/2` allows querying the process registry by tag.
 - `ProcessRegistry.update/3` enables advanced users to manually update the process registry.
 - Alter hooks to modify data before processing. Currently, only one alter hook is available: `child_data_alter_hook`, which is invoked right before the supervisor starts the child process. This allows altering the child spec, metadata, or node list on the node where the process will be started.
-- New option `:confirm_handover` for `ProcessHub.Strategy.Migration.HotSwap`. Ability to confirm state handovers by waiting for synchronization messages from the target node. This is useful for ensuring that the state has been properly handed over before proceeding with any further operations. Specially useful when running tests.
+- New option `:confirm_handover` for `ProcessHub.Strategy.Migration.HotSwap`. This option allows confirming state handovers by waiting for synchronization messages from the target node. It is particularly useful for ensuring that the state has been properly handed over before proceeding with further operations, especially during tests.
 
 ### Changed
 - Calling `ProcessHub.Service.Synchronizer.exec_interval_sync/4` has been made synchronous to avoid possible race conditions.
-- Hooks registered by the `ProcessHub` have default priority of `100`.
+- Hooks registered by `ProcessHub` now have a default priority of `100`.
 
 ### Soft Deprecations
-- `ProcessHub.process_registry/1` will be deprecated in favour of `ProcessHub.registry_dump/1` due to not returning associated metadata with the processes.
+- `ProcessHub.process_registry/1` will be deprecated in favor of `ProcessHub.registry_dump/1` as it does not return associated metadata with the processes.
 
 ## v0.3.2-alpha - 2025-04-16
 Includes new feature and a breaking change. Minor improvements on documentations and other fixes.
