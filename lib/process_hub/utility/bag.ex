@@ -1,6 +1,6 @@
 defmodule ProcessHub.Utility.Bag do
   @moduledoc """
-  Utility functions.
+  Utility functions for testing.
   """
 
   alias ProcessHub.Service.HookManager

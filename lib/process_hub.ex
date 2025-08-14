@@ -54,13 +54,16 @@ defmodule ProcessHub do
   - `:metadata` - is optional and is used to define the metadata that will be stored in the process registry
   when the child is started. The metadata can be used to store any information that is needed to identify
   the child process.
+  - `:disable_logging` - is optional and is used to define whether logging should be disabled for the child process
+  startup or shutdown. Mostly used for testing purposes.
   """
   @type init_opts() :: [
           async_wait: boolean(),
           timeout: non_neg_integer(),
           check_existing: boolean(),
           on_failure: :continue | :rollback,
-          metadata: child_metadata()
+          metadata: child_metadata(),
+          disable_logging: boolean()
         ]
 
   @typedoc """
