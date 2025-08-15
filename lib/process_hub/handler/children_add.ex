@@ -24,7 +24,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             cid: ProcessHub.child_id(),
             pid: pid(),
             child_spec: ProcessHub.child_spec(),
-            result: {:ok, pid()} | {:error, term()} | term(),
+            result: {:ok, pid()} | {:error, term()},
             child_nodes: [{node(), pid()}],
             nodes: [node()],
             has_errors: boolean(),

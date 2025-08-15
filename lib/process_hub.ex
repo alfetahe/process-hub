@@ -8,6 +8,13 @@ defmodule ProcessHub do
   and synchronization.
   """
 
+  alias ProcessHub.Service.Distributor
+  alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.State
+  alias ProcessHub.Service.Cluster
+  alias ProcessHub.Utility.Name
+  alias ProcessHub.AsyncPromise
+
   @typedoc """
   The `hub_id` defines the name of the hub. It is used to identify the hub.
   """
@@ -56,6 +63,9 @@ defmodule ProcessHub do
   the child process.
   - `:disable_logging` - is optional and is used to define whether logging should be disabled for the child process
   startup or shutdown. Mostly used for testing purposes.
+    - `:await_timeout` is optional and is used to define the maximum lifetime for the spawned collector process.
+  After this time, the collector process will be terminated and trying to collect the results using `ProcessHub.await/1` will fail.
+  The await_timeout option should be used with `async_wait: true`. The default is `60000` (60 seconds).
   """
   @type init_opts() :: [
           async_wait: boolean(),
@@ -63,7 +73,8 @@ defmodule ProcessHub do
           check_existing: boolean(),
           on_failure: :continue | :rollback,
           metadata: child_metadata(),
-          disable_logging: boolean()
+          disable_logging: boolean(),
+          await_timeout: non_neg_integer()
         ]
 
   @typedoc """
@@ -71,12 +82,16 @@ defmodule ProcessHub do
 
   - `:async_wait` - is optional and is used to define whether the function should return another function that
   can be used to wait for the children to stop. The default is `false`.
-  - `:timeout` is optional and is used to define the timeout for the function. The timeout option
-  should be used with `async_wait: true`. The default is `5000` (5 seconds).
+  - `:timeout` is optional and is used to define the maximum time for the function to complete.
+  The timeout option should be used with `async_wait: true`. The default is `5000` (5 seconds).
+  - `:await_timeout` is optional and is used to define the maximum lifetime for the spawned collector process.
+  After this time, the collector process will be terminated and trying to collect the results using `ProcessHub.await/1` will fail.
+  The await_timeout option should be used with `async_wait: true`. The default is `60000` (60 seconds).
   """
   @type stop_opts() :: [
           async_wait: boolean(),
-          timeout: non_neg_integer()
+          timeout: non_neg_integer(),
+          await_timeout: non_neg_integer()
         ]
 
   @typedoc """
@@ -186,12 +201,6 @@ defmodule ProcessHub do
     dsup_shutdown_timeout: 60000
   ]
 
-  alias ProcessHub.Service.Distributor
-  alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.State
-  alias ProcessHub.Service.Cluster
-  alias ProcessHub.Utility.Name
-
   # 10 seconds
   @default_init_timeout 10000
 
@@ -222,9 +231,8 @@ defmodule ProcessHub do
   """
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
           {:ok, :start_initiated}
+          | {:ok, AsyncPromise.t()}
           | {:error, :no_children | {:already_started, [atom | binary, ...]}}
-          | (-> {:ok, start_result()})
-          | (-> {:error, start_failure()} | {:error, start_failure(), start_result(), :rollback})
   def start_child(hub_id, child_spec, opts \\ []) do
     start_children(hub_id, [child_spec], Keyword.put(opts, :return_first, true))
   end
@@ -243,13 +251,11 @@ defmodule ProcessHub do
   """
   @spec start_children(hub_id(), [child_spec()], init_opts()) ::
           {:ok, :start_initiated}
+          | {:ok, AsyncPromise.t()}
           | {:error,
              :no_children
              | {:error, :children_not_list}
              | {:already_started, [atom | binary, ...]}}
-          | (-> {:ok, [start_result()]})
-          | (-> {:error, [start_failure()], [start_result()]}
-                | {:error, [start_failure()], [start_result()], :rollback})
   def start_children(hub_id, child_specs, opts \\ []) when is_list(child_specs) do
     Distributor.init_children(hub_id, child_specs, default_init_opts(opts))
   end
@@ -272,9 +278,7 @@ defmodule ProcessHub do
       {:ok, {:my_child, [:mynode]}}
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
-          {:ok, :stop_initiated}
-          | (-> {:ok, stop_result()})
-          | (-> {:error, stop_failure()})
+          {:ok, :stop_initiated} | {:ok, AsyncPromise.t()}
   def stop_child(hub_id, child_id, opts \\ []) do
     stop_children(hub_id, [child_id], Keyword.put(opts, :return_first, true))
   end
@@ -292,9 +296,8 @@ defmodule ProcessHub do
   """
   @spec stop_children(hub_id(), [child_id()], stop_opts()) ::
           {:ok, :stop_initiated}
-          | {:error, list}
-          | (-> {:ok, [stop_result()]})
-          | (-> {:error, [stop_failure()], [stop_result()]})
+          | {:ok, AsyncPromise.t()}
+          | {:error, list()}
   def stop_children(hub_id, child_ids, opts \\ []) do
     Distributor.stop_children(hub_id, child_ids, default_init_opts(opts))
   end
@@ -359,17 +362,21 @@ defmodule ProcessHub do
   period, the function will return `{:error, term()}`.
 
   ## Example
-      iex> ref = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
-      iex> ProcessHub.await(ref)
+      iex> {:ok, promise} = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
+      iex> ProcessHub.await(promise)
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
-  @spec await(function() | {:error, term()}) ::
+  @spec await(AsyncPromise.t() | {:ok, AsyncPromise.t()} | {:error, term()} | term()) ::
           {:ok, start_result() | [start_result() | stop_result()]}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]}}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]},
              :rollback}
-  def await(func) when is_function(func) do
-    func.()
+  def await({:ok, promise}) when is_struct(promise) do
+    AsyncPromise.await(promise)
+  end
+
+  def await(promise) when is_struct(promise) do
+    AsyncPromise.await(promise)
   end
 
   def await({:error, msg}), do: {:error, msg}
@@ -585,5 +592,6 @@ defmodule ProcessHub do
     |> Keyword.put_new(:return_first, false)
     |> Keyword.put_new(:on_failure, :continue)
     |> Keyword.put_new(:metadata, %{})
+    |> Keyword.put_new(:await_timeout, 60000)
   end
 end

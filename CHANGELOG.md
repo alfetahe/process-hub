@@ -1,6 +1,13 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.3.4-alpha - YYYY-mm-dd
+TODO:
+
+### Fixed
+- Using the `async_wait` option on process startup or shutdown now returns a promise that can be awaited instead of a function. This avoids the possibility of polluting the caller's mailbox if the caller does not await the result. This change also avoids the possibility of the caller receiving from their mailbox before executing the await function.
+The new `:await_timeout` option has been added to specify a timeout for the spawned collector process to wait before automatically terminating itself.
+
 ## v0.3.3-alpha - 2025-06-21
 This release focuses on improving process migrations and the state handover mechanism.
 Users who previously implemented custom callbacks for the `HotSwap` migration strategy must update their code to use the new macro-based approach.

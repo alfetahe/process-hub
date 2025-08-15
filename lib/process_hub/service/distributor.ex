@@ -3,6 +3,7 @@ defmodule ProcessHub.Service.Distributor do
   The distributor service provides API functions for distributing child processes.
   """
 
+  alias ProcessHub.AsyncPromise
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
@@ -156,7 +157,8 @@ defmodule ProcessHub.Service.Distributor do
       :continue ->
         case Keyword.get(opts, :async_wait, false) do
           true ->
-            async_wait_startup(hub_id, startup_children, self(), opts)
+            promise = async_wait_startup(hub_id, startup_children, opts)
+            {:ok, promise}
 
           false ->
             Dispatcher.children_start(hub_id, startup_children, opts)
@@ -175,14 +177,14 @@ defmodule ProcessHub.Service.Distributor do
         {:ok, :stop_initiated}
 
       true ->
-        {receiver_pid, _, await_func} = spawn_collector(hub_id, :stop, self(), opts)
+        {receiver_pid, _, await_promise} = spawn_collector(hub_id, :stop, opts)
         opts = Keyword.put(opts, :reply_to, [receiver_pid])
         Dispatcher.children_stop(hub_id, stop_children, opts)
-        await_func
+        {:ok, await_promise}
     end
   end
 
-  defp async_wait_startup(hub_id, startup_children, caller_pid, opts) do
+  defp async_wait_startup(hub_id, startup_children, opts) do
     {collect_from, required_cids} =
       Enum.reduce(startup_children, {[], []}, fn {node, children}, {cf, rc} ->
         {[node | cf], rc ++ Enum.map(children, &Map.get(&1, :child_id))}
@@ -193,7 +195,7 @@ defmodule ProcessHub.Service.Distributor do
       |> Keyword.put(:collect_from, Enum.uniq(collect_from))
       |> Keyword.put(:required_cids, Enum.uniq(required_cids))
 
-    {receiver_pid, _, await_func} = spawn_collector(hub_id, :start, caller_pid, opts)
+    {receiver_pid, _, await_promise} = spawn_collector(hub_id, :start, opts)
 
     Dispatcher.children_start(
       hub_id,
@@ -201,35 +203,47 @@ defmodule ProcessHub.Service.Distributor do
       Keyword.put(opts, :reply_to, [receiver_pid])
     )
 
-    await_func
+    await_promise
   end
 
   defp spawn_failure_handler(hub_id, startup_children, opts) do
-    caller_pid = self()
     ref = make_ref()
 
-    spawn(fn ->
-      await_func = async_wait_startup(hub_id, startup_children, self(), opts)
-      results = handle_failures(hub_id, await_func.())
+    collector_pid =
+      spawn(fn ->
+        Process.send_after(
+          self(),
+          {:process_hub, :auto_shutdown},
+          Keyword.get(opts, :await_timeout, 60_000)
+        )
 
-      case Keyword.get(opts, :async_wait, false) do
-        true ->
-          send(caller_pid, {:process_hub_failure_handler, ref, results})
+        promise = async_wait_startup(hub_id, startup_children, opts)
+        results = handle_failures(hub_id, AsyncPromise.await(promise))
 
-        false ->
-          nil
-      end
-    end)
+        case Keyword.get(opts, :async_wait, false) do
+          true ->
+            receive do
+              {:process_hub, :auto_shutdown} ->
+                nil
+
+              {:process_hub, :collect_results, from, ^ref} ->
+                send(from, {:process_hub, :async_results, ref, results})
+            end
+
+          false ->
+            nil
+        end
+      end)
+
+    await_promise = %ProcessHub.AsyncPromise{
+      promise_resolver: collector_pid,
+      timeout: Keyword.get(opts, :timeout),
+      ref: ref
+    }
 
     case Keyword.get(opts, :async_wait, false) do
       true ->
-        receive do
-          {:process_hub_failure_handler, ^ref, results} ->
-            fn -> results end
-        after
-          Keyword.get(opts, :timeout, 5000) + 5000 ->
-            {:error, :timeout}
-        end
+        {:ok, await_promise}
 
       false ->
         {:ok, :start_initiated}
@@ -251,32 +265,39 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  defp spawn_collector(hub_id, start_or_stop, caller_pid, opts) do
+  defp spawn_collector(hub_id, start_or_stop, opts) do
     ref = make_ref()
-    timeout = Keyword.get(opts, :timeout, 5000)
 
     pid =
       spawn(fn ->
+        Process.send_after(
+          self(),
+          {:process_hub, :auto_shutdown},
+          Keyword.get(opts, :await_timeout, 60_000)
+        )
+
         results =
           case start_or_stop do
             :start -> Mailbox.collect_start_results(hub_id, opts)
             :stop -> Mailbox.collect_stop_results(hub_id, opts)
           end
 
-        send(caller_pid, {:process_hub, :async_results, ref, results})
+        receive do
+          {:process_hub, :auto_shutdown} ->
+            nil
+
+          {:process_hub, :collect_results, from, ^ref} ->
+            send(from, {:process_hub, :async_results, ref, results})
+        end
       end)
 
-    func = fn ->
-      receive do
-        {:process_hub, :async_results, ^ref, results} ->
-          results
-      after
-        timeout + 5000 ->
-          {:error, :timeout}
-      end
-    end
+    await_promise = %ProcessHub.AsyncPromise{
+      promise_resolver: pid,
+      timeout: Keyword.get(opts, :timeout),
+      ref: ref
+    }
 
-    {pid, ref, func}
+    {pid, ref, await_promise}
   end
 
   defp init_distribution(hub_id, child_specs, opts, %{distribution: strategy}) do

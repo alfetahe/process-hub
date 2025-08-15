@@ -18,9 +18,9 @@ defmodule ProcessHubTest do
     {:ok, _} = ProcessHub.start_children(hub_id, [cs3], async_wait: true) |> ProcessHub.await()
     assert ProcessHub.start_children(hub_id, [cs3]) === {:error, {:already_started, [:child3]}}
 
-    receiver = ProcessHub.start_children(hub_id, [cs2], async_wait: true, timeout: 1000)
-    assert is_function(receiver)
-    {:ok, children} = ProcessHub.await(receiver)
+    {:ok, promise} = ProcessHub.start_children(hub_id, [cs2], async_wait: true, timeout: 1000)
+    assert is_struct(promise)
+    {:ok, children} = ProcessHub.await(promise)
     assert is_list(children)
     assert length(children) === 1
     assert List.first(children) |> elem(0) === :child2
@@ -29,8 +29,7 @@ defmodule ProcessHubTest do
     assert is_pid(pid)
 
     assert ProcessHub.start_children(hub_id, [cs4], async_wait: true, timeout: 0)
-           |> ProcessHub.await() ===
-             {:error, {[{:undefined, node(), :node_receive_timeout}], []}}
+           |> ProcessHub.await() === {:error, :timeout}
 
     {status, results} =
       ProcessHub.start_children(hub_id, [cs5, cs5], async_wait: true, timeout: 1000)
@@ -108,9 +107,9 @@ defmodule ProcessHubTest do
     assert ProcessHub.start_child(hub_id, cs1, async_wait: false) ===
              {:ok, :start_initiated}
 
-    receiver = ProcessHub.start_child(hub_id, cs2, async_wait: true, timeout: 1000)
-    assert is_function(receiver)
-    {:ok, child_response} = ProcessHub.await(receiver)
+    {:ok, promise} = ProcessHub.start_child(hub_id, cs2, async_wait: true, timeout: 1000)
+    assert is_struct(promise)
+    {:ok, child_response} = ProcessHub.await(promise)
     assert is_tuple(child_response)
     assert elem(child_response, 0) === "child2"
     [{node, pid}] = elem(child_response, 1)
@@ -125,7 +124,7 @@ defmodule ProcessHubTest do
       |> ProcessHub.await()
 
     assert ProcessHub.start_child(hub_id, cs4, async_wait: true, timeout: 0)
-           |> ProcessHub.await() === {:error, {{:undefined, node(), :node_receive_timeout}, []}}
+           |> ProcessHub.await() === {:error, :timeout}
 
     ProcessHub.Service.Dispatcher.reply_respondents(
       [self()],
