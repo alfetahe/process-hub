@@ -40,21 +40,10 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.State
+  alias ProcessHub.Hub
 
   use Event
   use GenServer
-
-  @type t() :: %__MODULE__{
-          hub_id: atom(),
-          managers: map(),
-          storage: map()
-        }
-
-  defstruct [
-    :hub_id,
-    :managers,
-    :storage
-  ]
 
   def start_link({_, _, managers, _} = arg) do
     GenServer.start_link(__MODULE__, arg, name: managers.coordinator)
@@ -66,7 +55,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   @spec init({ProcessHub.hub_id(), ProcessHub.t(), map()}) ::
-          {:ok, ProcessHub.Coordinator.t(), {:continue, :additional_setup}}
+          {:ok, Hub.t(), {:continue, :additional_setup}}
   def init({hub_id, settings, managers, storage}) do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
@@ -77,7 +66,7 @@ defmodule ProcessHub.Coordinator do
     register_handlers(managers)
     register_handlers(hub_id, settings.hooks)
 
-    state = %__MODULE__{
+    state = %Hub{
       hub_id: hub_id,
       managers: managers,
       storage: storage
