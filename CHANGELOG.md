@@ -8,6 +8,13 @@ TODO:
 - Using the `async_wait` option on process startup or shutdown now returns a promise that can be awaited instead of a function. This avoids the possibility of polluting the caller's mailbox if the caller does not await the result. This change also avoids the possibility of the caller receiving from their mailbox before executing the await function.
 The new `:await_timeout` option has been added to specify a timeout for the spawned collector process to wait before automatically terminating itself.
 
+### Changed
+- All public API functions defined in the `ProcessHub` module now call the coordinator process instead of calling the services directly.
+This avoids the potential issue of generating new atoms when calling those functions with a `hub_id` that is not known to the system.
+
+### Soft deprecations
+- `ProcessHub.which_children/2` is soft deprecated. Use `ProcessHub.process_list/2` instead.
+
 ## v0.3.3-alpha - 2025-06-21
 This release focuses on improving process migrations and the state handover mechanism.
 Users who previously implemented custom callbacks for the `HotSwap` migration strategy must update their code to use the new macro-based approach.
