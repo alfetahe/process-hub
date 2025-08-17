@@ -11,7 +11,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -33,6 +32,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             partition_strat: PartitionToleranceStrategy.t(),
             dist_strat: DistributionStrategy.t(),
             node: node(),
+            local_storage: reference(),
             repl_fact: pos_integer(),
             local_children: list(),
             keep: list(),
@@ -43,7 +43,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     @enforce_keys [
       :hub_id,
-      :node
+      :node,
+      :local_storage
     ]
     defstruct @enforce_keys ++
                 [
@@ -93,16 +94,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp attach_data(arg) do
-      local_storage = Name.local_storage(arg.hub_id)
-
       %__MODULE__{
         arg
-        | sync_strat: Storage.get(local_storage, StorageKey.strsyn()),
-          redun_strat: Storage.get(local_storage, StorageKey.strred()),
-          dist_strat: Storage.get(local_storage, StorageKey.strdist()),
-          migr_strat: Storage.get(local_storage, StorageKey.strmigr()),
-          partition_strat: Storage.get(local_storage, StorageKey.strpart()),
-          migr_base_timeout: Storage.get(local_storage, StorageKey.mbt())
+        | sync_strat: Storage.get(arg.local_storage, StorageKey.strsyn()),
+          redun_strat: Storage.get(arg.local_storage, StorageKey.strred()),
+          dist_strat: Storage.get(arg.local_storage, StorageKey.strdist()),
+          migr_strat: Storage.get(arg.local_storage, StorageKey.strmigr()),
+          partition_strat: Storage.get(arg.local_storage, StorageKey.strpart()),
+          migr_base_timeout: Storage.get(arg.local_storage, StorageKey.mbt())
       }
     end
 
@@ -263,25 +262,25 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             redun_strat: RedundancyStrategy.t(),
             dist_strat: DistributionStrategy.t(),
             hub_nodes: [node()],
+            local_storage: reference(),
             rem_node_cids: [ProcessHub.child_id()]
           }
 
     @enforce_keys [
       :hub_id,
       :removed_node,
-      :hub_nodes
+      :hub_nodes,
+      :local_storage
     ]
     defstruct @enforce_keys ++ [:partition_strat, :redun_strat, :dist_strat, :rem_node_cids]
 
     @spec handle(t()) :: any()
     def handle(%__MODULE__{} = arg) do
-      local_storage = Name.local_storage(arg.hub_id)
-
       %__MODULE__{
         arg
-        | partition_strat: Storage.get(local_storage, StorageKey.strpart()),
-          redun_strat: Storage.get(local_storage, StorageKey.strred()),
-          dist_strat: Storage.get(local_storage, StorageKey.strdist())
+        | partition_strat: Storage.get(arg.local_storage, StorageKey.strpart()),
+          redun_strat: Storage.get(arg.local_storage, StorageKey.strred()),
+          dist_strat: Storage.get(arg.local_storage, StorageKey.strdist())
       }
       |> dispatch_down_hook()
       |> distribute_processes()

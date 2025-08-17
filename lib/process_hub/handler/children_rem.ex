@@ -1,8 +1,6 @@
 defmodule ProcessHub.Handler.ChildrenRem do
   @moduledoc false
 
-  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
@@ -21,29 +19,23 @@ defmodule ProcessHub.Handler.ChildrenRem do
                 child_id: ProcessHub.child_id()
               }
             ],
-            dist_sup: atom(),
-            sync_strategy: SynchronizationStrategy.t(),
+            dist_sup: {:via, Registry, {atom(), binary()}},
+            local_storage: reference(),
             stop_opts: keyword()
           }
 
     @enforce_keys [
       :hub_id,
       :children,
-      :stop_opts
+      :stop_opts,
+      :dist_sup,
+      :local_storage
     ]
-    defstruct @enforce_keys ++
-                [
-                  :dist_sup,
-                  :sync_strategy
-                ]
+    defstruct @enforce_keys
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = arg) do
-      arg = %__MODULE__{
-        arg
-        | dist_sup: Name.distributed_supervisor(arg.hub_id),
-          sync_strategy: Storage.get(Name.local_storage(arg.hub_id), StorageKey.strsyn())
-      }
+      sync_strategy = Storage.get(arg.local_storage, StorageKey.strsyn())
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
         true ->
@@ -58,7 +50,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
           Distributor.children_terminate(
             arg.hub_id,
             cids,
-            arg.sync_strategy,
+            sync_strategy,
             arg.stop_opts
           )
 

@@ -165,7 +165,9 @@ defmodule ProcessHub.Coordinator do
         %ChildrenRem.StopHandle{
           hub_id: state.hub_id,
           children: children,
-          stop_opts: stop_opts
+          stop_opts: stop_opts,
+          dist_sup: state.managers.distributed_supervisor,
+          local_storage: state.storage.local
         }
       ]
     )
@@ -257,7 +259,8 @@ defmodule ProcessHub.Coordinator do
       [
         %ClusterUpdate.NodeUp{
           hub_id: state.hub_id,
-          node: node
+          node: node,
+          local_storage: state.storage.local
         }
       ]
     )
@@ -409,7 +412,8 @@ defmodule ProcessHub.Coordinator do
   def handle_info(:sync_processes, state) do
     Synchronizer.trigger_sync(
       state.hub_id,
-      state.managers.task_supervisor
+      state.managers.task_supervisor,
+      state.storage.local
     )
 
     state.storage.local
@@ -466,7 +470,8 @@ defmodule ProcessHub.Coordinator do
           %ClusterUpdate.NodeDown{
             hub_id: state.hub_id,
             removed_node: down_node,
-            hub_nodes: hub_nodes
+            hub_nodes: hub_nodes,
+            local_storage: state.storage.local
           }
         ]
       )
