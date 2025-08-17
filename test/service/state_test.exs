@@ -44,17 +44,17 @@ defmodule Test.Service.StateTest do
     assert State.toggle_quorum_failure(hub_id) === :ok
     assert State.toggle_quorum_failure(hub_id) === {:error, :already_partitioned}
     assert State.is_locked?(hub_id) === true
-    assert Process.whereis(Name.distributed_supervisor(hub_id)) === nil
+    assert Registry.lookup(Name.system_registry(hub_id), "dist_sup") === []
   end
 
   test "toggle quorum success", %{hub_id: hub_id} = _context do
     assert State.is_locked?(hub_id) === false
     assert State.toggle_quorum_failure(hub_id) === :ok
     assert State.is_locked?(hub_id) === true
-    assert Process.whereis(Name.distributed_supervisor(hub_id)) === nil
+    assert Registry.lookup(Name.system_registry(hub_id), "dist_sup") === []
     assert State.toggle_quorum_success(hub_id) === :ok
     assert State.toggle_quorum_success(hub_id) === {:error, :not_partitioned}
     assert State.is_locked?(hub_id) === false
-    assert is_pid(Process.whereis(Name.distributed_supervisor(hub_id)))
+    assert Registry.lookup(Name.system_registry(hub_id), "dist_sup") |> List.first() |> elem(0)
   end
 end

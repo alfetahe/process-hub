@@ -41,6 +41,7 @@ defmodule ProcessHub.Initializer do
 
     children =
       [
+        {Registry, keys: :unique, name: Name.system_registry(hub_id)},
         {Blockade, %{name: managers.event_queue, priority_sync: false}},
         dist_sup(hub, managers),
         {Task.Supervisor, name: managers.task_supervisor},

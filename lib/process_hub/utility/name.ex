@@ -4,22 +4,27 @@ defmodule ProcessHub.Utility.Name do
   the `hub_id`.
   """
 
-  @doc "Returns the process registry table identifier."
-  @spec registry(ProcessHub.hub_id()) :: atom()
-  def registry(hub_id) do
-    :"hub.#{hub_id}.process_registry"
-  end
-
   @doc "Returns the localstorage identifier."
   @spec local_storage(ProcessHub.hub_id()) :: atom()
   def local_storage(hub_id) do
     :"hub.#{hub_id}.local_storage"
   end
 
+  @doc "The name of the hook registry process."
+  @spec hook_registry(ProcessHub.hub_id()) :: atom()
+  def hook_registry(hub_id) do
+    :"hub.#{hub_id}.hook_registry"
+  end
+
+  # TODO: add tests and docs.
+  def system_registry(hub_id) do
+    :"hub.#{hub_id}.system_registry"
+  end
+
   @doc "Returns the worker queue identifier."
   @spec worker_queue(ProcessHub.hub_id()) :: atom()
   def worker_queue(hub_id) do
-    :"hub.#{hub_id}.worker_queue"
+    {:via, Registry, {system_registry(hub_id), "worker_queue"}}
   end
 
   @doc "The name of the main initializer process."
@@ -34,33 +39,21 @@ defmodule ProcessHub.Utility.Name do
     :"hub.#{hub_id}.event_queue"
   end
 
-  @doc "The name of main coordinator process."
-  @spec coordinator(ProcessHub.hub_id()) :: atom()
-  def coordinator(hub_id) do
-    :"hub.#{hub_id}.coordinator"
-  end
-
+  # TODO: update tests and docs
   @doc "The name distributed supervisor process."
-  @spec distributed_supervisor(ProcessHub.hub_id()) :: atom()
   def distributed_supervisor(hub_id) do
-    :"hub.#{hub_id}.distributed_supervisor"
+    {:via, Registry, {system_registry(hub_id), "dist_sup"}}
   end
 
+  # TODO: update tests and docs
   @doc "The name of the task supervisor process."
-  @spec task_supervisor(ProcessHub.hub_id()) :: atom()
   def task_supervisor(hub_id) do
-    :"hub.#{hub_id}.task_supervisor"
-  end
-
-  @doc "The name of the hook registry process."
-  @spec hook_registry(ProcessHub.hub_id()) :: atom()
-  def hook_registry(hub_id) do
-    :"hub.#{hub_id}.hook_registry"
+    {:via, Registry, {system_registry(hub_id), "task_sup"}}
   end
 
   @doc "The name of the janitor process."
   @spec janitor(ProcessHub.hub_id()) :: atom()
   def janitor(hub_id) do
-    :"hub.#{hub_id}.janitor"
+    {:via, Registry, {system_registry(hub_id), "janitor"}}
   end
 end

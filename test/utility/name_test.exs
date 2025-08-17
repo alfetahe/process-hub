@@ -12,15 +12,18 @@ defmodule Test.Utility.NameTest do
   end
 
   test "distributed supervisor" do
-    assert Name.distributed_supervisor(:test) === :"hub.test.distributed_supervisor"
+    assert Name.distributed_supervisor(:test) ===
+             {:via, Registry, {:"hub.test.system_registry", "dist_sup"}}
   end
 
   test "task supervisor" do
-    assert Name.task_supervisor(:test) === :"hub.test.task_supervisor"
+    assert Name.task_supervisor(:test) ===
+             {:via, Registry, {:"hub.test.system_registry", "task_sup"}}
   end
 
   test "worker queue" do
-    assert Name.worker_queue(:test) === :"hub.test.worker_queue"
+    assert Name.worker_queue(:test) ===
+             {:via, Registry, {:"hub.test.system_registry", "worker_queue"}}
   end
 
   test "hook registry" do
@@ -28,6 +31,6 @@ defmodule Test.Utility.NameTest do
   end
 
   test "janitor" do
-    assert Name.janitor(:test) === :"hub.test.janitor"
+    assert Name.janitor(:test) === {:via, Registry, {:"hub.test.system_registry", "janitor"}}
   end
 end

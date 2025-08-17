@@ -23,7 +23,11 @@ defmodule ProcessHub.Service.State do
   @doc "Returns a boolean indicating whether the hub cluster is partitioned."
   @spec is_partitioned?(atom) :: boolean
   def is_partitioned?(hub_id) do
-    Process.whereis(Name.distributed_supervisor(hub_id)) === nil
+    case Registry.lookup(Name.system_registry(hub_id), "dist_sup") do
+      [] -> true
+      [{pid, _}] -> !Process.alive?(pid)
+      _ -> false
+    end
   end
 
   @doc """

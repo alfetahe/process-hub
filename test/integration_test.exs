@@ -336,7 +336,7 @@ defmodule Test.IntegrationTest do
 
     end_num = peer_to_start - 1
 
-    Enum.reduce(peer_to_start..end_num, new_peers, fn numb, acc ->
+    Enum.reduce(Range.new(peer_to_start, end_num), new_peers, fn numb, acc ->
       removed_peers = Common.stop_peers(acc, 1)
       Bag.receive_multiple(numb, Hook.post_nodes_redistribution())
       Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
