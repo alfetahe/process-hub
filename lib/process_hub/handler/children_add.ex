@@ -15,7 +15,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
-  alias ProcessHub.Utility.Name
 
   use Task
 
@@ -117,7 +116,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
                 metadata: ProcessHub.child_metadata()
               }
             ],
-            dist_sup: atom(),
+            dist_sup: {:via, Registry, {atom(), binary()}},
+            task_sup: {:via, Registry, {atom(), binary()}},
+            local_storage: reference(),
             sync_strategy: SynchronizationStrategy.t(),
             redun_strategy: RedundancyStrategy.t(),
             dist_strategy: DistributionStrategy.t(),
@@ -129,11 +130,13 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @enforce_keys [
       :hub_id,
       :children,
-      :start_opts
+      :start_opts,
+      :dist_sup,
+      :task_sup,
+      :local_storage
     ]
     defstruct @enforce_keys ++
                 [
-                  :dist_sup,
                   :sync_strategy,
                   :redun_strategy,
                   :migr_strategy,
@@ -143,15 +146,12 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = arg) do
-      local_storage = Name.local_storage(arg.hub_id)
-
       arg = %__MODULE__{
         arg
-        | dist_sup: Name.distributed_supervisor(arg.hub_id),
-          sync_strategy: Storage.get(local_storage, StorageKey.strsyn()),
-          redun_strategy: Storage.get(local_storage, StorageKey.strred()),
-          dist_strategy: Storage.get(local_storage, StorageKey.strdist()),
-          migr_strategy: Storage.get(local_storage, StorageKey.strmigr())
+        | sync_strategy: Storage.get(arg.local_storage, StorageKey.strsyn()),
+          redun_strategy: Storage.get(arg.local_storage, StorageKey.strred()),
+          dist_strategy: Storage.get(arg.local_storage, StorageKey.strdist()),
+          migr_strategy: Storage.get(arg.local_storage, StorageKey.strmigr())
       }
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
@@ -197,7 +197,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     defp update_registry(%__MODULE__{hub_id: hub_id, process_data: pd, start_opts: so} = arg) do
       Task.Supervisor.async(
-        Name.task_supervisor(hub_id),
+        arg.task_sup,
         SyncHandle,
         :handle,
         [

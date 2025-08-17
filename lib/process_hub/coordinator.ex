@@ -143,7 +143,10 @@ defmodule ProcessHub.Coordinator do
           %ChildrenAdd.StartHandle{
             hub_id: state.hub_id,
             children: children,
-            start_opts: start_opts
+            start_opts: start_opts,
+            dist_sup: state.managers.distributed_supervisor,
+            task_sup: state.managers.task_supervisor,
+            local_storage: state.storage.local
           }
         ]
       )
@@ -326,7 +329,10 @@ defmodule ProcessHub.Coordinator do
           %ChildrenAdd.StartHandle{
             hub_id: state.hub_id,
             children: children,
-            start_opts: start_opts
+            start_opts: start_opts,
+            dist_sup: state.managers.distributed_supervisor,
+            task_sup: state.managers.task_supervisor,
+            local_storage: state.storage.local
           }
         ]
       )
