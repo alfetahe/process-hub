@@ -15,6 +15,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Hub
 
   use Task
 
@@ -109,16 +110,13 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     Handler for starting child processes.
     """
     @type t :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
             children: [
               %{
                 child_spec: ProcessHub.child_spec(),
                 metadata: ProcessHub.child_metadata()
               }
             ],
-            dist_sup: {:via, Registry, {atom(), binary()}},
-            task_sup: {:via, Registry, {atom(), binary()}},
-            local_storage: reference(),
+            hub: Hub.t(),
             sync_strategy: SynchronizationStrategy.t(),
             redun_strategy: RedundancyStrategy.t(),
             dist_strategy: DistributionStrategy.t(),
@@ -128,12 +126,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           }
 
     @enforce_keys [
-      :hub_id,
       :children,
       :start_opts,
-      :dist_sup,
-      :task_sup,
-      :local_storage
+      :hub
     ]
     defstruct @enforce_keys ++
                 [
@@ -148,13 +143,13 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     def handle(%__MODULE__{} = arg) do
       arg = %__MODULE__{
         arg
-        | sync_strategy: Storage.get(arg.local_storage, StorageKey.strsyn()),
-          redun_strategy: Storage.get(arg.local_storage, StorageKey.strred()),
-          dist_strategy: Storage.get(arg.local_storage, StorageKey.strdist()),
-          migr_strategy: Storage.get(arg.local_storage, StorageKey.strmigr())
+        | sync_strategy: Storage.get(arg.hub.storage.local, StorageKey.strsyn()),
+          redun_strategy: Storage.get(arg.hub.storage.local, StorageKey.strred()),
+          dist_strategy: Storage.get(arg.hub.storage.local, StorageKey.strdist()),
+          migr_strategy: Storage.get(arg.hub.storage.local, StorageKey.strmigr())
       }
 
-      case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
+      case ProcessHub.Service.State.is_partitioned?(arg.hub.hub_id) do
         true ->
           {:error, :partitioned}
 
@@ -171,7 +166,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     end
 
     defp handle_sync_callback(
-           %__MODULE__{hub_id: hub_id, sync_strategy: ss, process_data: pd} = arg
+           %__MODULE__{hub: %{hub_id: hub_id}, sync_strategy: ss, process_data: pd} = arg
          ) do
       SynchronizationStrategy.propagate(
         ss,
@@ -185,7 +180,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp dispatch_process_startups(%__MODULE__{hub_id: hub_id, process_data: pd} = arg) do
+    defp dispatch_process_startups(%__MODULE__{hub: %{hub_id: hub_id}, process_data: pd} = arg) do
       HookManager.dispatch_hook(
         hub_id,
         Hook.process_startups(),
@@ -195,9 +190,11 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp update_registry(%__MODULE__{hub_id: hub_id, process_data: pd, start_opts: so} = arg) do
+    defp update_registry(
+           %__MODULE__{hub: %{hub_id: hub_id}, process_data: pd, start_opts: so} = arg
+         ) do
       Task.Supervisor.async(
-        arg.task_sup,
+        arg.hub.managers.task_supervisor,
         SyncHandle,
         :handle,
         [
@@ -213,7 +210,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp release_lock(%__MODULE__{hub_id: hub_id, start_opts: so}) do
+    defp release_lock(%__MODULE__{hub: %{hub_id: hub_id}, start_opts: so}) do
       # Release the event queue lock only when migrating
       # processes rather than regular startup.
       if Keyword.get(so, :migration_add, false) === true do
@@ -221,7 +218,12 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp start_children(%__MODULE__{hub_id: hub_id, dist_sup: ds, start_opts: so} = arg) do
+    defp start_children(
+           %__MODULE__{
+             hub: %{hub_id: hub_id, managers: %{distributed_supervisor: ds}},
+             start_opts: so
+           } = arg
+         ) do
       # Used only for testing purposes.
       disable_logging = Keyword.get(so, :disable_logging, false)
 
@@ -281,13 +283,13 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           [{cid, rs, pid, n} | acc]
         end)
 
-      HookManager.dispatch_hook(arg.hub_id, Hook.post_children_start(), post_data)
+      HookManager.dispatch_hook(arg.hub.hub_id, Hook.post_children_start(), post_data)
 
       arg
     end
 
     defp validate_children(%__MODULE__{
-           hub_id: hub_id,
+           hub: %{hub_id: hub_id},
            children: children,
            dist_strategy: dist_strat,
            redun_strategy: redun_strat,

@@ -4,6 +4,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
+  alias ProcessHub.Hub
 
   use Task
 
@@ -13,31 +14,27 @@ defmodule ProcessHub.Handler.ChildrenRem do
     """
 
     @type t :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
             children: [
               %{
                 child_id: ProcessHub.child_id()
               }
             ],
-            dist_sup: {:via, Registry, {atom(), binary()}},
-            local_storage: reference(),
+            hub: Hub.t(),
             stop_opts: keyword()
           }
 
     @enforce_keys [
-      :hub_id,
       :children,
       :stop_opts,
-      :dist_sup,
-      :local_storage
+      :hub
     ]
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = arg) do
-      sync_strategy = Storage.get(arg.local_storage, StorageKey.strsyn())
+      sync_strategy = Storage.get(arg.hub.storage.local, StorageKey.strsyn())
 
-      case ProcessHub.Service.State.is_partitioned?(arg.hub_id) do
+      case ProcessHub.Service.State.is_partitioned?(arg.hub.hub_id) do
         true ->
           {:error, :partitioned}
 
@@ -48,7 +45,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
             end)
 
           Distributor.children_terminate(
-            arg.hub_id,
+            arg.hub.hub_id,
             cids,
             sync_strategy,
             arg.stop_opts

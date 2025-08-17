@@ -6,6 +6,7 @@ defmodule ProcessHub.Handler.Synchronization do
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
+  alias ProcessHub.Hub
 
   use Task
 
@@ -16,24 +17,22 @@ defmodule ProcessHub.Handler.Synchronization do
     alias ProcessHub.Service.Cluster
 
     @type t() :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
-            local_storage: reference()
+            hub: Hub.t()
           }
 
     @enforce_keys [
-      :hub_id,
-      :local_storage
+      :hub
     ]
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = arg) do
-      sync_strat = Storage.get(arg.local_storage, StorageKey.strsyn())
+      sync_strat = Storage.get(arg.hub.storage.local, StorageKey.strsyn())
 
-      unless State.is_locked?(arg.hub_id) do
-        hub_nodes = Cluster.nodes(arg.hub_id, [:include_local])
+      unless State.is_locked?(arg.hub.hub_id) do
+        hub_nodes = Cluster.nodes(arg.hub.hub_id, [:include_local])
 
-        SynchronizationStrategy.init_sync(sync_strat, arg.hub_id, hub_nodes)
+        SynchronizationStrategy.init_sync(sync_strat, arg.hub.hub_id, hub_nodes)
       end
 
       :ok

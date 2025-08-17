@@ -16,6 +16,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
+  alias ProcessHub.Hub
 
   defmodule NodeUp do
     @moduledoc """
@@ -25,14 +26,13 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     use Event
 
     @type t() :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
             redun_strat: RedundancyStrategy.t(),
             sync_strat: SynchronizationStrategy.t(),
             migr_strat: MigrationStrategy.t(),
             partition_strat: PartitionToleranceStrategy.t(),
             dist_strat: DistributionStrategy.t(),
             node: node(),
-            local_storage: reference(),
+            hub: Hub.t(),
             repl_fact: pos_integer(),
             local_children: list(),
             keep: list(),
@@ -42,9 +42,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           }
 
     @enforce_keys [
-      :hub_id,
       :node,
-      :local_storage
+      :hub
     ]
     defstruct @enforce_keys ++
                 [
@@ -66,19 +65,27 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       arg = attach_data(arg)
 
       # Dispatch the nodes pre redistribution event.
-      HookManager.dispatch_hook(arg.hub_id, Hook.pre_nodes_redistribution(), {:nodeup, arg.node})
+      HookManager.dispatch_hook(
+        arg.hub.hub_id,
+        Hook.pre_nodes_redistribution(),
+        {:nodeup, arg.node}
+      )
 
       # Handle the redistribution of processes.
       distribute_processes(arg)
 
       # Propagate the local children to the new node.
-      propagate_local_children(arg.hub_id, arg.node)
+      propagate_local_children(arg.hub.hub_id, arg.node)
 
       # Dispatch the nodes post redistribution event.
-      HookManager.dispatch_hook(arg.hub_id, Hook.post_nodes_redistribution(), {:nodeup, arg.node})
+      HookManager.dispatch_hook(
+        arg.hub.hub_id,
+        Hook.post_nodes_redistribution(),
+        {:nodeup, arg.node}
+      )
 
       # Unlock the event handler.
-      State.unlock_event_handler(arg.hub_id)
+      State.unlock_event_handler(arg.hub.hub_id)
 
       :ok
     end
@@ -96,12 +103,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp attach_data(arg) do
       %__MODULE__{
         arg
-        | sync_strat: Storage.get(arg.local_storage, StorageKey.strsyn()),
-          redun_strat: Storage.get(arg.local_storage, StorageKey.strred()),
-          dist_strat: Storage.get(arg.local_storage, StorageKey.strdist()),
-          migr_strat: Storage.get(arg.local_storage, StorageKey.strmigr()),
-          partition_strat: Storage.get(arg.local_storage, StorageKey.strpart()),
-          migr_base_timeout: Storage.get(arg.local_storage, StorageKey.mbt())
+        | sync_strat: Storage.get(arg.hub.storage.local, StorageKey.strsyn()),
+          redun_strat: Storage.get(arg.hub.storage.local, StorageKey.strred()),
+          dist_strat: Storage.get(arg.hub.storage.local, StorageKey.strdist()),
+          migr_strat: Storage.get(arg.hub.storage.local, StorageKey.strmigr()),
+          partition_strat: Storage.get(arg.hub.storage.local, StorageKey.strpart()),
+          migr_base_timeout: Storage.get(arg.hub.storage.local, StorageKey.mbt())
       }
     end
 
@@ -133,7 +140,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp handle_migrate(
            %__MODULE__{
-             hub_id: hub_id,
+             hub: %{hub_id: hub_id},
              migrate: data,
              async_tasks: async_tasks,
              migr_strat: migr_strat,
@@ -156,7 +163,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp handle_keep(
            %__MODULE__{
-             hub_id: hub_id,
+             hub: %{hub_id: hub_id},
              keep: keep,
              async_tasks: async_tasks,
              node: node
@@ -193,7 +200,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       )
     end
 
-    defp local_children(%__MODULE__{hub_id: hub_id} = arg) do
+    defp local_children(%__MODULE__{hub: %{hub_id: hub_id}} = arg) do
       local_node = node()
 
       local_children =
@@ -209,7 +216,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
            %__MODULE__{
              local_children: lc,
              dist_strat: dist_strat,
-             hub_id: hub_id,
+             hub: %{hub_id: hub_id},
              repl_fact: rp,
              node: node
            } = arg
@@ -256,21 +263,19 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     """
 
     @type t() :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
             removed_node: node(),
             partition_strat: PartitionToleranceStrategy.t(),
             redun_strat: RedundancyStrategy.t(),
             dist_strat: DistributionStrategy.t(),
             hub_nodes: [node()],
-            local_storage: reference(),
+            hub: Hub.t(),
             rem_node_cids: [ProcessHub.child_id()]
           }
 
     @enforce_keys [
-      :hub_id,
       :removed_node,
       :hub_nodes,
-      :local_storage
+      :hub
     ]
     defstruct @enforce_keys ++ [:partition_strat, :redun_strat, :dist_strat, :rem_node_cids]
 
@@ -278,9 +283,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     def handle(%__MODULE__{} = arg) do
       %__MODULE__{
         arg
-        | partition_strat: Storage.get(arg.local_storage, StorageKey.strpart()),
-          redun_strat: Storage.get(arg.local_storage, StorageKey.strred()),
-          dist_strat: Storage.get(arg.local_storage, StorageKey.strdist())
+        | partition_strat: Storage.get(arg.hub.storage.local, StorageKey.strpart()),
+          redun_strat: Storage.get(arg.hub.storage.local, StorageKey.strred()),
+          dist_strat: Storage.get(arg.hub.storage.local, StorageKey.strdist())
       }
       |> dispatch_down_hook()
       |> distribute_processes()
@@ -291,26 +296,26 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp dispatch_post_hooks(arg) do
       HookManager.dispatch_hook(
-        arg.hub_id,
+        arg.hub.hub_id,
         Hook.post_nodes_redistribution(),
         {:nodedown, arg.removed_node}
       )
 
-      HookManager.dispatch_hook(arg.hub_id, Hook.post_cluster_leave(), arg)
+      HookManager.dispatch_hook(arg.hub.hub_id, Hook.post_cluster_leave(), arg)
     end
 
     defp handle_locking(arg) do
-      State.unlock_event_handler(arg.hub_id)
+      State.unlock_event_handler(arg.hub.hub_id)
 
       lock_status =
         PartitionToleranceStrategy.toggle_lock?(
           arg.partition_strat,
-          arg.hub_id,
+          arg.hub.hub_id,
           arg.removed_node
         )
 
       if lock_status do
-        State.toggle_quorum_failure(arg.hub_id)
+        State.toggle_quorum_failure(arg.hub.hub_id)
       end
 
       arg
@@ -318,7 +323,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp dispatch_down_hook(arg) do
       HookManager.dispatch_hook(
-        arg.hub_id,
+        arg.hub.hub_id,
         Hook.pre_nodes_redistribution(),
         {:nodedown, arg.removed_node}
       )
@@ -334,7 +339,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         end)
         |> Map.new()
 
-      ProcessRegistry.bulk_delete(arg.hub_id, children_nodes)
+      ProcessRegistry.bulk_delete(arg.hub.hub_id, children_nodes)
 
       arg
     end
@@ -361,7 +366,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         end)
 
       handle_redundancy(arg, redun)
-      handle_redistribution(arg.hub_id, redist)
+      handle_redistribution(arg.hub.hub_id, redist)
 
       Map.put(arg, :rem_node_cids, cids)
     end
@@ -374,7 +379,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp handle_redundancy(arg, children) do
       HookManager.dispatch_hook(
-        arg.hub_id,
+        arg.hub.hub_id,
         Hook.pre_children_redistribution(),
         {children, {:down, arg.removed_node}}
       )
@@ -383,7 +388,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp removed_node_processes(arg) do
       repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
 
-      ProcessRegistry.dump(arg.hub_id)
+      ProcessRegistry.dump(arg.hub.hub_id)
       |> Enum.reduce([], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
         nodes_orig = Keyword.keys(node_pids)
 
@@ -391,7 +396,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           nodes_updated =
             DistributionStrategy.belongs_to(
               arg.dist_strat,
-              arg.hub_id,
+              arg.hub.hub_id,
               child_id,
               repl_fact
             )

@@ -130,12 +130,9 @@ defmodule ProcessHub.Coordinator do
         :handle,
         [
           %ChildrenAdd.StartHandle{
-            hub_id: state.hub_id,
             children: children,
             start_opts: start_opts,
-            dist_sup: state.managers.distributed_supervisor,
-            task_sup: state.managers.task_supervisor,
-            local_storage: state.storage.local
+            hub: state
           }
         ]
       )
@@ -152,11 +149,9 @@ defmodule ProcessHub.Coordinator do
       :handle,
       [
         %ChildrenRem.StopHandle{
-          hub_id: state.hub_id,
           children: children,
           stop_opts: stop_opts,
-          dist_sup: state.managers.distributed_supervisor,
-          local_storage: state.storage.local
+          hub: state
         }
       ]
     )
@@ -247,9 +242,8 @@ defmodule ProcessHub.Coordinator do
       :handle,
       [
         %ClusterUpdate.NodeUp{
-          hub_id: state.hub_id,
           node: node,
-          local_storage: state.storage.local
+          hub: state
         }
       ]
     )
@@ -319,12 +313,9 @@ defmodule ProcessHub.Coordinator do
         :handle,
         [
           %ChildrenAdd.StartHandle{
-            hub_id: state.hub_id,
             children: children,
             start_opts: start_opts,
-            dist_sup: state.managers.distributed_supervisor,
-            task_sup: state.managers.task_supervisor,
-            local_storage: state.storage.local
+            hub: state
           }
         ]
       )
@@ -399,11 +390,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(:sync_processes, state) do
-    Synchronizer.trigger_sync(
-      state.hub_id,
-      state.managers.task_supervisor,
-      state.storage.local
-    )
+    Synchronizer.trigger_sync(state)
 
     state.storage.local
     |> Storage.get(StorageKey.strsyn())
@@ -457,10 +444,9 @@ defmodule ProcessHub.Coordinator do
         :handle,
         [
           %ClusterUpdate.NodeDown{
-            hub_id: state.hub_id,
             removed_node: down_node,
             hub_nodes: hub_nodes,
-            local_storage: state.storage.local
+            hub: state
           }
         ]
       )

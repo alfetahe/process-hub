@@ -15,15 +15,14 @@ defmodule ProcessHub.Service.Synchronizer do
 
   The system will use the configured synchronization strategy.
   """
-  def trigger_sync(hub_id, task_sup, local_storage) do
+  def trigger_sync(hub_state) do
     Task.Supervisor.async(
-      task_sup,
+      hub_state.managers.task_supervisor,
       Synchronization.IntervalSyncInit,
       :handle,
       [
         %Synchronization.IntervalSyncInit{
-          hub_id: hub_id,
-          local_storage: local_storage
+          hub: hub_state
         }
       ]
     )
