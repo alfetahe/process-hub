@@ -11,10 +11,6 @@ defmodule Test.Utility.NameTest do
     assert Name.event_queue(:test) === :"hub.test.event_queue"
   end
 
-  test "coordinator" do
-    assert Name.coordinator(:test) === :"hub.test.coordinator"
-  end
-
   test "distributed supervisor" do
     assert Name.distributed_supervisor(:test) === :"hub.test.distributed_supervisor"
   end

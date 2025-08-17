@@ -318,15 +318,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   end
 
   defp send_data(send_data, hub_id) do
-    coordinator = Name.coordinator(hub_id)
-
     # Send the data to each node now.
     Enum.each(send_data, fn {node, data} ->
       cluster_nodes = Cluster.nodes(hub_id)
 
       if Enum.member?(cluster_nodes, node) && Enum.member?(Node.list(), node) do
         GenServer.cast(
-          {coordinator, node},
+          {hub_id, node},
           {:exec_cast, {__MODULE__, :handle_storage_update, [hub_id, data]}}
         )
       end

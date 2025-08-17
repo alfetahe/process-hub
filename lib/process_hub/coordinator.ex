@@ -87,11 +87,9 @@ defmodule ProcessHub.Coordinator do
     schedule_hub_discovery(Storage.get(local_store, StorageKey.hdi()))
     schedule_sync(Storage.get(local_store, StorageKey.strsyn()))
 
-    coordinator = Name.coordinator(state.hub_id)
-
     # TODO: is it okay to dispatch all nodes?
     Enum.each(Node.list(), fn node ->
-      :erlang.send({coordinator, node}, {@event_cluster_join, node()}, [])
+      :erlang.send({state.hub_id, node}, {@event_cluster_join, node()}, [])
     end)
 
     # TODO: handlers are not registered in some cases thats why dispatching may fail..

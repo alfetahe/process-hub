@@ -33,7 +33,7 @@ defmodule ProcessHub.Initializer do
     setup_storage(hub_id)
 
     managers = %{
-      coordinator: Name.coordinator(hub_id),
+      coordinator: hub_id,
       event_queue: Name.event_queue(hub_id),
       distributed_supervisor: Name.distributed_supervisor(hub_id),
       task_supervisor: Name.task_supervisor(hub_id)

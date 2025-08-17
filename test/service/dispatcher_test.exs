@@ -77,7 +77,7 @@ defmodule Test.Service.DispatcherTest do
     Dispatcher.children_migrate(hub_id, event_data, reply_to: [self()])
 
     # Reset priority.
-    GenServer.call(Name.coordinator(hub_id), :ping)
+    GenServer.call(hub_id, :ping)
     :blockade.set_priority(Name.event_queue(hub_id), 0)
 
     assert_receive {:collect_start_results, [propagate_migrate_test: {:ok, _}], _node},

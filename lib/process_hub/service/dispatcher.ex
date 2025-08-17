@@ -26,10 +26,8 @@ defmodule ProcessHub.Service.Dispatcher do
   """
   @spec children_start(ProcessHub.hub_id(), [{node(), [map()]}], keyword()) :: :ok
   def children_start(hub_id, children_nodes, opts) do
-    coordinator = Name.coordinator(hub_id)
-
     Enum.each(children_nodes, fn {child_node, children_data} ->
-      GenServer.cast({coordinator, child_node}, {:start_children, children_data, opts})
+      GenServer.cast({hub_id, child_node}, {:start_children, children_data, opts})
     end)
   end
 
@@ -58,7 +56,7 @@ defmodule ProcessHub.Service.Dispatcher do
   """
   @spec children_stop(ProcessHub.hub_id(), [{node(), [ProcessHub.child_id()]}], keyword()) :: :ok
   def children_stop(hub_id, children_nodes, stop_opts) do
-    coordinator = Name.coordinator(hub_id)
+    coordinator = hub_id
 
     Enum.each(children_nodes, fn {child_node, children} ->
       GenServer.cast({coordinator, child_node}, {:stop_children, children, stop_opts})
