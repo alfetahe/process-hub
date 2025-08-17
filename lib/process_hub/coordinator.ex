@@ -40,20 +40,23 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.State
-  alias ProcessHub.Utility.Name
 
   use Event
   use GenServer
 
   @type t() :: %__MODULE__{
-          hub_id: atom()
+          hub_id: atom(),
+          managers: map(),
+          storage: map()
         }
 
   defstruct [
-    :hub_id
+    :hub_id,
+    :managers,
+    :storage
   ]
 
-  def start_link({_, _, managers} = arg) do
+  def start_link({_, _, managers, _} = arg) do
     GenServer.start_link(__MODULE__, arg, name: managers.coordinator)
   end
 
@@ -64,22 +67,28 @@ defmodule ProcessHub.Coordinator do
   @impl true
   @spec init({ProcessHub.hub_id(), ProcessHub.t(), map()}) ::
           {:ok, ProcessHub.Coordinator.t(), {:continue, :additional_setup}}
-  def init({hub_id, settings, managers}) do
+  def init({hub_id, settings, managers, storage}) do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
 
     hub_nodes = get_hub_nodes(hub_id)
-    setup_local_storage(hub_id, settings, hub_nodes)
+    setup_local_storage(settings, hub_nodes, storage)
     init_strategies(hub_id, settings)
     register_handlers(managers)
     register_handlers(hub_id, settings.hooks)
 
-    {:ok, %__MODULE__{hub_id: hub_id}, {:continue, :additional_setup}}
+    state = %__MODULE__{
+      hub_id: hub_id,
+      managers: managers,
+      storage: storage
+    }
+
+    {:ok, state, {:continue, :additional_setup}}
   end
 
   @impl true
   def handle_continue(:additional_setup, state) do
-    local_store = Name.local_storage(state.hub_id)
+    local_store = state.storage.local
 
     PartitionToleranceStrategy.init(
       Storage.get(local_store, StorageKey.strpart()),
@@ -115,7 +124,7 @@ defmodule ProcessHub.Coordinator do
     })
 
     # Terminate all the running tasks before shutting down the coordinator.
-    task_sup = Name.task_supervisor(state.hub_id)
+    task_sup = state.managers.task_supervisor
 
     Task.Supervisor.children(task_sup)
     |> Enum.each(fn pid ->
@@ -127,7 +136,7 @@ defmodule ProcessHub.Coordinator do
   def handle_cast({:start_children, children, start_opts}, state) do
     if length(children) > 0 do
       Task.Supervisor.start_child(
-        Name.task_supervisor(state.hub_id),
+        state.managers.task_supervisor,
         ChildrenAdd.StartHandle,
         :handle,
         [
@@ -146,7 +155,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_cast({:stop_children, children, stop_opts}, state) do
     Task.Supervisor.start_child(
-      Name.task_supervisor(state.hub_id),
+      state.managers.task_supervisor,
       ChildrenRem.StopHandle,
       :handle,
       [
@@ -239,7 +248,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_distribute_children, node}, state) do
     Task.Supervisor.start_child(
-      Name.task_supervisor(state.hub_id),
+      state.managers.task_supervisor,
       ClusterUpdate.NodeUp,
       :handle,
       [
@@ -264,7 +273,7 @@ defmodule ProcessHub.Coordinator do
 
       unlock_status =
         PartitionToleranceStrategy.toggle_unlock?(
-          Storage.get(Name.local_storage(hub_id), StorageKey.strpart()),
+          Storage.get(state.storage.local, StorageKey.strpart()),
           state.hub_id,
           node
         )
@@ -289,7 +298,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_sync_remote_children, {children_data, node}}, state) do
     Task.Supervisor.start_child(
-      Name.task_supervisor(state.hub_id),
+      state.managers.task_supervisor,
       Synchronization.ProcessEmitHandle,
       :handle,
       [
@@ -310,7 +319,7 @@ defmodule ProcessHub.Coordinator do
       State.lock_event_handler(state.hub_id)
 
       Task.Supervisor.start_child(
-        Name.task_supervisor(state.hub_id),
+        state.managers.task_supervisor,
         ChildrenAdd.StartHandle,
         :handle,
         [
@@ -329,7 +338,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_children_registration, {post_start_results, _node, start_opts}}, state) do
     Task.Supervisor.async(
-      Name.task_supervisor(state.hub_id),
+      state.managers.task_supervisor,
       ChildrenAdd.SyncHandle,
       :handle,
       [
@@ -348,7 +357,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_children_unregistration, {children, node, stop_opts}}, state) do
     Task.Supervisor.async(
-      Name.task_supervisor(state.hub_id),
+      state.managers.task_supervisor,
       ChildrenRem.SyncHandle,
       :handle,
       [
@@ -391,10 +400,13 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info(:sync_processes, %{hub_id: hub_id} = state) do
-    Synchronizer.trigger_sync(hub_id)
+  def handle_info(:sync_processes, state) do
+    Synchronizer.trigger_sync(
+      state.hub_id,
+      state.managers.task_supervisor
+    )
 
-    Name.local_storage(hub_id)
+    state.storage.local
     |> Storage.get(StorageKey.strsyn())
     |> schedule_sync()
 
@@ -403,7 +415,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(:propagate, %{hub_id: hub_id} = state) do
-    Name.local_storage(hub_id)
+    state.storage.local
     |> Storage.get(StorageKey.hdi())
     |> schedule_hub_discovery()
 
@@ -441,7 +453,7 @@ defmodule ProcessHub.Coordinator do
       hub_nodes = Cluster.rem_hub_node(state.hub_id, down_node)
 
       Task.Supervisor.start_child(
-        Name.task_supervisor(state.hub_id),
+        state.managers.task_supervisor,
         ClusterUpdate.NodeDown,
         :handle,
         [
@@ -486,30 +498,28 @@ defmodule ProcessHub.Coordinator do
     )
   end
 
-  defp setup_local_storage(hub_id, %ProcessHub{} = settings, hub_nodes) do
-    local_storage = Name.local_storage(hub_id)
-
-    Storage.insert(local_storage, StorageKey.hn(), hub_nodes)
-    Storage.insert(local_storage, StorageKey.strred(), settings.redundancy_strategy)
-    Storage.insert(local_storage, StorageKey.strdist(), settings.distribution_strategy)
-    Storage.insert(local_storage, StorageKey.strmigr(), settings.migration_strategy)
-    Storage.insert(local_storage, StorageKey.staticcs(), settings.child_specs)
+  defp setup_local_storage(%ProcessHub{} = settings, hub_nodes, storage) do
+    Storage.insert(storage.local, StorageKey.hn(), hub_nodes)
+    Storage.insert(storage.local, StorageKey.strred(), settings.redundancy_strategy)
+    Storage.insert(storage.local, StorageKey.strdist(), settings.distribution_strategy)
+    Storage.insert(storage.local, StorageKey.strmigr(), settings.migration_strategy)
+    Storage.insert(storage.local, StorageKey.staticcs(), settings.child_specs)
 
     Storage.insert(
-      local_storage,
+      storage.local,
       StorageKey.strsyn(),
       settings.synchronization_strategy
     )
 
     Storage.insert(
-      local_storage,
+      storage.local,
       StorageKey.strpart(),
       settings.partition_tolerance_strategy
     )
 
-    Storage.insert(local_storage, StorageKey.hdi(), settings.hubs_discover_interval)
-    Storage.insert(local_storage, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
-    Storage.insert(local_storage, StorageKey.mbt(), settings.migr_base_timeout)
+    Storage.insert(storage.local, StorageKey.hdi(), settings.hubs_discover_interval)
+    Storage.insert(storage.local, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
+    Storage.insert(storage.local, StorageKey.mbt(), settings.migr_base_timeout)
   end
 
   defp register_handlers(%{event_queue: eq}) do

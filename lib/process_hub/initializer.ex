@@ -30,7 +30,7 @@ defmodule ProcessHub.Initializer do
 
   @impl true
   def init(%ProcessHub{hub_id: hub_id} = hub) do
-    setup_storage(hub_id)
+    {hook_registry, local_storage} = setup_storage(hub_id)
 
     managers = %{
       coordinator: hub_id,
@@ -39,13 +39,18 @@ defmodule ProcessHub.Initializer do
       task_supervisor: Name.task_supervisor(hub_id)
     }
 
+    storage = %{
+      hook: hook_registry,
+      local: local_storage
+    }
+
     children =
       [
         {Registry, keys: :unique, name: Name.system_registry(hub_id)},
         {Blockade, %{name: managers.event_queue, priority_sync: false}},
         dist_sup(hub, managers),
         {Task.Supervisor, name: managers.task_supervisor},
-        {ProcessHub.Coordinator, {hub_id, hub, managers}},
+        {ProcessHub.Coordinator, {hub_id, hub, managers, storage}},
         {ProcessHub.WorkerQueue, hub_id},
         {ProcessHub.Janitor, {hub_id, hub.storage_purge_interval}}
       ]
@@ -72,7 +77,10 @@ defmodule ProcessHub.Initializer do
 
   defp setup_storage(hub_id) do
     :ets.new(hub_id, [:set, :public, :named_table])
-    :ets.new(Name.hook_registry(hub_id), [:set, :public, :named_table])
-    :ets.new(Name.local_storage(hub_id), [:set, :public, :named_table])
+
+    hook_registry = :ets.new(Name.hook_registry(hub_id), [:set, :public, :named_table])
+    local_storage = :ets.new(Name.local_storage(hub_id), [:set, :public, :named_table])
+
+    {hook_registry, local_storage}
   end
 end
