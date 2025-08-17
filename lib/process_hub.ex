@@ -10,9 +10,6 @@ defmodule ProcessHub do
 
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.State
-  alias ProcessHub.Service.Cluster
-  alias ProcessHub.Utility.Name
   alias ProcessHub.AsyncPromise
 
   @typedoc """
@@ -201,9 +198,6 @@ defmodule ProcessHub do
     dsup_shutdown_timeout: 60000
   ]
 
-  # 10 seconds
-  @default_init_timeout 10000
-
   @doc """
   Starts a child process that will be distributed across the cluster.
   The `t:child_spec()` `:id` must be unique.
@@ -257,7 +251,7 @@ defmodule ProcessHub do
              | {:error, :children_not_list}
              | {:already_started, [atom | binary, ...]}}
   def start_children(hub_id, child_specs, opts \\ []) when is_list(child_specs) do
-    Distributor.init_children(hub_id, child_specs, default_init_opts(opts))
+    GenServer.call(hub_id, {:init_children_start, child_specs, opts})
   end
 
   @doc """
@@ -299,7 +293,7 @@ defmodule ProcessHub do
           | {:ok, AsyncPromise.t()}
           | {:error, list()}
   def stop_children(hub_id, child_ids, opts \\ []) do
-    Distributor.stop_children(hub_id, child_ids, default_init_opts(opts))
+    GenServer.call(hub_id, {:init_children_stop, child_ids, opts})
   end
 
   @doc """
@@ -320,6 +314,7 @@ defmodule ProcessHub do
   - `:local` - returns a list of all child processes started by the local node.
     The return result will be in the format of `{:node, children}`.
   """
+  @deprecated "Will be removed from the next minor release. Use `ProcessHub.process_list/2` instead."
   @spec which_children(hub_id(), [:global | :local] | nil) ::
           list()
           | {node(),
@@ -334,8 +329,8 @@ defmodule ProcessHub do
   @doc """
   Checks if the `ProcessHub` with the given `t:hub_id/0` is alive.
 
-  A hub is considered alive if the `ProcessHub.Initializer` supervisor process
-  is running along with the required child processes for the hub to function.
+  A hub is considered alive if the `ProcessHub.Coordinator` process is
+  running for the hub to function.
 
   ## Example
       iex> ProcessHub.is_alive?(:not_existing)
@@ -343,9 +338,7 @@ defmodule ProcessHub do
   """
   @spec is_alive?(hub_id()) :: boolean
   def is_alive?(hub_id) do
-    pname = Name.initializer(hub_id)
-
-    case Process.whereis(pname) do
+    case Process.whereis(hub_id) do
       nil -> false
       _ -> true
     end
@@ -541,7 +534,9 @@ defmodule ProcessHub do
       false
   """
   @spec is_locked?(hub_id()) :: boolean()
-  defdelegate is_locked?(hub_id), to: State
+  def is_locked?(hub_id) do
+    GenServer.call(hub_id, :is_locked?)
+  end
 
   @doc """
   Checks if the `ProcessHub` with the given `t:hub_id/0` is in a network-partitioned state.
@@ -555,7 +550,9 @@ defmodule ProcessHub do
       false
   """
   @spec is_partitioned?(hub_id()) :: boolean()
-  defdelegate is_partitioned?(hub_id), to: State
+  def is_partitioned?(hub_id) do
+    GenServer.call(hub_id, :is_partitioned?)
+  end
 
   @doc """
   Returns a list of nodes where the `ProcessHub` with the given `t:hub_id/0` is running.
@@ -568,7 +565,9 @@ defmodule ProcessHub do
       [:remote_node]
   """
   @spec nodes(hub_id(), [:include_local] | nil) :: [node()]
-  defdelegate nodes(hub_id, opts \\ []), to: Cluster
+  def nodes(hub_id, opts \\ []) do
+    GenServer.call(hub_id, {:get_nodes, opts})
+  end
 
   @doc """
   Promotes the `ProcessHub` with the given `t:hub_id/0` to a node.
@@ -583,15 +582,7 @@ defmodule ProcessHub do
   By default, the current node name will be used.
   """
   @spec promote_to_node(hub_id()) :: :ok | {:error, :not_alive}
-  defdelegate promote_to_node(hub_id, node_name \\ node()), to: Cluster
-
-  defp default_init_opts(opts) do
-    Keyword.put_new(opts, :timeout, @default_init_timeout)
-    |> Keyword.put_new(:async_wait, false)
-    |> Keyword.put_new(:check_existing, true)
-    |> Keyword.put_new(:return_first, false)
-    |> Keyword.put_new(:on_failure, :continue)
-    |> Keyword.put_new(:metadata, %{})
-    |> Keyword.put_new(:await_timeout, 60000)
+  def promote_to_node(hub_id, node_name \\ node()) do
+    GenServer.call(hub_id, {:promote_to_node, node_name})
   end
 end

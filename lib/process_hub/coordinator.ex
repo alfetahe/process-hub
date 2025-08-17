@@ -31,6 +31,8 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Handler.ClusterUpdate
   alias ProcessHub.Handler.Synchronization
   alias ProcessHub.Handler.ChildrenAdd
+  alias ProcessHub.Service.Distributor
+  alias ProcessHub.Service.State
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
@@ -164,6 +166,50 @@ defmodule ProcessHub.Coordinator do
     apply(m, f, a)
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_call({:init_children_start, child_specs, opts}, _from, state) do
+    result =
+      Distributor.init_children(
+        state.hub_id,
+        child_specs,
+        Distributor.default_init_opts(opts)
+      )
+
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:init_children_stop, child_ids, opts}, _from, state) do
+    result =
+      Distributor.stop_children(
+        state.hub_id,
+        child_ids,
+        Distributor.default_init_opts(opts)
+      )
+
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call(:is_locked?, _from, state) do
+    {:reply, State.is_locked?(state.hub_id), state}
+  end
+
+  @impl true
+  def handle_call(:is_partitioned?, _from, state) do
+    {:reply, State.is_partitioned?(state.hub_id), state}
+  end
+
+  @impl true
+  def handle_call({:get_nodes, opts}, _from, state) do
+    {:reply, Cluster.nodes(state.hub_id, opts), state}
+  end
+
+  @impl true
+  def handle_call({:promote_to_node, node}, _from, state) do
+    {:reply, Cluster.promote_to_node(state.hub_id, node), state}
   end
 
   @impl true

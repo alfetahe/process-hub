@@ -17,6 +17,9 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
+  # 10 seconds
+  @default_init_timeout 10000
+
   @doc "Initiates process redistribution."
   @spec children_redist_init(
           ProcessHub.hub_id(),
@@ -150,6 +153,17 @@ defmodule ProcessHub.Service.Distributor do
     Cluster.nodes(hub_id, [:include_local])
     |> :erpc.multicall(fn -> __MODULE__.which_children_local(hub_id, opts) end, timeout)
     |> Enum.map(fn {_status, result} -> result end)
+  end
+
+  # TODO: add tests and documentation.
+  def default_init_opts(opts) do
+    Keyword.put_new(opts, :timeout, @default_init_timeout)
+    |> Keyword.put_new(:async_wait, false)
+    |> Keyword.put_new(:check_existing, true)
+    |> Keyword.put_new(:return_first, false)
+    |> Keyword.put_new(:on_failure, :continue)
+    |> Keyword.put_new(:metadata, %{})
+    |> Keyword.put_new(:await_timeout, 60000)
   end
 
   defp pre_start_children(hub_id, startup_children, opts) do

@@ -271,7 +271,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   def handle_shutdown(%__MODULE__{handover: true, handover_data_wait: hodw} = _struct, hub_id) do
     # Make sure there are other nodes in the cluster left.
-    if ProcessHub.nodes(hub_id) |> length() > 0 do
+    if Cluster.nodes(hub_id) |> length() > 0 do
       ProcessRegistry.local_data(hub_id)
       |> get_state_msgs()
       |> get_send_data(hodw)
