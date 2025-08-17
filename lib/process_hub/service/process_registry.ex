@@ -22,7 +22,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
           tag: String.t()
         }
 
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
@@ -30,7 +29,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @doc "Returns information about all registered processes. Will be deprecated in the future."
   @spec registry(ProcessHub.hub_id()) :: registry()
   def registry(hub_id) do
-    Name.registry(hub_id)
+    hub_id
     |> Storage.export_all()
     |> Enum.map(fn
       {key, {c, n, _m}} -> {key, {c, n}}
@@ -46,7 +45,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
   @spec dump(ProcessHub.hub_id()) :: registry_dump()
   def dump(hub_id) do
-    Name.registry(hub_id)
+    hub_id
     |> Storage.export_all()
     |> Enum.map(fn
       {key, values} -> {key, values}
@@ -93,13 +92,13 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def match_tag(hub_id, tag) do
     match_expr = {:"$1", {:_, :"$3", %{tag: tag}}}
 
-    Storage.match(Name.registry(hub_id), match_expr)
+    Storage.match(hub_id, match_expr)
   end
 
   @doc "Deletes all objects from the process registry."
   @spec clear_all(ProcessHub.hub_id()) :: boolean()
   def clear_all(hub_id) do
-    Storage.clear_all(Name.registry(hub_id))
+    Storage.clear_all(hub_id)
   end
 
   @doc "Returns information on all processes that are running on the local node."
@@ -149,7 +148,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           | {ProcessHub.child_spec(), [{node(), pid()}], ProcessHub.child_metadata()}
           | nil
   def lookup(hub_id, child_id, opts) do
-    table = Keyword.get(opts, :table, Name.registry(hub_id))
+    table = Keyword.get(opts, :table, hub_id)
     with_metadata = Keyword.get(opts, :with_metadata, false)
 
     case Storage.get(table, child_id) do
@@ -168,7 +167,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   def lookup(hub_id, child_id) do
-    lookup(hub_id, child_id, table: Name.registry(hub_id))
+    lookup(hub_id, child_id, table: hub_id)
   end
 
   @doc """
@@ -181,7 +180,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def insert(hub_id, child_spec, child_nodes, opts \\ []) do
     metadata = Keyword.get(opts, :metadata, %{})
 
-    Keyword.get(opts, :table, Name.registry(hub_id))
+    Keyword.get(opts, :table, hub_id)
     |> Storage.insert(child_spec.id, {child_spec, child_nodes, metadata}, opts)
 
     if !Keyword.get(opts, :skip_hooks, false) do
@@ -202,7 +201,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
   @spec delete(ProcessHub.hub_id(), ProcessHub.child_id(), keyword() | nil) :: :ok
   def delete(hub_id, child_id, opts \\ []) do
-    Keyword.get(opts, :table, Name.registry(hub_id))
+    Keyword.get(opts, :table, hub_id)
     |> Storage.remove(child_id)
 
     unless Keyword.get(opts, :skip_hooks, false) do
@@ -221,7 +220,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}], metadata()}
         }) :: :ok
   def bulk_insert(hub_id, children) do
-    table = Name.registry(hub_id)
+    table = hub_id
 
     hooks =
       Enum.map(children, fn {child_id, {child_spec, child_nodes, metadata}} ->
@@ -271,7 +270,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
         }) :: :ok
   def bulk_delete(hub_id, children) do
-    table = Name.registry(hub_id)
+    table = hub_id
 
     hooks =
       Enum.map(children, fn {child_id, rem_nodes} ->
@@ -325,7 +324,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec update(ProcessHub.hub_id(), ProcessHub.child_id(), function()) ::
           :ok | {:error, String.t()}
   def update(hub_id, child_id, update_fn) do
-    table = Name.registry(hub_id)
+    table = hub_id
     opts = [table: table, with_metadata: true, skip_hooks: true]
 
     case lookup(hub_id, child_id, opts) do

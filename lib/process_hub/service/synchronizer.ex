@@ -63,7 +63,7 @@ defmodule ProcessHub.Service.Synchronizer do
           node() => [{ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}]
         }) :: :ok
   def append_data(hub_id, remote_data) do
-    table = Name.registry(hub_id)
+    table = hub_id
 
     Enum.each(remote_data, fn {remote_node, remote_children} ->
       # TODO: may want to add some type of locking or transactions here.

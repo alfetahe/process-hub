@@ -87,7 +87,7 @@ defmodule ProcessHub.Service.Cluster do
             hub_id,
             child_spec,
             new_node_pids,
-            table: Name.registry(hub_id),
+            table: hub_id,
             skip_hooks: true,
             metadata: metadata
           )

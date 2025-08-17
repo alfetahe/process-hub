@@ -70,7 +70,7 @@ defmodule ProcessHub.Initializer do
   end
 
   defp setup_storage(hub_id) do
-    :ets.new(Name.registry(hub_id), [:set, :public, :named_table])
+    :ets.new(hub_id, [:set, :public, :named_table])
     :ets.new(Name.hook_registry(hub_id), [:set, :public, :named_table])
     :ets.new(Name.local_storage(hub_id), [:set, :public, :named_table])
   end

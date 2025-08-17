@@ -100,7 +100,7 @@ defmodule Test.Service.StorageTest do
 
   test "clear all", _context do
     # Were not using local storage because this would result in error.
-    process_storage = ProcessHub.Utility.Name.registry(@hub_id)
+    process_storage = @hub_id
 
     Storage.insert(process_storage, "test_clear_1", "my_value")
     Storage.insert(process_storage, "test_clear_2", "my_value")
@@ -115,7 +115,7 @@ defmodule Test.Service.StorageTest do
 
   test "export all", _context do
     # Were not using local storage because it has other required elements inside it.
-    process_storage = ProcessHub.Utility.Name.registry(@hub_id)
+    process_storage = @hub_id
 
     assert Storage.export_all(process_storage) === []
 
