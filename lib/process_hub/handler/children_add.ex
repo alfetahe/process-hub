@@ -56,21 +56,21 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     """
 
     @type t :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
+            hub: Hub.t(),
             post_start_results: [%PostStartData{}],
             start_opts: keyword()
           }
 
     @enforce_keys [
-      :hub_id,
+      :hub,
       :post_start_results,
       :start_opts
     ]
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{hub_id: hub_id, post_start_results: psr, start_opts: start_opts}) do
-      ProcessRegistry.bulk_insert(hub_id, store_format(psr))
+    def handle(%__MODULE__{hub: hub, post_start_results: psr, start_opts: start_opts}) do
+      ProcessRegistry.bulk_insert(hub.hub_id, store_format(psr), hook_storage: hub.storage.hook)
 
       send_collect_results(psr, start_opts)
     end
@@ -143,10 +143,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     def handle(%__MODULE__{} = arg) do
       arg = %__MODULE__{
         arg
-        | sync_strategy: Storage.get(arg.hub.storage.local, StorageKey.strsyn()),
-          redun_strategy: Storage.get(arg.hub.storage.local, StorageKey.strred()),
-          dist_strategy: Storage.get(arg.hub.storage.local, StorageKey.strdist()),
-          migr_strategy: Storage.get(arg.hub.storage.local, StorageKey.strmigr())
+        | sync_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strsyn()),
+          redun_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strred()),
+          dist_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strdist()),
+          migr_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strmigr())
       }
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub.hub_id) do
@@ -165,24 +165,24 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp handle_sync_callback(
-           %__MODULE__{hub: %{hub_id: hub_id}, sync_strategy: ss, process_data: pd} = arg
-         ) do
-      SynchronizationStrategy.propagate(
-        ss,
-        hub_id,
-        pd,
-        node(),
-        :add,
-        members: :external
-      )
+    defp handle_sync_callback(%__MODULE__{sync_strategy: ss, process_data: pd, hub: hub} = arg) do
+      if !Enum.empty?(pd) do
+        SynchronizationStrategy.propagate(
+          ss,
+          hub,
+          pd,
+          node(),
+          :add,
+          members: :external
+        )
+      end
 
       arg
     end
 
-    defp dispatch_process_startups(%__MODULE__{hub: %{hub_id: hub_id}, process_data: pd} = arg) do
+    defp dispatch_process_startups(%__MODULE__{hub: hub, process_data: pd} = arg) do
       HookManager.dispatch_hook(
-        hub_id,
+        hub.storage.hook,
         Hook.process_startups(),
         pd
       )
@@ -190,16 +190,14 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp update_registry(
-           %__MODULE__{hub: %{hub_id: hub_id}, process_data: pd, start_opts: so} = arg
-         ) do
+    defp update_registry(%__MODULE__{hub: hub, process_data: pd, start_opts: so} = arg) do
       Task.Supervisor.async(
-        arg.hub.managers.task_supervisor,
+        hub.managers.task_supervisor,
         SyncHandle,
         :handle,
         [
           %SyncHandle{
-            hub_id: hub_id,
+            hub: hub,
             post_start_results: pd,
             start_opts: so
           }
@@ -210,30 +208,32 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp release_lock(%__MODULE__{hub: %{hub_id: hub_id}, start_opts: so}) do
+    defp release_lock(%__MODULE__{hub: hub, start_opts: so}) do
       # Release the event queue lock only when migrating
       # processes rather than regular startup.
       if Keyword.get(so, :migration_add, false) === true do
-        State.unlock_event_handler(hub_id)
+        State.unlock_event_handler(hub)
       end
     end
 
     defp start_children(
            %__MODULE__{
-             hub: %{hub_id: hub_id, managers: %{distributed_supervisor: ds}},
+             hub: hub,
              start_opts: so
            } = arg
          ) do
       # Used only for testing purposes.
       disable_logging = Keyword.get(so, :disable_logging, false)
+      ds = hub.managers.distributed_supervisor
 
-      HookManager.dispatch_hook(hub_id, Hook.pre_children_start(), arg)
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_children_start(), arg)
 
       local_node = node()
 
       validate_children(arg)
       |> Enum.map(fn child_data ->
-        child_data = HookManager.dispatch_alter_hook(hub_id, Hook.child_data_alter(), child_data)
+        child_data =
+          HookManager.dispatch_alter_hook(hub.storage.hook, Hook.child_data_alter(), child_data)
 
         startup_result = DistributedSupervisor.start_child(ds, child_data.child_spec)
 
@@ -277,19 +277,19 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       }
     end
 
-    defp post_start_hook(%__MODULE__{process_data: ps} = arg) do
+    defp post_start_hook(%__MODULE__{process_data: ps, hub: hub} = arg) do
       post_data =
         Enum.reduce(ps, [], fn %PostStartData{cid: cid, result: rs, pid: pid, nodes: n}, acc ->
           [{cid, rs, pid, n} | acc]
         end)
 
-      HookManager.dispatch_hook(arg.hub.hub_id, Hook.post_children_start(), post_data)
+      HookManager.dispatch_hook(hub.storage.hook, Hook.post_children_start(), post_data)
 
       arg
     end
 
     defp validate_children(%__MODULE__{
-           hub: %{hub_id: hub_id},
+           hub: hub,
            children: children,
            dist_strategy: dist_strat,
            redun_strategy: redun_strat,
@@ -302,7 +302,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       {valid, forw} =
         Enum.reduce(children, {[], []}, fn %{child_id: cid, nodes: n_orig} = cdata,
                                            {valid, forw} ->
-          nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, replication_factor)
+          nodes = DistributionStrategy.belongs_to(dist_strat, hub, cid, replication_factor)
 
           # Recheck if the child processes that are supposed to be started current node are
           # still assigned to current node or not. If not then forward to the correct node.
@@ -320,8 +320,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         end)
 
       if length(forw) > 0 do
-        Dispatcher.children_start(hub_id, forw, start_opts)
-        HookManager.dispatch_hook(hub_id, Hook.forwarded_migration(), forw)
+        Dispatcher.children_start(hub.hub_id, forw, start_opts)
+        HookManager.dispatch_hook(hub.storage.hook, Hook.forwarded_migration(), forw)
       end
 
       # Return the filtered list of valid children for this node.

@@ -1,17 +1,16 @@
 defmodule ProcessHub.WorkerQueue do
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
 
   use GenServer
 
-  def start_link(hub_id) do
-    GenServer.start_link(__MODULE__, hub_id, name: Name.worker_queue(hub_id))
+  def start_link({hub_id, pname, misc_storage}) do
+    GenServer.start_link(__MODULE__, {hub_id, misc_storage}, name: pname)
   end
 
   @impl true
-  def init(hub_id) do
-    handle_static_children(hub_id)
+  def init({hub_id, misc_storage}) do
+    handle_static_children(hub_id, misc_storage)
 
     {:ok, %{hub_id: hub_id}}
   end
@@ -28,8 +27,8 @@ defmodule ProcessHub.WorkerQueue do
     {:reply, func.(), state}
   end
 
-  defp handle_static_children(hub_id) do
-    static_child_specs = Storage.get(Name.local_storage(hub_id), StorageKey.staticcs())
+  defp handle_static_children(hub_id, misc_storage) do
+    static_child_specs = Storage.get(misc_storage, StorageKey.staticcs())
 
     if length(static_child_specs) > 0 do
       res =

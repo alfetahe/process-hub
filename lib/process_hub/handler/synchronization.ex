@@ -26,13 +26,13 @@ defmodule ProcessHub.Handler.Synchronization do
     defstruct @enforce_keys
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{} = arg) do
-      sync_strat = Storage.get(arg.hub.storage.local, StorageKey.strsyn())
+    def handle(%__MODULE__{hub: hub} = arg) do
+      sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
 
       unless State.is_locked?(arg.hub.hub_id) do
-        hub_nodes = Cluster.nodes(arg.hub.hub_id, [:include_local])
+        hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
-        SynchronizationStrategy.init_sync(sync_strat, arg.hub.hub_id, hub_nodes)
+        SynchronizationStrategy.init_sync(sync_strat, hub.hub_id, hub_nodes)
       end
 
       :ok
@@ -45,14 +45,14 @@ defmodule ProcessHub.Handler.Synchronization do
     """
 
     @type t() :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
+            hub: Hub.t(),
             sync_strat: SynchronizationStrategy.t(),
             sync_data: any(),
             remote_node: node()
           }
 
     @enforce_keys [
-      :hub_id,
+      :hub,
       :sync_strat,
       :sync_data,
       :remote_node
@@ -63,7 +63,7 @@ defmodule ProcessHub.Handler.Synchronization do
     def handle(%__MODULE__{} = args) do
       SynchronizationStrategy.handle_synchronization(
         args.sync_strat,
-        args.hub_id,
+        args.hub,
         args.sync_data,
         args.remote_node
       )
@@ -76,20 +76,20 @@ defmodule ProcessHub.Handler.Synchronization do
     """
 
     @type t() :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
+            hub: Hub.t(),
             remote_children: [{ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}],
             remote_node: node()
           }
 
     @enforce_keys [
-      :hub_id,
+      :hub,
       :remote_node,
       :remote_children
     ]
     defstruct @enforce_keys
 
     def handle(%__MODULE__{} = args) do
-      local_data = ProcessRegistry.dump(args.hub_id)
+      local_data = ProcessRegistry.dump(args.hub.hub_id)
 
       # Add all new processes to the local process table or update their nodes list.
       updated_data =
@@ -102,7 +102,9 @@ defmodule ProcessHub.Handler.Synchronization do
         end)
 
       if length(updated_data) > 0 do
-        ProcessRegistry.bulk_insert(args.hub_id, Map.new(updated_data))
+        ProcessRegistry.bulk_insert(args.hub.hub_id, Map.new(updated_data),
+          hook_storage: args.hub.storage.hook
+        )
       end
     end
 

@@ -32,7 +32,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = arg) do
-      sync_strategy = Storage.get(arg.hub.storage.local, StorageKey.strsyn())
+      sync_strategy = Storage.get(arg.hub.storage.misc, StorageKey.strsyn())
 
       case ProcessHub.Service.State.is_partitioned?(arg.hub.hub_id) do
         true ->
@@ -45,7 +45,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
             end)
 
           Distributor.children_terminate(
-            arg.hub.hub_id,
+            arg.hub,
             cids,
             sync_strategy,
             arg.stop_opts
@@ -64,7 +64,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
     alias ProcessHub.Service.ProcessRegistry
 
     @type t :: %__MODULE__{
-            hub_id: ProcessHub.hub_id(),
+            hub: Hub.t(),
             children: [
               {ProcessHub.child_id(), :ok | {:error, :not_found}, node()}
             ],
@@ -73,7 +73,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
           }
 
     @enforce_keys [
-      :hub_id,
+      :hub,
       :children,
       :node,
       :stop_opts
@@ -88,7 +88,13 @@ defmodule ProcessHub.Handler.ChildrenRem do
         end)
         |> Map.new()
 
-      ProcessRegistry.bulk_delete(args.hub_id, children_nodes)
+      if !Enum.empty?(children_nodes) do
+        ProcessRegistry.bulk_delete(args.hub.hub_id, children_nodes,
+          hook_storage: args.hub.storage.hook
+        )
+      end
+
+      # TODO: try wrapping in the if statement.
       send_collect_results(args.children, args.stop_opts)
 
       :ok
