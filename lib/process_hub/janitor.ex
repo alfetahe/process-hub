@@ -4,8 +4,8 @@ defmodule ProcessHub.Janitor do
 
   use GenServer
 
-  def start_link({hub_id, purge_interval}) do
-    GenServer.start_link(__MODULE__, {hub_id, purge_interval}, name: Name.janitor(hub_id))
+  def start_link({hub_id, pname, purge_interval}) do
+    GenServer.start_link(__MODULE__, {hub_id, purge_interval}, name: pname)
   end
 
   @impl true
@@ -28,10 +28,10 @@ defmodule ProcessHub.Janitor do
   end
 
   defp purge_cache(hub_id) do
-    local_storage = Name.local_storage(hub_id)
+    misc_storage = Name.misc_storage(hub_id)
 
     # Match only items with TTL.
-    ttl_items = :ets.match(local_storage, {:"$1", :_, :"$2"})
+    ttl_items = :ets.match(misc_storage, {:"$1", :_, :"$2"})
     curr_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
     Enum.each(ttl_items, fn
@@ -43,7 +43,7 @@ defmodule ProcessHub.Janitor do
 
       [cache_key, ttl_expire] ->
         if curr_timestamp > ttl_expire do
-          Storage.remove(local_storage, cache_key)
+          Storage.remove(misc_storage, cache_key)
         end
     end)
   end

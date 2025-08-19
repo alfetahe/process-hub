@@ -5,9 +5,9 @@ defmodule ProcessHub.Utility.Name do
   """
 
   @doc "Returns the localstorage identifier."
-  @spec local_storage(ProcessHub.hub_id()) :: atom()
-  def local_storage(hub_id) do
-    :"hub.#{hub_id}.local_storage"
+  @spec misc_storage(ProcessHub.hub_id()) :: atom()
+  def misc_storage(hub_id) do
+    :"hub.#{hub_id}.misc_storage"
   end
 
   @doc "The name of the hook registry process."
@@ -30,7 +30,7 @@ defmodule ProcessHub.Utility.Name do
   @doc "The name of the main initializer process."
   @spec initializer(ProcessHub.hub_id()) :: atom()
   def initializer(hub_id) do
-    :"hub.#{hub_id}.initializer"
+    {:via, Registry, {system_registry(hub_id), "initializer"}}
   end
 
   @doc "The name of the event queue process."

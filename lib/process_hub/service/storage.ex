@@ -8,7 +8,7 @@ defmodule ProcessHub.Service.Storage do
 
   alias :ets, as: ETS
 
-  @type table_id() :: atom()
+  @type table_id() :: atom() | reference()
 
   @doc "Returns a boolean indicating whether the key exists in local storage."
   @spec exists?(table_id(), term()) :: boolean()

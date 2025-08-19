@@ -11,6 +11,7 @@ defmodule ProcessHub.Service.State do
   alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Hub
 
   @doc "Returns a boolean indicating whether the hub is locked."
   @spec is_locked?(ProcessHub.hub_id()) :: boolean
@@ -33,17 +34,17 @@ defmodule ProcessHub.Service.State do
   @doc """
   Locks the event handler and dispatches the priority state updated hook.
   """
-  @spec lock_event_handler(ProcessHub.hub_id(), boolean() | nil) :: :ok
-  def lock_event_handler(hub_id, deadlock_recover \\ true) do
-    options = lock_options(hub_id, deadlock_recover)
+  @spec lock_event_handler(Hub.t(), boolean() | nil) :: :ok
+  def lock_event_handler(hub, deadlock_recover \\ true) do
+    options = lock_options(hub.hub_id, deadlock_recover)
 
     Blockade.set_priority(
-      Name.event_queue(hub_id),
+      hub.managers.event_queue,
       PriorityLevel.locked(),
       options
     )
 
-    dispatch_lock(hub_id, options)
+    dispatch_lock(hub.storage.hook, options)
 
     :ok
   end
@@ -51,15 +52,15 @@ defmodule ProcessHub.Service.State do
   @doc """
   Unlocks the event handler and dispatches the priority state updated hook.
   """
-  @spec unlock_event_handler(ProcessHub.hub_id()) :: :ok
-  def unlock_event_handler(hub_id) do
+  @spec unlock_event_handler(Hub.t()) :: :ok
+  def unlock_event_handler(hub) do
     Blockade.set_priority(
-      Name.event_queue(hub_id),
+      hub.managers.event_queue,
       PriorityLevel.unlocked(),
       %{local_priority_set: true}
     )
 
-    dispatch_unlock(hub_id, %{})
+    dispatch_unlock(hub.storage.hook, %{})
 
     :ok
   end
@@ -67,13 +68,11 @@ defmodule ProcessHub.Service.State do
   @doc """
   Locks the event handler and kills the local distributed supervisor.
   """
-  @spec toggle_quorum_failure(ProcessHub.hub_id()) :: :ok | {:error, :already_partitioned}
-  def toggle_quorum_failure(hub_id) do
-    unless is_partitioned?(hub_id) do
-      lock_event_handler(hub_id, false)
-      initializer = Name.initializer(hub_id)
-
-      Supervisor.terminate_child(initializer, :distributed_supervisor)
+  @spec toggle_quorum_failure(ProcessHub.t()) :: :ok | {:error, :already_partitioned}
+  def toggle_quorum_failure(hub) do
+    unless is_partitioned?(hub.hub_id) do
+      lock_event_handler(hub, false)
+      Supervisor.terminate_child(hub.managers.initializer, :distributed_supervisor)
 
       :ok
     else
@@ -84,13 +83,15 @@ defmodule ProcessHub.Service.State do
   @doc """
   Unlocks the local event handler and restarts the local distributed supervisor.
   """
-  @spec toggle_quorum_success(ProcessHub.hub_id()) :: :ok | {:error, :not_partitioned}
-  def toggle_quorum_success(hub_id) do
-    if is_partitioned?(hub_id) do
-      Name.initializer(hub_id)
-      |> Supervisor.restart_child(:distributed_supervisor)
+  @spec toggle_quorum_success(Hub.t()) :: :ok | {:error, :not_partitioned}
+  def toggle_quorum_success(hub) do
+    if is_partitioned?(hub.hub_id) do
+      Supervisor.restart_child(
+        hub.managers.initializer,
+        :distributed_supervisor
+      )
 
-      unlock_event_handler(hub_id)
+      unlock_event_handler(hub)
 
       :ok
     else
@@ -98,17 +99,17 @@ defmodule ProcessHub.Service.State do
     end
   end
 
-  defp dispatch_lock(hub_id, options) do
+  defp dispatch_lock(hook_storage, options) do
     HookManager.dispatch_hook(
-      hub_id,
+      hook_storage,
       Hook.priority_state_updated(),
       {PriorityLevel.locked(), options}
     )
   end
 
-  defp dispatch_unlock(hub_id, options) do
+  defp dispatch_unlock(hook_storage, options) do
     HookManager.dispatch_hook(
-      hub_id,
+      hook_storage,
       Hook.priority_state_updated(),
       {PriorityLevel.unlocked(), options}
     )
@@ -117,7 +118,7 @@ defmodule ProcessHub.Service.State do
   defp lock_options(hub_id, deadlock_recover) do
     case deadlock_recover do
       false -> %{}
-      true -> %{reset_after: Storage.get(Name.local_storage(hub_id), StorageKey.dlrt())}
+      true -> %{reset_after: Storage.get(Name.misc_storage(hub_id), StorageKey.dlrt())}
     end
     |> Map.put(:local_priority_set, true)
   end

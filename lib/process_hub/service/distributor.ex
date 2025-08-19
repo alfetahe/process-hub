@@ -3,6 +3,7 @@ defmodule ProcessHub.Service.Distributor do
   The distributor service provides API functions for distributing child processes.
   """
 
+  alias ProcessHub.Coordinator
   alias ProcessHub.AsyncPromise
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
@@ -16,32 +17,33 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.Hub
 
   # 10 seconds
   @default_init_timeout 10000
 
   @doc "Initiates process redistribution."
   @spec children_redist_init(
-          ProcessHub.hub_id(),
+          Hub.t(),
           node(),
           [{ProcessHub.child_spec(), ProcessHub.child_metadata()}],
           keyword() | nil
         ) ::
           {:ok, :redistribution_initiated} | {:ok, :no_children_to_redistribute}
-  def children_redist_init(hub_id, node, children_data, opts \\ []) do
+  def children_redist_init(hub, node, children_data, opts \\ []) do
     # Migration expects the `:migration_add` true flag otherwise the
     # remote node wont release the lock.
     opts = Keyword.put(opts, :migration_add, true)
 
     redist_children =
       Enum.map(children_data, fn {child_spec, metadata} ->
-        init_data([node], hub_id, child_spec, metadata)
+        init_data([node], hub.hub_id, child_spec, metadata)
         |> Map.merge(Map.new(opts))
       end)
 
     case length(redist_children) > 0 do
       true ->
-        Dispatcher.children_migrate(hub_id, [{node, redist_children}], opts)
+        Dispatcher.children_migrate(hub.managers.event_queue, [{node, redist_children}], opts)
 
         {:ok, :redistribution_initiated}
 
@@ -50,8 +52,15 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
+  # TODO: Replace with coordinator function.
+  @doc "Get hub struct from coordinator for testing purposes."
+  @spec get_hub_struct(ProcessHub.hub_id()) :: ProcessHub.Hub.t()
+  def get_hub_struct(hub_id) do
+    GenServer.call(hub_id, :get_state)
+  end
+
   @doc "Initiates processes startup."
-  @spec init_children(ProcessHub.hub_id(), [ProcessHub.child_spec()], keyword()) ::
+  @spec init_children(ProcessHub.Hub.t(), [ProcessHub.child_spec()], keyword()) ::
           {:ok, :start_initiated}
           | (-> {:ok, list})
           | {:error,
@@ -59,31 +68,30 @@ defmodule ProcessHub.Service.Distributor do
              | :no_children
              | {:already_started, [ProcessHub.child_id()]}
              | any()}
-  def init_children(_hub_id, [], _opts), do: {:error, :no_children}
+  def init_children(_hub, [], _opts), do: {:error, :no_children}
 
-  def init_children(hub_id, child_specs, opts) do
-    with {:ok, strategies} <- init_strategies(hub_id),
-         :ok <- init_distribution(hub_id, child_specs, opts, strategies),
-         :ok <- init_registry_check(hub_id, child_specs, opts),
-         {:ok, children_nodes} <- init_attach_nodes(hub_id, child_specs, strategies),
-         {:ok, composed_data} <- init_compose_data(hub_id, children_nodes, opts) do
-      pre_start_children(hub_id, composed_data, opts)
+  def init_children(hub, child_specs, opts) do
+    with {:ok, strategies} <- init_strategies(hub),
+         :ok <- init_distribution(hub, child_specs, opts, strategies),
+         :ok <- init_registry_check(hub, child_specs, opts),
+         {:ok, children_nodes} <- init_attach_nodes(hub, child_specs, strategies),
+         {:ok, composed_data} <- init_compose_data(hub, children_nodes, opts) do
+      pre_start_children(hub, composed_data, opts)
     else
       err -> err
     end
   end
 
   @doc "Initiates processes shutdown."
-  @spec stop_children(ProcessHub.hub_id(), [ProcessHub.child_id()], keyword()) ::
+  @spec stop_children(Hub.t(), [ProcessHub.child_id()], keyword()) ::
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
-  def stop_children(hub_id, child_ids, opts) do
-    local_storage = Name.local_storage(hub_id)
-    redun_strat = Storage.get(local_storage, StorageKey.strred())
-    dist_strat = Storage.get(local_storage, StorageKey.strdist())
+  def stop_children(hub, child_ids, opts) do
+    redun_strat = Storage.get(hub.storage.misc, StorageKey.strred())
+    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
-      child_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, child_id, repl_fact)
+      child_nodes = DistributionStrategy.belongs_to(dist_strat, hub, child_id, repl_fact)
       child_data = %{nodes: child_nodes, child_id: child_id}
 
       append_items =
@@ -95,7 +103,7 @@ defmodule ProcessHub.Service.Distributor do
 
       Keyword.merge(acc, append_items)
     end)
-    |> pre_stop_children(hub_id, opts)
+    |> pre_stop_children(hub, opts)
   end
 
   @doc """
@@ -103,13 +111,13 @@ defmodule ProcessHub.Service.Distributor do
   to remove the child processes from their registry.
   """
   @spec children_terminate(
-          ProcessHub.hub_id(),
+          Hub.t(),
           [ProcessHub.child_id()],
           ProcessHub.Strategy.Synchronization.Base,
           keyword()
         ) :: [StopHandle.t()]
-  def children_terminate(hub_id, child_ids, sync_strategy, stop_opts \\ []) do
-    dist_sup = Name.distributed_supervisor(hub_id)
+  def children_terminate(hub, child_ids, sync_strategy, stop_opts \\ []) do
+    dist_sup = hub.managers.distributed_supervisor
 
     shutdown_results =
       Enum.map(child_ids, fn child_id ->
@@ -120,7 +128,7 @@ defmodule ProcessHub.Service.Distributor do
 
     SynchronizationStrategy.propagate(
       sync_strategy,
-      hub_id,
+      hub,
       shutdown_results,
       node(),
       :rem,
@@ -149,8 +157,9 @@ defmodule ProcessHub.Service.Distributor do
   @spec which_children_global(ProcessHub.hub_id(), keyword()) :: list
   def which_children_global(hub_id, opts) do
     timeout = Keyword.get(opts, :timeout, 5000)
+    hub = Coordinator.get_hub(hub_id)
 
-    Cluster.nodes(hub_id, [:include_local])
+    Cluster.nodes(hub.storage.misc, [:include_local])
     |> :erpc.multicall(fn -> __MODULE__.which_children_local(hub_id, opts) end, timeout)
     |> Enum.map(fn {_status, result} -> result end)
   end
@@ -166,7 +175,7 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:await_timeout, 60000)
   end
 
-  defp pre_start_children(hub_id, startup_children, opts) do
+  defp pre_start_children(%Hub{hub_id: hub_id}, startup_children, opts) do
     case Keyword.get(opts, :on_failure, :continue) do
       :continue ->
         case Keyword.get(opts, :async_wait, false) do
@@ -184,16 +193,16 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  defp pre_stop_children(stop_children, hub_id, opts) do
+  defp pre_stop_children(stop_children, hub, opts) do
     case Keyword.get(opts, :async_wait, false) do
       false ->
-        Dispatcher.children_stop(hub_id, stop_children, opts)
+        Dispatcher.children_stop(hub.hub_id, stop_children, opts)
         {:ok, :stop_initiated}
 
       true ->
-        {receiver_pid, _, await_promise} = spawn_collector(hub_id, :stop, opts)
+        {receiver_pid, _, await_promise} = spawn_collector(hub, :stop, opts)
         opts = Keyword.put(opts, :reply_to, [receiver_pid])
-        Dispatcher.children_stop(hub_id, stop_children, opts)
+        Dispatcher.children_stop(hub.hub_id, stop_children, opts)
         {:ok, await_promise}
     end
   end
@@ -279,7 +288,7 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  defp spawn_collector(hub_id, start_or_stop, opts) do
+  defp spawn_collector(hub, start_or_stop, opts) do
     ref = make_ref()
 
     pid =
@@ -292,8 +301,8 @@ defmodule ProcessHub.Service.Distributor do
 
         results =
           case start_or_stop do
-            :start -> Mailbox.collect_start_results(hub_id, opts)
-            :stop -> Mailbox.collect_stop_results(hub_id, opts)
+            :start -> Mailbox.collect_start_results(hub, opts)
+            :stop -> Mailbox.collect_stop_results(hub, opts)
           end
 
         receive do
@@ -314,17 +323,15 @@ defmodule ProcessHub.Service.Distributor do
     {pid, ref, await_promise}
   end
 
-  defp init_distribution(hub_id, child_specs, opts, %{distribution: strategy}) do
-    DistributionStrategy.children_init(strategy, hub_id, child_specs, opts)
+  defp init_distribution(hub, child_specs, opts, %{distribution: strategy}) do
+    DistributionStrategy.children_init(strategy, hub, child_specs, opts)
   end
 
-  defp init_strategies(hub_id) do
-    local_storage = Name.local_storage(hub_id)
-
+  defp init_strategies(%Hub{storage: %{misc: misc_storage}}) do
     {:ok,
      %{
-       distribution: Storage.get(local_storage, StorageKey.strdist()),
-       redundancy: Storage.get(local_storage, StorageKey.strred())
+       distribution: Storage.get(misc_storage, StorageKey.strdist()),
+       redundancy: Storage.get(misc_storage, StorageKey.strred())
      }}
   end
 
@@ -338,7 +345,7 @@ defmodule ProcessHub.Service.Distributor do
     }
   end
 
-  defp init_compose_data(hub_id, children, opts) do
+  defp init_compose_data(%Hub{hub_id: hub_id}, children, opts) do
     metadata = Keyword.get(opts, :metadata, %{})
 
     {:ok,
@@ -356,16 +363,16 @@ defmodule ProcessHub.Service.Distributor do
      end)}
   end
 
-  defp init_attach_nodes(hub_id, child_specs, %{distribution: dist, redundancy: redun}) do
+  defp init_attach_nodes(hub, child_specs, %{distribution: dist, redundancy: redun}) do
     repl_fact = RedundancyStrategy.replication_factor(redun)
 
     {:ok,
      Enum.map(child_specs, fn child_spec ->
-       {child_spec, DistributionStrategy.belongs_to(dist, hub_id, child_spec.id, repl_fact)}
+       {child_spec, DistributionStrategy.belongs_to(dist, hub, child_spec.id, repl_fact)}
      end)}
   end
 
-  defp init_registry_check(hub_id, child_specs, opts) do
+  defp init_registry_check(%Hub{hub_id: hub_id}, child_specs, opts) do
     case Keyword.get(opts, :check_existing) do
       true ->
         contains = ProcessRegistry.contains_children(hub_id, Enum.map(child_specs, & &1.id))

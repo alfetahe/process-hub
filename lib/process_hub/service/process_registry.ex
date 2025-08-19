@@ -183,9 +183,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
     Keyword.get(opts, :table, hub_id)
     |> Storage.insert(child_spec.id, {child_spec, child_nodes, metadata}, opts)
 
-    if !Keyword.get(opts, :skip_hooks, false) do
+    hook_storage = Keyword.get(opts, :hook_storage, nil)
+
+    if hook_storage do
       HookManager.dispatch_hook(
-        hub_id,
+        hook_storage,
         Hook.registry_pid_inserted(),
         {child_spec.id, child_nodes}
       )
@@ -194,6 +196,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
     :ok
   end
 
+  # TODO: update documentation about the skip hooks option for all functions.
   @doc """
   Deletes information about a child process from the registry.
 
@@ -201,11 +204,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
   @spec delete(ProcessHub.hub_id(), ProcessHub.child_id(), keyword() | nil) :: :ok
   def delete(hub_id, child_id, opts \\ []) do
-    Keyword.get(opts, :table, hub_id)
-    |> Storage.remove(child_id)
+    Storage.remove(hub_id, child_id)
 
-    unless Keyword.get(opts, :skip_hooks, false) do
-      HookManager.dispatch_hook(hub_id, Hook.registry_pid_removed(), child_id)
+    hook_storage = Keyword.get(opts, :hook_storage, nil)
+
+    if hook_storage do
+      HookManager.dispatch_hook(hook_storage, Hook.registry_pid_removed(), child_id)
     end
 
     :ok
@@ -216,23 +220,25 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   Calling this function will dispatch the `:registry_pid_insert_hook` hook unless the `:skip_hooks` option is set to `true`.
   """
-  @spec bulk_insert(ProcessHub.hub_id(), %{
-          ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}], metadata()}
-        }) :: :ok
-  def bulk_insert(hub_id, children) do
-    table = hub_id
+  @spec bulk_insert(
+          ProcessHub.hub_id(),
+          %{
+            ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}], metadata()}
+          },
+          keyword()
+        ) :: :ok
+  def bulk_insert(hub_id, children, opts \\ []) do
+    hook_storage = Keyword.get(opts, :hook_storage, nil)
 
     hooks =
       Enum.map(children, fn {child_id, {child_spec, child_nodes, metadata}} ->
         diff =
-          case lookup(hub_id, child_id, table: table) do
+          case lookup(hub_id, child_id) do
             nil ->
               insert(
                 hub_id,
                 child_spec,
                 child_nodes,
-                skip_hooks: true,
-                table: table,
                 metadata: metadata
               )
 
@@ -244,8 +250,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
                 existing_nodes,
                 hub_id,
                 child_spec,
-                table,
-                metadata
+                metadata: metadata
               )
           end
 
@@ -255,7 +260,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
       end)
       |> Enum.filter(&is_tuple/1)
 
-    HookManager.dispatch_hooks(hub_id, hooks)
+    if hook_storage do
+      HookManager.dispatch_hooks(hook_storage, hooks)
+    end
 
     :ok
   end
@@ -266,15 +273,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Calling this function will dispatch the `:registry_pid_remove_hook` hooks unless
   the `:skip_hooks` option is set to `true`.
   """
-  @spec bulk_delete(ProcessHub.hub_id(), %{
-          ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
-        }) :: :ok
-  def bulk_delete(hub_id, children) do
-    table = hub_id
-
+  @spec bulk_delete(
+          ProcessHub.hub_id(),
+          %{
+            ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
+          },
+          keyword()
+        ) :: :ok
+  def bulk_delete(hub_id, children, opts \\ []) do
     hooks =
       Enum.map(children, fn {child_id, rem_nodes} ->
-        case lookup(hub_id, child_id, table: table, with_metadata: true) do
+        case lookup(hub_id, child_id, with_metadata: true) do
           nil ->
             nil
 
@@ -289,12 +298,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
                 hub_id,
                 child_spec,
                 new_nodes,
-                skip_hooks: true,
-                table: table,
                 metadata: metadata
               )
             else
-              delete(hub_id, child_id, skip_hooks: true, table: table)
+              delete(hub_id, child_id)
             end
 
             {Hook.registry_pid_removed(), {child_id, rem_nodes}}
@@ -302,7 +309,13 @@ defmodule ProcessHub.Service.ProcessRegistry do
       end)
       |> Enum.reject(&is_nil/1)
 
-    HookManager.dispatch_hooks(hub_id, hooks)
+    hook_storage = Keyword.get(opts, :hook_storage, nil)
+
+    if hook_storage do
+      HookManager.dispatch_hooks(hook_storage, hooks)
+    end
+
+    :ok
   end
 
   @doc """
@@ -342,7 +355,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end
   end
 
-  defp merge_insert(nodes_new, nodes_existing, hub_id, child_spec, table, metadata) do
+  defp merge_insert(nodes_new, nodes_existing, hub_id, child_spec, opts) do
     cond do
       Enum.sort(nodes_new) !== Enum.sort(nodes_existing) ->
         merged_data = Keyword.merge(nodes_existing, nodes_new)
@@ -351,9 +364,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           hub_id,
           child_spec,
           merged_data,
-          skip_hooks: true,
-          table: table,
-          metadata: metadata
+          opts
         )
 
         get_insert_diff(nodes_new, nodes_existing)

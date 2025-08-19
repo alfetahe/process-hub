@@ -24,7 +24,7 @@ defmodule ProcessHub.Service.Ring do
   """
   @spec get_ring(ProcessHub.hub_id()) :: HashRing.ring()
   def get_ring(hub_id) do
-    Storage.get(Name.local_storage(hub_id), StorageKey.hr())
+    Storage.get(Name.misc_storage(hub_id), StorageKey.hr())
   end
 
   @doc """

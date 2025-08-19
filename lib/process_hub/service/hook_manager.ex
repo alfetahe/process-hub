@@ -5,7 +5,6 @@ defmodule ProcessHub.Service.HookManager do
   """
 
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Utility.Name
 
   # TODO: need more dynamic way of defining those.
   @type hook_key() ::
@@ -47,57 +46,57 @@ defmodule ProcessHub.Service.HookManager do
   defstruct [:id, :m, :f, :a, p: 0]
 
   @doc "Registers a new hook handlers."
-  @spec register_handlers(ProcessHub.hub_id(), hook_key(), [t()]) ::
+  @spec register_handlers(reference(), hook_key(), [t()]) ::
           :ok | {:error, {:handler_id_not_unique, [handler_id()]}}
-  def register_handlers(hub_id, hook_key, hook_handlers) do
-    hook_handlers = hook_handlers ++ registered_handlers(hub_id, hook_key)
+  def register_handlers(hook_table, hook_key, hook_handlers) do
+    hook_handlers = hook_handlers ++ registered_handlers(hook_table, hook_key)
 
-    case insert_handlers(hub_id, hook_key, hook_handlers) do
+    case insert_handlers(hook_table, hook_key, hook_handlers) do
       :ok -> :ok
       error -> error
     end
   end
 
   @doc "Registers a new hook handler."
-  @spec register_handler(ProcessHub.hub_id(), hook_key(), t()) ::
+  @spec register_handler(reference(), hook_key(), t()) ::
           :ok | {:error, :handler_id_not_unique}
-  def register_handler(hub_id, hook_key, hook_handler) do
-    hook_handlers = [hook_handler | registered_handlers(hub_id, hook_key)]
+  def register_handler(hook_table, hook_key, hook_handler) do
+    hook_handlers = [hook_handler | registered_handlers(hook_table, hook_key)]
 
-    case insert_handlers(hub_id, hook_key, hook_handlers) do
+    case insert_handlers(hook_table, hook_key, hook_handlers) do
       :ok -> :ok
       {:error, {:handler_id_not_unique, _}} -> {:error, :handler_id_not_unique}
     end
   end
 
   @doc "Returns all registered hook handlers for the given hook key"
-  @spec registered_handlers(ProcessHub.hub_id(), hook_key()) :: [t()]
-  def registered_handlers(hub_id, hook_key) do
-    case Storage.get(Name.hook_registry(hub_id), hook_key) do
+  @spec registered_handlers(reference(), hook_key()) :: [t()]
+  def registered_handlers(hook_table, hook_key) do
+    case Storage.get(hook_table, hook_key) do
       nil -> []
       handlers -> handlers
     end
   end
 
   @doc "Cancels a hook handler."
-  @spec cancel_handler(ProcessHub.hub_id(), hook_key(), handler_id()) :: :ok
-  def cancel_handler(hub_id, hook_key, handler_id) do
+  @spec cancel_handler(reference(), hook_key(), handler_id()) :: :ok
+  def cancel_handler(hook_table, hook_key, handler_id) do
     hook_handlers =
-      registered_handlers(hub_id, hook_key)
+      registered_handlers(hook_table, hook_key)
       |> Enum.reject(fn handler -> handler.id == handler_id end)
 
-    Storage.insert(Name.hook_registry(hub_id), hook_key, hook_handlers)
+    Storage.insert(hook_table, hook_key, hook_handlers)
 
     :ok
   end
 
   @doc "Dispatches multiple hooks to the registered handlers."
-  @spec dispatch_hooks(ProcessHub.hub_id(), [t()]) :: :ok
-  def dispatch_hooks(_hub_id, %{}), do: :ok
+  @spec dispatch_hooks(reference(), [t()]) :: :ok
+  def dispatch_hooks(_hook_table, %{}), do: :ok
 
-  def dispatch_hooks(hub_id, hooks) do
+  def dispatch_hooks(hook_table, hooks) do
     Enum.each(hooks, fn {hook_key, hook_data} ->
-      dispatch_hook(hub_id, hook_key, hook_data)
+      dispatch_hook(hook_table, hook_key, hook_data)
     end)
 
     :ok
@@ -109,9 +108,9 @@ defmodule ProcessHub.Service.HookManager do
   It is possible to register a hook handler with a wildcard argument `:_` which
   will be replaced with the hook data when the hook is dispatched.
   """
-  @spec dispatch_hook(ProcessHub.hub_id(), hook_key(), any()) :: :ok
-  def dispatch_hook(hub_id, hook_key, hook_data) do
-    registered_handlers(hub_id, hook_key)
+  @spec dispatch_hook(reference(), hook_key(), any()) :: :ok
+  def dispatch_hook(hook_table, hook_key, hook_data) do
+    registered_handlers(hook_table, hook_key)
     |> Enum.each(fn hook_handler ->
       exec_hook(hook_handler, hook_data)
     end)
@@ -128,9 +127,9 @@ defmodule ProcessHub.Service.HookManager do
   Works similar to `dispatch_hook/3` but each handler is expected to return the modified
   hook data. The hook data is passed to the next handler in the chain.
   """
-  @spec dispatch_alter_hook(ProcessHub.hub_id(), hook_key(), any()) :: any()
-  def dispatch_alter_hook(hub_id, hook_key, hook_data) do
-    registered_handlers(hub_id, hook_key)
+  @spec dispatch_alter_hook(reference(), hook_key(), any()) :: any()
+  def dispatch_alter_hook(hook_table, hook_key, hook_data) do
+    registered_handlers(hook_table, hook_key)
     |> Enum.reduce(hook_data, fn hook_handler, acc ->
       exec_hook(hook_handler, acc)
     end)
@@ -151,14 +150,14 @@ defmodule ProcessHub.Service.HookManager do
     apply(module, func, args)
   end
 
-  defp insert_handlers(hub_id, hook_key, hook_handlers) do
+  defp insert_handlers(hook_table, hook_key, hook_handlers) do
     # Make sure that the hook id is unique
     duplicates = duplicate_handlers(hook_handlers)
     sorted_handlers = Enum.sort_by(hook_handlers, & &1.p) |> Enum.reverse()
 
     cond do
       Enum.empty?(duplicates) ->
-        Name.hook_registry(hub_id) |> Storage.insert(hook_key, sorted_handlers)
+        Storage.insert(hook_table, hook_key, sorted_handlers)
         :ok
 
       true ->

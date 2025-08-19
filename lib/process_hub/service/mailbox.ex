@@ -1,5 +1,6 @@
 defmodule ProcessHub.Service.Mailbox do
   alias ProcessHub.Service.Cluster
+  alias ProcessHub.Hub
 
   @moduledoc """
   The messenger service provides API functions for receiving messages from other processes.
@@ -8,9 +9,9 @@ defmodule ProcessHub.Service.Mailbox do
   @doc """
   Waits for multiple child process startup results.
   """
-  @spec collect_start_results(ProcessHub.hub_id(), keyword()) ::
+  @spec collect_start_results(Hub.t(), keyword()) ::
           {:ok, list()} | {:error, {list(), list()}}
-  def collect_start_results(hub_id, opts) do
+  def collect_start_results(hub, opts) do
     result_handler =
       Keyword.get(opts, :result_handler, fn _cid, _node, result ->
         case result do
@@ -21,15 +22,15 @@ defmodule ProcessHub.Service.Mailbox do
 
     opts = Keyword.put(opts, :receive_key, :collect_start_results)
 
-    collect_transition_results(hub_id, result_handler, opts)
+    collect_transition_results(hub, result_handler, opts)
   end
 
   @doc """
   Waits for multiple child process termination results.
   """
-  @spec collect_stop_results(ProcessHub.hub_id(), keyword()) ::
+  @spec collect_stop_results(Hub.t(), keyword()) ::
           {:ok, list()} | {:error, {list(), list()}}
-  def collect_stop_results(hub_id, opts) do
+  def collect_stop_results(hub, opts) do
     result_handler =
       Keyword.get(opts, :result_handler, fn _child_id, _node, resp ->
         case resp do
@@ -40,7 +41,7 @@ defmodule ProcessHub.Service.Mailbox do
 
     opts = Keyword.put(opts, :receive_key, :collect_stop_results)
 
-    collect_transition_results(hub_id, result_handler, opts)
+    collect_transition_results(hub, result_handler, opts)
   end
 
   @doc """
@@ -86,11 +87,20 @@ defmodule ProcessHub.Service.Mailbox do
     end
   end
 
-  defp collect_transition_results(hub_id, result_handler, opts) do
+  defp collect_transition_results(hub, result_handler, opts) do
     timeout = Keyword.get(opts, :timeout)
     recv_key = Keyword.get(opts, :receive_key)
-    collect_from = Keyword.get(opts, :collect_from, Cluster.nodes(hub_id, [:include_local]))
     required_cids = Keyword.get(opts, :required_cids, [])
+
+    collect_from =
+      Keyword.get(
+        opts,
+        :collect_from,
+        Cluster.nodes(
+          hub.storage.misc,
+          [:include_local]
+        )
+      )
 
     {success_results, errors} =
       recursive_collect(

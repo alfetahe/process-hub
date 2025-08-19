@@ -4,10 +4,11 @@ defmodule ProcessHub.Service.Synchronizer do
   registry data between nodes.
   """
 
+  alias ProcessHub.Coordinator
   alias ProcessHub.Handler.Synchronization
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Utility.Name
+  alias ProcessHub.Hub
 
   # TODO: add tests
   @doc """
@@ -31,13 +32,15 @@ defmodule ProcessHub.Service.Synchronizer do
 
   # TODO: add tests
   def exec_interval_sync(hub_id, strategy, sync_data, remote_node) do
+    hub = Coordinator.get_hub(hub_id)
+
     Task.Supervisor.async_nolink(
-      Name.task_supervisor(hub_id),
+      hub.managers.task_supervisor,
       Synchronization.IntervalSyncHandle,
       :handle,
       [
         %Synchronization.IntervalSyncHandle{
-          hub_id: hub_id,
+          hub: hub,
           sync_strat: strategy,
           sync_data: sync_data,
           remote_node: remote_node
@@ -48,35 +51,33 @@ defmodule ProcessHub.Service.Synchronizer do
   end
 
   @doc "Returns local node's process registry data used for synchronization."
-  @spec local_sync_data(ProcessHub.hub_id()) :: [
+  @spec local_sync_data(Hub.t()) :: [
           {ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}
         ]
-  def local_sync_data(hub_id) do
-    ProcessRegistry.dump(hub_id)
-    |> filter_local_data(hub_id)
+  def local_sync_data(hub) do
+    ProcessRegistry.dump(hub.hub_id)
+    |> filter_local_data(hub.managers.distributed_supervisor)
   end
 
   @doc """
   Appends remote data to the local process registry.
   """
-  @spec append_data(ProcessHub.hub_id(), %{
+  @spec append_data(Hub.t(), %{
           node() => [{ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}]
         }) :: :ok
-  def append_data(hub_id, remote_data) do
-    table = hub_id
-
+  def append_data(hub, remote_data) do
     Enum.each(remote_data, fn {remote_node, remote_children} ->
       # TODO: may want to add some type of locking or transactions here.
       Enum.each(remote_children, fn {remote_cs, remote_pid, remote_meta} ->
         # Check if local children contain remote node data.
-        case ProcessRegistry.lookup(hub_id, remote_cs.id, table: table) do
+        case ProcessRegistry.lookup(hub.hub_id, remote_cs.id) do
           nil ->
             # We don't have data locally so add it.
             ProcessRegistry.insert(
-              hub_id,
+              hub.hub_id,
               remote_cs,
               [{remote_node, remote_pid}],
-              table: table,
+              hook_storage: hub.storage.hook,
               metadata: remote_meta
             )
 
@@ -88,10 +89,10 @@ defmodule ProcessHub.Service.Synchronizer do
 
             # We have data locally, update the pid that is associated with the remote node.
             ProcessRegistry.insert(
-              hub_id,
+              hub.hub_id,
               remote_cs,
               updated,
-              table: table,
+              hook_storage: hub.storage.hook,
               metadata: remote_meta
             )
         end
@@ -102,12 +103,12 @@ defmodule ProcessHub.Service.Synchronizer do
   @doc """
   Detaches remote data from the local process registry.
   """
-  @spec detach_data(ProcessHub.hub_id(), %{node() => [{ProcessHub.child_spec(), pid()}]}) :: :ok
-  def detach_data(hub_id, remote_children) do
-    local_registry = ProcessRegistry.dump(hub_id)
+  @spec detach_data(Hub.t(), %{node() => [{ProcessHub.child_spec(), pid()}]}) :: :ok
+  def detach_data(hub, remote_children) do
+    local_registry = ProcessRegistry.dump(hub.hub_id)
 
     Enum.each(local_registry, fn {child_id, {child_spec, child_nodes, metadata}} ->
-      opts = [metadata: metadata]
+      opts = [metadata: metadata, hook_storage: hub.storage.hook]
 
       Enum.each(child_nodes, fn {child_node, _child_pid} ->
         if remote_children[child_node] do
@@ -118,9 +119,9 @@ defmodule ProcessHub.Service.Synchronizer do
             new_child_nodes = Keyword.delete(child_nodes, child_node)
 
             if length(new_child_nodes) > 0 do
-              ProcessRegistry.insert(hub_id, child_spec, new_child_nodes, opts)
+              ProcessRegistry.insert(hub.hub_id, child_spec, new_child_nodes, opts)
             else
-              ProcessRegistry.delete(hub_id, child_spec.id)
+              ProcessRegistry.delete(hub.hub_id, child_spec.id, opts)
             end
           end
         end
@@ -128,11 +129,8 @@ defmodule ProcessHub.Service.Synchronizer do
     end)
   end
 
-  defp filter_local_data(process_registry, hub_id) do
-    supervisor_child_ids =
-      Name.distributed_supervisor(hub_id)
-      |> DistributedSupervisor.local_child_ids()
-
+  defp filter_local_data(process_registry, dist_sup) do
+    supervisor_child_ids = DistributedSupervisor.local_child_ids(dist_sup)
     node = node()
 
     Enum.filter(process_registry, fn {child_id, _} ->
