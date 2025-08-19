@@ -13,7 +13,7 @@ defmodule ProcessHub.Initializer do
   @doc "Starts a `ProcessHub` instance with all its children."
   @spec start_link(ProcessHub.t()) :: {:ok, pid()} | {:error, term()}
   def start_link(%ProcessHub{} = hub_settings) do
-    Supervisor.start_link(__MODULE__, hub_settings, name: Name.initializer(hub_settings.hub_id))
+    Supervisor.start_link(__MODULE__, hub_settings)
   end
 
   def start_link(_), do: {:error, :expected_hub_settings}
@@ -22,7 +22,8 @@ defmodule ProcessHub.Initializer do
   @spec stop(atom()) :: :ok | {:error, :not_alive}
   def stop(hub_id) do
     if ProcessHub.is_alive?(hub_id) do
-      Supervisor.stop(Name.initializer(hub_id))
+      hub = GenServer.call(hub_id, :get_state)
+      Supervisor.stop(hub.managers.initializer)
     else
       {:error, :not_alive}
     end
@@ -30,18 +31,22 @@ defmodule ProcessHub.Initializer do
 
   @impl true
   def init(%ProcessHub{hub_id: hub_id} = hub) do
-    {hook_registry, local_storage} = setup_storage(hub_id)
+    {hook_registry, misc_storage} = setup_storage(hub_id)
 
+    # TODO: refactor.
     managers = %{
-      coordinator: hub_id,
+      initializer: self(),
+      system_registry: Name.system_registry(hub_id),
       event_queue: Name.event_queue(hub_id),
       distributed_supervisor: Name.distributed_supervisor(hub_id),
-      task_supervisor: Name.task_supervisor(hub_id)
+      task_supervisor: Name.task_supervisor(hub_id),
+      worker_queue: Name.worker_queue(hub_id),
+      janitor: Name.janitor(hub_id)
     }
 
     storage = %{
       hook: hook_registry,
-      local: local_storage
+      misc: misc_storage
     }
 
     children =
@@ -50,9 +55,9 @@ defmodule ProcessHub.Initializer do
         {Blockade, %{name: managers.event_queue, priority_sync: false}},
         dist_sup(hub, managers),
         {Task.Supervisor, name: managers.task_supervisor},
-        {ProcessHub.Coordinator, {hub_id, hub, managers, storage}},
-        {ProcessHub.WorkerQueue, hub_id},
-        {ProcessHub.Janitor, {hub_id, hub.storage_purge_interval}}
+        {ProcessHub.Coordinator, {hub, managers, storage}},
+        {ProcessHub.WorkerQueue, {hub_id, managers.worker_queue, storage.misc}},
+        {ProcessHub.Janitor, {hub_id, managers.janitor, hub.storage_purge_interval}}
       ]
 
     opts = [strategy: :one_for_one]
@@ -79,8 +84,8 @@ defmodule ProcessHub.Initializer do
     :ets.new(hub_id, [:set, :public, :named_table])
 
     hook_registry = :ets.new(Name.hook_registry(hub_id), [:set, :public, :named_table])
-    local_storage = :ets.new(Name.local_storage(hub_id), [:set, :public, :named_table])
+    misc_storage = :ets.new(Name.misc_storage(hub_id), [:set, :public, :named_table])
 
-    {hook_registry, local_storage}
+    {hook_registry, misc_storage}
   end
 end

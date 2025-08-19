@@ -10,6 +10,7 @@ defmodule ProcessHub.DistributedSupervisor do
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.PriorityLevel
+  alias ProcessHub.Coordinator
 
   use ProcessHub.Constant.Event
 
@@ -126,6 +127,8 @@ defmodule ProcessHub.DistributedSupervisor do
 
   defp handle_child_exit(old_state, new_state, pid) do
     hub_id = elem(old_state, 11) |> Map.get(:hub_id)
+    hub = Coordinator.get_hub(hub_id)
+
     cid = find_cid_from_pid(old_state, pid)
     old_pid = find_pid_from_cid(old_state, cid)
     new_pid = find_pid_from_cid(new_state, cid)
@@ -133,22 +136,22 @@ defmodule ProcessHub.DistributedSupervisor do
     cond do
       # No new pid found, the child process has been terminated.
       new_pid === :undefined ->
-        handle_child_removal(hub_id, cid)
+        handle_child_removal(hub.managers.event_queue, cid)
 
       # The child process has been restarted with a new pid.
       is_pid(new_pid) and old_pid !== new_pid ->
-        handle_child_restart(hub_id, cid, new_pid)
+        handle_child_restart(hub.managers.event_queue, cid, new_pid)
 
       true ->
         nil
     end
   end
 
-  defp handle_child_removal(hub_id, child_id) do
+  defp handle_child_removal(event_queue, child_id) do
     node = node()
 
     Dispatcher.propagate_event(
-      hub_id,
+      event_queue,
       @event_children_unregistration,
       {[{child_id, :self_exit, node}], node, []},
       %{
@@ -162,9 +165,9 @@ defmodule ProcessHub.DistributedSupervisor do
     Process.send(self(), {:delete_child_spec, child_id}, [])
   end
 
-  defp handle_child_restart(hub_id, child_id, new_pid) do
+  defp handle_child_restart(event_queue, child_id, new_pid) do
     Dispatcher.propagate_event(
-      hub_id,
+      event_queue,
       @event_child_process_pid_update,
       {child_id, {node(), new_pid}},
       %{
