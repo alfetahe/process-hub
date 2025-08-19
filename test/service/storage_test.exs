@@ -5,72 +5,72 @@ defmodule Test.Service.StorageTest do
   use ExUnit.Case
 
   @hub_id :storage_test
-  @local_storage Name.local_storage(@hub_id)
+  @misc_storage Name.misc_storage(@hub_id)
 
   setup do
     Test.Helper.SetupHelper.setup_base(%{}, @hub_id)
   end
 
   test "exists", _context do
-    assert Storage.exists?(@local_storage, :test) === false
+    assert Storage.exists?(@misc_storage, :test) === false
 
-    Storage.insert(@local_storage, :test, :test_value)
+    Storage.insert(@misc_storage, :test, :test_value)
 
-    assert Storage.exists?(@local_storage, :test) === true
+    assert Storage.exists?(@misc_storage, :test) === true
   end
 
   test "insert", _context do
-    assert Storage.get(@local_storage, :test) === nil
+    assert Storage.get(@misc_storage, :test) === nil
 
-    Storage.insert(@local_storage, :test_insert, :test_value)
-    Storage.insert(@local_storage, :test_insert2, :test_value2, ttl: 5000)
+    Storage.insert(@misc_storage, :test_insert, :test_value)
+    Storage.insert(@misc_storage, :test_insert2, :test_value2, ttl: 5000)
 
-    assert Storage.get(@local_storage, :test_insert) === :test_value
+    assert Storage.get(@misc_storage, :test_insert) === :test_value
 
-    value = Storage.get(@local_storage, :test_insert2)
+    value = Storage.get(@misc_storage, :test_insert2)
 
     assert value === value
   end
 
   test "get", _context do
-    assert Storage.get(@local_storage, :test) === nil
+    assert Storage.get(@misc_storage, :test) === nil
 
-    Storage.insert(@local_storage, :test, :test_value)
-    Storage.insert(@local_storage, :test2, :test_value2)
+    Storage.insert(@misc_storage, :test, :test_value)
+    Storage.insert(@misc_storage, :test2, :test_value2)
 
-    assert Storage.get(@local_storage, :test) === :test_value
-    assert Storage.get(@local_storage, :test2) === :test_value2
-    assert Storage.get(@local_storage, :non_exist) === nil
+    assert Storage.get(@misc_storage, :test) === :test_value
+    assert Storage.get(@misc_storage, :test2) === :test_value2
+    assert Storage.get(@misc_storage, :non_exist) === nil
   end
 
   test "match", _context do
     match = {:"$1", {:"$2", %{some_key: "some_value"}}}
 
-    assert Storage.match(@local_storage, match) === []
+    assert Storage.match(@misc_storage, match) === []
 
-    Storage.insert(@local_storage, :test1, {:test_value1, %{some_key: "some_value"}})
-    Storage.insert(@local_storage, :test2, {:test_value2, %{some_key: "some_value"}})
-    Storage.insert(@local_storage, :test3, {:test_value3, %{other_key: "some_value"}})
-    Storage.insert(@local_storage, :test4, :test_value4)
+    Storage.insert(@misc_storage, :test1, {:test_value1, %{some_key: "some_value"}})
+    Storage.insert(@misc_storage, :test2, {:test_value2, %{some_key: "some_value"}})
+    Storage.insert(@misc_storage, :test3, {:test_value3, %{other_key: "some_value"}})
+    Storage.insert(@misc_storage, :test4, :test_value4)
 
-    assert Storage.match(@local_storage, match) === [
+    assert Storage.match(@misc_storage, match) === [
              {:test2, :test_value2},
              {:test1, :test_value1}
            ]
 
-    assert Storage.match(@local_storage, {:"$1", :"$2", %{some_key: "no_existing"}}) === []
+    assert Storage.match(@misc_storage, {:"$1", :"$2", %{some_key: "no_existing"}}) === []
   end
 
   test "update", _context do
-    res1 = Storage.update(@local_storage, :not_exist_update1, fn val -> val end)
-    res2 = Storage.update(@local_storage, :not_exist_update2, fn _val -> 5000 end)
+    res1 = Storage.update(@misc_storage, :not_exist_update1, fn val -> val end)
+    res2 = Storage.update(@misc_storage, :not_exist_update2, fn _val -> 5000 end)
 
-    Storage.insert(@local_storage, :exist_update1, 4)
-    res3 = Storage.update(@local_storage, :exist_update1, fn val -> val * 2 end)
+    Storage.insert(@misc_storage, :exist_update1, 4)
+    res3 = Storage.update(@misc_storage, :exist_update1, fn val -> val * 2 end)
 
-    assert Storage.get(@local_storage, :not_exist_update1) === nil
-    assert Storage.get(@local_storage, :not_exist_update2) === 5000
-    assert Storage.get(@local_storage, :exist_update1) === 8
+    assert Storage.get(@misc_storage, :not_exist_update1) === nil
+    assert Storage.get(@misc_storage, :not_exist_update2) === 5000
+    assert Storage.get(@misc_storage, :exist_update1) === 8
 
     assert res1 === true
     assert res2 === true
@@ -78,24 +78,24 @@ defmodule Test.Service.StorageTest do
   end
 
   test "remove", _context do
-    Storage.insert(@local_storage, :test_remove_1, "test_value_delete_1")
-    Storage.insert(@local_storage, :test_remove_2, "test_value_delete_2")
-    Storage.insert(@local_storage, "test_remove_3", "test_value_delete_3")
-    Storage.insert(@local_storage, "test_remove_4", "test_value_delete_4")
+    Storage.insert(@misc_storage, :test_remove_1, "test_value_delete_1")
+    Storage.insert(@misc_storage, :test_remove_2, "test_value_delete_2")
+    Storage.insert(@misc_storage, "test_remove_3", "test_value_delete_3")
+    Storage.insert(@misc_storage, "test_remove_4", "test_value_delete_4")
 
-    assert Storage.get(@local_storage, :test_remove_1) === "test_value_delete_1"
-    assert Storage.get(@local_storage, :test_remove_2) === "test_value_delete_2"
-    assert Storage.get(@local_storage, "test_remove_3") === "test_value_delete_3"
-    assert Storage.get(@local_storage, "test_remove_4") === "test_value_delete_4"
+    assert Storage.get(@misc_storage, :test_remove_1) === "test_value_delete_1"
+    assert Storage.get(@misc_storage, :test_remove_2) === "test_value_delete_2"
+    assert Storage.get(@misc_storage, "test_remove_3") === "test_value_delete_3"
+    assert Storage.get(@misc_storage, "test_remove_4") === "test_value_delete_4"
 
-    Storage.remove(@local_storage, :test_remove_1)
-    Storage.remove(@local_storage, :test_remove_2)
-    Storage.remove(@local_storage, "test_remove_3")
+    Storage.remove(@misc_storage, :test_remove_1)
+    Storage.remove(@misc_storage, :test_remove_2)
+    Storage.remove(@misc_storage, "test_remove_3")
 
-    assert Storage.get(@local_storage, :test_remove_1) === nil
-    assert Storage.get(@local_storage, :test_remove_2) === nil
-    assert Storage.get(@local_storage, "test_remove_3") === nil
-    assert Storage.get(@local_storage, "test_remove_4") === "test_value_delete_4"
+    assert Storage.get(@misc_storage, :test_remove_1) === nil
+    assert Storage.get(@misc_storage, :test_remove_2) === nil
+    assert Storage.get(@misc_storage, "test_remove_3") === nil
+    assert Storage.get(@misc_storage, "test_remove_4") === "test_value_delete_4"
   end
 
   test "clear all", _context do

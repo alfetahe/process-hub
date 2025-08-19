@@ -55,7 +55,9 @@ defmodule Test.Helper.Bootstrap do
       kill_hubs(peer_nodes, hub_id)
     end)
 
-    Map.put(context, :hub, hub)
+    context
+    |> Map.put(:hub_conf, hub)
+    |> Map.put(:hub, ProcessHub.Coordinator.get_hub(hub_id))
   end
 
   def gen_hub(context) do

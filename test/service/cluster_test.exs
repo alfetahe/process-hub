@@ -10,13 +10,13 @@ defmodule Test.Service.ClusterTest do
   use ExUnit.Case
 
   @hub_id :cluster_test
-  @local_storage Name.local_storage(@hub_id)
+  @misc_storage Name.misc_storage(@hub_id)
 
   setup %{} do
     local_node = node()
 
     exit_fun = fn ->
-      ProcessHub.Service.Storage.insert(@local_storage, :hub_nodes, [local_node])
+      ProcessHub.Service.Storage.insert(@misc_storage, :hub_nodes, [local_node])
     end
 
     Test.Helper.SetupHelper.setup_base(%{}, @hub_id, [exit_fun])
@@ -36,7 +36,7 @@ defmodule Test.Service.ClusterTest do
     assert Cluster.add_hub_node(@hub_id, :one) === [local_node, :new, :dupl, :one]
     assert Cluster.add_hub_node(@hub_id, :two) === [local_node, :new, :dupl, :one, :two]
 
-    assert ProcessHub.Service.Storage.get(@local_storage, :hub_nodes) === [
+    assert ProcessHub.Service.Storage.get(@misc_storage, :hub_nodes) === [
              local_node,
              :new,
              :dupl,
@@ -49,14 +49,14 @@ defmodule Test.Service.ClusterTest do
     local_node = node()
     nodes = [:one, :two, :three, :four]
     Enum.each(nodes, fn node -> Cluster.add_hub_node(@hub_id, node) end)
-    assert ProcessHub.Service.Storage.get(@local_storage, :hub_nodes) === [local_node | nodes]
+    assert ProcessHub.Service.Storage.get(@misc_storage, :hub_nodes) === [local_node | nodes]
 
     assert Cluster.rem_hub_node(@hub_id, :one) === [local_node, :two, :three, :four]
     assert Cluster.rem_hub_node(@hub_id, :two) === [local_node, :three, :four]
     assert Cluster.rem_hub_node(@hub_id, :three) === [local_node, :four]
     assert Cluster.rem_hub_node(@hub_id, :four) === [local_node]
 
-    assert ProcessHub.Service.Storage.get(@local_storage, :hub_nodes) === [local_node]
+    assert ProcessHub.Service.Storage.get(@misc_storage, :hub_nodes) === [local_node]
   end
 
   test "is new node", _context do

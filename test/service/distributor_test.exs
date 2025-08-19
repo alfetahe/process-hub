@@ -68,7 +68,7 @@ defmodule Test.Service.DistributorTest do
   end
 
   test "terminate children", %{hub_id: hub_id} = _context do
-    local_storage = Name.local_storage(hub_id)
+    misc_storage = Name.misc_storage(hub_id)
 
     cs1 = %{
       id: :dist_child_add,
@@ -80,14 +80,16 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    Distributor.init_children(hub_id, [cs1, cs2],
+    hub = Distributor.get_hub_struct(hub_id)
+
+    Distributor.init_children(hub, [cs1, cs2],
       async_wait: true,
       check_existing: true,
       timeout: 5000
     )
     |> ProcessHub.await()
 
-    sync_strategy = ProcessHub.Service.Storage.get(local_storage, :synchronization_strategy)
+    sync_strategy = ProcessHub.Service.Storage.get(misc_storage, :synchronization_strategy)
 
     Distributor.children_terminate(hub_id, [cs1.id, cs2.id], sync_strategy)
 
@@ -105,7 +107,9 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    Distributor.init_children(hub_id, [child_spec, child_spec2],
+    hub = Distributor.get_hub_struct(hub_id)
+
+    Distributor.init_children(hub, [child_spec, child_spec2],
       async_wait: true,
       check_existing: false,
       timeout: 5000
@@ -130,7 +134,9 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
     }
 
-    Distributor.init_children(hub_id, [child_spec],
+    hub = Distributor.get_hub_struct(hub_id)
+
+    Distributor.init_children(hub, [child_spec],
       async_wait: true,
       check_existing: true,
       timeout: 1000

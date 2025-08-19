@@ -3,7 +3,6 @@ ExUnit.start()
 
 defmodule Test.Helper.Common do
   alias ProcessHub.Utility.Bag
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Ring
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
@@ -48,10 +47,11 @@ defmodule Test.Helper.Common do
   end
 
   def validate_replication(
-        %{hub_id: hub_id, hub: hub, replication_factor: _rf, validate_metadata: vm} = _context
+        %{hub_id: hub_id, hub_conf: hub_conf, replication_factor: _rf, validate_metadata: vm} =
+          _context
       ) do
     registry = ProcessHub.registry_dump(hub_id)
-    replication_factor = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
+    replication_factor = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes, metadata}} ->
       if vm do
@@ -86,23 +86,23 @@ defmodule Test.Helper.Common do
   end
 
   def validate_redundancy_mode(
-        %{hub_id: hub_id, replication_model: rep_model, hub: hub} = _context
+        %{hub_id: hub_id, replication_model: rep_model, hub_conf: hub_conf, hub: hub} = _context
       ) do
     registry = ProcessHub.registry_dump(hub_id)
-    dist_strat = hub.distribution_strategy
-    redun_strat = hub.redundancy_strategy
-    repl_fact = RedundancyStrategy.replication_factor(hub.redundancy_strategy)
+    dist_strat = hub_conf.distribution_strategy
+    redun_strat = hub_conf.redundancy_strategy
+    repl_fact = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes, _}} ->
       child_nodes =
         ProcessHub.Strategy.Distribution.Base.belongs_to(
           dist_strat,
-          hub_id,
+          hub,
           child_id,
           repl_fact
         )
 
-      master_node = RedundancyStrategy.master_node(redun_strat, hub_id, child_id, child_nodes)
+      master_node = RedundancyStrategy.master_node(redun_strat, hub, child_id, child_nodes)
 
       assert length(nodes) === repl_fact,
              "The length of nodes does not match replication factor"
@@ -216,10 +216,10 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def trigger_periodc_sync(%{hub_id: hub_id, peer_nodes: nodes} = context, child_specs, :add) do
+  def trigger_periodc_sync(%{peer_nodes: nodes, hub: hub} = context, child_specs, :add) do
     SynchronizationStrategy.init_sync(
-      context.hub.synchronization_strategy,
-      hub_id,
+      context.hub_conf.synchronization_strategy,
+      hub,
       Keyword.keys(nodes)
     )
 
@@ -230,10 +230,10 @@ defmodule Test.Helper.Common do
     )
   end
 
-  def trigger_periodc_sync(%{hub_id: hub_id, peer_nodes: nodes} = context, child_specs, :rem) do
+  def trigger_periodc_sync(%{peer_nodes: nodes, hub: hub} = context, child_specs, :rem) do
     SynchronizationStrategy.init_sync(
-      context.hub.synchronization_strategy,
-      hub_id,
+      context.hub_conf.synchronization_strategy,
+      hub,
       Keyword.keys(nodes)
     )
 
@@ -244,14 +244,16 @@ defmodule Test.Helper.Common do
     )
   end
 
-  def periodic_sync_base(%{hub_id: hub_id} = _context, child_specs, :rem) do
+  def periodic_sync_base(%{hub_id: hub_id, hub: hub} = _context, child_specs, :rem) do
     Enum.each(child_specs, fn child_spec ->
       ProcessHub.DistributedSupervisor.terminate_child(
-        Name.distributed_supervisor(hub_id),
+        hub.managers.distributed_supervisor,
         child_spec.id
       )
 
-      ProcessHub.Service.ProcessRegistry.delete(hub_id, child_spec.id)
+      ProcessHub.Service.ProcessRegistry.delete(hub_id, child_spec.id,
+        hook_storage: hub.storage.hook
+      )
     end)
 
     Bag.receive_multiple(
@@ -261,12 +263,12 @@ defmodule Test.Helper.Common do
     )
   end
 
-  def periodic_sync_base(%{hub_id: hub_id} = _context, child_specs, :add) do
+  def periodic_sync_base(%{hub_id: hub_id, hub: hub} = _context, child_specs, :add) do
     registry_data =
       Enum.map(child_specs, fn child_spec ->
         start_res =
           ProcessHub.DistributedSupervisor.start_child(
-            Name.distributed_supervisor(hub_id),
+            hub.managers.distributed_supervisor,
             child_spec
           )
 
@@ -277,7 +279,9 @@ defmodule Test.Helper.Common do
       end)
       |> Map.new()
 
-    ProcessHub.Service.ProcessRegistry.bulk_insert(hub_id, registry_data)
+    ProcessHub.Service.ProcessRegistry.bulk_insert(hub_id, registry_data,
+      hook_storage: hub.storage.hook
+    )
 
     Bag.receive_multiple(
       length(child_specs),

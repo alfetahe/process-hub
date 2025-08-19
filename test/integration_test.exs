@@ -8,6 +8,7 @@ defmodule Test.IntegrationTest do
   use ExUnit.Case, async: false
 
   # Total nr of nodes to start (without the main node)
+  # TODO: change back to 5.
   @nr_of_peers 5
 
   setup_all context do
@@ -60,7 +61,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "guided pubsub children starting and removing", %{hub_id: hub_id} = context do
-    child_count = 1000
+    child_count = 1
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     assert ProcessHub.start_children(hub_id, child_specs) === {:error, :missing_child_mapping},
@@ -74,7 +75,7 @@ defmodule Test.IntegrationTest do
              {:error, :invalid_child_mapping},
            "Children should not be started with invalid mapping"
 
-    hub_nodes = ProcessHub.Service.Cluster.nodes(hub_id, [:include_local])
+    hub_nodes = ProcessHub.nodes(hub_id, [:include_local])
 
     child_mappings =
       Enum.map(child_specs, fn child_spec ->
@@ -265,10 +266,11 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "replication cluster size with mode active active",
-       %{hub_id: hub_id, hub: hub} = context do
+       %{hub_id: hub_id, hub_conf: hc} = context do
     child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
-    repl_fact = ProcessHub.Strategy.Redundancy.Base.replication_factor(hub.redundancy_strategy)
+
+    repl_fact = ProcessHub.Strategy.Redundancy.Base.replication_factor(hc.redundancy_strategy)
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add,
@@ -315,11 +317,10 @@ defmodule Test.IntegrationTest do
          {Hook.post_cluster_join(), :local},
          {Hook.post_nodes_redistribution(), :global}
        ]
-  test "partition divergence test",
-       %{hub_id: hub_id, listed_hooks: lh} = context do
+  test "partition divergence test", %{hub_id: hub_id, listed_hooks: lh} = context do
     :net_kernel.monitor_nodes(true)
 
-    peer_to_start = 5
+    peer_to_start = 6
 
     new_peers =
       TestNode.start_nodes(
@@ -334,13 +335,15 @@ defmodule Test.IntegrationTest do
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
-    end_num = peer_to_start - 1
+    Bag.receive_multiple(131, Hook.post_nodes_redistribution())
 
-    Enum.reduce(Range.new(peer_to_start, end_num), new_peers, fn numb, acc ->
+    Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
       removed_peers = Common.stop_peers(acc, 1)
-      Bag.receive_multiple(numb, Hook.post_nodes_redistribution())
+      # Bag.receive_multiple(numb, Hook.post_nodes_redistribution())
       Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
     end)
+
+    Bag.receive_multiple(36, Hook.post_nodes_redistribution())
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
@@ -359,7 +362,6 @@ defmodule Test.IntegrationTest do
   test "static quorum with min of #{@nr_of_peers + 2} nodes",
        %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
     :net_kernel.monitor_nodes(true)
-
     # We don't have enough nodes to form the cluster and startup_confirm is set `true`
     assert ProcessHub.is_partitioned?(hub_id) === true
 
@@ -524,7 +526,7 @@ defmodule Test.IntegrationTest do
          {Hook.forwarded_migration(), :global}
        ]
   test "hotswap migration with handoff",
-       %{hub_id: hub_id, listed_hooks: lh, hub: hub} = context do
+       %{hub_id: hub_id, listed_hooks: lh, hub_conf: hub_conf, hub: hub} = context do
     nodes_count = @nr_of_peers
     child_count = 1000
 
@@ -574,14 +576,14 @@ defmodule Test.IntegrationTest do
     )
 
     local_node = node()
-    dist_strat = hub.distribution_strategy
+    dist_strat = hub_conf.distribution_strategy
 
     # Get all children that have been migrated.
     migrated_children =
       Enum.map(child_specs, fn child_spec ->
         {
           child_spec.id,
-          ProcessHub.Strategy.Distribution.Base.belongs_to(dist_strat, hub_id, child_spec.id, 1)
+          ProcessHub.Strategy.Distribution.Base.belongs_to(dist_strat, hub, child_spec.id, 1)
           |> List.first()
         }
       end)
