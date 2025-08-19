@@ -6,10 +6,10 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   """
 
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.PriorityLevel
+  alias ProcessHub.Hub
   alias :blockade, as: Blockade
 
   @typedoc """
@@ -29,9 +29,9 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     def init(_strategy, _hub_id), do: nil
 
     @impl SynchronizationStrategy
-    def propagate(_strategy, hub_id, children, node, :add, opts) do
+    def propagate(_strategy, %Hub{} = hub, children, node, :add, opts) do
       Blockade.dispatch_sync(
-        Name.event_queue(hub_id),
+        hub.managers.event_queue,
         @event_children_registration,
         {children, node, opts},
         %{
@@ -43,9 +43,9 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       :ok
     end
 
-    def propagate(_strategy, hub_id, children, node, :rem, opts) do
+    def propagate(_strategy, %Hub{} = hub, children, node, :rem, opts) do
       Blockade.dispatch_sync(
-        Name.event_queue(hub_id),
+        hub.managers.event_queue,
         @event_children_unregistration,
         {children, node, opts},
         %{
@@ -58,8 +58,9 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     end
 
     @impl SynchronizationStrategy
-    def init_sync(strategy, hub_id, cluster_nodes) do
-      local_data = Synchronizer.local_sync_data(hub_id)
+    def init_sync(strategy, %Hub{} = hub, cluster_nodes) do
+      local_data = Synchronizer.local_sync_data(hub)
+
       local_node = node()
 
       cluster_nodes
@@ -67,9 +68,13 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       |> Enum.each(fn node ->
         Node.spawn(node, fn ->
           GenServer.cast(
-            Name.worker_queue(hub_id),
-            {:handle_work,
-             fn -> Synchronizer.exec_interval_sync(hub_id, strategy, local_data, local_node) end}
+            hub.managers.worker_queue,
+            {
+              :handle_work,
+              fn ->
+                Synchronizer.exec_interval_sync(hub.hub_id, strategy, local_data, local_node)
+              end
+            }
           )
         end)
       end)
@@ -78,9 +83,9 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     end
 
     @impl SynchronizationStrategy
-    def handle_synchronization(_strategy, hub_id, remote_data, remote_node) do
-      Synchronizer.append_data(hub_id, %{remote_node => remote_data})
-      Synchronizer.detach_data(hub_id, %{remote_node => remote_data})
+    def handle_synchronization(_strategy, hub, remote_data, remote_node) do
+      Synchronizer.append_data(hub, %{remote_node => remote_data})
+      Synchronizer.detach_data(hub, %{remote_node => remote_data})
 
       :ok
     end

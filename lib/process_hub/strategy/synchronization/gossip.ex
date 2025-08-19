@@ -26,14 +26,15 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   the synchronization data is not older than the data that is already in the local process registry.
   """
 
+  alias ProcessHub.Coordinator
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Constant.Event
   alias ProcessHub.Utility.Bag
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Hub
 
   use Event
 
@@ -54,15 +55,15 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
   @spec handle_propagation(
           ProcessHub.Strategy.Synchronization.Gossip.t(),
-          ProcessHub.hub_id(),
+          Hub.t(),
           term(),
           :add | :rem
         ) :: :ok
-  def handle_propagation(strategy, hub_id, {ref, acks, child_data, update_node}, type) do
-    local_storage = Name.local_storage(hub_id)
+  def handle_propagation(strategy, hub, {ref, acks, child_data, update_node}, type) do
+    misc_storage = hub.storage.misc
 
     cached_acks =
-      case Storage.get(local_storage, ref) do
+      case Storage.get(misc_storage, ref) do
         nil -> []
         :invalidated -> :invalidated
         cached_acks -> cached_acks
@@ -74,25 +75,25 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
       _ ->
         acks = Enum.uniq(acks ++ cached_acks)
-        unacked_nodes = unacked_nodes(acks, hub_id)
+        unacked_nodes = unacked_nodes(acks, hub.storage.misc)
 
         if length(unacked_nodes) === 0 do
-          invalidate_ref(strategy, hub_id, ref)
+          invalidate_ref(strategy, misc_storage, ref)
         end
 
         acks =
           if Enum.member?(unacked_nodes, node()) do
-            handle_propagation_type(hub_id, child_data, update_node, type)
+            handle_propagation_type(hub.hub_id, child_data, update_node, type)
 
             [node() | acks]
           else
             acks
           end
 
-        Storage.insert(local_storage, ref, acks, ttl: strategy.sync_interval)
+        Storage.insert(misc_storage, ref, acks, ttl: strategy.sync_interval)
 
         recipients_select(unacked_nodes, strategy)
-        |> propagate_data(hub_id, strategy, {ref, acks, child_data, update_node}, type)
+        |> propagate_data(hub, strategy, {ref, acks, child_data, update_node}, type)
     end
 
     :ok
@@ -100,27 +101,28 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
   @spec invalidate_ref(
           ProcessHub.Strategy.Synchronization.Gossip.t(),
-          ProcessHub.hub_id(),
+          reference(),
           reference()
         ) :: boolean()
-  def invalidate_ref(strategy, hub_id, ref) do
-    Name.local_storage(hub_id)
-    |> Storage.insert(ref, :invalidated, ttl: strategy.sync_interval)
+  def invalidate_ref(strategy, misc_storage, ref) do
+    Storage.insert(misc_storage, ref, :invalidated, ttl: strategy.sync_interval)
   end
 
   @spec propagate_data(
           [node()],
-          ProcessHub.hub_id(),
+          Hub.t(),
           ProcessHub.Strategy.Synchronization.Gossip.t(),
           term(),
           :add | :rem
         ) :: :ok
-  def propagate_data(nodes, hub_id, strategy, data, type) do
+  def propagate_data(nodes, hub, strategy, data, type) do
     Enum.each(nodes, fn node ->
       Node.spawn(node, fn ->
+        local_hub = Coordinator.get_hub(hub.hub_id)
+
         GenServer.cast(
-          Name.worker_queue(hub_id),
-          {:handle_work, fn -> __MODULE__.handle_propagation(strategy, hub_id, data, type) end}
+          local_hub.managers.worker_queue,
+          {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data, type) end}
         )
       end)
     end)
@@ -153,9 +155,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     end
   end
 
-  @spec unacked_nodes([node()], ProcessHub.hub_id()) :: [node()]
-  def unacked_nodes(sync_acks, hub_id) do
-    Cluster.nodes(hub_id, [:include_local])
+  @spec unacked_nodes([node()], reference()) :: [node()]
+  def unacked_nodes(sync_acks, misc_storage) do
+    Cluster.nodes(misc_storage, [:include_local])
     |> Enum.filter(fn node -> !Enum.member?(sync_acks, node) end)
   end
 
@@ -163,32 +165,32 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     alias ProcessHub.Strategy.Synchronization.Gossip
 
     @impl true
-    def init(_strategy, _hub_id), do: nil
+    def init(_strategy, _hub), do: nil
 
     @impl true
     @spec propagate(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
-            ProcessHub.hub_id(),
+            Hub.t(),
             [term()],
             node(),
             :add | :rem,
             keyword()
           ) :: :ok
-    def propagate(strategy, hub_id, children, update_node, type, _opts) do
+    def propagate(strategy, hub, children, update_node, type, _opts) do
       ref = make_ref()
-      Gossip.handle_propagation_type(hub_id, children, update_node, type)
+      Gossip.handle_propagation_type(hub.hub_id, children, update_node, type)
 
-      Cluster.nodes(hub_id)
+      Cluster.nodes(hub.storage.misc)
       |> Gossip.recipients_select(strategy)
-      |> Gossip.propagate_data(hub_id, strategy, {ref, [node()], children, update_node}, type)
+      |> Gossip.propagate_data(hub, strategy, {ref, [node()], children, update_node}, type)
 
       :ok
     end
 
     @impl true
-    @spec init_sync(ProcessHub.Strategy.Synchronization.Gossip.t(), ProcessHub.hub_id(), [node()]) ::
+    @spec init_sync(ProcessHub.Strategy.Synchronization.Gossip.t(), Hub.t(), [node()]) ::
             :ok
-    def init_sync(strategy, hub_id, cluster_nodes) do
+    def init_sync(strategy, hub, cluster_nodes) do
       case strategy.restricted_init do
         true ->
           local_node = node()
@@ -203,13 +205,13 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
           init_sync_internal(
             strategy,
-            hub_id,
+            hub,
             cluster_nodes,
             selected_node === Atom.to_string(local_node)
           )
 
         _ ->
-          init_sync_internal(strategy, hub_id, cluster_nodes, true)
+          init_sync_internal(strategy, hub, cluster_nodes, true)
       end
 
       :ok
@@ -218,22 +220,22 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     @impl true
     @spec handle_synchronization(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
-            ProcessHub.hub_id(),
+            Hub.t(),
             term(),
             node()
           ) :: :ok
     def handle_synchronization(
           strategy,
-          hub_id,
+          hub,
           %{ref: ref, nodes_data: nodes_data, sync_acks: sync_acks},
           _remote_node
         ) do
-      case merge_sync_data(hub_id, ref, nodes_data, sync_acks) do
+      case merge_sync_data(hub.storage.misc, hub, ref, nodes_data, sync_acks) do
         :invalidated ->
           nil
 
         {sync_data, sync_acks} ->
-          handle_sync_data(strategy, hub_id, ref, sync_data, sync_acks)
+          handle_sync_data(strategy, hub, ref, sync_data, sync_acks)
       end
 
       :ok
@@ -241,27 +243,32 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
     @spec handle_sync_data(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
-            ProcessHub.hub_id(),
+            Hub.t(),
             reference(),
             map(),
             list()
           ) :: :ok
-    def handle_sync_data(strategy, hub_id, ref, sync_data, sync_acks) do
-      Name.local_storage(hub_id)
-      |> Storage.insert(ref, {sync_data, sync_acks}, ttl: strategy.sync_interval)
+    def handle_sync_data(
+          strategy,
+          %Hub{} = hub,
+          ref,
+          sync_data,
+          sync_acks
+        ) do
+      Storage.insert(hub.storage.misc, ref, {sync_data, sync_acks}, ttl: strategy.sync_interval)
 
-      missing_nodes = missing_nodes(sync_data, hub_id)
+      missing_nodes = missing_nodes(sync_data, hub.storage.misc)
 
       cond do
         length(missing_nodes) === 0 ->
-          unacked_nodes = Gossip.unacked_nodes(sync_acks, hub_id)
+          unacked_nodes = Gossip.unacked_nodes(sync_acks, hub.storage.misc)
 
-          sync_acks = sync_acks(hub_id, unacked_nodes, sync_acks, sync_data)
+          sync_acks = sync_acks(hub, unacked_nodes, sync_acks, sync_data)
 
           if length(unacked_nodes) === 0 do
-            Gossip.invalidate_ref(strategy, hub_id, ref)
+            Gossip.invalidate_ref(strategy, hub.storage.misc, ref)
           else
-            forward_data(unacked_nodes, strategy, hub_id, %{
+            forward_data(unacked_nodes, strategy, hub, %{
               ref: ref,
               nodes_data: sync_data,
               sync_acks: sync_acks
@@ -269,7 +276,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           end
 
         length(missing_nodes) > 0 ->
-          forward_data(missing_nodes, strategy, hub_id, %{
+          forward_data(missing_nodes, strategy, hub, %{
             ref: ref,
             nodes_data: sync_data,
             sync_acks: sync_acks
@@ -280,9 +287,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       end
     end
 
-    defp sync_acks(hub_id, unacked_nodes, sync_acks, sync_data) do
+    defp sync_acks(hub, unacked_nodes, sync_acks, sync_data) do
       if Enum.member?(unacked_nodes, node()) do
-        sync_locally(hub_id, sync_data)
+        sync_locally(hub.storage.misc, hub, sync_data)
 
         [node() | sync_acks]
       else
@@ -290,32 +297,34 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       end
     end
 
-    defp init_sync_internal(strategy, hub_id, cluster_nodes, true) do
+    defp init_sync_internal(strategy, %Hub{} = hub, cluster_nodes, true) do
       ref = make_ref()
 
       sync_data = %{
-        node() => {Synchronizer.local_sync_data(hub_id), Bag.timestamp(:microsecond)}
+        node() => {Synchronizer.local_sync_data(hub), Bag.timestamp(:microsecond)}
       }
 
-      Name.local_storage(hub_id)
-      |> Storage.insert(ref, {sync_data, []}, ttl: strategy.sync_interval)
+      Storage.insert(hub.storage.misc, ref, {sync_data, []}, ttl: strategy.sync_interval)
 
       cluster_nodes
       |> Gossip.recipients_select(strategy)
-      |> forward_data(strategy, hub_id, %{ref: ref, nodes_data: sync_data, sync_acks: []})
+      |> forward_data(strategy, hub, %{
+        ref: ref,
+        nodes_data: sync_data,
+        sync_acks: []
+      })
     end
 
-    defp init_sync_internal(_strategy, _hub_id, _cluster_nodes, false) do
+    defp init_sync_internal(_strategy, _hub, _cluster_nodes, false) do
       :ok
     end
 
-    defp merge_sync_data(hub_id, ref, nodes_data, sync_acks) do
-      local_storage = Name.local_storage(hub_id)
+    defp merge_sync_data(misc_storage, hub, ref, nodes_data, sync_acks) do
       local_timestamp = Bag.timestamp(:microsecond)
-      local_data = Synchronizer.local_sync_data(hub_id)
+      local_data = Synchronizer.local_sync_data(hub)
       nodes_data = Map.put(nodes_data, node(), {local_data, local_timestamp})
 
-      case Storage.get(local_storage, ref) do
+      case Storage.get(misc_storage, ref) do
         nil ->
           {nodes_data, []}
 
@@ -335,9 +344,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       end
     end
 
-    defp sync_locally(hub_id, nodes_data) do
+    defp sync_locally(misc_storage, hub, nodes_data) do
       node_timestamps =
-        case Storage.get(Name.local_storage(hub_id), StorageKey.gct()) do
+        case Storage.get(misc_storage, StorageKey.gct()) do
           nil -> %{}
           node_timestamps -> node_timestamps
         end
@@ -349,10 +358,10 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
         cond do
           node_timestamp === nil ->
-            sync_locally_node(hub_id, node, data, timestamp)
+            sync_locally_node(misc_storage, hub, node, data, timestamp)
 
           node_timestamp < timestamp ->
-            sync_locally_node(hub_id, node, data, timestamp)
+            sync_locally_node(misc_storage, hub, node, data, timestamp)
 
           true ->
             :ok
@@ -360,42 +369,42 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       end)
     end
 
-    defp sync_locally_node(hub_id, node, data, timestamp) do
-      Synchronizer.append_data(hub_id, %{node => data})
-      Synchronizer.detach_data(hub_id, %{node => data})
+    defp sync_locally_node(misc_storage, hub, node, data, timestamp) do
+      Synchronizer.append_data(hub, %{node => data})
+      Synchronizer.detach_data(hub, %{node => data})
 
-      update_node_timestamps(hub_id, node, timestamp)
+      update_node_timestamps(misc_storage, node, timestamp)
     end
 
-    defp update_node_timestamps(hub_id, node, timestamp) do
-      local_storage = Name.local_storage(hub_id)
-
+    defp update_node_timestamps(misc_storage, node, timestamp) do
       node_timestamps =
-        case Storage.get(local_storage, StorageKey.gct()) do
+        case Storage.get(misc_storage, StorageKey.gct()) do
           nil -> %{}
           node_timestamps -> node_timestamps || %{}
         end
         |> Map.put(node, timestamp)
 
-      Storage.insert(local_storage, StorageKey.gct(), node_timestamps)
+      Storage.insert(misc_storage, StorageKey.gct(), node_timestamps)
     end
 
-    defp missing_nodes(nodes_data, hub_id) do
+    defp missing_nodes(nodes_data, misc_storage) do
       node_keys = Map.keys(nodes_data)
 
-      Cluster.nodes(hub_id, [:include_local])
+      Cluster.nodes(misc_storage, [:include_local])
       |> Enum.filter(fn node -> !Enum.member?(node_keys, node) end)
     end
 
-    defp forward_data(recipients, strategy, hub_id, sync_data) do
+    defp forward_data(recipients, strategy, hub, sync_data) do
       local_node = node()
 
       Enum.each(recipients, fn recipient ->
         Node.spawn(recipient, fn ->
           GenServer.cast(
-            Name.worker_queue(hub_id),
+            hub.managers.worker_queue,
             {:handle_work,
-             fn -> Synchronizer.exec_interval_sync(hub_id, strategy, sync_data, local_node) end}
+             fn ->
+               Synchronizer.exec_interval_sync(hub.hub_id, strategy, sync_data, local_node)
+             end}
           )
         end)
       end)

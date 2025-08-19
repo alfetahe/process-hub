@@ -1,4 +1,6 @@
 defprotocol ProcessHub.Strategy.Migration.Base do
+  alias ProcessHub.Hub
+
   @moduledoc """
   The migration strategy protocol provides API functions for migrating child processes.
   """
@@ -8,8 +10,8 @@ defprotocol ProcessHub.Strategy.Migration.Base do
 
   Could be used to perform initialization.
   """
-  @spec init(struct(), ProcessHub.hub_id()) :: any()
-  def init(strategy, hub_id)
+  @spec init(struct(), Hub.t()) :: any()
+  def init(strategy, hub)
 
   @doc """
   Migrates processes from the local to the remote node.
@@ -23,10 +25,10 @@ defprotocol ProcessHub.Strategy.Migration.Base do
   """
   @spec handle_migration(
           __MODULE__.t(),
-          ProcessHub.hub_id(),
+          Hub.t(),
           [{ProcessHub.child_spec(), map()}],
           node(),
           ProcessHub.Strategy.Synchronization.Base.t()
         ) :: :ok
-  def handle_migration(struct, hub_id, children_data, added_node, sync_strategy)
+  def handle_migration(struct, hub, children_data, added_node, sync_strategy)
 end

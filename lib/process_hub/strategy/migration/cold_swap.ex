@@ -25,18 +25,23 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.ColdSwap do
     @impl true
-    def init(_strategy, _hub_id), do: nil
+    def init(_strategy, _hub), do: nil
 
     @impl true
-    def handle_migration(_struct, hub_id, children_data, added_node, sync_strategy) do
+    def handle_migration(_struct, hub, children_data, added_node, sync_strategy) do
       Distributor.children_terminate(
-        hub_id,
+        hub,
         Enum.map(children_data, fn {cspec, _m} -> cspec.id end),
         sync_strategy
       )
 
-      Distributor.children_redist_init(hub_id, added_node, children_data, [])
-      HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, children_data})
+      Distributor.children_redist_init(hub, added_node, children_data, [])
+
+      HookManager.dispatch_hook(
+        hub.storage.hook,
+        Hook.children_migrated(),
+        {added_node, children_data}
+      )
 
       :ok
     end

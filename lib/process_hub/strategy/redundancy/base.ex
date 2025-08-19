@@ -1,4 +1,6 @@
 defprotocol ProcessHub.Strategy.Redundancy.Base do
+  alias ProcessHub.Hub
+
   @moduledoc """
   The redundancy protocol relies on the `HashRing` library to distribute processes across
   the cluster and determine which node should be responsible for a given process by its `child_id` key.
@@ -11,8 +13,8 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
 
   Could be used to perform initialization.
   """
-  @spec init(struct(), ProcessHub.hub_id()) :: any()
-  def init(strategy, hub_id)
+  @spec init(struct(), Hub.t()) :: any()
+  def init(strategy, hub)
 
   @doc """
   Returns the replication factor for the given strategy struct. This is the number of replicas
@@ -24,6 +26,6 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   @doc """
   Returns the master node that the given `child_id` belongs to.
   """
-  @spec master_node(struct(), ProcessHub.hub_id(), ProcessHub.child_id(), [node()]) :: node()
-  def master_node(strategy, hub_id, child_id, child_nodes)
+  @spec master_node(struct(), Hub.t(), ProcessHub.child_id(), [node()]) :: node()
+  def master_node(strategy, hub, child_id, child_nodes)
 end

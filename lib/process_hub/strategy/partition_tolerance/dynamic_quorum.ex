@@ -39,7 +39,6 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Constant.StorageKey
-  alias ProcessHub.Utility.Name
 
   @typedoc """
   Dynamic quorum strategy configuration.
@@ -60,55 +59,52 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
 
   defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     @impl true
-    def init(_strategy, _hub_id), do: nil
+    def init(_strategy, _hub), do: nil
 
     @impl true
-    def toggle_unlock?(strategy, hub_id, up_node) do
-      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+    def toggle_unlock?(strategy, hub, up_node) do
+      cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
-      node_log_func(strategy, hub_id, up_node, :up)
-      propagate_quorum_log(hub_id, up_node)
+      node_log_func(strategy, hub, up_node, :up)
+      propagate_quorum_log(up_node, hub.storage.misc)
 
-      !quorum_failure?(hub_id, strategy, cluster_nodes)
+      !quorum_failure?(strategy, cluster_nodes, hub.storage.misc)
     end
 
     @impl true
-    def toggle_lock?(strategy, hub_id, down_node) do
-      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
-      node_log_func(strategy, hub_id, down_node, :down)
+    def toggle_lock?(strategy, hub, down_node) do
+      cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
+      node_log_func(strategy, hub, down_node, :down)
 
-      quorum_failure?(hub_id, strategy, cluster_nodes)
+      quorum_failure?(strategy, cluster_nodes, hub.storage.misc)
     end
 
-    defp propagate_quorum_log(hub_id, node) do
-      local_storage = Name.local_storage(hub_id)
-
+    defp propagate_quorum_log(node, misc_storage) do
       local_log =
-        case Storage.get(local_storage, StorageKey.dqdn()) do
+        case Storage.get(misc_storage, StorageKey.dqdn()) do
           nil -> []
           data -> data
         end
 
       Node.spawn(node, fn ->
         remote_log =
-          case Storage.get(local_storage, StorageKey.dqdn()) do
+          case Storage.get(misc_storage, StorageKey.dqdn()) do
             nil -> []
             remote_log -> remote_log
           end
 
         if length(local_log) > length(remote_log) do
           # Overwrite quorum log with other nodes' data that has more data in it.
-          Storage.insert(local_storage, StorageKey.dqdn(), local_log)
+          Storage.insert(misc_storage, StorageKey.dqdn(), local_log)
         end
       end)
     end
 
-    defp quorum_failure?(hub_id, strategy, cluster_nodes) do
+    defp quorum_failure?(strategy, cluster_nodes, misc_storage) do
       connected_nodes = length(cluster_nodes)
-      local_storage = Name.local_storage(hub_id)
 
       cached_data =
-        case Storage.get(local_storage, StorageKey.dqdn()) do
+        case Storage.get(misc_storage, StorageKey.dqdn()) do
           nil -> []
           data -> data
         end
@@ -121,17 +117,17 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       quorum_left < strategy.quorum_size
     end
 
-    defp node_log_func(strategy, hub_id, node, type) do
-      new_data = node_log_data(hub_id, node, strategy.threshold_time, type)
+    defp node_log_func(strategy, hub, node, type) do
+      new_data = node_log_data(hub, node, strategy.threshold_time, type)
 
-      Storage.insert(Name.local_storage(hub_id), StorageKey.dqdn(), new_data)
+      Storage.insert(hub.storage.misc, StorageKey.dqdn(), new_data)
     end
 
-    defp node_log_data(hub_id, node, threshold_time, :up) do
+    defp node_log_data(hub, node, threshold_time, :up) do
       timestamp = DateTime.utc_now() |> DateTime.to_unix(:second)
       threshold_time = timestamp - threshold_time
 
-      case Storage.get(Name.local_storage(hub_id), StorageKey.dqdn()) do
+      case Storage.get(hub.storage.misc, StorageKey.dqdn()) do
         nil ->
           []
 
@@ -143,11 +139,11 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       end
     end
 
-    defp node_log_data(hub_id, node, threshold_time, :down) do
+    defp node_log_data(hub, node, threshold_time, :down) do
       timestamp = DateTime.utc_now() |> DateTime.to_unix(:second)
       threshold_time = timestamp - threshold_time
 
-      case Storage.get(Name.local_storage(hub_id), StorageKey.dqdn()) do
+      case Storage.get(hub.storage.misc, StorageKey.dqdn()) do
         nil ->
           [{node, timestamp}]
 

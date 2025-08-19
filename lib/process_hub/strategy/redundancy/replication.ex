@@ -36,9 +36,9 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   """
 
   alias ProcessHub.DistributedSupervisor
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Hub
 
   @typedoc """
   Replication strategy options.
@@ -71,22 +71,26 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     alias ProcessHub.Strategy.Redundancy.Replication
 
     @impl true
-    def init(strategy, hub_id) do
-      HookManager.register_handler(hub_id, Hook.post_children_start(), %HookManager{
+    def init(strategy, hub) do
+      HookManager.register_handler(hub.storage.hook, Hook.post_children_start(), %HookManager{
         id: :rr_post_start,
         m: Replication,
         f: :handle_post_start,
-        a: [strategy, hub_id, :_],
+        a: [strategy, hub, :_],
         p: 100
       })
 
-      HookManager.register_handler(hub_id, Hook.pre_children_redistribution(), %HookManager{
-        id: :rr_post_update,
-        m: Replication,
-        f: :handle_post_update,
-        a: [strategy, hub_id, :_],
-        p: 100
-      })
+      HookManager.register_handler(
+        hub.storage.hook,
+        Hook.pre_children_redistribution(),
+        %HookManager{
+          id: :rr_post_update,
+          m: Replication,
+          f: :handle_post_update,
+          a: [strategy, hub, :_],
+          p: 100
+        }
+      )
     end
 
     @impl true
@@ -103,8 +107,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
 
     @impl true
-    @spec master_node(struct(), ProcessHub.hub_id(), ProcessHub.child_id(), [node()]) :: node()
-    def master_node(_strategy, _hub_id, child_id, child_nodes) do
+    @spec master_node(struct(), Hub.t(), ProcessHub.child_id(), [node()]) :: node()
+    def master_node(_strategy, _hub, child_id, child_nodes) do
       child_nodes = Enum.sort(child_nodes)
 
       child_total =
@@ -122,14 +126,14 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
   end
 
-  @spec handle_post_start(struct(), ProcessHub.hub_id(), [
+  @spec handle_post_start(struct(), Hub.t(), [
           {ProcessHub.child_id(), pid(), [node()]}
         ]) :: :ok
   def handle_post_start(%__MODULE__{redundancy_signal: :none}, _, _), do: :ok
 
-  def handle_post_start(strategy, hub_id, post_start_data) do
+  def handle_post_start(strategy, hub, post_start_data) do
     Enum.each(post_start_data, fn {child_id, res, child_pid, child_nodes} ->
-      mode = process_mode(strategy, hub_id, child_id, child_nodes)
+      mode = process_mode(strategy, hub, child_id, child_nodes)
 
       if elem(res, 0) === :ok do
         cond do
@@ -150,20 +154,20 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   @spec handle_post_update(
           struct(),
-          ProcessHub.hub_id(),
+          Hub.t(),
           {[{ProcessHub.child_id(), [node()], keyword()}], {:up | :down, node()}}
         ) :: :ok
   def handle_post_update(%__MODULE__{redundancy_signal: :none}, _, _), do: :ok
 
   def handle_post_update(
         %__MODULE__{replication_model: :active_passive} = strategy,
-        hub_id,
+        hub,
         {processes_data, {node_action, node}}
       ) do
     Enum.each(processes_data, fn {child_id, child_nodes, opts} ->
       handle_redundancy_signal(
         strategy,
-        hub_id,
+        hub,
         child_id,
         child_nodes,
         {node_action, node},
@@ -174,13 +178,13 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   def handle_post_update(_, _, _), do: :ok
 
-  defp node_modes(strategy, hub_id, node_action, child_id, nodes, node) do
-    curr_master = RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)
+  defp node_modes(strategy, hub, node_action, child_id, nodes, node) do
+    curr_master = RedundancyStrategy.master_node(strategy, hub, child_id, nodes)
 
     prev_master =
       case node_action do
         :up ->
-          RedundancyStrategy.master_node(strategy, hub_id, child_id, nodes)
+          RedundancyStrategy.master_node(strategy, hub, child_id, nodes)
 
         :down ->
           [node | nodes]
@@ -189,11 +193,11 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     {prev_master, curr_master}
   end
 
-  defp handle_redundancy_signal(strategy, hub_id, child_id, nodes, {node_action, node}, opts) do
+  defp handle_redundancy_signal(strategy, hub, child_id, nodes, {node_action, node}, opts) do
     local_node = node()
 
     {prev_master, curr_master} =
-      node_modes(strategy, hub_id, node_action, child_id, nodes, node)
+      node_modes(strategy, hub, node_action, child_id, nodes, node)
 
     cond do
       prev_master === curr_master ->
@@ -203,13 +207,13 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       Enum.member?([:all, :active], strategy.redundancy_signal) ->
         if curr_master === local_node and prev_master !== curr_master do
           # Current node is the new active node.
-          child_pid(hub_id, child_id, opts) |> send_redundancy_signal(:active)
+          child_pid(hub, child_id, opts) |> send_redundancy_signal(:active)
         end
 
       Enum.member?([:all, :passive], strategy.redundancy_signal) ->
         if curr_master !== local_node and prev_master === local_node do
           # Current node is the new passive node.
-          child_pid(hub_id, child_id, opts) |> send_redundancy_signal(:passive)
+          child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
         end
 
       true ->
@@ -217,8 +221,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
   end
 
-  defp process_mode(%__MODULE__{replication_model: rp} = strat, hub_id, child_id, child_nodes) do
-    master_node = RedundancyStrategy.master_node(strat, hub_id, child_id, child_nodes)
+  defp process_mode(%__MODULE__{replication_model: rp} = strat, hub, child_id, child_nodes) do
+    master_node = RedundancyStrategy.master_node(strat, hub, child_id, child_nodes)
 
     cond do
       rp === :active_active ->
@@ -232,10 +236,10 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
   end
 
-  defp child_pid(hub_id, child_id, opts) do
+  defp child_pid(hub, child_id, opts) do
     case Keyword.get(opts, :pid) do
       nil ->
-        Name.distributed_supervisor(hub_id) |> DistributedSupervisor.local_pid(child_id)
+        DistributedSupervisor.local_pid(hub.managers.distributed_supervisor, child_id)
 
       pid ->
         pid

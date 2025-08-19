@@ -4,6 +4,7 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
   other nodes. This is the default strategy.
   """
 
+  alias ProcessHub.Hub
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
 
   @typedoc """
@@ -14,15 +15,15 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
 
   defimpl RedundancyStrategy, for: ProcessHub.Strategy.Redundancy.Singularity do
     @impl true
-    def init(_strategy, _hub_id), do: nil
+    def init(_strategy, _hub), do: nil
 
     @impl true
     @spec replication_factor(ProcessHub.Strategy.Redundancy.Singularity.t()) :: 1
     def replication_factor(_strategy), do: 1
 
     @impl true
-    @spec master_node(struct(), ProcessHub.hub_id(), ProcessHub.child_id(), [node()]) :: node()
-    def master_node(_strategy, _hub_id, _child_id, child_nodes) do
+    @spec master_node(struct(), Hub.t(), ProcessHub.child_id(), [node()]) :: node()
+    def master_node(_strategy, _hub, _child_id, child_nodes) do
       List.first(child_nodes)
     end
   end

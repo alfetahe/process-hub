@@ -33,26 +33,26 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
     alias ProcessHub.Service.Cluster
 
     @impl true
-    def init(strategy, hub_id) do
-      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+    def init(strategy, hub) do
+      cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
       if strategy.startup_confirm do
         unless quorum_present?(strategy, cluster_nodes) do
-          State.toggle_quorum_failure(hub_id)
+          State.toggle_quorum_failure(hub)
         end
       end
     end
 
     @impl true
-    def toggle_lock?(strategy, hub_id, _down_node) do
-      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+    def toggle_lock?(strategy, hub, _down_node) do
+      cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
       !quorum_present?(strategy, cluster_nodes)
     end
 
     @impl true
-    def toggle_unlock?(strategy, hub_id, _up_node) do
-      cluster_nodes = Cluster.nodes(hub_id, [:include_local])
+    def toggle_unlock?(strategy, hub, _up_node) do
+      cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
       quorum_present?(strategy, cluster_nodes)
     end

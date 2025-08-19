@@ -36,7 +36,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
-  alias ProcessHub.Utility.Name
+  alias ProcessHub.Hub
 
   @type t() :: %__MODULE__{}
   defstruct []
@@ -45,29 +45,29 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     alias ProcessHub.Strategy.Distribution.Guided, as: GuidedStrategy
 
     @impl true
-    @spec init(ProcessHub.Strategy.Distribution.Guided.t(), ProcessHub.hub_id()) :: any()
-    def init(_strategy, hub_id) do
+    @spec init(ProcessHub.Strategy.Distribution.Guided.t(), Hub.t()) :: any()
+    def init(_strategy, hub) do
       handler = %HookManager{
         id: :dg_pre_start_handler,
         m: ProcessHub.Strategy.Distribution.Guided,
         f: :handle_children_start,
-        a: [hub_id, :_],
+        a: [hub, :_],
         p: 100
       }
 
-      HookManager.register_handler(hub_id, Hook.pre_children_start(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_children_start(), handler)
     end
 
     @impl true
     @spec belongs_to(
             ProcessHub.Strategy.Distribution.Guided.t(),
-            ProcessHub.hub_id(),
+            Hub.t(),
             ProcessHub.child_id(),
             pos_integer()
           ) :: [atom]
-    def belongs_to(_strategy, hub_id, child_id, replication_factor) do
+    def belongs_to(_strategy, hub = %Hub{}, child_id, replication_factor) do
       with %{^child_id => child_nodes} <-
-             Storage.get(Name.local_storage(hub_id), StorageKey.gdc()),
+             Storage.get(hub.storage.misc, StorageKey.gdc()),
            nodes <- Enum.take(child_nodes, replication_factor) do
         nodes
       else
@@ -76,32 +76,32 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     end
 
     @impl true
-    @spec children_init(struct(), ProcessHub.hub_id(), [map()], keyword()) ::
+    @spec children_init(struct(), Hub.t(), [map()], keyword()) ::
             :ok | {:error, any()}
-    def children_init(_strategy, hub_id, child_specs, opts) do
-      with {:ok, child_mappings} <- validate_child_init(hub_id, opts, child_specs),
-           :ok <- GuidedStrategy.insert_child_mappings(hub_id, child_mappings) do
-        Storage.get(Name.local_storage(hub_id), StorageKey.gdc())
+    def children_init(_strategy, hub, child_specs, opts) do
+      with {:ok, child_mappings} <- validate_child_init(hub, opts, child_specs),
+           :ok <- GuidedStrategy.insert_child_mappings(hub, child_mappings) do
+        Storage.get(hub.storage.misc, StorageKey.gdc())
         :ok
       else
         err -> err
       end
     end
 
-    defp validate_child_init(hub_id, opts, child_specs) do
+    defp validate_child_init(hub, opts, child_specs) do
       with {:ok, mappings} <- opts_validate_existance(opts),
            :ok <- validate_mappings_type(mappings),
            :ok <- validate_children(mappings, child_specs),
-           :ok <- validate_children_replication(hub_id, mappings) do
+           :ok <- validate_children_replication(mappings, hub.storage.misc) do
         {:ok, mappings}
       else
         err -> err
       end
     end
 
-    defp validate_children_replication(hub_id, mappings) do
+    defp validate_children_replication(mappings, misc_storage) do
       repl_fact =
-        Storage.get(Name.local_storage(hub_id), StorageKey.strred())
+        Storage.get(misc_storage, StorageKey.strred())
         |> RedundancyStrategy.replication_factor()
 
       case Enum.all?(mappings, fn {_, children} -> length(children) == repl_fact end) do
@@ -134,26 +134,26 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
     end
   end
 
-  @spec handle_children_start(ProcessHub.hub_id(), %{
+  @spec handle_children_start(Hub.t(), %{
           :start_opts => keyword(),
           optional(any()) => any()
         }) ::
           :ok
-  def handle_children_start(hub_id, %{start_opts: start_opts}) do
-    insert_child_mappings(hub_id, Keyword.get(start_opts, :child_mapping, %{}))
+  def handle_children_start(hub, %{start_opts: start_opts}) do
+    insert_child_mappings(hub, Keyword.get(start_opts, :child_mapping, %{}))
   end
 
-  @spec insert_child_mappings(ProcessHub.hub_id(), any()) :: :ok
-  def insert_child_mappings(hub_id, child_mappings) do
-    local_storage = Name.local_storage(hub_id)
+  @spec insert_child_mappings(Hub.t(), any()) :: :ok
+  def insert_child_mappings(hub, child_mappings) do
+    misc_storage = hub.storage.misc
 
-    case Storage.get(local_storage, StorageKey.gdc()) do
+    case Storage.get(misc_storage, StorageKey.gdc()) do
       nil ->
-        Storage.insert(local_storage, StorageKey.gdc(), child_mappings)
+        Storage.insert(misc_storage, StorageKey.gdc(), child_mappings)
 
       existing_mappings ->
         new_mappings = Map.merge(existing_mappings, child_mappings)
-        Storage.insert(local_storage, StorageKey.gdc(), new_mappings)
+        Storage.insert(misc_storage, StorageKey.gdc(), new_mappings)
     end
 
     :ok

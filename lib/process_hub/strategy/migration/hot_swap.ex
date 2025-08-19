@@ -51,7 +51,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Mailbox
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
@@ -106,12 +105,12 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
     @impl true
-    def init(struct, hub_id) do
+    def init(struct, hub) do
       shutdown_handler = %HookManager{
         id: :mhs_shutdown,
         m: ProcessHub.Strategy.Migration.HotSwap,
         f: :handle_shutdown,
-        a: [struct, hub_id],
+        a: [struct, hub],
         p: 100
       }
 
@@ -119,33 +118,46 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         id: :mhs_process_startups,
         m: ProcessHub.Strategy.Migration.HotSwap,
         f: :handle_process_startups,
-        a: [struct, hub_id, :_],
+        a: [struct, hub, :_],
         p: 100
       }
 
-      HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
-      HookManager.register_handler(hub_id, Hook.process_startups(), process_startups_handler)
+      HookManager.register_handler(
+        hub.storage.hook,
+        Hook.coordinator_shutdown(),
+        shutdown_handler
+      )
+
+      HookManager.register_handler(
+        hub.storage.hook,
+        Hook.process_startups(),
+        process_startups_handler
+      )
     end
 
     @impl true
-    def handle_migration(struct, hub_id, children_data, added_node, sync_strategy) do
-      Distributor.children_redist_init(hub_id, added_node, children_data, reply_to: [self()])
+    def handle_migration(struct, hub, children_data, added_node, sync_strategy) do
+      Distributor.children_redist_init(hub, added_node, children_data, reply_to: [self()])
 
       if length(children_data) > 0 do
         child_specs = Enum.map(children_data, fn {cspec, _m} -> cspec end)
-        migration_cids = migration_cids(hub_id, struct, child_specs, added_node)
+        migration_cids = migration_cids(hub, struct, child_specs, added_node)
 
-        handle_retentions(hub_id, struct, sync_strategy, migration_cids)
+        handle_retentions(hub, struct, sync_strategy, migration_cids)
 
         if length(migration_cids) > 0 do
-          HookManager.dispatch_hook(hub_id, Hook.children_migrated(), {added_node, children_data})
+          HookManager.dispatch_hook(
+            hub.storage.hook,
+            Hook.children_migrated(),
+            {added_node, children_data}
+          )
         end
       end
 
       :ok
     end
 
-    defp handle_retentions(hub_id, strategy, sync_strategy, migration_cids) do
+    defp handle_retentions(hub, strategy, sync_strategy, migration_cids) do
       Enum.reduce(migration_cids, :continue, fn
         child_id, :continue ->
           # Wait for response from the peer process.
@@ -155,7 +167,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           :kill
       end)
 
-      Distributor.children_terminate(hub_id, migration_cids, sync_strategy)
+      Distributor.children_terminate(hub, migration_cids, sync_strategy)
 
       # Wait for handover confirmation messages.
       if strategy.confirm_handover do
@@ -163,9 +175,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
     end
 
-    defp migration_cids(hub_id, %HotSwap{} = strategy, child_specs, added_node) do
-      dist_sup = Name.distributed_supervisor(hub_id)
-      local_pids = DistributedSupervisor.local_children(dist_sup)
+    defp migration_cids(hub, %HotSwap{} = strategy, child_specs, added_node) do
+      local_pids = DistributedSupervisor.local_children(hub.managers.distributed_supervisor)
 
       handler = fn _cid, _node, result ->
         case result do
@@ -183,7 +194,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       ]
 
       success_results =
-        case Mailbox.collect_start_results(hub_id, opts) do
+        case Mailbox.collect_start_results(hub, opts) do
           {:ok, results} ->
             results
 
@@ -199,15 +210,15 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         # Because we are migrating we only expect one node result.
         started_pid = List.first(child_results) |> elem(1)
 
-        handle_started(hub_id, strategy, child_id, local_pids, started_pid)
+        handle_started(hub, strategy, child_id, local_pids, started_pid)
       end)
       |> Enum.filter(&(&1 != nil))
       |> retention_switch(strategy)
     end
 
-    defp handle_started(hub_id, strategy, child_id, local_pids, started_pid) do
+    defp handle_started(hub, strategy, child_id, local_pids, started_pid) do
       # Notify the peer process about the migration.
-      case start_handover(hub_id, strategy, child_id, local_pids, started_pid) do
+      case start_handover(hub, strategy, child_id, local_pids, started_pid) do
         nil -> nil
         _ -> child_id
       end
@@ -219,7 +230,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       child_ids
     end
 
-    defp start_handover(hub_id, strategy, child_id, local_pids, handover_receiver) do
+    defp start_handover(hub, strategy, child_id, local_pids, handover_receiver) do
       case strategy.handover do
         true ->
           pid = Map.get(local_pids, child_id)
@@ -235,7 +246,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
                 retention_receiver: self(),
                 confirmation_receiver: confirmation_receiver,
                 confirm_handover: strategy.confirm_handover,
-                hub_id: hub_id
+                hub_id: hub.hub_id
               ]
             })
           end
@@ -269,14 +280,14 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
   end
 
-  def handle_shutdown(%__MODULE__{handover: true, handover_data_wait: hodw} = _struct, hub_id) do
+  def handle_shutdown(%__MODULE__{handover: true, handover_data_wait: hodw} = _struct, hub) do
     # Make sure there are other nodes in the cluster left.
-    if Cluster.nodes(hub_id) |> length() > 0 do
-      ProcessRegistry.local_data(hub_id)
+    if Cluster.nodes(hub.storage.misc) |> length() > 0 do
+      ProcessRegistry.local_data(hub.hub_id)
       |> get_state_msgs()
       |> get_send_data(hodw)
-      |> format_send_data(hub_id)
-      |> send_data(hub_id)
+      |> format_send_data(hub)
+      |> send_data(hub)
     end
 
     :ok
@@ -284,8 +295,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   def handle_shutdown(_struct, _hub_id), do: :ok
 
-  def handle_process_startups(%__MODULE__{handover: true} = _struct, hub_id, cpids) do
-    state_data = Storage.get(Name.local_storage(hub_id), StorageKey.msk()) || []
+  def handle_process_startups(%__MODULE__{handover: true} = _struct, hub, cpids) do
+    state_data = Storage.get(hub.storage.misc, StorageKey.msk()) || []
 
     Enum.each(cpids, fn %{cid: cid, pid: pid} ->
       pstate = Enum.find(state_data, fn {child_id, _} -> child_id === cid end)
@@ -295,13 +306,15 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       end
     end)
 
-    rem_states(hub_id, Enum.map(state_data, fn {cid, _} -> cid end))
+    rem_states(Enum.map(state_data, fn {cid, _} -> cid end), hub.storage.misc)
   end
 
   def handle_process_startups(_struct, _hub_id, _pids), do: nil
 
-  def handle_storage_update(hub_id, data) do
-    Storage.update(Name.local_storage(hub_id), StorageKey.msk(), fn old_value ->
+  def handle_storage_update(hub, data) do
+    misc_storage = hub.storage.misc
+
+    Storage.update(misc_storage, StorageKey.msk(), fn old_value ->
       case old_value do
         nil -> data
         _ -> data ++ old_value
@@ -309,39 +322,37 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end)
   end
 
-  defp rem_states(hub_id, cids) do
-    Name.local_storage(hub_id)
-    |> Storage.update(StorageKey.msk(), fn
+  defp rem_states(cids, misc_storage) do
+    Storage.update(misc_storage, StorageKey.msk(), fn
       nil -> nil
       states -> Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
     end)
   end
 
-  defp send_data(send_data, hub_id) do
+  defp send_data(send_data, hub) do
     # Send the data to each node now.
     Enum.each(send_data, fn {node, data} ->
-      cluster_nodes = Cluster.nodes(hub_id)
+      cluster_nodes = Cluster.nodes(hub.storage.misc)
 
       if Enum.member?(cluster_nodes, node) && Enum.member?(Node.list(), node) do
         GenServer.cast(
-          {hub_id, node},
-          {:exec_cast, {__MODULE__, :handle_storage_update, [hub_id, data]}}
+          {hub.hub_id, node},
+          {:exec_cast, {__MODULE__, :handle_storage_update, [hub, data]}}
         )
       end
     end)
   end
 
-  defp format_send_data({local_data, states}, hub_id) do
-    local_storage = Name.local_storage(hub_id)
-    dist_strat = Storage.get(local_storage, StorageKey.strdist())
+  defp format_send_data({local_data, states}, hub) do
+    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
 
     repl_fact =
-      Storage.get(local_storage, StorageKey.strred())
+      Storage.get(hub.storage.misc, StorageKey.strred())
       |> RedundancyStrategy.replication_factor()
 
     Enum.reduce(local_data, %{}, fn {cid, {_, cn, _m}}, acc ->
       nodes = Keyword.keys(cn)
-      new_nodes = DistributionStrategy.belongs_to(dist_strat, hub_id, cid, repl_fact)
+      new_nodes = DistributionStrategy.belongs_to(dist_strat, hub, cid, repl_fact)
       migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
       node_data = Map.get(acc, migration_node, [])
 

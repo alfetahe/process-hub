@@ -37,26 +37,29 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Ring
+  alias ProcessHub.Hub
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
-  alias ProcessHub.Utility.Name
 
   @type t() :: %__MODULE__{}
   defstruct []
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.ConsistentHashing do
     @impl true
-    def init(_strategy, hub_id) do
-      local_storage = Name.local_storage(hub_id)
-      hub_nodes = Storage.get(local_storage, StorageKey.hn())
+    def init(_strategy, hub) do
+      hub_nodes = Storage.get(hub.storage.misc, StorageKey.hn())
 
-      Storage.insert(local_storage, StorageKey.hr(), Ring.create_ring(hub_nodes))
+      Storage.insert(
+        hub.storage.misc,
+        StorageKey.hr(),
+        Ring.create_ring(hub_nodes)
+      )
 
       join_handler = %HookManager{
         id: :ch_join,
         m: ProcessHub.Strategy.Distribution.ConsistentHashing,
         f: :handle_node_join,
-        a: [hub_id, :_],
+        a: [hub, :_],
         p: 100
       }
 
@@ -64,7 +67,7 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
         id: :ch_leave,
         m: ProcessHub.Strategy.Distribution.ConsistentHashing,
         f: :handle_node_leave,
-        a: [hub_id, :_],
+        a: [hub, :_],
         p: 100
       }
 
@@ -72,62 +75,66 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
         id: :ch_shutdown,
         m: ProcessHub.Strategy.Distribution.ConsistentHashing,
         f: :handle_shutdown,
-        a: [hub_id],
+        a: [hub],
         p: 100
       }
 
-      HookManager.register_handler(hub_id, Hook.pre_cluster_join(), join_handler)
-      HookManager.register_handler(hub_id, Hook.pre_cluster_leave(), leave_handler)
-      HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), join_handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), leave_handler)
+
+      HookManager.register_handler(
+        hub.storage.hook,
+        Hook.coordinator_shutdown(),
+        shutdown_handler
+      )
     end
 
     @impl true
     @spec belongs_to(
             ProcessHub.Strategy.Distribution.ConsistentHashing.t(),
-            ProcessHub.hub_id(),
+            Hub.t(),
             ProcessHub.child_id(),
             pos_integer()
           ) :: [atom]
-    def belongs_to(_strategy, hub_id, child_id, replication_factor) do
-      Ring.get_ring(hub_id) |> Ring.key_to_nodes(child_id, replication_factor)
+    def belongs_to(_strategy, hub, child_id, replication_factor) do
+      hub.storage.misc
+      |> Storage.get(StorageKey.hr())
+      |> Ring.key_to_nodes(child_id, replication_factor)
     end
 
     @impl true
-    @spec children_init(struct(), ProcessHub.hub_id(), [map()], keyword()) ::
+    @spec children_init(struct(), Hub.t(), [map()], keyword()) ::
             :ok | {:error, any()}
-    def children_init(_strategy, _hub_id, _child_specs, _opts), do: :ok
+    def children_init(_strategy, _hub, _child_specs, _opts), do: :ok
   end
 
   @doc """
   Adds a new node to the hash ring.
   """
-  @spec handle_node_join(ProcessHub.hub_id(), node()) :: boolean()
-  def handle_node_join(hub_id, node) do
-    hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
+  @spec handle_node_join(Hub.t(), node()) :: boolean()
+  def handle_node_join(hub, node) do
+    hash_ring = Storage.get(hub.storage.misc, StorageKey.hr()) |> Ring.add_node(node)
 
-    Name.local_storage(hub_id)
-    |> Storage.insert(StorageKey.hr(), hash_ring)
+    Storage.insert(hub.storage.misc, StorageKey.hr(), hash_ring)
   end
 
   @doc """
   Removes the node from the hash ring.
   """
-  @spec handle_node_leave(ProcessHub.hub_id(), node()) :: boolean()
-  def handle_node_leave(hub_id, node) do
-    hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
+  @spec handle_node_leave(Hub.t(), node()) :: boolean()
+  def handle_node_leave(hub, node) do
+    hash_ring = Storage.get(hub.storage.misc, StorageKey.hr()) |> Ring.remove_node(node)
 
-    Name.local_storage(hub_id)
-    |> Storage.insert(StorageKey.hr(), hash_ring)
+    Storage.insert(hub.storage.misc, StorageKey.hr(), hash_ring)
   end
 
   @doc """
   Removes the local node from the hash ring.
   """
-  @spec handle_shutdown(ProcessHub.hub_id()) :: any()
-  def handle_shutdown(hub_id) do
-    local_storage = Name.local_storage(hub_id)
-    hash_ring = Storage.get(local_storage, StorageKey.hr()) |> Ring.remove_node(node())
+  @spec handle_shutdown(Hub.t()) :: any()
+  def handle_shutdown(hub) do
+    hash_ring = Storage.get(hub.storage.misc, StorageKey.hr()) |> Ring.remove_node(node())
 
-    Storage.insert(local_storage, StorageKey.hr(), hash_ring)
+    Storage.insert(hub.storage.misc, StorageKey.hr(), hash_ring)
   end
 end

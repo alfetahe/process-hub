@@ -1,6 +1,7 @@
 defprotocol ProcessHub.Strategy.Synchronization.Base do
   alias ProcessHub.Handler.ChildrenAdd.PostStartData
   alias ProcessHub.Handler.ChildrenRem.StopHandle
+  alias ProcessHub.Hub
 
   @moduledoc """
   This protocol defines the behavior of a synchronization strategy.
@@ -11,8 +12,8 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
 
   Could be used to perform initialization.
   """
-  @spec init(struct(), ProcessHub.hub_id()) :: any()
-  def init(strategy, hub_id)
+  @spec init(struct(), Hub.t()) :: any()
+  def init(strategy, hub)
 
   @doc """
   This function is called when a process has been started on the local node, and the
@@ -20,24 +21,24 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   """
   @spec propagate(
           __MODULE__.t(),
-          ProcessHub.hub_id(),
+          Hub.t(),
           [PostStartData.t() | StopHandle.t()],
           node(),
           :add | :rem,
           keyword()
         ) ::
           :ok
-  def propagate(strategy, hub_id, children, node, type, opts)
+  def propagate(strategy, hub, children, node, type, opts)
 
   @doc """
   Initializes the periodic synchronization of the process registry.
   """
-  @spec init_sync(__MODULE__.t(), ProcessHub.hub_id(), [node()]) :: :ok
-  def init_sync(strategy, hub_id, cluster_nodes)
+  @spec init_sync(__MODULE__.t(), Hub.t(), [node()]) :: :ok
+  def init_sync(strategy, hub, cluster_nodes)
 
   @doc """
   Handles the periodic synchronization of the process registry.
   """
-  @spec handle_synchronization(__MODULE__.t(), ProcessHub.hub_id(), term(), node()) :: :ok
-  def handle_synchronization(strategy, hub_id, remote_data, remote_node)
+  @spec handle_synchronization(__MODULE__.t(), Hub.t(), term(), node()) :: :ok
+  def handle_synchronization(strategy, hub, remote_data, remote_node)
 end
