@@ -5,8 +5,9 @@ All notable changes to this project will be documented in this file.
 TODO:
 
 ### Fixed
-- Using the `async_wait` option on process startup or shutdown now returns a promise that can be awaited instead of a function. This avoids the possibility of polluting the caller's mailbox if the caller does not await the result. This change also avoids the possibility of the caller receiving from their mailbox before executing the await function.
-The new `:await_timeout` option has been added to specify a timeout for the spawned collector process to wait before automatically terminating itself.
+- Using the `async_wait` option on process startup or shutdown now returns a promise that can be awaited instead of a function. This avoids polluting the caller's mailbox if the caller does not await the result. It also prevents the caller from receiving messages from their mailbox before executing the await function.
+The new `:await_timeout` option specifies a timeout for the spawned collector process to wait before automatically terminating itself.
+- Gossip synchronization was sending empty messages during cluster updates.
 
 ### Changed
 - All public API functions defined in the `ProcessHub` module now call the coordinator process instead of calling the services directly.
@@ -152,6 +153,8 @@ This version includes bug fixes, new API functions, and minor improvements to th
 - Updated the default values for `max_restarts` and `max_seconds` to 100 and 4, respectively.
 - Storage module now accepts the table identifier as the first parameter, allowing
  it to be used with multiple tables.
+- Removed the `ProcessHub.Utility.Name` module. Instead we're setting the names in the initialization process
+and store them in the `ProcessHub.Hub.t()` struct. This reduces the risk of dynamic atom generation and misuse of the system generated ETS tables. The system processes now are mostly registered using the Elixir's `Registry` module.
 
 ### Added
 - Introduced new API functions `get_pids/2` and `get_pid/2` to get the pid/s by `child_id`.
@@ -160,6 +163,7 @@ This version includes bug fixes, new API functions, and minor improvements to th
 ### Fixed
 - Corrected an issue where local supervisor restarts were not properly updating the global registry.
 - Fixed various typos and errors in the documentation.
+- Event queue was unlocked when scaling nodes down while not respecting the partition status leading to an error.
 
 ## v0.2.5-alpha - 2024-06-21
 Bugfixes and documentation improvements.

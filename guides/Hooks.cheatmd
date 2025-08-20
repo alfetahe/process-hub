@@ -169,52 +169,50 @@ alias ProcessHub.Service.Storage
 alias ProcessHub.Service.HookManager
 
 # Register hook handlers to update the hash ring when node joins or leaves the cluster.
-def init(_strategy, hub_id) do
-  local_storage = ProcessHub.Utility.Name.local_storage(hub_id)
+def init(_strategy, hub) do
+  hub_nodes = Storage.get(hub.storage.misc, :hub_nodes)
 
-  hub_nodes = Storage.get(local_storage, :hub_nodes)
-
-  Storage.insert(local_storage, StorageKey.hr, Ring.create_ring(hub_nodes))
+  Storage.insert(hub.storage.misc, StorageKey.hr, Ring.create_ring(hub_nodes))
 
   join_handler = %HookManager{
     id: :ch_join,
     m: ProcessHub.Strategy.Distribution.ConsistentHashing,
     f: :handle_node_join,
-    a: [hub_id, :_]
+    a: [hub, :_]
   }
 
   leave_handler = %HookManager{
     id: :ch_join,
     m: ProcessHub.Strategy.Distribution.ConsistentHashing,
     f: :handle_node_leave,
-    a: [hub_id, :_]
+    a: [hub, :_]
   }
 
   shutdown_handler = %HookManager{
     id: :ch_shutdown,
     m: ProcessHub.Strategy.Distribution.ConsistentHashing,
     f: :handle_shutdown,
-    a: [hub_id],
+    a: [hub],
     p: 100
   }
 
-  HookManager.register_handler(hub_id, Hook.pre_cluster_join(), join_handler)
-  HookManager.register_handler(hub_id, Hook.pre_cluster_leave(), leave_handler)
-  HookManager.register_handler(hub_id, Hook.coordinator_shutdown(), shutdown_handler)
+  HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), join_handler)
+  HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), leave_handler)
+  HookManager.register_handler(hub.storage.hook, Hook.coordinator_shutdown(), shutdown_handler)
 end
 
 
 # Handler functions that will be called when the hooks are triggered.
-def handle_node_join(hub_id, node) do
-  hash_ring = Ring.get_ring(hub_id) |> Ring.add_node(node)
+def handle_node_join(hub, node) do
+  hash_ring = Ring.get_ring(hub.storage.misc) |> Ring.add_node(node)
 
-  Storage.insert(ProcessHub.Utility.Name.local_storage(hub_id), StorageKey.hr, hash_ring)
+  Storage.insert(hub.storage.misc, StorageKey.hr, hash_ring)
 end
 
-def handle_node_leave(hub_id, node) do
-  hash_ring = Ring.get_ring(hub_id) |> Ring.remove_node(node)
+def handle_node_leave(hub, node) do
+  hash_ring = Ring.get_ring(hub.storage.misc) |> Ring.remove_node(node)
 
-  Storage.insert(ProcessHub.Utility.Name.local_storage(hub_id), StorageKey.hr, hash_ring)
+  Storage.insert(hub.storage.misc, StorageKey.hr, hash_ring)
 end
 ```
 

@@ -103,7 +103,7 @@ For the sake of simplicity, we will ignore the replication factor in this exampl
 ...
 @impl true
 def belongs_to(struct, hub_id, _child_id, _replication_factor) do
-    hub_nodes = ProcessHub.Service.Cluster.nodes(hub_id, [:include_local])
+    hub_nodes = ProcessHub.nodes(hub_id, [:include_local])
 
     selected_node = case struct.direction do
         :asc -> Enum.sort(hub_nodes) |> Enum.at(0)
@@ -155,7 +155,7 @@ defmodule CustomStrategy.Compare do
 
     @impl true
     def belongs_to(struct, hub_id, _child_id, _replication_factor) do
-        hub_nodes = ProcessHub.Service.Cluster.nodes(hub_id, [:include_local])
+        hub_nodes = ProcessHub.nodes(hub_id, [:include_local])
 
         selected_node = case struct.direction do
             :asc -> Enum.sort(hub_nodes) |> Enum.at(0)
