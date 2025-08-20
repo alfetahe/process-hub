@@ -66,7 +66,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
       node_log_func(strategy, hub, up_node, :up)
-      propagate_quorum_log(up_node, hub.storage.misc)
+      propagate_quorum_log(hub, up_node)
 
       !quorum_failure?(strategy, cluster_nodes, hub.storage.misc)
     end
@@ -79,25 +79,22 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       quorum_failure?(strategy, cluster_nodes, hub.storage.misc)
     end
 
-    defp propagate_quorum_log(node, misc_storage) do
+    defp propagate_quorum_log(hub, node) do
       local_log =
-        case Storage.get(misc_storage, StorageKey.dqdn()) do
+        case Storage.get(hub.storage.misc, StorageKey.dqdn()) do
           nil -> []
           data -> data
         end
 
-      Node.spawn(node, fn ->
-        remote_log =
-          case Storage.get(misc_storage, StorageKey.dqdn()) do
-            nil -> []
-            remote_log -> remote_log
-          end
-
-        if length(local_log) > length(remote_log) do
-          # Overwrite quorum log with other nodes' data that has more data in it.
-          Storage.insert(misc_storage, StorageKey.dqdn(), local_log)
-        end
-      end)
+      GenServer.cast(
+        {hub.hub_id, node},
+        {:exec_cast,
+         {
+           ProcessHub.Strategy.PartitionTolerance.DynamicQuorum,
+           :sync_quorum_log,
+           [local_log]
+         }}
+      )
     end
 
     defp quorum_failure?(strategy, cluster_nodes, misc_storage) do
@@ -157,6 +154,19 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
           # Add a new row.
           [{node, timestamp} | filtered_data]
       end
+    end
+  end
+
+  def sync_quorum_log(hub, remote_log) do
+    local_log =
+      case Storage.get(hub.storage.misc, StorageKey.dqdn()) do
+        nil -> []
+        local_log -> local_log
+      end
+
+    if length(remote_log) > length(local_log) do
+      # Overwrite quorum log with other nodes data that has more information in it.
+      Storage.insert(hub.storage.misc, StorageKey.dqdn(), remote_log)
     end
   end
 end
