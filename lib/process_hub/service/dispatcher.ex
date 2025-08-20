@@ -65,7 +65,7 @@ defmodule ProcessHub.Service.Dispatcher do
   @doc """
   Propagates the event to the event queue.
   """
-  @spec propagate_event(reference(), atom(), term(), %{
+  @spec propagate_event(atom(), atom(), term(), %{
           optional(:discard_event) => boolean,
           optional(:members) => :global | :local | :external | [node()],
           optional(:priority) => integer(),

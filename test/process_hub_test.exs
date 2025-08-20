@@ -276,17 +276,17 @@ defmodule ProcessHubTest do
     assert ProcessHub.nodes(hub_id, [:include_local]) === [node()]
   end
 
-  test "start link" do
-    hub = %ProcessHub{
+  test "start link", %{hub: hub} do
+    hub_conf = %ProcessHub{
       hub_id: :start_link_test
     }
 
     assert ProcessHub.start_link(:none) === {:error, :expected_hub_settings}
-    {:ok, pid} = ProcessHub.start_link(hub)
+    {:ok, pid} = ProcessHub.start_link(hub_conf)
 
     assert is_pid(pid)
 
-    Supervisor.stop(ProcessHub.Utility.Name.initializer(hub.hub_id))
+    Supervisor.stop(hub.managers.initializer)
   end
 
   test "stop", %{hub_id: hub_id} = _context do
@@ -294,15 +294,15 @@ defmodule ProcessHubTest do
     assert ProcessHub.stop(hub_id) === :ok
   end
 
-  test "is locked?", %{hub_id: hub_id} = _context do
+  test "is locked?", %{hub_id: hub_id, hub: hub} = _context do
     assert ProcessHub.is_locked?(hub_id) === false
-    ProcessHub.Service.State.lock_event_handler(hub_id)
+    ProcessHub.Service.State.lock_event_handler(hub)
     assert ProcessHub.is_locked?(hub_id) === true
   end
 
-  test "is partitioned?", %{hub_id: hub_id} = _context do
+  test "is partitioned?", %{hub_id: hub_id, hub: hub} = _context do
     assert ProcessHub.is_partitioned?(hub_id) === false
-    ProcessHub.Service.State.toggle_quorum_failure(hub_id)
+    ProcessHub.Service.State.toggle_quorum_failure(hub)
     assert ProcessHub.is_partitioned?(hub_id) === true
   end
 
