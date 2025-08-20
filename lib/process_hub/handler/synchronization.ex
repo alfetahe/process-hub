@@ -29,7 +29,7 @@ defmodule ProcessHub.Handler.Synchronization do
     def handle(%__MODULE__{hub: hub} = arg) do
       sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
 
-      unless State.is_locked?(arg.hub.hub_id) do
+      unless State.is_locked?(arg.hub) do
         hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
         SynchronizationStrategy.init_sync(sync_strat, hub.hub_id, hub_nodes)

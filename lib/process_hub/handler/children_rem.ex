@@ -34,7 +34,7 @@ defmodule ProcessHub.Handler.ChildrenRem do
     def handle(%__MODULE__{} = arg) do
       sync_strategy = Storage.get(arg.hub.storage.misc, StorageKey.strsyn())
 
-      case ProcessHub.Service.State.is_partitioned?(arg.hub.hub_id) do
+      case ProcessHub.Service.State.is_partitioned?(arg.hub) do
         true ->
           {:error, :partitioned}
 

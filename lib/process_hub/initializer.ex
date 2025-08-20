@@ -31,27 +31,12 @@ defmodule ProcessHub.Initializer do
 
   @impl true
   def init(%ProcessHub{hub_id: hub_id} = hub) do
-    {hook_registry, misc_storage} = setup_storage(hub_id)
-
-    # TODO: refactor.
-    managers = %{
-      initializer: self(),
-      system_registry: Name.system_registry(hub_id),
-      event_queue: Name.event_queue(hub_id),
-      distributed_supervisor: Name.distributed_supervisor(hub_id),
-      task_supervisor: Name.task_supervisor(hub_id),
-      worker_queue: Name.worker_queue(hub_id),
-      janitor: Name.janitor(hub_id)
-    }
-
-    storage = %{
-      hook: hook_registry,
-      misc: misc_storage
-    }
+    storage = setup_storage(hub_id)
+    managers = setup_managers(hub_id)
 
     children =
       [
-        {Registry, keys: :unique, name: Name.system_registry(hub_id)},
+        {Registry, keys: :unique, name: managers.system_registry},
         {Blockade, %{name: managers.event_queue, priority_sync: false}},
         dist_sup(hub, managers),
         {Task.Supervisor, name: managers.task_supervisor},
@@ -86,6 +71,23 @@ defmodule ProcessHub.Initializer do
     hook_registry = :ets.new(Name.hook_registry(hub_id), [:set, :public, :named_table])
     misc_storage = :ets.new(Name.misc_storage(hub_id), [:set, :public, :named_table])
 
-    {hook_registry, misc_storage}
+    %{
+      hook: hook_registry,
+      misc: misc_storage
+    }
+  end
+
+  defp setup_mangers(hub_id) do
+    system_registry = :"hub.#{hub_id}.system_registry"
+
+    %{
+      initializer: self(),
+      system_registry: system_registry,
+      event_queue: :"hub.#{hub_id}.event_queue",
+      distributed_supervisor: {:via, Registry, {system_registry, "dist_sup"}},
+      task_supervisor: {:via, Registry, {system_registry, "task_sup"}},
+      worker_queue: {:via, Registry, {system_registry, "worker_queue"}},
+      janitor: {:via, Registry, {system_registry, "janitor"}}
+    }
   end
 end

@@ -149,7 +149,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           migr_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strmigr())
       }
 
-      case ProcessHub.Service.State.is_partitioned?(arg.hub.hub_id) do
+      case ProcessHub.Service.State.is_partitioned?(arg.hub) do
         true ->
           {:error, :partitioned}
 

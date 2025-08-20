@@ -202,13 +202,24 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_call({:get_dist_children, opts}, _from, state) do
+    children =
+      case Enum.member?(opts, :global) do
+        true -> Distributor.which_children_global(state, opts)
+        false -> Distributor.which_children_local(state, opts)
+      end
+
+    {:reply, children, state}
+  end
+
+  @impl true
   def handle_call(:is_locked?, _from, state) do
-    {:reply, State.is_locked?(state.hub_id), state}
+    {:reply, State.is_locked?(state), state}
   end
 
   @impl true
   def handle_call(:is_partitioned?, _from, state) do
-    {:reply, State.is_partitioned?(state.hub_id), state}
+    {:reply, State.is_partitioned?(state), state}
   end
 
   @impl true

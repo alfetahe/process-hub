@@ -144,23 +144,22 @@ defmodule ProcessHub.Service.Distributor do
   Works similar to `Supervisor.which_children/1` but returns a list of tuple
   where the first element is the node name and the second child processes started under the node.
   """
-  @spec which_children_local(ProcessHub.hub_id(), keyword() | nil) ::
+  @spec which_children_local(Hub.t(), keyword() | nil) ::
           {node(),
            [{any, :restarting | :undefined | pid, :supervisor | :worker, :dynamic | list}]}
-  def which_children_local(hub_id, _opts) do
-    {node(), Supervisor.which_children(Name.distributed_supervisor(hub_id))}
+  def which_children_local(hub, _opts) do
+    {node(), Supervisor.which_children(hub.managers.distributed_supervisor)}
   end
 
   @doc """
   Return a list of all child processes started by all nodes in the cluster.
   """
-  @spec which_children_global(ProcessHub.hub_id(), keyword()) :: list
-  def which_children_global(hub_id, opts) do
+  @spec which_children_global(Hub.t(), keyword()) :: list
+  def which_children_global(hub, opts) do
     timeout = Keyword.get(opts, :timeout, 5000)
-    hub = Coordinator.get_hub(hub_id)
 
     Cluster.nodes(hub.storage.misc, [:include_local])
-    |> :erpc.multicall(fn -> __MODULE__.which_children_local(hub_id, opts) end, timeout)
+    |> :erpc.multicall(fn -> __MODULE__.which_children_local(hub, opts) end, timeout)
     |> Enum.map(fn {_status, result} -> result end)
   end
 

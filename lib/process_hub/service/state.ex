@@ -14,17 +14,17 @@ defmodule ProcessHub.Service.State do
   alias ProcessHub.Hub
 
   @doc "Returns a boolean indicating whether the hub is locked."
-  @spec is_locked?(ProcessHub.hub_id()) :: boolean
-  def is_locked?(hub_id) do
-    {:ok, prio_level} = Blockade.get_priority(Name.event_queue(hub_id))
+  @spec is_locked?(Hub.t()) :: boolean
+  def is_locked?(hub) do
+    {:ok, prio_level} = Blockade.get_priority(hub.managers.event_queue)
 
     prio_level === PriorityLevel.locked()
   end
 
   @doc "Returns a boolean indicating whether the hub cluster is partitioned."
-  @spec is_partitioned?(atom) :: boolean
-  def is_partitioned?(hub_id) do
-    case Registry.lookup(Name.system_registry(hub_id), "dist_sup") do
+  @spec is_partitioned?(Hub.t()) :: boolean
+  def is_partitioned?(hub) do
+    case Registry.lookup(hub.managers.system_registry, "dist_sup") do
       [] -> true
       [{pid, _}] -> !Process.alive?(pid)
       _ -> false

@@ -320,10 +320,7 @@ defmodule ProcessHub do
           | {node(),
              [{any, :restarting | :undefined | pid, :supervisor | :worker, :dynamic | list}]}
   def which_children(hub_id, opts \\ []) do
-    case Enum.member?(opts, :global) do
-      true -> Distributor.which_children_global(hub_id, opts)
-      false -> Distributor.which_children_local(hub_id, opts)
-    end
+    GenServer.call(hub_id, {:get_dist_children, opts})
   end
 
   @doc """
