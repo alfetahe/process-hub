@@ -8,7 +8,6 @@ defmodule ProcessHub do
   and synchronization.
   """
 
-  alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.AsyncPromise
 

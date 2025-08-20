@@ -32,11 +32,11 @@ defmodule Test.Helper.Common do
     compare_started_children(child_specs, hub_id)
   end
 
-  def validate_singularity(%{hub_id: hub_id} = _context) do
+  def validate_singularity(%{hub_id: hub_id, hub: hub} = _context) do
     registry = ProcessHub.registry_dump(hub_id)
 
     Enum.each(registry, fn {child_id, {_, nodes, _}} ->
-      ring = Ring.get_ring(hub_id)
+      ring = Ring.get_ring(hub.storage.misc)
       ring_nodes = Ring.key_to_nodes(ring, child_id, 1)
 
       assert length(nodes) === 1, "The child #{child_id} is not started on single node"
@@ -47,7 +47,13 @@ defmodule Test.Helper.Common do
   end
 
   def validate_replication(
-        %{hub_id: hub_id, hub_conf: hub_conf, replication_factor: _rf, validate_metadata: vm} =
+        %{
+          hub_id: hub_id,
+          hub_conf: hub_conf,
+          replication_factor: _rf,
+          validate_metadata: vm,
+          hub: hub
+        } =
           _context
       ) do
     registry = ProcessHub.registry_dump(hub_id)
@@ -58,7 +64,7 @@ defmodule Test.Helper.Common do
         assert metadata === %{tag: hub_id |> Atom.to_string()}
       end
 
-      ring = Ring.get_ring(hub_id)
+      ring = Ring.get_ring(hub.storage.misc)
       ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
 
       assert length(nodes) === replication_factor,

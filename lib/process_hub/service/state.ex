@@ -7,7 +7,6 @@ defmodule ProcessHub.Service.State do
   alias :blockade, as: Blockade
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
@@ -36,7 +35,7 @@ defmodule ProcessHub.Service.State do
   """
   @spec lock_event_handler(Hub.t(), boolean() | nil) :: :ok
   def lock_event_handler(hub, deadlock_recover \\ true) do
-    options = lock_options(hub.hub_id, deadlock_recover)
+    options = lock_options(hub.storage.misc, deadlock_recover)
 
     Blockade.set_priority(
       hub.managers.event_queue,
@@ -68,9 +67,9 @@ defmodule ProcessHub.Service.State do
   @doc """
   Locks the event handler and kills the local distributed supervisor.
   """
-  @spec toggle_quorum_failure(ProcessHub.t()) :: :ok | {:error, :already_partitioned}
+  @spec toggle_quorum_failure(Hub.t()) :: :ok | {:error, :already_partitioned}
   def toggle_quorum_failure(hub) do
-    unless is_partitioned?(hub.hub_id) do
+    unless is_partitioned?(hub) do
       lock_event_handler(hub, false)
       Supervisor.terminate_child(hub.managers.initializer, :distributed_supervisor)
 
@@ -85,7 +84,7 @@ defmodule ProcessHub.Service.State do
   """
   @spec toggle_quorum_success(Hub.t()) :: :ok | {:error, :not_partitioned}
   def toggle_quorum_success(hub) do
-    if is_partitioned?(hub.hub_id) do
+    if is_partitioned?(hub) do
       Supervisor.restart_child(
         hub.managers.initializer,
         :distributed_supervisor
@@ -115,10 +114,10 @@ defmodule ProcessHub.Service.State do
     )
   end
 
-  defp lock_options(hub_id, deadlock_recover) do
+  defp lock_options(misc_storage, deadlock_recover) do
     case deadlock_recover do
       false -> %{}
-      true -> %{reset_after: Storage.get(Name.misc_storage(hub_id), StorageKey.dlrt())}
+      true -> %{reset_after: Storage.get(misc_storage, StorageKey.dlrt())}
     end
     |> Map.put(:local_priority_set, true)
   end

@@ -3,7 +3,6 @@ defmodule ProcessHub.Service.Ring do
   The Ring service provides API functions for managing the hash ring.
   """
 
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
   alias :hash_ring, as: HashRing
@@ -22,9 +21,9 @@ defmodule ProcessHub.Service.Ring do
   @doc """
   Returns the hash ring instance belonging to the given `hub_id`.
   """
-  @spec get_ring(ProcessHub.hub_id()) :: HashRing.ring()
-  def get_ring(hub_id) do
-    Storage.get(Name.misc_storage(hub_id), StorageKey.hr())
+  @spec get_ring(reference()) :: HashRing.ring()
+  def get_ring(misc_storage) do
+    Storage.get(misc_storage, StorageKey.hr())
   end
 
   @doc """

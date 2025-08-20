@@ -1,23 +1,28 @@
 defmodule ProcessHub.Janitor do
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Storage
 
   use GenServer
 
-  def start_link({hub_id, pname, purge_interval}) do
-    GenServer.start_link(__MODULE__, {hub_id, purge_interval}, name: pname)
+  def start_link({hub_id, pname, misc_storage, purge_interval}) do
+    GenServer.start_link(__MODULE__, {hub_id, pname, misc_storage, purge_interval}, name: pname)
   end
 
   @impl true
-  def init({hub_id, purge_interval}) do
+  def init({hub_id, pname, misc_storage, purge_interval}) do
     schedule_cleanup(purge_interval)
 
-    {:ok, %{hub_id: hub_id, purge_interval: purge_interval}}
+    {:ok,
+     %{
+       hub_id: hub_id,
+       pname: pname,
+       misc_storage: misc_storage,
+       purge_interval: purge_interval
+     }}
   end
 
   @impl true
   def handle_info(:ttl_cleanup, state) do
-    purge_cache(state.hub_id)
+    purge_cache(state.misc_storage)
     schedule_cleanup(state.purge_interval)
 
     {:noreply, state}
@@ -27,9 +32,7 @@ defmodule ProcessHub.Janitor do
     Process.send_after(self(), :ttl_cleanup, purge_interval)
   end
 
-  defp purge_cache(hub_id) do
-    misc_storage = Name.misc_storage(hub_id)
-
+  defp purge_cache(misc_storage) do
     # Match only items with TTL.
     ttl_items = :ets.match(misc_storage, {:"$1", :_, :"$2"})
     curr_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)

@@ -172,7 +172,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_cast({:exec_cast, {m, f, a}}, state) do
-    apply(m, f, a)
+    apply(m, f, [state | a])
 
     {:noreply, state}
   end
@@ -282,6 +282,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_join, node}, state) do
+    dbg({node(), state.storage.misc})
+
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
     if Cluster.new_node?(hub_nodes, node) and node() !== node do

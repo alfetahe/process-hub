@@ -3,12 +3,10 @@ defmodule ProcessHub.Service.Distributor do
   The distributor service provides API functions for distributing child processes.
   """
 
-  alias ProcessHub.Coordinator
   alias ProcessHub.AsyncPromise
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Utility.Name
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Mailbox
   alias ProcessHub.Service.Cluster

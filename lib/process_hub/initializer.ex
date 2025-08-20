@@ -5,7 +5,6 @@ defmodule ProcessHub.Initializer do
   This module is responsible for starting all the child processes of `ProcessHub`.
   """
 
-  alias ProcessHub.Utility.Name
   alias :blockade, as: Blockade
 
   use Supervisor
@@ -30,7 +29,7 @@ defmodule ProcessHub.Initializer do
   end
 
   @impl true
-  def init(%ProcessHub{hub_id: hub_id} = hub) do
+  def init(%ProcessHub{hub_id: hub_id} = hub_conf) do
     storage = setup_storage(hub_id)
     managers = setup_managers(hub_id)
 
@@ -38,11 +37,17 @@ defmodule ProcessHub.Initializer do
       [
         {Registry, keys: :unique, name: managers.system_registry},
         {Blockade, %{name: managers.event_queue, priority_sync: false}},
-        dist_sup(hub, managers),
+        dist_sup(hub_conf, managers),
         {Task.Supervisor, name: managers.task_supervisor},
-        {ProcessHub.Coordinator, {hub, managers, storage}},
+        {ProcessHub.Coordinator, {hub_conf, managers, storage}},
         {ProcessHub.WorkerQueue, {hub_id, managers.worker_queue, storage.misc}},
-        {ProcessHub.Janitor, {hub_id, managers.janitor, hub.storage_purge_interval}}
+        {ProcessHub.Janitor,
+         {
+           hub_id,
+           managers.janitor,
+           storage.misc,
+           hub_conf.storage_purge_interval
+         }}
       ]
 
     opts = [strategy: :one_for_one]
@@ -68,8 +73,8 @@ defmodule ProcessHub.Initializer do
   defp setup_storage(hub_id) do
     :ets.new(hub_id, [:set, :public, :named_table])
 
-    hook_registry = :ets.new(Name.hook_registry(hub_id), [:set, :public, :named_table])
-    misc_storage = :ets.new(Name.misc_storage(hub_id), [:set, :public, :named_table])
+    hook_registry = :ets.new(hub_id, [:set, :public])
+    misc_storage = :ets.new(hub_id, [:set, :public])
 
     %{
       hook: hook_registry,
@@ -77,7 +82,7 @@ defmodule ProcessHub.Initializer do
     }
   end
 
-  defp setup_mangers(hub_id) do
+  defp setup_managers(hub_id) do
     system_registry = :"hub.#{hub_id}.system_registry"
 
     %{

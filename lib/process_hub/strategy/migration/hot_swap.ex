@@ -312,9 +312,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   def handle_process_startups(_struct, _hub_id, _pids), do: nil
 
   def handle_storage_update(hub, data) do
-    misc_storage = hub.storage.misc
-
-    Storage.update(misc_storage, StorageKey.msk(), fn old_value ->
+    Storage.update(hub.storage.misc, StorageKey.msk(), fn old_value ->
       case old_value do
         nil -> data
         _ -> data ++ old_value
@@ -337,7 +335,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       if Enum.member?(cluster_nodes, node) && Enum.member?(Node.list(), node) do
         GenServer.cast(
           {hub.hub_id, node},
-          {:exec_cast, {__MODULE__, :handle_storage_update, [hub, data]}}
+          {:exec_cast, {__MODULE__, :handle_storage_update, [data]}}
         )
       end
     end)
