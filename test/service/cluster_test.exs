@@ -1,6 +1,5 @@
 defmodule Test.Service.ClusterTest do
   alias ProcessHub.Service.Cluster
-  alias ProcessHub.Utility.Name
   alias Test.Helper.TestNode
   alias Test.Helper.Bootstrap
   alias Test.Helper.Common

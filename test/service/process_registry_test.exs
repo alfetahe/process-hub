@@ -40,7 +40,7 @@ defmodule Test.Service.ProcessRegistryTest do
     end)
   end
 
-  test "bulk insert", %{hub_id: hub_id} = _context do
+  test "bulk insert", %{hub_id: hub_id, hub: hub} = _context do
     Storage.clear_all(hub_id)
 
     hook = %HookManager{
@@ -50,7 +50,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :bulk_insert_test]
     }
 
-    HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), hook)
+    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_inserted(), hook)
 
     assert ProcessRegistry.dump(hub_id) === %{}
 
@@ -61,7 +61,7 @@ defmodule Test.Service.ProcessRegistryTest do
       {:child4, {%{id: :child4, start: :mfa}, [{:node7, :pid1}, {:node8, :pid2}], %{}}}
     ]
 
-    ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data))
+    ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data), hook_storage: hub.storage.hook)
 
     Enum.each(1..length(insert_data), fn _ ->
       assert_receive :bulk_insert_test
@@ -70,7 +70,7 @@ defmodule Test.Service.ProcessRegistryTest do
     assert ProcessRegistry.dump(hub_id) === insert_data |> Map.new()
   end
 
-  test "bulk delete", %{hub_id: hub_id} = _context do
+  test "bulk delete", %{hub_id: hub_id, hub: hub} = _context do
     handler = %HookManager{
       id: :process_registry_test_bulk_delete,
       m: :erlang,
@@ -78,7 +78,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :bulk_delete]
     }
 
-    HookManager.register_handler(hub_id, Hook.registry_pid_removed(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_removed(), handler)
 
     assert ProcessRegistry.dump(hub_id) === %{}
 
@@ -95,7 +95,7 @@ defmodule Test.Service.ProcessRegistryTest do
       |> Map.new()
 
     ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data))
-    ProcessRegistry.bulk_delete(hub_id, del_data)
+    ProcessRegistry.bulk_delete(hub_id, del_data, hook_storage: hub.storage.hook)
 
     Enum.each(1..length(insert_data), fn _ ->
       assert_receive :bulk_delete
@@ -119,7 +119,7 @@ defmodule Test.Service.ProcessRegistryTest do
     assert ProcessRegistry.dump(hub_id) === %{}
   end
 
-  test "insert", %{hub_id: hub_id} = _context do
+  test "insert", %{hub_id: hub_id, hub: hub} = _context do
     handler = %HookManager{
       id: :process_registry_test_insert_test,
       m: :erlang,
@@ -127,7 +127,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :insert_test]
     }
 
-    HookManager.register_handler(hub_id, Hook.registry_pid_inserted(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_inserted(), handler)
 
     children = %{
       1 =>
@@ -142,14 +142,14 @@ defmodule Test.Service.ProcessRegistryTest do
     }
 
     Enum.each(children, fn {key, {child_spec, child_nodes, metadata}} ->
-      skip_hooks =
+      hook_storage =
         case Integer.is_odd(key) do
-          true -> false
-          false -> true
+          true -> hub.storage.hook
+          false -> nil
         end
 
       ProcessRegistry.insert(hub_id, child_spec, child_nodes,
-        skip_hooks: skip_hooks,
+        hook_storage: hook_storage,
         metadata: metadata
       )
     end)
@@ -161,7 +161,7 @@ defmodule Test.Service.ProcessRegistryTest do
     assert ProcessRegistry.dump(hub_id) === children
   end
 
-  test "delete child", %{hub_id: hub_id} = _context do
+  test "delete child", %{hub_id: hub_id, hub: hub} = _context do
     handler = %HookManager{
       id: :process_registry_test_delete_test,
       m: :erlang,
@@ -169,7 +169,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :delete_test]
     }
 
-    HookManager.register_handler(hub_id, Hook.registry_pid_removed(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_removed(), handler)
 
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
@@ -182,9 +182,9 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes)
 
       if Integer.is_odd(key) do
-        ProcessRegistry.delete(hub_id, key)
+        ProcessRegistry.delete(hub_id, key, hook_storage: hub.storage.hook)
       else
-        ProcessRegistry.delete(hub_id, key, skip_hooks: true)
+        ProcessRegistry.delete(hub_id, key)
       end
     end)
 
