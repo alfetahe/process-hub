@@ -1,7 +1,6 @@
 defmodule Test.Service.SynchronizerTest do
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Utility.Name
 
   use ExUnit.Case
 
@@ -9,19 +8,24 @@ defmodule Test.Service.SynchronizerTest do
     Test.Helper.SetupHelper.setup_base(%{}, :synchronizer_test)
   end
 
-  test "local sync data", %{hub_id: hub_id} = _context do
-    assert Synchronizer.local_sync_data(hub_id) === []
+  test "local sync data", %{hub: hub} = _context do
+    assert Synchronizer.local_sync_data(hub) === []
 
-    Name.distributed_supervisor(hub_id)
-    |> ProcessHub.DistributedSupervisor.start_child(%{
-      id: :test1,
-      start: {Test.Helper.TestServer, :start_link, [%{name: :test_synchronizer}]}
-    })
+    ProcessHub.DistributedSupervisor.start_child(
+      hub.managers.distributed_supervisor,
+      %{
+        id: :test1,
+        start: {Test.Helper.TestServer, :start_link, [%{name: :test_synchronizer}]}
+      }
+    )
 
-    ProcessRegistry.insert(hub_id, %{id: :test1}, [{node(), self()}], metadata: %{tag: "hello"})
-    ProcessRegistry.insert(hub_id, %{id: :test2}, [{:somethingelse, self()}])
+    ProcessRegistry.insert(hub.hub_id, %{id: :test1}, [{node(), self()}],
+      metadata: %{tag: "hello"}
+    )
 
-    [{child_spec, pid, metadata}] = Synchronizer.local_sync_data(hub_id)
+    ProcessRegistry.insert(hub.hub_id, %{id: :test2}, [{:somethingelse, self()}])
+
+    [{child_spec, pid, metadata}] = Synchronizer.local_sync_data(hub)
 
     assert is_map(child_spec)
     assert is_pid(pid)
@@ -29,12 +33,12 @@ defmodule Test.Service.SynchronizerTest do
     assert metadata.tag === "hello"
   end
 
-  test "append data", %{hub_id: hub_id} = _context do
-    Synchronizer.append_data(hub_id, %{node() => [{%{id: :test1}, self(), %{}}]})
-    Synchronizer.append_data(hub_id, %{node() => [{%{id: :test2}, self(), %{}}]})
-    Synchronizer.append_data(hub_id, %{:othernode => [{%{id: :test3}, self(), %{}}]})
+  test "append data", %{hub: hub} = _context do
+    Synchronizer.append_data(hub, %{node() => [{%{id: :test1}, self(), %{}}]})
+    Synchronizer.append_data(hub, %{node() => [{%{id: :test2}, self(), %{}}]})
+    Synchronizer.append_data(hub, %{:othernode => [{%{id: :test3}, self(), %{}}]})
 
-    registry = ProcessRegistry.dump(hub_id)
+    registry = ProcessRegistry.dump(hub.hub_id)
 
     assert Map.to_list(registry) |> length() === 3
 
@@ -50,18 +54,18 @@ defmodule Test.Service.SynchronizerTest do
     end)
   end
 
-  test "detach data", %{hub_id: hub_id} = _context do
-    Synchronizer.append_data(hub_id, %{node() => [{%{id: :test1}, :pid, %{}}]})
-    Synchronizer.append_data(hub_id, %{node() => [{%{id: :test2}, :pid, %{}}]})
-    Synchronizer.append_data(hub_id, %{:othernode => [{%{id: :test3}, :pid, %{}}]})
+  test "detach data", %{hub: hub} = _context do
+    Synchronizer.append_data(hub, %{node() => [{%{id: :test1}, :pid, %{}}]})
+    Synchronizer.append_data(hub, %{node() => [{%{id: :test2}, :pid, %{}}]})
+    Synchronizer.append_data(hub, %{:othernode => [{%{id: :test3}, :pid, %{}}]})
 
-    registry = ProcessRegistry.dump(hub_id)
+    registry = ProcessRegistry.dump(hub.hub_id)
     assert Map.to_list(registry) |> length() === 3
 
-    Synchronizer.detach_data(hub_id, %{:othernode => []})
-    Synchronizer.detach_data(hub_id, %{node() => []})
+    Synchronizer.detach_data(hub, %{:othernode => []})
+    Synchronizer.detach_data(hub, %{node() => []})
 
-    registry = ProcessRegistry.dump(hub_id)
+    registry = ProcessRegistry.dump(hub.hub_id)
     assert Map.to_list(registry) |> length() === 0
   end
 end

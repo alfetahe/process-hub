@@ -50,13 +50,6 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  # TODO: Replace with coordinator function.
-  @doc "Get hub struct from coordinator for testing purposes."
-  @spec get_hub_struct(ProcessHub.hub_id()) :: ProcessHub.Hub.t()
-  def get_hub_struct(hub_id) do
-    GenServer.call(hub_id, :get_state)
-  end
-
   @doc "Initiates processes startup."
   @spec init_children(ProcessHub.Hub.t(), [ProcessHub.child_spec()], keyword()) ::
           {:ok, :start_initiated}
