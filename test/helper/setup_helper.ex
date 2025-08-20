@@ -7,6 +7,8 @@ defmodule Test.Helper.SetupHelper do
       {:error, error} -> throw(error)
     end
 
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+
     on_exit(:stop_hub, fn ->
       ProcessHub.Initializer.stop(hub_id)
     end)
@@ -15,6 +17,8 @@ defmodule Test.Helper.SetupHelper do
       on_exit(fn -> exit_fun.() end)
     end)
 
-    Map.put(context, :hub_id, hub_id)
+    context
+    |> Map.put(:hub_id, hub_id)
+    |> Map.put(:hub, hub)
   end
 end

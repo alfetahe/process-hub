@@ -172,21 +172,21 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:await_timeout, 60000)
   end
 
-  defp pre_start_children(%Hub{hub_id: hub_id}, startup_children, opts) do
+  defp pre_start_children(hub, startup_children, opts) do
     case Keyword.get(opts, :on_failure, :continue) do
       :continue ->
         case Keyword.get(opts, :async_wait, false) do
           true ->
-            promise = async_wait_startup(hub_id, startup_children, opts)
+            promise = async_wait_startup(hub, startup_children, opts)
             {:ok, promise}
 
           false ->
-            Dispatcher.children_start(hub_id, startup_children, opts)
+            Dispatcher.children_start(hub.hub_id, startup_children, opts)
             {:ok, :start_initiated}
         end
 
       :rollback ->
-        spawn_failure_handler(hub_id, startup_children, opts)
+        spawn_failure_handler(hub, startup_children, opts)
     end
   end
 
@@ -204,7 +204,7 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  defp async_wait_startup(hub_id, startup_children, opts) do
+  defp async_wait_startup(hub, startup_children, opts) do
     {collect_from, required_cids} =
       Enum.reduce(startup_children, {[], []}, fn {node, children}, {cf, rc} ->
         {[node | cf], rc ++ Enum.map(children, &Map.get(&1, :child_id))}
@@ -215,10 +215,10 @@ defmodule ProcessHub.Service.Distributor do
       |> Keyword.put(:collect_from, Enum.uniq(collect_from))
       |> Keyword.put(:required_cids, Enum.uniq(required_cids))
 
-    {receiver_pid, _, await_promise} = spawn_collector(hub_id, :start, opts)
+    {receiver_pid, _, await_promise} = spawn_collector(hub, :start, opts)
 
     Dispatcher.children_start(
-      hub_id,
+      hub.hub_id,
       startup_children,
       Keyword.put(opts, :reply_to, [receiver_pid])
     )
@@ -226,7 +226,7 @@ defmodule ProcessHub.Service.Distributor do
     await_promise
   end
 
-  defp spawn_failure_handler(hub_id, startup_children, opts) do
+  defp spawn_failure_handler(hub, startup_children, opts) do
     ref = make_ref()
 
     collector_pid =
@@ -237,8 +237,8 @@ defmodule ProcessHub.Service.Distributor do
           Keyword.get(opts, :await_timeout, 60_000)
         )
 
-        promise = async_wait_startup(hub_id, startup_children, opts)
-        results = handle_failures(hub_id, AsyncPromise.await(promise))
+        promise = async_wait_startup(hub, startup_children, opts)
+        results = handle_failures(hub.hub_id, AsyncPromise.await(promise))
 
         case Keyword.get(opts, :async_wait, false) do
           true ->
