@@ -1,7 +1,6 @@
 defmodule Test.Service.DistributorTest do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Distributor
-  alias ProcessHub.Utility.Name
 
   use ProcessHub.Constant.Event
   use ExUnit.Case
@@ -10,24 +9,28 @@ defmodule Test.Service.DistributorTest do
     Test.Helper.SetupHelper.setup_base(%{}, :distributor_test)
   end
 
-  test "local supevisor children", %{hub_id: hub_id} = _context do
-    assert Distributor.which_children_local(hub_id, []) === {:"process_hub@127.0.0.1", []}
+  test "local supevisor children", %{hub: hub} = _context do
+    assert Distributor.which_children_local(hub, []) === {:"process_hub@127.0.0.1", []}
 
     {:ok, _pid} =
-      Name.distributed_supervisor(hub_id)
-      |> ProcessHub.DistributedSupervisor.start_child(%{
-        id: :test_child,
-        start: {Test.Helper.TestServer, :start_link, [%{name: :test_local_sup_child}]}
-      })
+      ProcessHub.DistributedSupervisor.start_child(
+        hub.managers.distributed_supervisor,
+        %{
+          id: :test_child,
+          start: {Test.Helper.TestServer, :start_link, [%{name: :test_local_sup_child}]}
+        }
+      )
 
     {:ok, _pid} =
-      Name.distributed_supervisor(hub_id)
-      |> ProcessHub.DistributedSupervisor.start_child(%{
-        id: :test_child2,
-        start: {Test.Helper.TestServer, :start_link, [%{name: :test_local_sup_child2}]}
-      })
+      ProcessHub.DistributedSupervisor.start_child(
+        hub.managers.distributed_supervisor,
+        %{
+          id: :test_child2,
+          start: {Test.Helper.TestServer, :start_link, [%{name: :test_local_sup_child2}]}
+        }
+      )
 
-    {:"process_hub@127.0.0.1", children} = Distributor.which_children_local(hub_id, [])
+    {:"process_hub@127.0.0.1", children} = Distributor.which_children_local(hub, [])
 
     assert length(children) === 2
     assert Enum.all?(children, fn {_, pid, _, _} -> is_pid(pid) end)
@@ -40,24 +43,28 @@ defmodule Test.Service.DistributorTest do
   test "asda" do
   end
 
-  test "global supevisor children", %{hub_id: hub_id} = _context do
-    assert Distributor.which_children_global(hub_id, []) === [{:"process_hub@127.0.0.1", []}]
+  test "global supevisor children", %{hub: hub} = _context do
+    assert Distributor.which_children_global(hub, []) === [{:"process_hub@127.0.0.1", []}]
 
     {:ok, _pid} =
-      Name.distributed_supervisor(hub_id)
-      |> ProcessHub.DistributedSupervisor.start_child(%{
-        id: :test_child_global,
-        start: {Test.Helper.TestServer, :start_link, [%{name: :test_global_sup_child}]}
-      })
+      ProcessHub.DistributedSupervisor.start_child(
+        hub.managers.distributed_supervisor,
+        %{
+          id: :test_child_global,
+          start: {Test.Helper.TestServer, :start_link, [%{name: :test_global_sup_child}]}
+        }
+      )
 
     {:ok, _pid} =
-      Name.distributed_supervisor(hub_id)
-      |> ProcessHub.DistributedSupervisor.start_child(%{
-        id: :test_child2_global,
-        start: {Test.Helper.TestServer, :start_link, [%{name: :test_global_sup_child2}]}
-      })
+      ProcessHub.DistributedSupervisor.start_child(
+        hub.managers.distributed_supervisor,
+        %{
+          id: :test_child2_global,
+          start: {Test.Helper.TestServer, :start_link, [%{name: :test_global_sup_child2}]}
+        }
+      )
 
-    [{:"process_hub@127.0.0.1", children}] = Distributor.which_children_global(hub_id, [])
+    [{:"process_hub@127.0.0.1", children}] = Distributor.which_children_global(hub, [])
 
     assert length(children) === 2
     assert Enum.all?(children, fn {_, pid, _, _} -> is_pid(pid) end)
@@ -67,8 +74,8 @@ defmodule Test.Service.DistributorTest do
            end)
   end
 
-  test "terminate children", %{hub_id: hub_id} = _context do
-    misc_storage = Name.misc_storage(hub_id)
+  test "terminate children", %{hub: hub} = _context do
+    misc_storage = hub.storage.misc
 
     cs1 = %{
       id: :dist_child_add,
@@ -80,8 +87,6 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    hub = Distributor.get_hub_struct(hub_id)
-
     Distributor.init_children(hub, [cs1, cs2],
       async_wait: true,
       check_existing: true,
@@ -91,12 +96,12 @@ defmodule Test.Service.DistributorTest do
 
     sync_strategy = ProcessHub.Service.Storage.get(misc_storage, :synchronization_strategy)
 
-    Distributor.children_terminate(hub_id, [cs1.id, cs2.id], sync_strategy)
+    Distributor.children_terminate(hub, [cs1.id, cs2.id], sync_strategy)
 
-    assert Supervisor.which_children(Name.distributed_supervisor(hub_id)) === []
+    assert Supervisor.which_children(hub.managers.distributed_supervisor) === []
   end
 
-  test "add children", %{hub_id: hub_id} = _context do
+  test "add children", %{hub: hub} = _context do
     child_spec = %{
       id: :dist_child_add,
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add}]}
@@ -107,8 +112,6 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    hub = Distributor.get_hub_struct(hub_id)
-
     Distributor.init_children(hub, [child_spec, child_spec2],
       async_wait: true,
       check_existing: false,
@@ -117,7 +120,7 @@ defmodule Test.Service.DistributorTest do
     |> ProcessHub.await()
 
     local_node = node()
-    res = ProcessRegistry.dump(hub_id) |> Keyword.new()
+    res = ProcessRegistry.dump(hub.hub_id) |> Keyword.new()
 
     assert length(res) === 2
 
@@ -128,13 +131,11 @@ defmodule Test.Service.DistributorTest do
     assert Enum.all?(res, fn {_, {_, [{^local_node, pid}], _}} -> is_pid(pid) end)
   end
 
-  test "stop child", %{hub_id: hub_id} = _context do
+  test "stop child", %{hub: hub} = _context do
     child_spec = %{
       id: :dist_child_stop,
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
     }
-
-    hub = Distributor.get_hub_struct(hub_id)
 
     Distributor.init_children(hub, [child_spec],
       async_wait: true,
@@ -143,17 +144,17 @@ defmodule Test.Service.DistributorTest do
     )
     |> ProcessHub.await()
 
-    Distributor.stop_children(hub_id, [child_spec.id],
+    Distributor.stop_children(hub, [child_spec.id],
       async_wait: true,
       check_existing: true,
       timeout: 1000
     )
     |> ProcessHub.await()
 
-    assert ProcessRegistry.dump(hub_id) === %{}
+    assert ProcessRegistry.dump(hub.hub_id) === %{}
   end
 
-  test "children redist init", %{hub_id: hub_id} = _context do
+  test "children redist init", %{hub: hub} = _context do
     child_spec = %{
       id: :dist_child_stop,
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
@@ -161,7 +162,7 @@ defmodule Test.Service.DistributorTest do
 
     metadata = %{tag: "test_tag"}
 
-    assert Distributor.children_redist_init(hub_id, node(), [{child_spec, metadata}]) ===
+    assert Distributor.children_redist_init(hub, node(), [{child_spec, metadata}]) ===
              {:ok, :redistribution_initiated}
   end
 end

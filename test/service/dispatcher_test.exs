@@ -1,6 +1,5 @@
 defmodule Test.Service.DispatcherTest do
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Utility.Name
 
   use ProcessHub.Constant.Event
   use ExUnit.Case
@@ -19,12 +18,12 @@ defmodule Test.Service.DispatcherTest do
     assert_received {:test_msg, :test_child, :ok, :test_node}, @default_receive_timeout
   end
 
-  test "propagate event", %{hub_id: hub_id} = _context do
-    :blockade.add_handler(Name.event_queue(hub_id), :propagate_test)
-    :blockade.add_handler(Name.event_queue(hub_id), :propagate_test2)
+  test "propagate event", %{hub: hub} = _context do
+    :blockade.add_handler(hub.managers.event_queue, :propagate_test)
+    :blockade.add_handler(hub.managers.event_queue, :propagate_test2)
 
-    Dispatcher.propagate_event(hub_id, :propagate_test, "test_data")
-    Dispatcher.propagate_event(hub_id, :propagate_test2, "test_data2")
+    Dispatcher.propagate_event(hub.managers.event_queue, :propagate_test, "test_data")
+    Dispatcher.propagate_event(hub.managers.event_queue, :propagate_test2, "test_data2")
 
     assert_receive {:propagate_test, "test_data"}, @default_receive_timeout
     assert_receive {:propagate_test2, "test_data2"}, @default_receive_timeout
@@ -55,7 +54,7 @@ defmodule Test.Service.DispatcherTest do
                    @default_receive_timeout
   end
 
-  test "propagate migrate", %{hub_id: hub_id} = _context do
+  test "propagate migrate", %{hub_id: hub_id, hub: hub} = _context do
     local_node = node()
 
     event_data = [
@@ -74,11 +73,11 @@ defmodule Test.Service.DispatcherTest do
        ]}
     ]
 
-    Dispatcher.children_migrate(hub_id, event_data, reply_to: [self()])
+    Dispatcher.children_migrate(hub.managers.event_queue, event_data, reply_to: [self()])
 
     # Reset priority.
     GenServer.call(hub_id, :ping)
-    :blockade.set_priority(Name.event_queue(hub_id), 0)
+    :blockade.set_priority(hub.managers.event_queue, 0)
 
     assert_receive {:collect_start_results, [propagate_migrate_test: {:ok, _}], _node},
                    @default_receive_timeout
