@@ -21,7 +21,7 @@ defmodule ProcessHub.Service.Ring do
   @doc """
   Returns the hash ring instance belonging to the given `hub_id`.
   """
-  @spec get_ring(reference()) :: HashRing.ring()
+  @spec get_ring(:ets.tid()) :: HashRing.ring()
   def get_ring(misc_storage) do
     Storage.get(misc_storage, StorageKey.hr())
   end

@@ -14,7 +14,7 @@ defmodule Test.Service.DistributorTest do
 
     {:ok, _pid} =
       ProcessHub.DistributedSupervisor.start_child(
-        hub.managers.distributed_supervisor,
+        hub.procs.dist_sup,
         %{
           id: :test_child,
           start: {Test.Helper.TestServer, :start_link, [%{name: :test_local_sup_child}]}
@@ -23,7 +23,7 @@ defmodule Test.Service.DistributorTest do
 
     {:ok, _pid} =
       ProcessHub.DistributedSupervisor.start_child(
-        hub.managers.distributed_supervisor,
+        hub.procs.dist_sup,
         %{
           id: :test_child2,
           start: {Test.Helper.TestServer, :start_link, [%{name: :test_local_sup_child2}]}
@@ -48,7 +48,7 @@ defmodule Test.Service.DistributorTest do
 
     {:ok, _pid} =
       ProcessHub.DistributedSupervisor.start_child(
-        hub.managers.distributed_supervisor,
+        hub.procs.dist_sup,
         %{
           id: :test_child_global,
           start: {Test.Helper.TestServer, :start_link, [%{name: :test_global_sup_child}]}
@@ -57,7 +57,7 @@ defmodule Test.Service.DistributorTest do
 
     {:ok, _pid} =
       ProcessHub.DistributedSupervisor.start_child(
-        hub.managers.distributed_supervisor,
+        hub.procs.dist_sup,
         %{
           id: :test_child2_global,
           start: {Test.Helper.TestServer, :start_link, [%{name: :test_global_sup_child2}]}
@@ -98,7 +98,7 @@ defmodule Test.Service.DistributorTest do
 
     Distributor.children_terminate(hub, [cs1.id, cs2.id], sync_strategy)
 
-    assert Supervisor.which_children(hub.managers.distributed_supervisor) === []
+    assert Supervisor.which_children(hub.procs.dist_sup) === []
   end
 
   test "add children", %{hub: hub} = _context do

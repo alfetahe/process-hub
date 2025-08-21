@@ -59,7 +59,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   @spec init({ProcessHub.t(), map(), map()}) :: {:ok, Hub.t(), {:continue, :additional_setup}}
-  def init({settings, managers, storage}) do
+  def init({settings, procs, storage}) do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
 
@@ -68,12 +68,12 @@ defmodule ProcessHub.Coordinator do
 
     state = %Hub{
       hub_id: settings.hub_id,
-      managers: managers,
+      procs: procs,
       storage: storage
     }
 
     init_strategies(state, settings)
-    register_handlers(managers)
+    register_handlers(procs)
     register_handlers(storage.hook, settings.hooks)
 
     {:ok, state, {:continue, :additional_setup}}
@@ -90,9 +90,9 @@ defmodule ProcessHub.Coordinator do
 
     # Register the initializer pid on the registry.
     Registry.register(
-      state.managers.system_registry,
+      state.procs.system_registry,
       "initializer",
-      state.managers.initializer
+      state.procs.initializer
     )
 
     schedule_hub_discovery(Storage.get(local_store, StorageKey.hdi()))
@@ -118,13 +118,13 @@ defmodule ProcessHub.Coordinator do
     )
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
-    Dispatcher.propagate_event(state.managers.event_queue, @event_cluster_leave, node(), %{
+    Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave, node(), %{
       members: :external,
       priority: PriorityLevel.locked()
     })
 
     # Terminate all the running tasks before shutting down the coordinator.
-    task_sup = state.managers.task_supervisor
+    task_sup = state.procs.task_sup
 
     Task.Supervisor.children(task_sup)
     |> Enum.each(fn pid ->
@@ -136,7 +136,7 @@ defmodule ProcessHub.Coordinator do
   def handle_cast({:start_children, children, start_opts}, state) do
     if length(children) > 0 do
       Task.Supervisor.start_child(
-        state.managers.task_supervisor,
+        state.procs.task_sup,
         ChildrenAdd.StartHandle,
         :handle,
         [
@@ -155,7 +155,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_cast({:stop_children, children, stop_opts}, state) do
     Task.Supervisor.start_child(
-      state.managers.task_supervisor,
+      state.procs.task_sup,
       ChildrenRem.StopHandle,
       :handle,
       [
@@ -249,14 +249,14 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({:nodeup, node}, state) do
-    Cluster.propagate_self(state.managers.event_queue, node)
+    Cluster.propagate_self(state.procs.event_queue, node)
 
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:nodedown, node}, state) do
-    Dispatcher.propagate_event(state.managers.event_queue, @event_cluster_leave, node, %{
+    Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave, node, %{
       members: :local
     })
 
@@ -266,7 +266,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_distribute_children, node}, state) do
     Task.Supervisor.start_child(
-      state.managers.task_supervisor,
+      state.procs.task_sup,
       ClusterUpdate.NodeUp,
       :handle,
       [
@@ -302,12 +302,12 @@ defmodule ProcessHub.Coordinator do
 
       # Atomic dispatch with locking.
       # TODO: why not use the dispatch_lock function?
-      Dispatcher.propagate_event(state.managers.event_queue, @event_distribute_children, node, %{
+      Dispatcher.propagate_event(state.procs.event_queue, @event_distribute_children, node, %{
         members: :local
       })
 
       State.lock_event_handler(state)
-      Cluster.propagate_self(state.managers.event_queue, node)
+      Cluster.propagate_self(state.procs.event_queue, node)
       HookManager.dispatch_hook(state.storage.hook, Hook.post_cluster_join(), node)
     end
 
@@ -317,7 +317,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_sync_remote_children, {children_data, node}}, state) do
     Task.Supervisor.start_child(
-      state.managers.task_supervisor,
+      state.procs.task_sup,
       Synchronization.ProcessEmitHandle,
       :handle,
       [
@@ -338,7 +338,7 @@ defmodule ProcessHub.Coordinator do
       State.lock_event_handler(state)
 
       Task.Supervisor.start_child(
-        state.managers.task_supervisor,
+        state.procs.task_sup,
         ChildrenAdd.StartHandle,
         :handle,
         [
@@ -357,7 +357,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_children_registration, {post_start_results, _node, start_opts}}, state) do
     Task.Supervisor.async(
-      state.managers.task_supervisor,
+      state.procs.task_sup,
       ChildrenAdd.SyncHandle,
       :handle,
       [
@@ -376,7 +376,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_children_unregistration, {children, node, stop_opts}}, state) do
     Task.Supervisor.async(
-      state.managers.task_supervisor,
+      state.procs.task_sup,
       ChildrenRem.SyncHandle,
       :handle,
       [
@@ -436,7 +436,7 @@ defmodule ProcessHub.Coordinator do
     |> Storage.get(StorageKey.hdi())
     |> schedule_hub_discovery()
 
-    Dispatcher.propagate_event(state.managers.event_queue, @event_cluster_join, node(), %{
+    Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_join, node(), %{
       members: :external,
       priority: PriorityLevel.locked()
     })
@@ -470,7 +470,7 @@ defmodule ProcessHub.Coordinator do
       hub_nodes = Cluster.rem_hub_node(state.storage.misc, down_node)
 
       Task.Supervisor.start_child(
-        state.managers.task_supervisor,
+        state.procs.task_sup,
         ClusterUpdate.NodeDown,
         :handle,
         [

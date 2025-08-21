@@ -136,11 +136,11 @@ defmodule ProcessHub.DistributedSupervisor do
     cond do
       # No new pid found, the child process has been terminated.
       new_pid === :undefined ->
-        handle_child_removal(hub.managers.event_queue, cid)
+        handle_child_removal(hub.procs.event_queue, cid)
 
       # The child process has been restarted with a new pid.
       is_pid(new_pid) and old_pid !== new_pid ->
-        handle_child_restart(hub.managers.event_queue, cid, new_pid)
+        handle_child_restart(hub.procs.event_queue, cid, new_pid)
 
       true ->
         nil

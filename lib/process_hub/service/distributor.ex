@@ -41,7 +41,7 @@ defmodule ProcessHub.Service.Distributor do
 
     case length(redist_children) > 0 do
       true ->
-        Dispatcher.children_migrate(hub.managers.event_queue, [{node, redist_children}], opts)
+        Dispatcher.children_migrate(hub.procs.event_queue, [{node, redist_children}], opts)
 
         {:ok, :redistribution_initiated}
 
@@ -108,7 +108,7 @@ defmodule ProcessHub.Service.Distributor do
           keyword()
         ) :: [StopHandle.t()]
   def children_terminate(hub, child_ids, sync_strategy, stop_opts \\ []) do
-    dist_sup = hub.managers.distributed_supervisor
+    dist_sup = hub.procs.dist_sup
 
     shutdown_results =
       Enum.map(child_ids, fn child_id ->
@@ -139,7 +139,7 @@ defmodule ProcessHub.Service.Distributor do
           {node(),
            [{any, :restarting | :undefined | pid, :supervisor | :worker, :dynamic | list}]}
   def which_children_local(hub, _opts) do
-    {node(), Supervisor.which_children(hub.managers.distributed_supervisor)}
+    {node(), Supervisor.which_children(hub.procs.dist_sup)}
   end
 
   @doc """

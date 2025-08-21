@@ -227,9 +227,11 @@ defmodule ProcessHubTest do
 
     local_node = node()
 
+    # Use apply to supress the deprecation warnings.
+
     res =
       {^local_node, [{child_id2, pid2, type2, module2}, {child_id1, pid1, type1, module1}]} =
-      ProcessHub.which_children(hub_id)
+      apply(ProcessHub, :which_children, [hub_id])
 
     assert child_id1 === :child1
     assert child_id2 === :child2
@@ -240,8 +242,9 @@ defmodule ProcessHubTest do
     assert module1 === [Test.Helper.TestServer]
     assert module2 === [Test.Helper.TestServer]
 
-    assert ProcessHub.which_children(hub_id, [:local]) === res
-    assert ProcessHub.which_children(hub_id, [:global]) === [res]
+    # Use apply to supress the deprecation warnings.
+    assert apply(ProcessHub, :which_children, [hub_id, [:local]]) === res
+    assert apply(ProcessHub, :which_children, [hub_id, [:global]]) === [res]
   end
 
   test "is alive?", %{hub_id: hub_id} = _context do
@@ -286,7 +289,7 @@ defmodule ProcessHubTest do
 
     assert is_pid(pid)
 
-    Supervisor.stop(hub.managers.initializer)
+    Supervisor.stop(hub.procs.initializer)
   end
 
   test "stop", %{hub_id: hub_id} = _context do

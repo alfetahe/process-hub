@@ -19,11 +19,11 @@ defmodule Test.Service.DispatcherTest do
   end
 
   test "propagate event", %{hub: hub} = _context do
-    :blockade.add_handler(hub.managers.event_queue, :propagate_test)
-    :blockade.add_handler(hub.managers.event_queue, :propagate_test2)
+    :blockade.add_handler(hub.procs.event_queue, :propagate_test)
+    :blockade.add_handler(hub.procs.event_queue, :propagate_test2)
 
-    Dispatcher.propagate_event(hub.managers.event_queue, :propagate_test, "test_data")
-    Dispatcher.propagate_event(hub.managers.event_queue, :propagate_test2, "test_data2")
+    Dispatcher.propagate_event(hub.procs.event_queue, :propagate_test, "test_data")
+    Dispatcher.propagate_event(hub.procs.event_queue, :propagate_test2, "test_data2")
 
     assert_receive {:propagate_test, "test_data"}, @default_receive_timeout
     assert_receive {:propagate_test2, "test_data2"}, @default_receive_timeout
@@ -73,11 +73,11 @@ defmodule Test.Service.DispatcherTest do
        ]}
     ]
 
-    Dispatcher.children_migrate(hub.managers.event_queue, event_data, reply_to: [self()])
+    Dispatcher.children_migrate(hub.procs.event_queue, event_data, reply_to: [self()])
 
     # Reset priority.
     GenServer.call(hub_id, :ping)
-    :blockade.set_priority(hub.managers.event_queue, 0)
+    :blockade.set_priority(hub.procs.event_queue, 0)
 
     assert_receive {:collect_start_results, [propagate_migrate_test: {:ok, _}], _node},
                    @default_receive_timeout

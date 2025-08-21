@@ -12,7 +12,7 @@ defmodule Test.Service.SynchronizerTest do
     assert Synchronizer.local_sync_data(hub) === []
 
     ProcessHub.DistributedSupervisor.start_child(
-      hub.managers.distributed_supervisor,
+      hub.procs.dist_sup,
       %{
         id: :test1,
         start: {Test.Helper.TestServer, :start_link, [%{name: :test_synchronizer}]}

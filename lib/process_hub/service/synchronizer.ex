@@ -18,7 +18,7 @@ defmodule ProcessHub.Service.Synchronizer do
   """
   def trigger_sync(hub_state) do
     Task.Supervisor.async(
-      hub_state.managers.task_supervisor,
+      hub_state.procs.task_sup,
       Synchronization.IntervalSyncInit,
       :handle,
       [
@@ -35,7 +35,7 @@ defmodule ProcessHub.Service.Synchronizer do
     hub = Coordinator.get_hub(hub_id)
 
     Task.Supervisor.async_nolink(
-      hub.managers.task_supervisor,
+      hub.procs.task_sup,
       Synchronization.IntervalSyncHandle,
       :handle,
       [
@@ -56,7 +56,7 @@ defmodule ProcessHub.Service.Synchronizer do
         ]
   def local_sync_data(hub) do
     ProcessRegistry.dump(hub.hub_id)
-    |> filter_local_data(hub.managers.distributed_supervisor)
+    |> filter_local_data(hub.procs.dist_sup)
   end
 
   @doc """

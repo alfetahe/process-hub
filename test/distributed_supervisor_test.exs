@@ -5,7 +5,7 @@ defmodule Test.Service.DistributedSupervisorTest do
 
   use ExUnit.Case
 
-  @hub_id :distributed_supervisor_test
+  @hub_id :dist_sup_test
 
   setup _context do
     Test.Helper.SetupHelper.setup_base(%{}, @hub_id)
@@ -43,6 +43,6 @@ defmodule Test.Service.DistributedSupervisorTest do
     assert ProcessHub.process_list(@hub_id, :global) === []
 
     # Make sure the child specification has been removed from the supervisor
-    assert Supervisor.which_children(hub.managers.distributed_supervisor) === []
+    assert Supervisor.which_children(hub.procs.dist_sup) === []
   end
 end

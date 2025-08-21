@@ -335,15 +335,16 @@ defmodule Test.IntegrationTest do
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
-    Bag.receive_multiple(131, Hook.post_nodes_redistribution())
+    messages_to_recv = (@nr_of_peers + peer_to_start) * (@nr_of_peers + peer_to_start + 1)
+    Bag.receive_multiple(messages_to_recv, Hook.post_nodes_redistribution())
 
     Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
       removed_peers = Common.stop_peers(acc, 1)
-      # Bag.receive_multiple(numb, Hook.post_nodes_redistribution())
       Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
     end)
 
-    Bag.receive_multiple(36, Hook.post_nodes_redistribution())
+    messages_to_recv = (@nr_of_peers + 1) * (@nr_of_peers + 1)
+    Bag.receive_multiple(messages_to_recv, Hook.post_nodes_redistribution())
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 

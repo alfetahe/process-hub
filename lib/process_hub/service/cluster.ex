@@ -14,7 +14,7 @@ defmodule ProcessHub.Service.Cluster do
   use Event
 
   @doc "Adds a new node to the hub cluster and returns new list of nodes."
-  @spec add_hub_node(reference(), node()) :: [node()]
+  @spec add_hub_node(:ets.tid(), node()) :: [node()]
   def add_hub_node(misc_storage, node) do
     hub_nodes = Storage.get(misc_storage, StorageKey.hn())
 
@@ -33,7 +33,7 @@ defmodule ProcessHub.Service.Cluster do
   end
 
   @doc "Removes a node from the cluster and returns new list of nodes."
-  @spec rem_hub_node(reference(), node()) :: [node()]
+  @spec rem_hub_node(:ets.tid(), node()) :: [node()]
   def rem_hub_node(misc_storage, node) do
     hub_nodes = Storage.get(misc_storage, StorageKey.hn())
     hub_nodes = Enum.filter(hub_nodes, fn n -> n != node end)
@@ -49,7 +49,7 @@ defmodule ProcessHub.Service.Cluster do
   end
 
   @doc "Returns a list of nodes in the cluster."
-  @spec nodes(reference(), [:include_local] | nil) :: [node()]
+  @spec nodes(:ets.tid(), [:include_local] | nil) :: [node()]
   def nodes(misc_storage, opts \\ []) do
     nodes = Storage.get(misc_storage, StorageKey.hn()) || []
 

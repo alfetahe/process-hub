@@ -253,7 +253,7 @@ defmodule Test.Helper.Common do
   def periodic_sync_base(%{hub_id: hub_id, hub: hub} = _context, child_specs, :rem) do
     Enum.each(child_specs, fn child_spec ->
       ProcessHub.DistributedSupervisor.terminate_child(
-        hub.managers.distributed_supervisor,
+        hub.procs.dist_sup,
         child_spec.id
       )
 
@@ -274,7 +274,7 @@ defmodule Test.Helper.Common do
       Enum.map(child_specs, fn child_spec ->
         start_res =
           ProcessHub.DistributedSupervisor.start_child(
-            hub.managers.distributed_supervisor,
+            hub.procs.dist_sup,
             child_spec
           )
 

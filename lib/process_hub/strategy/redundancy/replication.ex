@@ -239,7 +239,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   defp child_pid(hub, child_id, opts) do
     case Keyword.get(opts, :pid) do
       nil ->
-        DistributedSupervisor.local_pid(hub.managers.distributed_supervisor, child_id)
+        DistributedSupervisor.local_pid(hub.procs.dist_sup, child_id)
 
       pid ->
         pid

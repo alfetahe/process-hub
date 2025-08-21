@@ -118,7 +118,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       local_node = node()
 
       Dispatcher.propagate_event(
-        hub.managers.event_queue,
+        hub.procs.event_queue,
         @event_sync_remote_children,
         {local_processes, local_node},
         %{members: [node], priority: PriorityLevel.locked()}

@@ -15,7 +15,7 @@ defmodule ProcessHub.Service.State do
   @doc "Returns a boolean indicating whether the hub is locked."
   @spec is_locked?(Hub.t()) :: boolean
   def is_locked?(hub) do
-    {:ok, prio_level} = Blockade.get_priority(hub.managers.event_queue)
+    {:ok, prio_level} = Blockade.get_priority(hub.procs.event_queue)
 
     prio_level === PriorityLevel.locked()
   end
@@ -23,7 +23,7 @@ defmodule ProcessHub.Service.State do
   @doc "Returns a boolean indicating whether the hub cluster is partitioned."
   @spec is_partitioned?(Hub.t()) :: boolean
   def is_partitioned?(hub) do
-    case Registry.lookup(hub.managers.system_registry, "dist_sup") do
+    case Registry.lookup(hub.procs.system_registry, "dist_sup") do
       [] -> true
       [{pid, _}] -> !Process.alive?(pid)
       _ -> false
@@ -38,7 +38,7 @@ defmodule ProcessHub.Service.State do
     options = lock_options(hub.storage.misc, deadlock_recover)
 
     Blockade.set_priority(
-      hub.managers.event_queue,
+      hub.procs.event_queue,
       PriorityLevel.locked(),
       options
     )
@@ -54,7 +54,7 @@ defmodule ProcessHub.Service.State do
   @spec unlock_event_handler(Hub.t()) :: :ok
   def unlock_event_handler(hub) do
     Blockade.set_priority(
-      hub.managers.event_queue,
+      hub.procs.event_queue,
       PriorityLevel.unlocked(),
       %{local_priority_set: true}
     )
@@ -71,7 +71,7 @@ defmodule ProcessHub.Service.State do
   def toggle_quorum_failure(hub) do
     unless is_partitioned?(hub) do
       lock_event_handler(hub, false)
-      Supervisor.terminate_child(hub.managers.initializer, :distributed_supervisor)
+      Supervisor.terminate_child(hub.procs.initializer, :dist_sup)
 
       :ok
     else
@@ -86,8 +86,8 @@ defmodule ProcessHub.Service.State do
   def toggle_quorum_success(hub) do
     if is_partitioned?(hub) do
       Supervisor.restart_child(
-        hub.managers.initializer,
-        :distributed_supervisor
+        hub.procs.initializer,
+        :dist_sup
       )
 
       unlock_event_handler(hub)

@@ -176,7 +176,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     defp migration_cids(hub, %HotSwap{} = strategy, child_specs, added_node) do
-      local_pids = DistributedSupervisor.local_children(hub.managers.distributed_supervisor)
+      local_pids = DistributedSupervisor.local_children(hub.procs.dist_sup)
 
       handler = fn _cid, _node, result ->
         case result do

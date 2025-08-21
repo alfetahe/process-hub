@@ -101,7 +101,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
   @spec invalidate_ref(
           ProcessHub.Strategy.Synchronization.Gossip.t(),
-          reference(),
+          :ets.tid(),
           reference()
         ) :: boolean()
   def invalidate_ref(strategy, misc_storage, ref) do
@@ -121,7 +121,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         local_hub = Coordinator.get_hub(hub.hub_id)
 
         GenServer.cast(
-          local_hub.managers.worker_queue,
+          local_hub.procs.worker_queue,
           {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data, type) end}
         )
       end)
@@ -155,7 +155,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     end
   end
 
-  @spec unacked_nodes([node()], reference()) :: [node()]
+  @spec unacked_nodes([node()], :ets.tid()) :: list()
   def unacked_nodes(sync_acks, misc_storage) do
     Cluster.nodes(misc_storage, [:include_local])
     |> Enum.filter(fn node -> !Enum.member?(sync_acks, node) end)
@@ -400,7 +400,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       Enum.each(recipients, fn recipient ->
         Node.spawn(recipient, fn ->
           GenServer.cast(
-            hub.managers.worker_queue,
+            hub.procs.worker_queue,
             {:handle_work,
              fn ->
                Synchronizer.exec_interval_sync(hub.hub_id, strategy, sync_data, local_node)

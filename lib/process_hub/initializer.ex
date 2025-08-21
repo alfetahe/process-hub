@@ -22,7 +22,7 @@ defmodule ProcessHub.Initializer do
   def stop(hub_id) do
     if ProcessHub.is_alive?(hub_id) do
       hub = GenServer.call(hub_id, :get_state)
-      Supervisor.stop(hub.managers.initializer)
+      Supervisor.stop(hub.procs.initializer)
     else
       {:error, :not_alive}
     end
@@ -31,20 +31,20 @@ defmodule ProcessHub.Initializer do
   @impl true
   def init(%ProcessHub{hub_id: hub_id} = hub_conf) do
     storage = setup_storage(hub_id)
-    managers = setup_managers(hub_id)
+    procs = setup_procs(hub_id)
 
     children =
       [
-        {Registry, keys: :unique, name: managers.system_registry},
-        {Blockade, %{name: managers.event_queue, priority_sync: false}},
-        dist_sup(hub_conf, managers),
-        {Task.Supervisor, name: managers.task_supervisor},
-        {ProcessHub.Coordinator, {hub_conf, managers, storage}},
-        {ProcessHub.WorkerQueue, {hub_id, managers.worker_queue, storage.misc}},
+        {Registry, keys: :unique, name: procs.system_registry},
+        {Blockade, %{name: procs.event_queue, priority_sync: false}},
+        dist_sup(hub_conf, procs),
+        {Task.Supervisor, name: procs.task_sup},
+        {ProcessHub.Coordinator, {hub_conf, procs, storage}},
+        {ProcessHub.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
         {ProcessHub.Janitor,
          {
            hub_id,
-           managers.janitor,
+           procs.janitor,
            storage.misc,
            hub_conf.storage_purge_interval
          }}
@@ -55,16 +55,16 @@ defmodule ProcessHub.Initializer do
     Supervisor.init(children, opts)
   end
 
-  defp dist_sup(%ProcessHub{} = hub, managers) do
+  defp dist_sup(%ProcessHub{} = hub, procs) do
     args = {
       hub.hub_id,
-      managers.distributed_supervisor,
+      procs.dist_sup,
       hub.dsup_max_restarts,
       hub.dsup_max_seconds
     }
 
     %{
-      id: :distributed_supervisor,
+      id: :dist_sup,
       start: {ProcessHub.DistributedSupervisor, :start_link, [args]},
       shutdown: hub.dsup_shutdown_timeout
     }
@@ -82,15 +82,15 @@ defmodule ProcessHub.Initializer do
     }
   end
 
-  defp setup_managers(hub_id) do
+  defp setup_procs(hub_id) do
     system_registry = :"hub.#{hub_id}.system_registry"
 
     %{
       initializer: self(),
       system_registry: system_registry,
       event_queue: :"hub.#{hub_id}.event_queue",
-      distributed_supervisor: {:via, Registry, {system_registry, "dist_sup"}},
-      task_supervisor: {:via, Registry, {system_registry, "task_sup"}},
+      dist_sup: {:via, Registry, {system_registry, "dist_sup"}},
+      task_sup: {:via, Registry, {system_registry, "task_sup"}},
       worker_queue: {:via, Registry, {system_registry, "worker_queue"}},
       janitor: {:via, Registry, {system_registry, "janitor"}}
     }

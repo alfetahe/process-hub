@@ -192,7 +192,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     defp update_registry(%__MODULE__{hub: hub, process_data: pd, start_opts: so} = arg) do
       Task.Supervisor.async(
-        hub.managers.task_supervisor,
+        hub.procs.task_sup,
         SyncHandle,
         :handle,
         [
@@ -224,7 +224,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
          ) do
       # Used only for testing purposes.
       disable_logging = Keyword.get(so, :disable_logging, false)
-      ds = hub.managers.distributed_supervisor
+      ds = hub.procs.dist_sup
 
       HookManager.dispatch_hook(hub.storage.hook, Hook.pre_children_start(), arg)
 

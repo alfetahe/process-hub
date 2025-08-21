@@ -31,7 +31,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     @impl SynchronizationStrategy
     def propagate(_strategy, %Hub{} = hub, children, node, :add, opts) do
       Blockade.dispatch_sync(
-        hub.managers.event_queue,
+        hub.procs.event_queue,
         @event_children_registration,
         {children, node, opts},
         %{
@@ -45,7 +45,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
 
     def propagate(_strategy, %Hub{} = hub, children, node, :rem, opts) do
       Blockade.dispatch_sync(
-        hub.managers.event_queue,
+        hub.procs.event_queue,
         @event_children_unregistration,
         {children, node, opts},
         %{
@@ -68,7 +68,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       |> Enum.each(fn node ->
         Node.spawn(node, fn ->
           GenServer.cast(
-            hub.managers.worker_queue,
+            hub.procs.worker_queue,
             {
               :handle_work,
               fn ->
