@@ -112,23 +112,12 @@ defmodule ProcessHub.Service.Mailbox do
         required_cids
       )
 
-    success_results = filter_transition_result(success_results, opts)
-
     case length(errors) > 0 do
       false ->
         {:ok, success_results}
 
       true ->
-        {:error, {filter_transition_result(errors, opts), success_results}}
-    end
-  end
-
-  # Get the first result if the return_first option is set to true.
-  # This is used for single child process operations.
-  defp filter_transition_result(results, opts) do
-    case Keyword.get(opts, :return_first, false) do
-      false -> results
-      true -> List.first(results) || []
+        {:error, {errors, success_results}}
     end
   end
 

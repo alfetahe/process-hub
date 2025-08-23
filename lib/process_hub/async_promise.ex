@@ -1,4 +1,4 @@
-defmodule ProcessHub.AsyncPromise do
+defmodule ProcessHub.Future do
   @type t :: %__MODULE__{
           promise_resolver: pid(),
           ref: reference(),

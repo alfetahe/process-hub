@@ -3,7 +3,7 @@ defmodule ProcessHub.Service.Distributor do
   The distributor service provides API functions for distributing child processes.
   """
 
-  alias ProcessHub.AsyncPromise
+  alias ProcessHub.Future
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
@@ -159,7 +159,6 @@ defmodule ProcessHub.Service.Distributor do
     Keyword.put_new(opts, :timeout, @default_init_timeout)
     |> Keyword.put_new(:async_wait, false)
     |> Keyword.put_new(:check_existing, true)
-    |> Keyword.put_new(:return_first, false)
     |> Keyword.put_new(:on_failure, :continue)
     |> Keyword.put_new(:metadata, %{})
     |> Keyword.put_new(:await_timeout, 60000)
@@ -231,7 +230,7 @@ defmodule ProcessHub.Service.Distributor do
         )
 
         promise = async_wait_startup(hub, startup_children, opts)
-        results = handle_failures(hub.hub_id, AsyncPromise.await(promise))
+        results = handle_failures(hub.hub_id, Future.await(promise))
 
         case Keyword.get(opts, :async_wait, false) do
           true ->
@@ -248,7 +247,7 @@ defmodule ProcessHub.Service.Distributor do
         end
       end)
 
-    await_promise = %ProcessHub.AsyncPromise{
+    await_promise = %ProcessHub.Future{
       promise_resolver: collector_pid,
       timeout: Keyword.get(opts, :timeout),
       ref: ref
@@ -304,7 +303,7 @@ defmodule ProcessHub.Service.Distributor do
         end
       end)
 
-    await_promise = %ProcessHub.AsyncPromise{
+    await_promise = %ProcessHub.Future{
       promise_resolver: pid,
       timeout: Keyword.get(opts, :timeout),
       ref: ref

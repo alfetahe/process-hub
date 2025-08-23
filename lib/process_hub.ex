@@ -9,7 +9,7 @@ defmodule ProcessHub do
   """
 
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.AsyncPromise
+  alias ProcessHub.Future
 
   @typedoc """
   The `hub_id` defines the name of the hub. It is used to identify the hub.
@@ -224,10 +224,10 @@ defmodule ProcessHub do
   """
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
           {:ok, :start_initiated}
-          | {:ok, AsyncPromise.t()}
+          | {:ok, Future.t()}
           | {:error, :no_children | {:already_started, [atom | binary, ...]}}
   def start_child(hub_id, child_spec, opts \\ []) do
-    start_children(hub_id, [child_spec], Keyword.put(opts, :return_first, true))
+    start_children(hub_id, [child_spec], opts)
   end
 
   @doc """
@@ -244,7 +244,7 @@ defmodule ProcessHub do
   """
   @spec start_children(hub_id(), [child_spec()], init_opts()) ::
           {:ok, :start_initiated}
-          | {:ok, AsyncPromise.t()}
+          | {:ok, Future.t()}
           | {:error,
              :no_children
              | {:error, :children_not_list}
@@ -271,9 +271,9 @@ defmodule ProcessHub do
       {:ok, {:my_child, [:mynode]}}
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
-          {:ok, :stop_initiated} | {:ok, AsyncPromise.t()}
+          {:ok, :stop_initiated} | {:ok, Future.t()}
   def stop_child(hub_id, child_id, opts \\ []) do
-    stop_children(hub_id, [child_id], Keyword.put(opts, :return_first, true))
+    stop_children(hub_id, [child_id], opts)
   end
 
   @doc """
@@ -289,7 +289,7 @@ defmodule ProcessHub do
   """
   @spec stop_children(hub_id(), [child_id()], stop_opts()) ::
           {:ok, :stop_initiated}
-          | {:ok, AsyncPromise.t()}
+          | {:ok, Future.t()}
           | {:error, list()}
   def stop_children(hub_id, child_ids, opts \\ []) do
     GenServer.call(hub_id, {:init_children_stop, child_ids, opts})
@@ -355,17 +355,17 @@ defmodule ProcessHub do
       iex> ProcessHub.await(promise)
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
-  @spec await(AsyncPromise.t() | {:ok, AsyncPromise.t()} | {:error, term()} | term()) ::
+  @spec await(Future.t() | {:ok, Future.t()} | {:error, term()} | term()) ::
           {:ok, start_result() | [start_result() | stop_result()]}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]}}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]},
              :rollback}
   def await({:ok, promise}) when is_struct(promise) do
-    AsyncPromise.await(promise)
+    Future.await(promise)
   end
 
   def await(promise) when is_struct(promise) do
-    AsyncPromise.await(promise)
+    Future.await(promise)
   end
 
   def await({:error, msg}), do: {:error, msg}
