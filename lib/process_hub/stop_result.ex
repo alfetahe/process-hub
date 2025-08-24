@@ -35,10 +35,10 @@ defmodule ProcessHub.StopResult do
       iex> ProcessHub.StopResult.format({:error, :timeout})
       {:error, :timeout}
   """
-  @spec format(t() | error_input()) :: 
-    {:ok, term()} | 
-    {:error, {term(), term()}} | 
-    {:error, term()}
+  @spec format(t() | error_input()) ::
+          {:ok, term()}
+          | {:error, {term(), term()}}
+          | {:error, term()}
   def format(%__MODULE__{status: :error, errors: e, stopped: s}), do: {:error, {e, s}}
   def format(%__MODULE__{status: :ok, stopped: s}), do: {:ok, s}
   def format({:error, reason}), do: {:error, reason}

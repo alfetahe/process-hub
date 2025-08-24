@@ -216,11 +216,11 @@ true
 Time to see the magic happen!
 ```elixir
 iex> ProcessHub.start_children(:my_hub, [
-...>    %{id: "process1", start: {MyProcess, :start_link, []}},
-...>    %{id: "process2", start: {MyProcess, :start_link, []}},
-...>    %{id: "process3", start: {MyProcess, :start_link, []}},
-...>    %{id: "process4", start: {MyProcess, :start_link, []}},
-...>    %{id: "process5", start: {MyProcess, :start_link, []}}
+...>    %{id: "process1", start: {MyProcess, :start_link, [nil]}},
+...>    %{id: "process2", start: {MyProcess, :start_link, [nil]}},
+...>    %{id: "process3", start: {MyProcess, :start_link, [nil]}},
+...>    %{id: "process4", start: {MyProcess, :start_link, [nil]}},
+...>    %{id: "process5", start: {MyProcess, :start_link, [nil]}}
 ...> ])
 {:ok, :start_initiated}
 iex> ProcessHub.process_list(:my_hub, :global)

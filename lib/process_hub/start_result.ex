@@ -37,11 +37,11 @@ defmodule ProcessHub.StartResult do
       iex> ProcessHub.StartResult.format({:error, :timeout})
       {:error, :timeout}
   """
-  @spec format(t() | error_input()) :: 
-    {:ok, term()} | 
-    {:error, {term(), term()}} | 
-    {:error, {term(), term()}, :rollback} | 
-    {:error, term()}
+  @spec format(t() | error_input()) ::
+          {:ok, term()}
+          | {:error, {term(), term()}}
+          | {:error, {term(), term()}, :rollback}
+          | {:error, term()}
   def format(%__MODULE__{status: :error, errors: e, started: s, rollback: true}),
     do: {:error, {e, s}, :rollback}
 
@@ -105,8 +105,10 @@ defmodule ProcessHub.StartResult do
   @spec pid(t()) :: pid() | nil
   def pid(%__MODULE__{started: started}) do
     case List.first(started) do
-      nil -> nil
-      first_item -> 
+      nil ->
+        nil
+
+      first_item ->
         first_item
         |> elem(1)
         |> List.first()
@@ -153,8 +155,10 @@ defmodule ProcessHub.StartResult do
   @spec node(t()) :: node() | nil
   def node(%__MODULE__{started: started}) do
     case List.first(started) do
-      nil -> nil
-      first_item -> 
+      nil ->
+        nil
+
+      first_item ->
         first_item
         |> elem(1)
         |> List.first()

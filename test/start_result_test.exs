@@ -79,7 +79,7 @@ defmodule StartResultTest do
     test "returns all pids from started processes" do
       pid1 = self()
       pid2 = spawn(fn -> :ok end)
-      
+
       result = %StartResult{
         started: [
           {"child1", [{:node1, pid1}, {:node2, pid2}]},
@@ -115,7 +115,7 @@ defmodule StartResultTest do
   describe "nodes/1" do
     test "returns all unique nodes" do
       pid = self()
-      
+
       result = %StartResult{
         started: [
           {"child1", [{:node1, pid}, {:node2, pid}]},
@@ -151,7 +151,7 @@ defmodule StartResultTest do
   describe "cids/1" do
     test "returns all child IDs" do
       pid = self()
-      
+
       result = %StartResult{
         started: [
           {"child1", [{:node1, pid}]},

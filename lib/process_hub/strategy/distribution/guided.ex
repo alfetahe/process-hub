@@ -25,7 +25,7 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
   > Example:
   >
   > ```elixir
-  > iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, []}}
+  > iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, [nil]}}
   > iex> ProcessHub.start_children(:my_hub, [child_spec], [child_mapping: %{my_child: [:node1, :node2]}])
   > ```
   """

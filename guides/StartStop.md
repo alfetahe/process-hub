@@ -20,15 +20,15 @@ Some examples of starting processes are:
 ### Starting multiple processes
 ```elixir
 iex> ProcessHub.start_children(:my_hub, [
-  %{id: "process1", start: {MyProcess, :start_link, []}},
-  %{id: "process2", start: {MyProcess, :start_link, []}}
+  %{id: "process1", start: {MyProcess, :start_link, [nil]}},
+  %{id: "process2", start: {MyProcess, :start_link, [nil]}}
 ])
 {:ok, :start_initiated}
 ```
 
 ### Starting a single process
 ```elixir
-child_spec = %{id: "process_id", start: {MyProcess, :start_link, []}}
+child_spec = %{id: "process_id", start: {MyProcess, :start_link, [nil]}}
 ProcessHub.start_child(:my_hub, child_spec)
 {:ok, :start_initiated}
 ```
@@ -44,11 +44,11 @@ defmodule MyApp.Application do
     child_specs = [
         %{
             id: :my_process_1,
-            start: {MyProcess, :start_link, []}
+            start: {MyProcess, :start_link, [nil]}
         },
         %{
             id: :my_process_2,
-            start: {MyProcess, :start_link, []}
+            start: {MyProcess, :start_link, [nil]}
         }
     ]
 
@@ -129,7 +129,7 @@ By doing so, the operation returns a `ProcessHub.Future` struct that can be awai
 ```elixir
 child_spec = %{
   id: "my_process_1",
-  start: {MyProcess, :start_link, []}
+  start: {MyProcess, :start_link, [nil]}
 }
 ProcessHub.start_children(:my_hub, [child_spec], awaitable: true) 
 |> ProcessHub.Future.await()

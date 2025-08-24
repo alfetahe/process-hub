@@ -81,8 +81,8 @@ started asynchronously by default and are monitored by the hub.
 
 ```elixir
 iex> ProcessHub.start_children(:my_hub, [
-  %{id: "process1", start: {MyProcess, :start_link, []}},
-  %{id: "process2", start: {MyProcess, :start_link, []}}
+  %{id: "process1", start: {MyProcess, :start_link, [nil]}},
+  %{id: "process2", start: {MyProcess, :start_link, [nil]}}
 ])
 {:ok, :start_initiated}
 ```
@@ -94,11 +94,11 @@ Start the hub with 2 child specs. The hub will start the processes when it boots
 child_specs = [
   %{
     id: "my_process_1",
-    start: {MyProcess, :start_link, []}
+    start: {MyProcess, :start_link, [nil]}
   },
   %{
     id: "my_process_2",
-    start: {MyProcess, :start_link, []}
+    start: {MyProcess, :start_link, [nil]}
   }
 ]
 
@@ -124,7 +124,7 @@ Query processes by `child_id`:
 ```elixir
 iex> ProcessHub.child_lookup(:my_hub, "my_process_1")
 {
-  %{id: "my_process_1", start: {MyProcess, :start_link, []}},
+  %{id: "my_process_1", start: {MyProcess, :start_link, [nil]}},
   [node_two@host: #PID<0.228.0>]
 }
 ```

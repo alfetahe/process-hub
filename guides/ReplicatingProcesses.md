@@ -49,11 +49,13 @@ You can refer to the [Manual Distribution](ManualDistribution.md#start-2-nodes) 
 ## Start child
 Next let's start a process on one node and then see how it is replicated on the other node.
 
-We will be using the `async_wait` just for demonstration purposes and see the results printed in the console.
+We will be using the `awaitable` just for demonstration purposes and see the results printed in the console.
 
 ```elixir
 iex> child_spec = %{id: :child1, start: {MyProcess, :start_link, [nil]}}
-iex> ProcessHub.start_children(:my_hub, [child_spec], [async_wait: true]) |> ProcessHub.await()
+iex> ProcessHub.start_children(:my_hub, [child_spec], [awaitable: true]) 
+iex> |> ProcessHub.Future.await()
+iex> |> ProcessHub.StartResult.format()
 {:ok,
  [
    child1: [

@@ -208,7 +208,7 @@ defmodule ProcessHub do
   The `t:child_spec()` `:id` must be unique.
 
   ## Example
-      iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, []}}
+      iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, [nil]}}
       iex> ProcessHub.start_child(:my_hub, child_spec)
       {:ok, :start_initiated}
 
@@ -224,7 +224,7 @@ defmodule ProcessHub do
   `pid()` of the started child. By default, the list should contain only one tuple, but if the
   redundancy strategy is configured for replicas, it may contain more than one tuple.
 
-      iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, []}}
+      iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, [nil]}}
       iex> ProcessHub.start_child(:my_hub, child_spec, [async_wait: true]) |> ProcessHub.await()
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
@@ -422,10 +422,10 @@ defmodule ProcessHub do
 
   ## Example
       iex> {_child_spec, _node_pid_tuples} = ProcessHub.child_lookup(:my_hub, :my_child)
-      {%{id: :my_child, start: {MyProcess, :start_link, []}}, [{:mynode, #PID<0.123.0>}]}
+      {%{id: :my_child, start: {MyProcess, :start_link, [nil]}}, [{:mynode, #PID<0.123.0>}]}
 
       iex> {_child_spec, _node_pid_tuples, _metadata} = ProcessHub.child_lookup(:my_hub, :my_child, with_metadata: true)
-      {%{id: :my_child, start: {MyProcess, :start_link, []}}, [{:mynode, #PID<0.123.0>}], %{tag: "my_metadata"}}
+      {%{id: :my_child, start: {MyProcess, :start_link, [nil]}}, [{:mynode, #PID<0.123.0>}], %{tag: "my_metadata"}}
   """
   @spec child_lookup(hub_id(), child_id(), with_metadata: boolean()) ::
           {child_spec(), [{node(), pid()}]} | nil

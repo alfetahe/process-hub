@@ -52,8 +52,7 @@ supervision tree.
 
 ## Example usage
 The following example shows how to start 2 elixir nodes, connect them and start processes
-under the `ProcessHub` cluster. This demonstrates how the processes are distributed within
-the cluster.
+under the `ProcessHub` cluster. This demonstrates how the processes are distributed in the cluster.
 
 **Note:** The examples below assume that the `ProcessHub` is already started under the
 supervision tree. If not please refer to the [Installation](#installation) section.
@@ -63,7 +62,7 @@ supervision tree. If not please refer to the [Installation](#installation) secti
 defmodule MyProcess do
     use GenServer
 
-    def start_link() do
+    def start_link(_) do
         GenServer.start_link(__MODULE__, nil)
     end
 
@@ -86,11 +85,11 @@ iex --name node1@127.0.0.1 --cookie mycookie -S mix
 ```elixir
 # Run the following in the iex console to start 5 processes under the hub.
 iex> ProcessHub.start_children(:my_hub, [
-...>    %{id: :process1, start: {MyProcess, :start_link, []}},
-...>    %{id: :process2, start: {MyProcess, :start_link, []}},
-...>    %{id: :process3, start: {MyProcess, :start_link, []}},
-...>    %{id: :process4, start: {MyProcess, :start_link, []}},
-...>    %{id: :process5, start: {MyProcess, :start_link, []}}
+...>    %{id: :process1, start: {MyProcess, :start_link, [nil]}},
+...>    %{id: :process2, start: {MyProcess, :start_link, [nil]}},
+...>    %{id: :process3, start: {MyProcess, :start_link, [nil]}},
+...>    %{id: :process4, start: {MyProcess, :start_link, [nil]}},
+...>    %{id: :process5, start: {MyProcess, :start_link, [nil]}}
 ...> ])
 {:ok, :start_initiated}
 

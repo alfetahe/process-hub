@@ -60,25 +60,25 @@ including metadata stored in the registry.
 ```elixir
 iex> ProcessHub.registry_dump(:my_hub)
 %{
-  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, []}},
+  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, [nil]}},
    [two@anuar: #PID<23772.233.0>], %{tag: "Some tag"}},
-  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, []}},
+  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.250.0>], %{custom_data: "Some data"}},
-  my_process_3: {%{id: :my_process_3, start: {MyProcess, :start_link, []}},
+  my_process_3: {%{id: :my_process_3, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.253.0>], %{}},
-  my_process_4: {%{id: :my_process_4, start: {MyProcess, :start_link, []}},
+  my_process_4: {%{id: :my_process_4, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.256.0>], %{}},
-  my_process_5: {%{id: :my_process_5, start: {MyProcess, :start_link, []}},
+  my_process_5: {%{id: :my_process_5, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.259.0>], %{}},
-  my_process_6: {%{id: :my_process_6, start: {MyProcess, :start_link, []}},
+  my_process_6: {%{id: :my_process_6, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.262.0>], %{}},
-  my_process_7: {%{id: :my_process_7, start: {MyProcess, :start_link, []}},
+  my_process_7: {%{id: :my_process_7, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.265.0>], %{}},
-  my_process_8: {%{id: :my_process_8, start: {MyProcess, :start_link, []}},
+  my_process_8: {%{id: :my_process_8, start: {MyProcess, :start_link, [nil]}},
    [two@anuar: #PID<23772.254.0>], %{}},
-  my_process_9: {%{id: :my_process_9, start: {MyProcess, :start_link, []}},
+  my_process_9: {%{id: :my_process_9, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.271.0>], %{}},
-  my_process_10: {%{id: :my_process_10, start: {MyProcess, :start_link, []}},
+  my_process_10: {%{id: :my_process_10, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.274.0>], %{}}
 }
 ```
@@ -153,7 +153,7 @@ This function also gives us the `child_spec`.
 ```elixir
 iex> ProcessHub.child_lookup(:my_hub, :my_process_10)
 {
-    %{id: :my_process_10, start: {MyProcess, :start_link, []}},
+    %{id: :my_process_10, start: {MyProcess, :start_link, [nil]}},
     [one@anuar: #PID<0.228.0>]
 }
  ```
@@ -165,7 +165,7 @@ We can store metadata in the registry by starting the process with `:metadata` o
 # First we need to start the process with metadata
 iex> ProcessHub.start_child(
   :my_hub, 
-  %{id: :my_process_1, start: {MyProcess, :start_link, []}}, 
+  %{id: :my_process_1, start: {MyProcess, :start_link, [nil]}}, 
   [metadata: %{some_info: "my data"}, awaitable: true]
 ) |> ProcessHub.Future.await()
 {:ok, #PID<0.228.0>} # TODO: update
@@ -173,7 +173,7 @@ iex> ProcessHub.start_child(
 # Now we can query the process with metadata
 iex> ProcessHub.child_lookup(:my_hub, :my_process_1, [with_metadata: true])
 {
-  %{id: :my_process_1, start: {MyProcess, :start_link, []}},
+  %{id: :my_process_1, start: {MyProcess, :start_link, [nil]}},
   [one@anuar: #PID<0.228.0>],
   %{some_info: "my data"}
 }
@@ -185,11 +185,11 @@ We can also get all the metadata stored for all the processes in the registry by
 ```elixir
 iex> ProcessHub.registry_dump(:my_hub)
 %{
-  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, []}},
+  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.228.0>], %{some_info: "my data"}},
-  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, []}},
+  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.250.0>], %{}},
-  my_process_3: {%{id: :my_process_3, start: {MyProcess, :start_link, []}},
+  my_process_3: {%{id: :my_process_3, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.253.0>], %{}}
 }
 ```
@@ -199,9 +199,9 @@ to query the processes by tags.
 ```elixir
 iex> ProcessHub.tag_query(:my_hub, "MY_TAG")
 [
-  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, []}},
+  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.228.0>]},
-  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, []}},
+  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, [nil]}},
    [one@anuar: #PID<0.250.0>]}
 ]
 ```
