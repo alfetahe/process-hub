@@ -8,6 +8,7 @@ defmodule ProcessHub do
   and synchronization.
   """
 
+  alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Future
 
@@ -598,5 +599,15 @@ defmodule ProcessHub do
   @spec promote_to_node(hub_id()) :: :ok | {:error, :not_alive}
   def promote_to_node(hub_id, node_name \\ node()) do
     GenServer.call(hub_id, {:promote_to_node, node_name})
+  end
+
+  # TODO: add tests.
+  @doc """
+  Registers hook handlers dynamically.
+  """
+  @spec register_hook_handlers(hub_id(), HookManager.hook_key(), [HookManager.t()]) ::
+          :ok | {:error, {:handler_id_not_unique, [HookManager.handler_id()]}}
+  def register_hook_handlers(hub_id, hook_key, hook_handlers) do
+    GenServer.call(hub_id, {:register_hook_handlers, hook_key, hook_handlers})
   end
 end

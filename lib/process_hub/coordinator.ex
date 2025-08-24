@@ -178,6 +178,13 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_call({:register_hook_handlers, hook_key, handlers}, _from, state) do
+    result = register_handlers(state.storage.hook, %{hook_key => handlers})
+
+    {:reply, result, state}
+  end
+
+  @impl true
   def handle_call({:init_children_start, child_specs, opts}, _from, state) do
     result =
       Distributor.init_children(

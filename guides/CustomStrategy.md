@@ -54,15 +54,15 @@ defimpl DistributionStrategy, for: CustomStrategy.Compare do
     alias ProcessHub.Constant.Hook
 
     @impl true
-    def init(_struct, hub_id) do
+    def init(_struct, %ProcessHub.Hub{} = hub) do
       handler = %HookManager{
         id: :some_id_here,
         m: CustomStrategy.Compare,
         f: :handle_node_join,
-        a: [hub_id, :_]
+        a: [hub, :_]
       }
 
-      HookManager.register_handler(hub_id, Hook.pre_cluster_join(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), handler)
     end
 end
 ...
@@ -73,8 +73,8 @@ Let's also define the handler function!
 ```elixir
 defmodule CustomStrategy.Compare do
 ...
-    def handle_node_join(hub_id, node) do
-        IO.puts("Node #{node} is joining the hub #{hub_id}")
+    def handle_node_join(hub, node) do
+        IO.puts("Node #{node} is joining the hub #{hub.hub_id}")
     end
 end
 ...
@@ -88,7 +88,7 @@ particular function.
 ```elixir
 ...
 @impl true
-def children_init(_struct, _hub_id, _child_specs, _opts), do: :ok
+def children_init(_struct, _hub, _child_specs, _opts), do: :ok
 ...
 ```
 
@@ -102,8 +102,8 @@ For the sake of simplicity, we will ignore the replication factor in this exampl
 ```elixir
 ...
 @impl true
-def belongs_to(struct, hub_id, _child_id, _replication_factor) do
-    hub_nodes = ProcessHub.nodes(hub_id, [:include_local])
+def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_id, _replication_factor) do
+    hub_nodes = ProcessHub.nodes(hub, [:include_local])
 
     selected_node = case struct.direction do
         :asc -> Enum.sort(hub_nodes) |> Enum.at(0)
@@ -130,8 +130,8 @@ defmodule CustomStrategy.Compare do
     direction: :asc
   ]
 
-  def handle_node_join(hub_id, node) do
-      IO.puts("Node #{node} is joining the hub #{hub_id}")
+  def handle_node_join(%ProcessHub.Hub{} = hub, node) do
+      IO.puts("Node #{node} is joining the hub #{hub.hub_id}")
   end
 
   defimpl DistributionStrategy, for: CustomStrategy.Compare do
@@ -139,23 +139,23 @@ defmodule CustomStrategy.Compare do
     alias ProcessHub.Constant.Hook
 
     @impl true
-    def init(_struct, hub_id) do
+    def init(_struct, %ProcessHub.Hub{} = hub) do
       handler = %HookManager{
         id: :some_id_here,
         m: CustomStrategy.Compare,
         f: :handle_node_join,
-        a: [hub_id, :_]
+        a: [hub, :_]
       }
 
-      HookManager.register_handler(hub_id, Hook.pre_cluster_join(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), handler)
     end
 
     @impl true
-    def children_init(_struct, _hub_id, _child_specs, _opts), do: :ok
+    def children_init(_struct, _hub, _child_specs, _opts), do: :ok
 
     @impl true
-    def belongs_to(struct, hub_id, _child_id, _replication_factor) do
-        hub_nodes = ProcessHub.nodes(hub_id, [:include_local])
+    def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_id, _replication_factor) do
+        hub_nodes = ProcessHub.nodes(hub, [:include_local])
 
         selected_node = case struct.direction do
             :asc -> Enum.sort(hub_nodes) |> Enum.at(0)

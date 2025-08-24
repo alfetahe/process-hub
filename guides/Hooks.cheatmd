@@ -72,7 +72,7 @@ alias ProcessHub.Service.HookManager
 alias ProcessHub.Constant.Hook
 
 # Register a hook handler for the `:cluster_join` event with a wildcard argument.
-HookManager.register_handler(
+ProcessHub.register_hook_handlers(
   :my_hub, 
   Hook.post_cluster_join(),
   %HookManager{
@@ -124,7 +124,7 @@ hook_handler2 = %HookManager{
 }
 
 # We're triggering the hook when child process has been registered under the process registry.
-HookManager.register_handlers(:my_hub, Hook.registry_pid_inserted(), [hook_handler1, hook_handler2])
+ProcessHub.register_hook_handlers(:my_hub, Hook.registry_pid_inserted(), [hook_handler1, hook_handler2])
 ...
 
 # The hook handlers
@@ -237,7 +237,7 @@ hook_handler = %HookManager{
   p: 15 # here we set the priority level to 15.
 }
 
-HookManager.register_handler(:my_hub, Hook.pre_cluster_leave(), hook_handler)
+ProcessHub.register_hook_handlers(:my_hub, Hook.pre_cluster_leave(), hook_handler)
 ```
 
 ## Hook handler arguments
@@ -259,7 +259,7 @@ hook_handler = %HookManager{
   a: [:_, :some, :something_else] # here the first argument will be the wildcard argument.
 }
 
-HookManager.register_handler(:my_hub, Hook.pre_cluster_join(), hook_handler)
+ProcessHub.register_hook_handlers(:my_hub, Hook.pre_cluster_join(), hook_handler)
 
 # Here the handler function receives the wildcard argument as the first argument.
 defmodule MyModule do
