@@ -153,7 +153,7 @@ ProcessHub.stop_child(:my_hub, "my_process_1", awaitable: true)
 
 ## Formatting and extracting information from the results
 
-When using awaitable operations, ProcessHub returns `StartResult` and `StopResult` structs that contain detailed information about the operation. These structs provide both formatting functions and convenient accessor functions to extract specific information.
+When using awaitable operations, ProcessHub returns `ProcessHub.StartResult.t()` and `ProcessHub.StopResult.t()` structs that contain detailed information about the operation. These structs provide both formatting functions and convenient accessor functions to extract specific information.
 
 ### StartResult API Functions
 
@@ -257,13 +257,24 @@ pids = ProcessHub.start_children(:my_hub, [child_spec1, child_spec2], awaitable:
 |> ProcessHub.Future.await()
 |> ProcessHub.StartResult.pids()
 # [#PID<0.123.0>, #PID<0.124.0>]
+```
 
-# Chain with error handling
-case ProcessHub.start_child(:my_hub, child_spec, awaitable: true) |> ProcessHub.Future.await() do
-  %ProcessHub.StartResult{status: :ok} = result ->
-    ProcessHub.StartResult.pid(result)
-  %ProcessHub.StartResult{status: :error} = result ->
-    ProcessHub.StartResult.errors(result)
+### Pattern Matching on Result Structs
+
+Both `StartResult` and `StopResult` are regular Elixir structs that can be pattern matched directly:
+
+```elixir
+# Pattern match on successful start
+result = ProcessHub.start_children(:my_hub, [child_spec1, child_spec2], awaitable: true)
+|> ProcessHub.Future.await()
+
+case result do
+  %ProcessHub.StartResult{status: :ok, started: started} ->
+    IO.puts("Successfully started: #{inspect(started)}")
+    
+  %ProcessHub.StartResult{status: :error, errors: errors, started: started} ->
+    IO.puts("Some failures: #{inspect(errors)}")
+    IO.puts("Some successes: #{inspect(started)}")
 end
 ```
 
