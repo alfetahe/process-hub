@@ -2,8 +2,6 @@
 
 ![example workflow](https://github.com/alfetahe/process-hub/actions/workflows/elixir.yml/badge.svg)  [![hex.pm version](https://img.shields.io/hexpm/v/coverex.svg?style=flat)](https://hex.pm/packages/process_hub) [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/process_hub)
 
-**NOTE: This library is still in alpha stage and is not recommended for production use.**
-
 ## Description
 
 Library for building distributed systems that are scalable. It handles the distribution of
@@ -117,16 +115,16 @@ Query the whole registry for all processes under the hub `:my_hub`:
 ```elixir
 iex> ProcessHub.process_list(:my_hub, :global)
 [
-  my_process_1: [node_two@host: #PID<23772.233.0>],
-  my_process_2: [node_one@user: #PID<0.250.0>],
+  {"my_process_1", [node_two@host: #PID<23772.233.0>]},
+  {"my_process_2", [node_one@user: #PID<0.250.0>]}
 ]
 ```
 
 Query processes by `child_id`:
 ```elixir
-iex> ProcessHub.child_lookup(:my_hub, :my_process_1)
+iex> ProcessHub.child_lookup(:my_hub, "my_process_1")
 {
-  %{id: :my_process_1, start: {MyProcess, :start_link, []}},
+  %{id: "my_process_1", start: {MyProcess, :start_link, []}},
   [node_two@host: #PID<0.228.0>]
 }
 ```
