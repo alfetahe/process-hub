@@ -1,6 +1,7 @@
 defmodule ProcessHub.WorkerQueue do
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Future
 
   use GenServer
 
@@ -35,13 +36,13 @@ defmodule ProcessHub.WorkerQueue do
         ProcessHub.start_children(
           hub_id,
           static_child_specs,
-          async_wait: true
+          awaitable: true
         )
-        |> ProcessHub.await()
+        |> Future.await()
 
-      case res do
-        {:ok, _} -> nil
-        {:error, _} -> raise RuntimeError, message: "static children startup failed."
+      case res.status do
+        :ok -> nil
+        :error -> raise RuntimeError, message: "static children startup failed."
       end
     end
   end

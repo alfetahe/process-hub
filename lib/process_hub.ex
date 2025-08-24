@@ -45,7 +45,9 @@ defmodule ProcessHub do
   The `init_opts()` defines the options that can be passed to the `start_children/3`, `start_child/3`,
   `stop_children/3`, and `stop_child/3` functions.
 
-  - `:async_wait` - is optional and is used to define whether the function should return another function that
+  - `:awaitable` - is optional and can be used to specify if the returned value should be awaitable struct `ProcessHub.Future.t()`.
+  The awaitable struct provides a way to handle the result of the operation synchronously by passing it to `ProcessHub.Future.await/1` function.
+  - `:async_wait` - (**deprecated** use `:awaitable`) is optional and is used to define whether the function should return another function that
   can be used to wait for the children to start or stop. The default is `false`.
   - `:timeout` is optional and is used to define the timeout for the function. The timeout option
   should be used with `async_wait: true`. The default is `5000` (5 seconds).
@@ -61,9 +63,10 @@ defmodule ProcessHub do
   startup or shutdown. Mostly used for testing purposes.
     - `:await_timeout` is optional and is used to define the maximum lifetime for the spawned collector process.
   After this time, the collector process will be terminated and trying to collect the results using `ProcessHub.await/1` will fail.
-  The await_timeout option should be used with `async_wait: true`. The default is `60000` (60 seconds).
+  The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
   """
   @type init_opts() :: [
+          awaitable: boolean(),
           async_wait: boolean(),
           timeout: non_neg_integer(),
           check_existing: boolean(),
@@ -76,15 +79,18 @@ defmodule ProcessHub do
   @typedoc """
   The `stop_opts()` defines the options that can be passed to the `stop_children/3` and `stop_child/3` functions.
 
-  - `:async_wait` - is optional and is used to define whether the function should return another function that
+  - `:awaitable` - is optional and can be used to specify if the returned value should be awaitable struct `ProcessHub.Future.t()`.
+  The awaitable struct provides a way to handle the result of the operation synchronously by passing it to `ProcessHub.Future.await/1` function.
+  - `:async_wait` - (**deprecated** use `:awaitable`) is optional and is used to define whether the function should return another function that
   can be used to wait for the children to stop. The default is `false`.
   - `:timeout` is optional and is used to define the maximum time for the function to complete.
   The timeout option should be used with `async_wait: true`. The default is `5000` (5 seconds).
   - `:await_timeout` is optional and is used to define the maximum lifetime for the spawned collector process.
   After this time, the collector process will be terminated and trying to collect the results using `ProcessHub.await/1` will fail.
-  The await_timeout option should be used with `async_wait: true`. The default is `60000` (60 seconds).
+  The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
   """
   @type stop_opts() :: [
+          awaitable: boolean(),
           async_wait: boolean(),
           timeout: non_neg_integer(),
           await_timeout: non_neg_integer()
@@ -207,8 +213,8 @@ defmodule ProcessHub do
       {:ok, :start_initiated}
 
   By default, the `start_child/3` function is **asynchronous** and returns immediately.
-  To wait for the child to start, you can pass `async_wait: true` to the `opts` argument.
-  When `async_wait: true`, you **must await** the response from the function.
+  To wait for the child to start, you can pass `awaitable: true` to the `opts` argument and
+  use the `ProcessHub.Future.await/1` function on the returned value.
 
   See `t:init_opts/0` for more options.
 
@@ -227,7 +233,7 @@ defmodule ProcessHub do
           | {:ok, Future.t()}
           | {:error, :no_children | {:already_started, [atom | binary, ...]}}
   def start_child(hub_id, child_spec, opts \\ []) do
-    start_children(hub_id, [child_spec], opts)
+    start_children(hub_id, [child_spec], Keyword.put(opts, :return_first, true))
   end
 
   @doc """
@@ -238,9 +244,8 @@ defmodule ProcessHub do
 
   > #### Warning {: .warning}
   >
-  > Using `start_children/3` with `async_wait: true` can lead to timeout errors,
+  > Using `start_children/3` with `awaitable: true` can lead to timeout errors,
   > especially when the number of children is large.
-  > When `async_wait: true`, you **must await** the response from the function.
   """
   @spec start_children(hub_id(), [child_spec()], init_opts()) ::
           {:ok, :start_initiated}
@@ -273,7 +278,7 @@ defmodule ProcessHub do
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
           {:ok, :stop_initiated} | {:ok, Future.t()}
   def stop_child(hub_id, child_id, opts \\ []) do
-    stop_children(hub_id, [child_id], opts)
+    stop_children(hub_id, [child_id], Keyword.put(opts, :return_first, true))
   end
 
   @doc """
@@ -351,8 +356,8 @@ defmodule ProcessHub do
   period, the function will return `{:error, term()}`.
 
   ## Example
-      iex> {:ok, promise} = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
-      iex> ProcessHub.await(promise)
+      iex> {:ok, future} = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
+      iex> ProcessHub.await(future)
       {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
   """
   @spec await(Future.t() | {:ok, Future.t()} | {:error, term()} | term()) ::
@@ -360,12 +365,12 @@ defmodule ProcessHub do
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]}}
           | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]},
              :rollback}
-  def await({:ok, promise}) when is_struct(promise) do
-    Future.await(promise)
+  def await({:ok, future}) when is_struct(future) do
+    Future.await(future)
   end
 
-  def await(promise) when is_struct(promise) do
-    Future.await(promise)
+  def await(future) when is_struct(future) do
+    Future.await(future)
   end
 
   def await({:error, msg}), do: {:error, msg}

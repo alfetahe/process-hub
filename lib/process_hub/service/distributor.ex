@@ -3,6 +3,7 @@ defmodule ProcessHub.Service.Distributor do
   The distributor service provides API functions for distributing child processes.
   """
 
+  alias ProcessHub.StartResult
   alias ProcessHub.Future
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
@@ -157,6 +158,7 @@ defmodule ProcessHub.Service.Distributor do
   # TODO: add tests and documentation.
   def default_init_opts(opts) do
     Keyword.put_new(opts, :timeout, @default_init_timeout)
+    |> Keyword.put_new(:awaitable, false)
     |> Keyword.put_new(:async_wait, false)
     |> Keyword.put_new(:check_existing, true)
     |> Keyword.put_new(:on_failure, :continue)
@@ -165,16 +167,24 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp pre_start_children(hub, startup_children, opts) do
+    # For backward compatibility we need to handle the old options.
     case Keyword.get(opts, :on_failure, :continue) do
       :continue ->
         case Keyword.get(opts, :async_wait, false) do
           true ->
-            promise = async_wait_startup(hub, startup_children, opts)
-            {:ok, promise}
+            future = async_wait_startup(hub, startup_children, opts)
+            {:ok, future}
 
           false ->
-            Dispatcher.children_start(hub.hub_id, startup_children, opts)
-            {:ok, :start_initiated}
+            case Keyword.get(opts, :awaitable, false) do
+              true ->
+                future = async_wait_startup(hub, startup_children, opts)
+                {:ok, future}
+
+              false ->
+                Dispatcher.children_start(hub.hub_id, startup_children, opts)
+                {:ok, :start_initiated}
+            end
         end
 
       :rollback ->
@@ -183,10 +193,20 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp pre_stop_children(stop_children, hub, opts) do
+    # For backward compatibility we need to handle the old options.
     case Keyword.get(opts, :async_wait, false) do
       false ->
-        Dispatcher.children_stop(hub.hub_id, stop_children, opts)
-        {:ok, :stop_initiated}
+        case Keyword.get(opts, :awaitable, false) do
+          true ->
+            {receiver_pid, _, await_promise} = spawn_collector(hub, :stop, opts)
+            opts = Keyword.put(opts, :reply_to, [receiver_pid])
+            Dispatcher.children_stop(hub.hub_id, stop_children, opts)
+            {:ok, await_promise}
+
+          false ->
+            Dispatcher.children_stop(hub.hub_id, stop_children, opts)
+            {:ok, :stop_initiated}
+        end
 
       true ->
         {receiver_pid, _, await_promise} = spawn_collector(hub, :stop, opts)
@@ -207,7 +227,7 @@ defmodule ProcessHub.Service.Distributor do
       |> Keyword.put(:collect_from, Enum.uniq(collect_from))
       |> Keyword.put(:required_cids, Enum.uniq(required_cids))
 
-    {receiver_pid, _, await_promise} = spawn_collector(hub, :start, opts)
+    {receiver_pid, _, awaitable_future} = spawn_collector(hub, :start, opts)
 
     Dispatcher.children_start(
       hub.hub_id,
@@ -215,7 +235,7 @@ defmodule ProcessHub.Service.Distributor do
       Keyword.put(opts, :reply_to, [receiver_pid])
     )
 
-    await_promise
+    awaitable_future
   end
 
   defp spawn_failure_handler(hub, startup_children, opts) do
@@ -229,9 +249,10 @@ defmodule ProcessHub.Service.Distributor do
           Keyword.get(opts, :await_timeout, 60_000)
         )
 
-        promise = async_wait_startup(hub, startup_children, opts)
-        results = handle_failures(hub.hub_id, Future.await(promise))
+        awaitable_future = async_wait_startup(hub, startup_children, opts)
+        results = handle_failures(hub.hub_id, Future.await(awaitable_future))
 
+        # For backward compatibility we need to handle the old options.
         case Keyword.get(opts, :async_wait, false) do
           true ->
             receive do
@@ -243,37 +264,61 @@ defmodule ProcessHub.Service.Distributor do
             end
 
           false ->
-            nil
+            case Keyword.get(opts, :awaitable, false) do
+              false ->
+                nil
+
+              true ->
+                receive do
+                  {:process_hub, :auto_shutdown} ->
+                    nil
+
+                  {:process_hub, :collect_results, from, ^ref} ->
+                    send(from, {:process_hub, :async_results, ref, results})
+                end
+            end
         end
       end)
 
-    await_promise = %ProcessHub.Future{
-      promise_resolver: collector_pid,
+    awaitable_future = %ProcessHub.Future{
+      future_resolver: collector_pid,
       timeout: Keyword.get(opts, :timeout),
       ref: ref
     }
 
     case Keyword.get(opts, :async_wait, false) do
       true ->
-        {:ok, await_promise}
+        {:ok, awaitable_future}
 
       false ->
-        {:ok, :start_initiated}
+        case Keyword.get(opts, :awaitable, false) do
+          true ->
+            {:ok, awaitable_future}
+
+          false ->
+            {:ok, :start_initiated}
+        end
     end
   end
 
   defp handle_failures(hub_id, startup_results) do
-    case startup_results do
-      {:ok, results} ->
-        {:ok, results}
+    case startup_results.status do
+      :ok ->
+        startup_results
 
-      {:error, {errs, success_results}} ->
-        success_cids = Enum.map(success_results, fn {cid, _} -> cid end)
+      :error ->
+        success_cids = Enum.map(startup_results.started, fn {cid, _} -> cid end)
 
         # Stop the children that were started successfully.
-        ProcessHub.stop_children(hub_id, success_cids, async_wait: true) |> ProcessHub.await()
+        ProcessHub.stop_children(hub_id, success_cids, awaitable: true)
+        |> Future.await()
 
-        {:error, {errs, success_results}, :rollback}
+        %StartResult{
+          status: :error,
+          started: startup_results.started,
+          errors: startup_results.errors,
+          rollback: true
+        }
     end
   end
 
@@ -304,7 +349,7 @@ defmodule ProcessHub.Service.Distributor do
       end)
 
     await_promise = %ProcessHub.Future{
-      promise_resolver: pid,
+      future_resolver: pid,
       timeout: Keyword.get(opts, :timeout),
       ref: ref
     }

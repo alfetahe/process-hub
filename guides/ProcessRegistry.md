@@ -166,9 +166,9 @@ We can store metadata in the registry by starting the process with `:metadata` o
 iex> ProcessHub.start_child(
   :my_hub, 
   %{id: :my_process_1, start: {MyProcess, :start_link, []}}, 
-  [metadata: %{some_info: "my data"}, async_wait: true]
-) |> ProcessHub.await()
-{:ok, #PID<0.228.0>}
+  [metadata: %{some_info: "my data"}, awaitable: true]
+) |> ProcessHub.Future.await()
+{:ok, #PID<0.228.0>} # TODO: update
 
 # Now we can query the process with metadata
 iex> ProcessHub.child_lookup(:my_hub, :my_process_1, [with_metadata: true])

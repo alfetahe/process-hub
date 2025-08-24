@@ -31,24 +31,38 @@ defmodule Test.Service.MailboxTest do
 
   test "collect start", %{hub: hub} do
     assert Mailbox.collect_start_results(hub, timeout: 1) ===
-             {:error, {[{:undefined, node(), :node_receive_timeout}], []}}
+             %ProcessHub.StartResult{
+               status: :error,
+               started: [],
+               errors: [{:undefined, node(), :node_receive_timeout}],
+               rollback: false
+             }
 
     send(self(), {:collect_start_results, [{"child_id1", {:ok, :somepid}}], node()})
     send(self(), {:collect_start_results, [{"child_id2", {:ok, :somepid}}], :somenode})
     send(self(), {:collect_start_results, [{"child_id2", {:ok, :somepid}}], :no_collect})
     opts = [collect_from: [node(), :somenode], timeout: 1]
 
-    assert Mailbox.collect_start_results(hub, opts) ===
-             {:ok, [{"child_id2", [somenode: :somepid]}, {"child_id1", [{node(), :somepid}]}]}
+    assert Mailbox.collect_start_results(hub, opts) === %ProcessHub.StartResult{
+             status: :ok,
+             started: [
+               {"child_id2", [somenode: :somepid]},
+               {"child_id1", [{node(), :somepid}]}
+             ],
+             errors: [],
+             rollback: false
+           }
 
     opts = [{:receive_key, :custom_recv_key} | opts]
     send(self(), {:custom_recv_key, [{"child_id1", {:error, :someerror}}], node()})
     send(self(), {:custom_recv_key, [{"child_id2", {:ok, :somepid}}], :somenode})
 
-    assert Mailbox.collect_start_results(hub, opts) ===
-             {:error,
-              {[{:undefined, node(), :node_receive_timeout}],
-               [{"child_id2", [no_collect: :somepid]}]}}
+    assert Mailbox.collect_start_results(hub, opts) === %ProcessHub.StartResult{
+             status: :error,
+             started: [{"child_id2", [no_collect: :somepid]}],
+             errors: [{:undefined, node(), :node_receive_timeout}],
+             rollback: false
+           }
 
     handler = fn _cid, _node, result ->
       case result do
@@ -66,13 +80,21 @@ defmodule Test.Service.MailboxTest do
     send(self(), {:collect_start_results, [{"child_id1", {:ok, :pid}}], node()})
 
     assert Mailbox.collect_start_results(hub, opts) ===
-             {:error,
-              {[{:undefined, node(), :node_receive_timeout}], [{"child_id1", [{node(), :myok}]}]}}
+             %ProcessHub.StartResult{
+               status: :error,
+               started: [{"child_id1", [{node(), :myok}]}],
+               errors: [{:undefined, node(), :node_receive_timeout}],
+               rollback: false
+             }
   end
 
   test "collect stop", %{hub: hub} do
     assert Mailbox.collect_stop_results(hub, timeout: 1) ===
-             {:error, {[{:undefined, node(), :node_receive_timeout}], []}}
+             %ProcessHub.StopResult{
+               status: :error,
+               stopped: [],
+               errors: [{:undefined, node(), :node_receive_timeout}]
+             }
 
     send(self(), {:collect_stop_results, [{"child_id1", :ok}], node()})
     send(self(), {:collect_stop_results, [{"child_id2", :ok}], :somenode})
@@ -80,15 +102,21 @@ defmodule Test.Service.MailboxTest do
     opts = [collect_from: [node(), :somenode], timeout: 1]
 
     assert Mailbox.collect_stop_results(hub, opts) ===
-             {:ok, [{"child_id2", [:somenode]}, {"child_id1", [node()]}]}
+             %ProcessHub.StopResult{
+               status: :ok,
+               stopped: [{"child_id2", [:somenode]}, {"child_id1", [node()]}],
+               errors: []
+             }
 
     opts = [{:receive_key, :custom_recv_key} | opts]
     send(self(), {:custom_recv_key, [{"child_id1", {:error, :someerror}}], node()})
     send(self(), {:custom_recv_key, [{"child_id2", :ok}], :somenode})
 
-    assert Mailbox.collect_stop_results(hub, opts) ===
-             {:error,
-              {[{:undefined, node(), :node_receive_timeout}], [{"child_id2", [:no_collect]}]}}
+    assert Mailbox.collect_stop_results(hub, opts) === %ProcessHub.StopResult{
+             errors: [{:undefined, node(), :node_receive_timeout}],
+             status: :error,
+             stopped: [{"child_id2", [:no_collect]}]
+           }
 
     handler = fn _cid, _node, result ->
       case result do
@@ -105,8 +133,11 @@ defmodule Test.Service.MailboxTest do
 
     send(self(), {:collect_stop_results, [{"child_id1", :custom_ok}], node()})
 
-    assert Mailbox.collect_stop_results(hub, opts) ===
-             {:error, {[{:undefined, node(), :node_receive_timeout}], [{"child_id1", [node()]}]}}
+    assert Mailbox.collect_stop_results(hub, opts) === %ProcessHub.StopResult{
+             errors: [{:undefined, node(), :node_receive_timeout}],
+             status: :error,
+             stopped: [{"child_id1", [node()]}]
+           }
   end
 
   test "receive child resp" do

@@ -1,6 +1,7 @@
 defmodule Test.Service.DistributorTest do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Distributor
+  alias ProcessHub
 
   use ProcessHub.Constant.Event
   use ExUnit.Case
@@ -88,11 +89,11 @@ defmodule Test.Service.DistributorTest do
     }
 
     Distributor.init_children(hub, [cs1, cs2],
-      async_wait: true,
+      awaitable: true,
       check_existing: true,
       timeout: 5000
     )
-    |> ProcessHub.await()
+    |> ProcessHub.Future.await()
 
     sync_strategy = ProcessHub.Service.Storage.get(misc_storage, :synchronization_strategy)
 
@@ -113,11 +114,11 @@ defmodule Test.Service.DistributorTest do
     }
 
     Distributor.init_children(hub, [child_spec, child_spec2],
-      async_wait: true,
+      awaitable: true,
       check_existing: false,
       timeout: 5000
     )
-    |> ProcessHub.await()
+    |> ProcessHub.Future.await()
 
     local_node = node()
     res = ProcessRegistry.dump(hub.hub_id) |> Keyword.new()
@@ -138,18 +139,18 @@ defmodule Test.Service.DistributorTest do
     }
 
     Distributor.init_children(hub, [child_spec],
-      async_wait: true,
+      awaitable: true,
       check_existing: true,
       timeout: 1000
     )
-    |> ProcessHub.await()
+    |> ProcessHub.Future.await()
 
     Distributor.stop_children(hub, [child_spec.id],
-      async_wait: true,
+      awaitable: true,
       check_existing: true,
       timeout: 1000
     )
-    |> ProcessHub.await()
+    |> ProcessHub.Future.await()
 
     assert ProcessRegistry.dump(hub.hub_id) === %{}
   end

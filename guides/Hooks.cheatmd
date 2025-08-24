@@ -97,7 +97,7 @@ end
 ## Using hooks to react and handle asynchronous events
 
 Sometimes when starting a child process, it is necessary to know when the child process has been
-started and is ready to receive messages. We sure could use the `:async_wait` option but that would
+started and is ready to receive messages. We could use the `:awaitable` option with the `ProcessHub.Future.await/1` but that would
 block the process that is starting the child process. Instead, we can use hooks to react to the
 `:pre_children_start` event asynchronously.
 

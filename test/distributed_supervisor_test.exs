@@ -2,6 +2,7 @@ defmodule Test.Service.DistributedSupervisorTest do
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
+  alias ProcessHub.Future
 
   use ExUnit.Case
 
@@ -29,10 +30,10 @@ defmodule Test.Service.DistributedSupervisorTest do
     }
 
     ProcessHub.start_children(@hub_id, [child_spec1, child_spec2],
-      async_wait: true,
+      awaitable: true,
       timeout: 4000
     )
-    |> ProcessHub.await()
+    |> Future.await()
 
     GenServer.cast(:self_shutdown_1, {:stop, :normal})
     GenServer.cast(:self_shutdown_2, {:stop, :shutdown})

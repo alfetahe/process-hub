@@ -297,7 +297,7 @@ defmodule Test.Helper.Common do
   end
 
   def sync_start(hub_id, child_specs) do
-    ProcessHub.start_children(hub_id, child_specs, async_wait: true)
-    |> ProcessHub.await()
+    ProcessHub.start_children(hub_id, child_specs, awaitable: true)
+    |> ProcessHub.Future.await()
   end
 end

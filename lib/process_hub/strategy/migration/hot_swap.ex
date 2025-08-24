@@ -56,6 +56,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Strategy.Migration.HotSwap
+  alias ProcessHub.StartResult
 
   @typedoc """
   Hot-swap migration strategy configuration.
@@ -194,7 +195,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       ]
 
       success_results =
-        case Mailbox.collect_start_results(hub, opts) do
+        case Mailbox.collect_start_results(hub, opts) |> StartResult.format() do
           {:ok, results} ->
             results
 

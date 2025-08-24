@@ -1,5 +1,7 @@
 defmodule ProcessHub.Service.Mailbox do
   alias ProcessHub.Service.Cluster
+  alias ProcessHub.StartResult
+  alias ProcessHub.StopResult
   alias ProcessHub.Hub
 
   @moduledoc """
@@ -9,8 +11,7 @@ defmodule ProcessHub.Service.Mailbox do
   @doc """
   Waits for multiple child process startup results.
   """
-  @spec collect_start_results(Hub.t(), keyword()) ::
-          {:ok, list()} | {:error, {list(), list()}}
+  @spec collect_start_results(Hub.t(), keyword()) :: StartResult.t()
   def collect_start_results(hub, opts) do
     result_handler =
       Keyword.get(opts, :result_handler, fn _cid, _node, result ->
@@ -20,7 +21,10 @@ defmodule ProcessHub.Service.Mailbox do
         end
       end)
 
-    opts = Keyword.put(opts, :receive_key, :collect_start_results)
+    opts =
+      opts
+      |> Keyword.put(:action, :start)
+      |> Keyword.put(:receive_key, :collect_start_results)
 
     collect_transition_results(hub, result_handler, opts)
   end
@@ -28,8 +32,7 @@ defmodule ProcessHub.Service.Mailbox do
   @doc """
   Waits for multiple child process termination results.
   """
-  @spec collect_stop_results(Hub.t(), keyword()) ::
-          {:ok, list()} | {:error, {list(), list()}}
+  @spec collect_stop_results(Hub.t(), keyword()) :: StopResult.t()
   def collect_stop_results(hub, opts) do
     result_handler =
       Keyword.get(opts, :result_handler, fn _child_id, _node, resp ->
@@ -39,7 +42,10 @@ defmodule ProcessHub.Service.Mailbox do
         end
       end)
 
-    opts = Keyword.put(opts, :receive_key, :collect_stop_results)
+    opts =
+      opts
+      |> Keyword.put(:action, :stop)
+      |> Keyword.put(:receive_key, :collect_stop_results)
 
     collect_transition_results(hub, result_handler, opts)
   end
@@ -91,6 +97,7 @@ defmodule ProcessHub.Service.Mailbox do
     timeout = Keyword.get(opts, :timeout)
     recv_key = Keyword.get(opts, :receive_key)
     required_cids = Keyword.get(opts, :required_cids, [])
+    action = Keyword.get(opts, :action)
 
     collect_from =
       Keyword.get(
@@ -112,12 +119,27 @@ defmodule ProcessHub.Service.Mailbox do
         required_cids
       )
 
-    case length(errors) > 0 do
-      false ->
-        {:ok, success_results}
+    status =
+      cond do
+        length(errors) > 0 -> :error
+        true -> :ok
+      end
 
-      true ->
-        {:error, {errors, success_results}}
+    case action do
+      :start ->
+        %StartResult{
+          status: status,
+          started: success_results,
+          errors: errors,
+          rollback: false
+        }
+
+      :stop ->
+        %StopResult{
+          status: status,
+          stopped: success_results,
+          errors: errors
+        }
     end
   end
 

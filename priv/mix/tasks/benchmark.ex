@@ -72,10 +72,10 @@ defmodule Mix.Tasks.Benchmark do
   end
 
   defp start_stop_processes(hub_id, child_specs, cids) do
-    ProcessHub.start_children(hub_id, child_specs, async_wait: true, timeout: 60_000)
-    |> ProcessHub.await()
+    ProcessHub.start_children(hub_id, child_specs, awaitable: true, timeout: 60_000)
+    |> ProcessHub.Future.await()
 
-    ProcessHub.stop_children(hub_id, cids, async_wait: true, timeout: 60_000)
-    |> ProcessHub.await()
+    ProcessHub.stop_children(hub_id, cids, awaitable: true, timeout: 60_000)
+    |> ProcessHub.Future.await()
   end
 end
