@@ -153,7 +153,7 @@ ProcessHub.stop_child(:my_hub, "my_process_1", awaitable: true)
 
 ## Formatting and extracting information from the results
 
-When using awaitable operations, ProcessHub returns `ProcessHub.StartResult.t()` and `ProcessHub.StopResult.t()` structs that contain detailed information about the operation. These structs provide both formatting functions and convenient accessor functions to extract specific information.
+When using awaitable operations, ProcessHub returns `ProcessHub.StartResult` and `ProcessHub.StopResult` structs that contain detailed information about the operation. These structs provide both formatting functions and convenient accessor functions to extract specific information.
 
 ### StartResult API Functions
 
