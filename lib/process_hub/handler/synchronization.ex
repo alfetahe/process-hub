@@ -32,7 +32,7 @@ defmodule ProcessHub.Handler.Synchronization do
       unless State.is_locked?(arg.hub) do
         hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
-        SynchronizationStrategy.init_sync(sync_strat, hub.hub_id, hub_nodes)
+        SynchronizationStrategy.init_sync(sync_strat, hub, hub_nodes)
       end
 
       :ok

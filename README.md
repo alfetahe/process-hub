@@ -20,7 +20,7 @@ The default distribution strategy is based on consistent hashing.
 > ProcessHub is built with scalability and availability in mind. 
 > Most of the operations are asynchronous and non-blocking. It can guarantee **eventual consistency**.
 >
-> this means that the system may not be in a consistent state at all times, 
+> The system may not be in a consistent state at all times, 
 > but it will eventually converge to a consistent state.
 
 ## Features
