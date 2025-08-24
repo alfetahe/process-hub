@@ -86,6 +86,32 @@ defmodule Test.Service.MailboxTest do
                errors: [{:undefined, node(), :node_receive_timeout}],
                rollback: false
              }
+
+    opts = [collect_from: [:first_node, :second_node, :third_node], timeout: 1]
+
+    send(
+      self(),
+      {:collect_start_results, [{"child_id1", {:ok, :pid1}}, {"child_id2", {:ok, :pid1}}],
+       :first_node}
+    )
+
+    send(
+      self(),
+      {:collect_start_results, [{"child_id1", {:ok, :pid2}}, {"child_id2", {:ok, :pid1}}],
+       :second_node}
+    )
+
+    send(self(), {:collect_start_results, [{"child_id1", {:ok, :pid3}}], :third_node})
+
+    assert Mailbox.collect_start_results(hub, opts) === %ProcessHub.StartResult{
+             errors: [],
+             rollback: false,
+             started: [
+               {"child_id2", [second_node: :pid1, first_node: :pid1]},
+               {"child_id1", [third_node: :pid3, second_node: :pid2, first_node: :pid1]}
+             ],
+             status: :ok
+           }
   end
 
   test "collect stop", %{hub: hub} do

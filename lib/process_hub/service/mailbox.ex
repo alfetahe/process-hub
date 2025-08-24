@@ -211,7 +211,7 @@ defmodule ProcessHub.Service.Mailbox do
             nil ->
               [{cid, [{node, res}]} | success_results]
 
-            existing_results ->
+            {_cid, existing_results} ->
               List.keyreplace(success_results, cid, 0, {cid, [{node, res} | existing_results]})
           end
 
