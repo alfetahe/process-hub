@@ -138,7 +138,7 @@ defmodule ProcessHub do
   - `:hubs_discover_interval` is optional and is used to define the interval in milliseconds
   for hubs to start the discovery process. The default is `60000` (1 minute).
   - `:deadlock_recovery_timeout` is optional and is used to define the timeout in milliseconds
-  to recover from locked hub. Hub locking can happen for different reasons
+  to recover from a locked hub. Hub locking can happen for different reasons
   such as updating internal data, migrating processes or handling network partitions.
   The default is `60000` (1 minute).
   - `:storage_purge_interval` is optional and is used to define the interval in milliseconds
@@ -154,7 +154,7 @@ defmodule ProcessHub do
   See `Supervisor` child specification for more information. The default is `4`.
   - `:dsup_shutdown_timeout` is optional and is used to define the timeout in milliseconds
   for the distributed supervisor to wait before forcefully terminating itself
-   when receiving a shutdown signal.
+  when receiving a shutdown signal.
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -225,8 +225,15 @@ defmodule ProcessHub do
   redundancy strategy is configured for replicas, it may contain more than one tuple.
 
       iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, [nil]}}
-      iex> ProcessHub.start_child(:my_hub, child_spec, [async_wait: true]) |> ProcessHub.await()
-      {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
+      iex> future = ProcessHub.start_child(:my_hub, child_spec, [awaitable: true])
+      {:ok, %ProcessHub.Future{}}
+      iex> ProcessHub.Future.await(future)
+      %ProcessHub.StartResult{
+        status: :ok,
+        started: [{"my_child", [{:mynode, #PID<0.123.0>}]}],
+        errors: [],
+        rollback: false
+      }
   """
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
           {:ok, :start_initiated}
@@ -239,7 +246,7 @@ defmodule ProcessHub do
   @doc """
   Starts multiple child processes that will be distributed across the cluster.
 
-  Same as `start_child/3`, except it starts multiple children at once and is more
+  Same as `start_child/3`, except that it starts multiple children at once and is more
   efficient than calling `start_child/3` multiple times.
 
   > #### Warning {: .warning}
@@ -262,8 +269,8 @@ defmodule ProcessHub do
   Stops a child process in the cluster.
 
   By default, this function is **asynchronous** and returns immediately.
-  You can wait for the child to stop by passing `async_wait: true` in the `opts` argument.
-  When `async_wait: true`, you **must await** the response from the function.
+  You can wait for the child to stop by passing `awaitable: true` in the `opts` argument and
+  using the `ProcessHub.Future.await/1` function on the returned value.
 
   ## Example
       iex> ProcessHub.stop_child(:my_hub, :my_child)
@@ -272,8 +279,12 @@ defmodule ProcessHub do
   See `t:stop_opts/0` for more options.
 
   ## Example with synchronous wait
-      iex> ProcessHub.stop_child(:my_hub, :my_child, [async_wait: true]) |> ProcessHub.await()
-      {:ok, {:my_child, [:mynode]}}
+      iex> ProcessHub.stop_child(:my_hub, :my_child, [awaitable: true]) |> ProcessHub.Future.await()
+      %ProcessHub.StopResult{
+        status: :ok,
+        stopped: [{"my_child", [:node1]}],
+        errors: []
+      }
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
           {:ok, :stop_initiated} | {:ok, Future.t()}
@@ -289,8 +300,8 @@ defmodule ProcessHub do
 
   > #### Warning {: .info}
   >
-  > Using `stop_children/3` with `async_wait: true` can lead to timeout errors,
-  > especially when stopping a large number of child processes.
+  > Using `stop_children/3` with `awaitable: true` can lead to timeout errors
+  > when stopping a large number of child processes.
   """
   @spec stop_children(hub_id(), [child_id()], stop_opts()) ::
           {:ok, :stop_initiated}
@@ -331,7 +342,7 @@ defmodule ProcessHub do
   Checks if the `ProcessHub` with the given `t:hub_id/0` is alive.
 
   A hub is considered alive if the `ProcessHub.Coordinator` process is
-  running for the hub to function.
+  running for the hub to function properly.
 
   ## Example
       iex> ProcessHub.is_alive?(:not_existing)
@@ -345,13 +356,13 @@ defmodule ProcessHub do
     end
   end
 
-  @deprecated "Deprecated in favor of `ProcessHub.Future.await/1`. This function will be removed in the 0.5.x version.
-  The `:rollback` option does not work with the deprecated function."
+  @deprecated "Use `ProcessHub.Future.await/1` instead. This function will be removed in the 0.5.x version.
+  The `:rollback` option does not work with this function."
   @doc """
   This function can be used to wait for the `ProcessHub` child start or stop
   functions to complete.
 
-  The `await/1` function should be used with the `async_wait: true` option.
+  The `await/1` function should only be used with the `async_wait: true` option.
 
   Keep in mind that the `await/1` function will block the calling process until
   the response is received. If the response is not received within the timeout
@@ -445,7 +456,7 @@ defmodule ProcessHub do
       iex> ref = ProcessHub.start_child(:my_hub, child_spec, [metadata: %{tag: "my_tag"}])
       {:ok, :start_initiated}
 
-      iex> Process.sleep(300) # We did not use the async_wait option so we need to wait.
+      iex> Process.sleep(300) # Just to ensure the process has started. You can await the future if needed.
       iex> ProcessHub.tag_query(:my_hub, "my_tag")
       [
         {:my_child, [{:mynode, #PID<0.123.0>}],
@@ -486,8 +497,8 @@ defmodule ProcessHub do
   @doc """
   Returns the first pid for the given child_id.
 
-  Although the function can be handy to quickly get the pid of the child, it is
-  not recommended to use with replication strategies as it will return the first pid only.
+  Although this function can be handy to quickly get the pid of the child, it is
+  not recommended for use with replication strategies as it will return only the first pid.
 
   ## Example
       iex> ProcessHub.get_pid(:my_hub, :my_child)
@@ -530,7 +541,7 @@ defmodule ProcessHub do
 
   A hub is considered locked if the `ProcessHub` local event queue has a priority level
   greater than or equal to 10. This is used to throttle the hub from processing
-  any new events and conserve data integrity.
+  any new events and preserve data integrity.
 
   ## Example
       iex> ProcessHub.is_locked?(:my_hub)
