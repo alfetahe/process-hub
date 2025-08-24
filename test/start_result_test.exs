@@ -29,7 +29,7 @@ defmodule StartResultTest do
     test "creates struct with multiple started processes" do
       pid1 = self()
       pid2 = spawn(fn -> :ok end)
-      
+
       result = %StartResult{
         status: :ok,
         started: [
@@ -75,7 +75,8 @@ defmodule StartResultTest do
         rollback: true
       }
 
-      assert StartResult.format(result) == {:error, {[{"child1", :timeout}], [{"child2", [{:node1, self()}]}]}, :rollback}
+      assert StartResult.format(result) ==
+               {:error, {[{"child1", :timeout}], [{"child2", [{:node1, self()}]}]}, :rollback}
     end
 
     test "formats error result without rollback" do
@@ -86,7 +87,8 @@ defmodule StartResultTest do
         rollback: false
       }
 
-      assert StartResult.format(result) == {:error, {[{"child1", :timeout}], [{"child2", [{:node1, self()}]}]}}
+      assert StartResult.format(result) ==
+               {:error, {[{"child1", :timeout}], [{"child2", [{:node1, self()}]}]}}
     end
 
     test "formats error result with rollback nil (defaults to no rollback)" do
@@ -97,7 +99,8 @@ defmodule StartResultTest do
         rollback: nil
       }
 
-      assert StartResult.format(result) == {:error, {[{"child1", :timeout}], [{"child2", [{:node1, self()}]}]}}
+      assert StartResult.format(result) ==
+               {:error, {[{"child1", :timeout}], [{"child2", [{:node1, self()}]}]}}
     end
 
     test "formats ok result" do
@@ -121,7 +124,7 @@ defmodule StartResultTest do
     test "formats ok result with multiple started processes" do
       pid1 = self()
       pid2 = spawn(fn -> :ok end)
-      
+
       result = %StartResult{
         status: :ok,
         started: [
@@ -136,6 +139,7 @@ defmodule StartResultTest do
         {"child2", [{:node2, pid2}]},
         {"child3", [{:node1, pid1}, {:node2, pid2}]}
       ]
+
       assert StartResult.format(result) == {:ok, expected}
     end
 
@@ -152,11 +156,11 @@ defmodule StartResultTest do
       pid1 = self()
       pid2 = spawn(fn -> :ok end)
       pid3 = spawn(fn -> :ok end)
-      
+
       result = %StartResult{
         status: :error,
         errors: [
-          {"child1", :timeout}, 
+          {"child1", :timeout},
           {"child2", {:error, :badarg}},
           {"child3", {:shutdown, :normal}},
           {"child4", "custom error"}
@@ -169,23 +173,25 @@ defmodule StartResultTest do
       }
 
       expected_errors = [
-        {"child1", :timeout}, 
+        {"child1", :timeout},
         {"child2", {:error, :badarg}},
         {"child3", {:shutdown, :normal}},
         {"child4", "custom error"}
       ]
+
       expected_started = [
         {"child5", [{:node1, pid1}]},
         {"child6", [{:node2, pid2}]},
         {"child7", [{:node1, pid3}, {:node3, pid1}]}
       ]
+
       assert StartResult.format(result) == {:error, {expected_errors, expected_started}}
     end
 
     test "formats error result with multiple started processes" do
       pid1 = self()
       pid2 = spawn(fn -> :ok end)
-      
+
       result = %StartResult{
         status: :error,
         errors: [{"child1", :timeout}],
@@ -196,16 +202,18 @@ defmodule StartResultTest do
       }
 
       expected_errors = [{"child1", :timeout}]
+
       expected_started = [
         {"child2", [{:node1, pid1}]},
         {"child3", [{:node2, pid2}]}
       ]
+
       assert StartResult.format(result) == {:error, {expected_errors, expected_started}}
     end
 
     test "formats error result with processes started on multiple nodes" do
       pid1 = self()
-      
+
       result = %StartResult{
         status: :error,
         errors: [{"child1", :timeout}],
@@ -235,7 +243,7 @@ defmodule StartResultTest do
     test "extracts multiple errors with different types" do
       result = %StartResult{
         errors: [
-          {"child1", :timeout}, 
+          {"child1", :timeout},
           {"child2", {:error, :badarg}},
           {:child3, {:shutdown, :normal}},
           {"child4", "string error"},
@@ -244,12 +252,13 @@ defmodule StartResultTest do
       }
 
       expected = [
-        {"child1", :timeout}, 
+        {"child1", :timeout},
         {"child2", {:error, :badarg}},
         {:child3, {:shutdown, :normal}},
         {"child4", "string error"},
         {"child5", 42}
       ]
+
       assert StartResult.errors(result) == expected
     end
 
@@ -292,7 +301,7 @@ defmodule StartResultTest do
   describe "edge cases and type conformance" do
     test "handles empty struct" do
       result = %StartResult{}
-      
+
       assert StartResult.errors(result) == nil
       assert StartResult.status(result) == nil
     end
@@ -334,7 +343,233 @@ defmodule StartResultTest do
         {"child3", "string error"},
         {"child4", 42}
       ]
+
       assert StartResult.format(result) == {:error, {expected_errors, []}}
+    end
+  end
+
+  describe "pid/1" do
+    test "returns first result's first pid" do
+      pid1 = self()
+      pid2 = spawn(fn -> :ok end)
+
+      result = %StartResult{
+        started: [
+          {"child1", [{:node1, pid1}, {:node2, pid2}]},
+          {"child2", [{:node3, pid2}]}
+        ]
+      }
+
+      assert StartResult.pid(result) == pid1
+    end
+
+    test "returns pid when only one started process" do
+      pid = self()
+
+      result = %StartResult{
+        started: [{"child1", [{:node1, pid}]}]
+      }
+
+      assert StartResult.pid(result) == pid
+    end
+
+    test "returns nil when no started processes" do
+      result = %StartResult{started: []}
+      assert StartResult.pid(result) == nil
+    end
+  end
+
+  describe "pids/1" do
+    test "returns all pids from all started processes" do
+      pid1 = self()
+      pid2 = spawn(fn -> :ok end)
+      pid3 = spawn(fn -> :ok end)
+
+      result = %StartResult{
+        started: [
+          {"child1", [{:node1, pid1}, {:node2, pid2}]},
+          {"child2", [{:node3, pid3}]}
+        ]
+      }
+
+      pids = StartResult.pids(result)
+      assert length(pids) == 3
+      assert pid1 in pids
+      assert pid2 in pids
+      assert pid3 in pids
+    end
+
+    test "returns single pid in list when one started process" do
+      pid = self()
+
+      result = %StartResult{
+        started: [{"child1", [{:node1, pid}]}]
+      }
+
+      assert StartResult.pids(result) == [pid]
+    end
+
+    test "returns empty list when no started processes" do
+      result = %StartResult{started: []}
+      assert StartResult.pids(result) == []
+    end
+
+    test "handles multiple pids per child on same node" do
+      pid1 = self()
+      pid2 = spawn(fn -> :ok end)
+
+      result = %StartResult{
+        started: [{"child1", [{:node1, pid1}, {:node1, pid2}]}]
+      }
+
+      pids = StartResult.pids(result)
+      assert length(pids) == 2
+      assert pid1 in pids
+      assert pid2 in pids
+    end
+  end
+
+  describe "node/1" do
+    test "returns first result's first node" do
+      pid1 = self()
+      pid2 = spawn(fn -> :ok end)
+
+      result = %StartResult{
+        started: [
+          {"child1", [{:node1, pid1}, {:node2, pid2}]},
+          {"child2", [{:node3, pid2}]}
+        ]
+      }
+
+      assert StartResult.node(result) == :node1
+    end
+
+    test "returns node when only one started process" do
+      pid = self()
+
+      result = %StartResult{
+        started: [{"child1", [{:special_node, pid}]}]
+      }
+
+      assert StartResult.node(result) == :special_node
+    end
+
+    test "returns nil when no started processes" do
+      result = %StartResult{started: []}
+      assert StartResult.node(result) == nil
+    end
+  end
+
+  describe "nodes/1" do
+    test "returns all unique nodes from all started processes" do
+      pid1 = self()
+      pid2 = spawn(fn -> :ok end)
+
+      result = %StartResult{
+        started: [
+          {"child1", [{:node1, pid1}, {:node2, pid2}]},
+          {"child2", [{:node3, pid1}, {:node1, pid2}]}
+        ]
+      }
+
+      nodes = StartResult.nodes(result)
+      assert length(nodes) == 3
+      assert :node1 in nodes
+      assert :node2 in nodes
+      assert :node3 in nodes
+    end
+
+    test "returns single node in list when one node" do
+      pid = self()
+
+      result = %StartResult{
+        started: [{"child1", [{:node1, pid}]}]
+      }
+
+      assert StartResult.nodes(result) == [:node1]
+    end
+
+    test "returns empty list when no started processes" do
+      result = %StartResult{started: []}
+      assert StartResult.nodes(result) == []
+    end
+
+    test "deduplicates repeated nodes" do
+      pid1 = self()
+      pid2 = spawn(fn -> :ok end)
+
+      result = %StartResult{
+        started: [
+          {"child1", [{:node1, pid1}]},
+          {"child2", [{:node1, pid2}]},
+          {"child3", [{:node1, pid1}]}
+        ]
+      }
+
+      assert StartResult.nodes(result) == [:node1]
+    end
+
+    test "handles mixed node types" do
+      pid = self()
+
+      result = %StartResult{
+        started: [
+          {"child1", [{:atom_node, pid}]},
+          {"child2", [{"string_node", pid}]}
+        ]
+      }
+
+      nodes = StartResult.nodes(result)
+      assert length(nodes) == 2
+      assert :atom_node in nodes
+      assert "string_node" in nodes
+    end
+  end
+
+  describe "first/1" do
+    test "returns first started item tuple" do
+      pid1 = self()
+      pid2 = spawn(fn -> :ok end)
+
+      result = %StartResult{
+        started: [
+          {"child1", [{:node1, pid1}]},
+          {"child2", [{:node2, pid2}]}
+        ]
+      }
+
+      assert StartResult.first(result) == {"child1", [{:node1, pid1}]}
+    end
+
+    test "returns only item when one started process" do
+      pid = self()
+
+      result = %StartResult{
+        started: [{"only_child", [{:node1, pid}]}]
+      }
+
+      assert StartResult.first(result) == {"only_child", [{:node1, pid}]}
+    end
+
+    test "returns nil when no started processes" do
+      result = %StartResult{started: []}
+      assert StartResult.first(result) == nil
+    end
+
+    test "returns first item with complex node-pid structure" do
+      pid1 = self()
+      pid2 = spawn(fn -> :ok end)
+      pid3 = spawn(fn -> :ok end)
+
+      result = %StartResult{
+        started: [
+          {"child1", [{:node1, pid1}, {:node2, pid2}, {:node3, pid3}]},
+          {"child2", [{:node4, pid1}]}
+        ]
+      }
+
+      expected = {"child1", [{:node1, pid1}, {:node2, pid2}, {:node3, pid3}]}
+      assert StartResult.first(result) == expected
     end
   end
 end

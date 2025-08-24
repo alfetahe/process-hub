@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 ## v0.3.4-alpha - YYYY-mm-dd
 TODO:
 
+### Added
+- `ProcessHub.StartResult` module which can be used to format and manipulate the results of process startups. This struct is returned by the `ProcessHub.Future.await/1` function.
+- `ProcessHub.StopResult` module which can be used to format and manipulate the results of process shutdowns. This struct is returned by the `ProcessHub.Future.await/1` function.
+
 ### Fixed
 - Using the `async_wait` option on process startup or shutdown now returns a promise that can be awaited instead of a function. This avoids polluting the caller's mailbox if the caller does not await the result. It also prevents the caller from receiving messages from their mailbox before executing the await function.
 The new `:await_timeout` option specifies a timeout for the spawned collector process to wait before automatically terminating itself.

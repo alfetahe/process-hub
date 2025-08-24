@@ -19,4 +19,43 @@ defmodule ProcessHub.StartResult do
 
   def status(%__MODULE__{status: status}), do: status
   def status({:error, reason}), do: {:error, reason}
+
+  def pid(%__MODULE__{started: started}) do
+    case List.first(started) do
+      nil -> nil
+      first_item -> 
+        first_item
+        |> elem(1)
+        |> List.first()
+        |> elem(1)
+    end
+  end
+
+  def pids(%__MODULE__{started: started}) do
+    started
+    |> Enum.flat_map(fn {_, node_pids} -> node_pids end)
+    |> Enum.map(fn {_node, pid} -> pid end)
+  end
+
+  def node(%__MODULE__{started: started}) do
+    case List.first(started) do
+      nil -> nil
+      first_item -> 
+        first_item
+        |> elem(1)
+        |> List.first()
+        |> elem(0)
+    end
+  end
+
+  def nodes(%__MODULE__{started: started}) do
+    started
+    |> Enum.flat_map(fn {_, node_pids} -> node_pids end)
+    |> Enum.map(fn {node, _pid} -> node end)
+    |> Enum.uniq()
+  end
+
+  def first(%__MODULE__{started: started}) do
+    List.first(started)
+  end
 end
