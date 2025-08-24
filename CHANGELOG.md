@@ -12,6 +12,11 @@ The new `:await_timeout` option specifies a timeout for the spawned collector pr
 ### Changed
 - All public API functions defined in the `ProcessHub` module now call the coordinator process instead of calling the services directly.
 This avoids the potential issue of generating new atoms when calling those functions with a `hub_id` that is not known to the system.
+- Calling `ProcessHub.start_child/3`, `ProcessHub.start_children/3`, `ProcessHub.stop_child/3`, `ProcessHub.stop_child/3` with the `awaitable: true` option (or deprecated `async_wait: true`) now returns a `ProcessHub.Future.t()` struct that can be awaited instead of regular anonymous function. Calling `ProcessHub.Future.await/1` will either return `ProcessHub.StartResult.t()` or `ProcessHub.StopResult.t()` instead of tuples.
+
+### Deprecated
+- The option `:async_wait` is deprecated in favor of `:awaitable`. This option will be removed in the 0.5.x version.
+- `ProcessHub.await/1` is deprecated in favor of `ProcessHub.Future.await/1`. The `ProcessHub.await/1` function will be removed in the 0.5.x version or replaced with the new implementation.
 
 ### Soft deprecations
 - `ProcessHub.which_children/2` is soft deprecated. Use `ProcessHub.process_list/2` instead.

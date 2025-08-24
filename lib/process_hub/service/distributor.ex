@@ -260,6 +260,19 @@ defmodule ProcessHub.Service.Distributor do
                 nil
 
               {:process_hub, :collect_results, from, ^ref} ->
+                # TODO: backward compatibility for :async_wait
+                results =
+                  case(Keyword.get(opts, :return_first, false)) do
+                    true ->
+                      case StartResult.format(results) do
+                        {:ok, formatted} -> {:ok, List.first(formatted)}
+                        {:error, _} -> {:error, results}
+                      end
+
+                    false ->
+                      results
+                  end
+
                 send(from, {:process_hub, :async_results, ref, results})
             end
 
@@ -333,10 +346,38 @@ defmodule ProcessHub.Service.Distributor do
           Keyword.get(opts, :await_timeout, 60_000)
         )
 
+        # TODO: backward compatibility for :async_wait
+        result_module =
+          case start_or_stop do
+            :start -> ProcessHub.StartResult
+            :stop -> ProcessHub.StopResult
+          end
+
         results =
           case start_or_stop do
             :start -> Mailbox.collect_start_results(hub, opts)
             :stop -> Mailbox.collect_stop_results(hub, opts)
+          end
+
+        # TODO: backward compatibility for :async_wait
+        results =
+          case Keyword.get(opts, :async_wait, false) do
+            true ->
+              formatted_res = apply(result_module, :format, [results])
+
+              case Keyword.get(opts, :return_first, false) do
+                false ->
+                  formatted_res
+
+                true ->
+                  case formatted_res do
+                    {:ok, formatted} -> {:ok, List.first(formatted)}
+                    {:error, {errs, succ}} -> {:error, {List.first(errs), succ}}
+                  end
+              end
+
+            false ->
+              results
           end
 
         receive do

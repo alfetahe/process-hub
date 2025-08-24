@@ -345,6 +345,8 @@ defmodule ProcessHub do
     end
   end
 
+  @deprecated "Deprecated in favor of `ProcessHub.Future.await/1`. This function will be removed in the 0.5.x version.
+  The `:rollback` option does not work with the deprecated function."
   @doc """
   This function can be used to wait for the `ProcessHub` child start or stop
   functions to complete.

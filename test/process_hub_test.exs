@@ -36,7 +36,7 @@ defmodule ProcessHubTest do
     assert ProcessHub.start_children(hub_id, [cs4], awaitable: true, timeout: 0)
            |> ProcessHub.Future.await()
            |> ProcessHub.StartResult.format() ===
-             {:error, :timeout}
+             {:error, {[{:undefined, :"process_hub@127.0.0.1", :node_receive_timeout}], []}}
 
     {status, results} =
       ProcessHub.start_children(hub_id, [cs5, cs5], awaitable: true, timeout: 1000)
@@ -142,7 +142,8 @@ defmodule ProcessHubTest do
 
     assert ProcessHub.start_child(hub_id, cs4, awaitable: true, timeout: 0)
            |> ProcessHub.Future.await()
-           |> ProcessHub.StartResult.format() === {:error, :timeout}
+           |> ProcessHub.StartResult.format() ===
+             {:error, {[{:undefined, :"process_hub@127.0.0.1", :node_receive_timeout}], []}}
 
     ProcessHub.Service.Dispatcher.reply_respondents(
       [self()],
