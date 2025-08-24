@@ -58,4 +58,9 @@ defmodule ProcessHub.StartResult do
   def first(%__MODULE__{started: started}) do
     List.first(started)
   end
+
+  def cids(%__MODULE__{started: started}) do
+    started
+    |> Enum.map(fn {cid, _node_pids} -> cid end)
+  end
 end
