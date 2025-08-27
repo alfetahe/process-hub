@@ -5,7 +5,6 @@ defmodule ProcessHub.Service.Cluster do
   """
 
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.StorageKey
@@ -57,12 +56,6 @@ defmodule ProcessHub.Service.Cluster do
       false -> Enum.filter(nodes, &(&1 !== node()))
       true -> nodes
     end
-  end
-
-  @doc "Sends a cluster join event to the remote node."
-  @spec propagate_self(atom(), node()) :: term()
-  def propagate_self(event_queue, node) do
-    Dispatcher.propagate_event(event_queue, @event_cluster_join, node(), %{members: [node]})
   end
 
   @doc "Promotes the current node to a cluster node."

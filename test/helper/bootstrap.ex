@@ -130,7 +130,7 @@ defmodule Test.Helper.Bootstrap do
 
     msg_count =
       case new_nodes do
-        false -> nodes_count
+        false -> nodes_count * length(nodes)
         true -> length(nodes)
       end
 

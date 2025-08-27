@@ -76,12 +76,8 @@ defmodule ProcessHub.Coordinator do
     register_handlers(procs)
     register_handlers(storage.hook, settings.hooks)
 
-    {:ok, state, {:continue, :additional_setup}}
-  end
-
-  @impl true
-  def handle_continue(:additional_setup, state) do
     local_store = state.storage.misc
+    event_queue = state.procs.event_queue
 
     PartitionToleranceStrategy.init(
       Storage.get(local_store, StorageKey.strpart()),
@@ -98,14 +94,25 @@ defmodule ProcessHub.Coordinator do
     schedule_hub_discovery(Storage.get(local_store, StorageKey.hdi()))
     schedule_sync(Storage.get(local_store, StorageKey.strsyn()))
 
-    # TODO: is it okay to dispatch all nodes?
-    Enum.each(Node.list(), fn node ->
-      :erlang.send({state.hub_id, node}, {@event_cluster_join, node()}, [])
-    end)
+    # Monitor cluster join events.
+    Blockade.monitor_handlers(event_queue, @event_cluster_join)
 
-    # TODO: handlers are not registered in some cases thats why dispatching may fail..
-    # Dispatcher.propagate_event(state.hub_id, @event_cluster_join, node(), %{members: :external})
+    # Emit cluster join event.
+    Dispatcher.propagate_event(event_queue, @event_cluster_join, node(), %{
+      members: :external
+    })
 
+    # Make sure we register all joined hub nodes.
+    event_queue
+    |> Blockade.get_handlers(@event_cluster_join)
+    |> elem(1)
+    |> join_handlers(state)
+
+    {:ok, state, {:continue, :additional_setup}}
+  end
+
+  @impl true
+  def handle_continue(:additional_setup, state) do
     {:noreply, state}
   end
 
@@ -255,18 +262,16 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({:nodeup, node}, state) do
-    Cluster.propagate_self(state.procs.event_queue, node)
-
-    {:noreply, state}
-  end
-
-  @impl true
   def handle_info({:nodedown, node}, state) do
     Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave, node, %{
       members: :local
     })
 
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:nodeup, _node}, state) do
     {:noreply, state}
   end
 
@@ -289,34 +294,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_join, node}, state) do
-    hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
-
-    if Cluster.new_node?(hub_nodes, node) and node() !== node do
-      Cluster.add_hub_node(state.storage.misc, node)
-
-      HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
-
-      unlock_status =
-        PartitionToleranceStrategy.toggle_unlock?(
-          Storage.get(state.storage.misc, StorageKey.strpart()),
-          state,
-          node
-        )
-
-      if unlock_status do
-        State.toggle_quorum_success(state)
-      end
-
-      # Atomic dispatch with locking.
-      # TODO: why not use the dispatch_lock function?
-      Dispatcher.propagate_event(state.procs.event_queue, @event_distribute_children, node, %{
-        members: :local
-      })
-
-      State.lock_event_handler(state)
-      Cluster.propagate_self(state.procs.event_queue, node)
-      HookManager.dispatch_hook(state.storage.hook, Hook.post_cluster_join(), node)
-    end
+    handle_hub_join(state, node)
 
     {:noreply, state}
   end
@@ -438,6 +416,18 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
+    join_handlers(handlers, state)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({_ref, :leave, @event_cluster_join, _handlers}, state) do
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(:propagate, state) do
     state.storage.misc
     |> Storage.get(StorageKey.hdi())
@@ -466,6 +456,48 @@ defmodule ProcessHub.Coordinator do
   ##############################################################################
   ### Private functions
   ##############################################################################
+
+  defp join_handlers(handlers, state) do
+    node_list = Node.list()
+
+    Enum.each(handlers, fn handler_pid ->
+      node = node(handler_pid)
+
+      if Enum.member?(node_list, node) do
+        handle_hub_join(state, node)
+      end
+    end)
+  end
+
+  defp handle_hub_join(state, node) do
+    hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
+
+    if Cluster.new_node?(hub_nodes, node) and node() !== node do
+      Cluster.add_hub_node(state.storage.misc, node)
+
+      HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
+
+      unlock_status =
+        PartitionToleranceStrategy.toggle_unlock?(
+          Storage.get(state.storage.misc, StorageKey.strpart()),
+          state,
+          node
+        )
+
+      if unlock_status do
+        State.toggle_quorum_success(state)
+      end
+
+      # Atomic dispatch with locking.
+      # TODO: why not use the dispatch_lock function?
+      Dispatcher.propagate_event(state.procs.event_queue, @event_distribute_children, node, %{
+        members: :local
+      })
+
+      State.lock_event_handler(state)
+      HookManager.dispatch_hook(state.storage.hook, Hook.post_cluster_join(), node)
+    end
+  end
 
   defp handle_node_down(state, down_node) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])

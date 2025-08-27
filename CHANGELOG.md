@@ -13,6 +13,7 @@ TODO:
 - Using the `async_wait` option on process startup or shutdown now returns a promise that can be awaited instead of a function. This avoids polluting the caller's mailbox if the caller does not await the result. It also prevents the caller from receiving messages from their mailbox before executing the await function.
 The new `:await_timeout` option specifies a timeout for the spawned collector process to wait before automatically terminating itself.
 - Gossip synchronization was sending empty messages during cluster updates.
+- Race condition when multiple nodes were started simultaneously and the cluster information was not seen the same by all nodes.
 
 ### Changed
 - All public API functions defined in the `ProcessHub` module now call the coordinator process instead of calling the services directly.
