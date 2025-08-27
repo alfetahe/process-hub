@@ -51,7 +51,7 @@ defmodule ProcessHub.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:blockade, "~> 0.2.1"},
+      {:blockade, "~> 0.2.2"},
       {:hash_ring, "~> 0.4.2"},
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
       {:benchee, "~> 1.2", only: [:dev, :test]}

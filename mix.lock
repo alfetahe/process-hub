@@ -1,6 +1,6 @@
 %{
   "benchee": {:hex, :benchee, "1.3.0", "f64e3b64ad3563fa9838146ddefb2d2f94cf5b473bdfd63f5ca4d0657bf96694", [:mix], [{:deep_merge, "~> 1.0", [hex: :deep_merge, repo: "hexpm", optional: false]}, {:statistex, "~> 1.0", [hex: :statistex, repo: "hexpm", optional: false]}, {:table, "~> 0.1.0", [hex: :table, repo: "hexpm", optional: true]}], "hexpm", "34f4294068c11b2bd2ebf2c59aac9c7da26ffa0068afdf3419f1b176e16c5f81"},
-  "blockade": {:hex, :blockade, "0.2.1", "2a91de67a337ae146f368cfc0bfc850a0cf9b5390408b323f263f8608ba33361", [:rebar3], [], "hexpm", "d319b643c9bd20b4499e0a2fe254c37ec9e3682ae62ec211a0cabca62ca5f245"},
+  "blockade": {:hex, :blockade, "0.2.2", "96be65f7901d615bc3011306f483e90c43c45eba7c9f3c3bee6e1f089fe03fc8", [:rebar3], [], "hexpm", "abfd1886b11921ecb3d5f55310a3013de94a2300944e81f2429105fe8f8ba5e7"},
   "deep_merge": {:hex, :deep_merge, "1.0.0", "b4aa1a0d1acac393bdf38b2291af38cb1d4a52806cf7a4906f718e1feb5ee961", [:mix], [], "hexpm", "ce708e5f094b9cd4e8f2be4f00d2f4250c4095be93f8cd6d018c753894885430"},
   "earmark_parser": {:hex, :earmark_parser, "1.4.40", "f3534689f6b58f48aa3a9ac850d4f05832654fe257bf0549c08cc290035f70d5", [:mix], [], "hexpm", "cdb34f35892a45325bad21735fadb88033bcb7c4c296a999bde769783f53e46a"},
   "eternal": {:hex, :eternal, "1.2.2", "d1641c86368de99375b98d183042dd6c2b234262b8d08dfd72b9eeaafc2a1abd", [:mix], [], "hexpm", "2c9fe32b9c3726703ba5e1d43a1d255a4f3f2d8f8f9bc19f094c7cb1a7a9e782"},
