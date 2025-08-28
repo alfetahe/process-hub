@@ -114,7 +114,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp propagate_local_children(hub, node) do
       local_processes = Synchronizer.local_sync_data(hub)
-
       local_node = node()
 
       Dispatcher.propagate_event(

@@ -14,6 +14,8 @@ TODO:
 The new `:await_timeout` option specifies a timeout for the spawned collector process to wait before automatically terminating itself.
 - Gossip synchronization was sending empty messages during cluster updates.
 - Race condition when multiple nodes were started simultaneously and the cluster information was not seen the same by all nodes.
+- `ProcessHub.Strategy.PartitionTolerance.StaticQuorum` with `startup_confirm: true` shuts down the distributed supervisor when in partition mode.
+When new nodes joining the cluster this leads to errors when trying to call the dead distributed supervisor process.
 
 ### Changed
 - All public API functions defined in the `ProcessHub` module now call the coordinator process instead of calling the services directly.

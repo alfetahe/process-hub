@@ -79,11 +79,6 @@ defmodule ProcessHub.Coordinator do
     local_store = state.storage.misc
     event_queue = state.procs.event_queue
 
-    PartitionToleranceStrategy.init(
-      Storage.get(local_store, StorageKey.strpart()),
-      state
-    )
-
     # Register the initializer pid on the registry.
     Registry.register(
       state.procs.system_registry,
@@ -91,6 +86,7 @@ defmodule ProcessHub.Coordinator do
       state.procs.initializer
     )
 
+    # Schedule periodic tasks.
     schedule_hub_discovery(Storage.get(local_store, StorageKey.hdi()))
     schedule_sync(Storage.get(local_store, StorageKey.strsyn()))
 
@@ -113,6 +109,13 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_continue(:additional_setup, state) do
+    # Handle partition strategy initialization. This needs to be done
+    # after the coordinator has been started.
+    PartitionToleranceStrategy.init(
+      Storage.get(state.storage.misc, StorageKey.strpart()),
+      state
+    )
+
     {:noreply, state}
   end
 

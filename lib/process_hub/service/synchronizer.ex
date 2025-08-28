@@ -130,7 +130,24 @@ defmodule ProcessHub.Service.Synchronizer do
   end
 
   defp filter_local_data(process_registry, dist_sup) do
-    supervisor_child_ids = DistributedSupervisor.local_child_ids(dist_sup)
+    # Make sure we're not in partition mode and the distributed supervisor is
+    # alive before querying its child processes.
+    supervisor_child_ids =
+      case GenServer.whereis(dist_sup) do
+        nil ->
+          []
+
+        pid when is_pid(pid) ->
+          if Process.alive?(pid) do
+            DistributedSupervisor.local_child_ids(dist_sup)
+          else
+            []
+          end
+
+        _ ->
+          []
+      end
+
     node = node()
 
     Enum.filter(process_registry, fn {child_id, _} ->
