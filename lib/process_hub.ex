@@ -1,11 +1,11 @@
 defmodule ProcessHub do
   @moduledoc """
-  This is the main public API module for the `ProcessHub` library and it is recommended to use
+  This is the main public API module for the `ProcessHub` library. It is recommended to use
   only the functions defined in this module to interact with the `ProcessHub` library.
 
   ProcessHub is a library that distributes processes within the BEAM cluster. It is designed to
   be used as a building block for distributed applications that require process distribution
-  and synchronization.
+  and synchronization across multiple nodes.
   """
 
   alias ProcessHub.Service.HookManager
@@ -46,11 +46,11 @@ defmodule ProcessHub do
   The `init_opts()` defines the options that can be passed to the `start_children/3`, `start_child/3`,
   `stop_children/3`, and `stop_child/3` functions.
 
-  - `:awaitable` - is optional and can be used to specify if the returned value should be awaitable struct `ProcessHub.Future.t()`.
-  The awaitable struct provides a way to handle the result of the operation synchronously by passing it to `ProcessHub.Future.await/1` function.
-  - `:async_wait` - (**deprecated** use `:awaitable`) is optional and is used to define whether the function should return another function that
+  - `:awaitable` - is optional and can be used to specify if the returned value should be an awaitable struct `ProcessHub.Future.t()`.
+  The awaitable struct provides a way to handle the result of the operation synchronously by passing it to the `ProcessHub.Future.await/1` function.
+  - `:async_wait` - (**deprecated** use `:awaitable`) is optional and is used to define whether the function should return a function that
   can be used to wait for the children to start or stop. The default is `false`.
-  - `:timeout` is optional and is used to define the timeout for the function. The timeout option
+  - `:timeout` - is optional and is used to define the timeout for the function. This timeout option
   should be used with `async_wait: true`. The default is `5000` (5 seconds).
   - `:check_existing` - is optional and is used to define whether the function should check if the children
   are already started. The default is `true`.
@@ -62,8 +62,8 @@ defmodule ProcessHub do
   the child process.
   - `:disable_logging` - is optional and is used to define whether logging should be disabled for the child process
   startup or shutdown. Mostly used for testing purposes.
-    - `:await_timeout` is optional and is used to define the maximum lifetime for the spawned collector process.
-  After this time, the collector process will be terminated and trying to collect the results using `ProcessHub.await/1` will fail.
+  - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
+  After this time, the collector process will be terminated and attempts to collect the results using `ProcessHub.await/1` will fail.
   The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
   """
   @type init_opts() :: [
@@ -80,14 +80,14 @@ defmodule ProcessHub do
   @typedoc """
   The `stop_opts()` defines the options that can be passed to the `stop_children/3` and `stop_child/3` functions.
 
-  - `:awaitable` - is optional and can be used to specify if the returned value should be awaitable struct `ProcessHub.Future.t()`.
-  The awaitable struct provides a way to handle the result of the operation synchronously by passing it to `ProcessHub.Future.await/1` function.
-  - `:async_wait` - (**deprecated** use `:awaitable`) is optional and is used to define whether the function should return another function that
+  - `:awaitable` - is optional and can be used to specify if the returned value should be an awaitable struct `ProcessHub.Future.t()`.
+  The awaitable struct provides a way to handle the result of the operation synchronously by passing it to the `ProcessHub.Future.await/1` function.
+  - `:async_wait` - (**deprecated** use `:awaitable`) is optional and is used to define whether the function should return a function that
   can be used to wait for the children to stop. The default is `false`.
-  - `:timeout` is optional and is used to define the maximum time for the function to complete.
-  The timeout option should be used with `async_wait: true`. The default is `5000` (5 seconds).
-  - `:await_timeout` is optional and is used to define the maximum lifetime for the spawned collector process.
-  After this time, the collector process will be terminated and trying to collect the results using `ProcessHub.await/1` will fail.
+  - `:timeout` - is optional and is used to define the maximum time for the function to complete.
+  This timeout option should be used with `async_wait: true`. The default is `5000` (5 seconds).
+  - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
+  After this time, the collector process will be terminated and attempts to collect the results using `ProcessHub.await/1` will fail.
   The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
   """
   @type stop_opts() :: [
@@ -205,25 +205,28 @@ defmodule ProcessHub do
   ]
 
   @doc """
-  Starts a child process that will be distributed across the cluster.
-  The `t:child_spec()` `:id` must be unique.
+  Starts a single child process that will be distributed across the cluster based on the configured distribution strategy.
 
-  ## Example
+  The child process will be started on one or more nodes in the cluster depending on the redundancy configuration.
+  The `t:child_spec()` `:id` field must be unique across the entire cluster.
+
+  ## Basic Usage
       iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, [nil]}}
       iex> ProcessHub.start_child(:my_hub, child_spec)
       {:ok, :start_initiated}
 
-  By default, the `start_child/3` function is **asynchronous** and returns immediately.
-  To wait for the child to start, you can pass `awaitable: true` to the `opts` argument and
-  use the `ProcessHub.Future.await/1` function on the returned value.
+  By default, the `start_child/3` function is **asynchronous** and returns immediately with a confirmation
+  that the start operation has been initiated. The actual child process startup happens in the background.
 
-  See `t:init_opts/0` for more options.
+  To wait for the child to start and get detailed results, you can pass `awaitable: true` to the `opts` argument and
+  use the `ProcessHub.Future.await/1` function on the returned future.
 
-  ## Example with synchronous wait
-  The synchronous response includes the status code `:ok` or `:error`, a tuple containing the `t:child_id/0` and
-  a list of tuples where the first key is the node where the child is started, and the second key is the
-  `pid()` of the started child. By default, the list should contain only one tuple, but if the
-  redundancy strategy is configured for replicas, it may contain more than one tuple.
+  See `t:init_opts/0` for all available options including timeout control, failure handling, and metadata.
+
+  ## Synchronous Operation Example
+  When using the awaitable option, you get detailed information about the startup process including
+  the final status, started processes with their PIDs and node locations, any errors encountered,
+  and rollback information if applicable.
 
       iex> child_spec = %{id: "my_child", start: {MyProcess, :start_link, [nil]}}
       iex> future = ProcessHub.start_child(:my_hub, child_spec, [awaitable: true])
@@ -255,7 +258,7 @@ defmodule ProcessHub do
 
   > #### Handling startup results {: .info}
   >
-  > See more how to handle startup results at [Starting and stopping processes](startstop.html#startresult-api-functions)
+  > See more about how to handle startup results at [Starting and stopping processes](startstop.html#startresult-api-functions)
   """
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
           {:ok, :start_initiated}
@@ -268,10 +271,13 @@ defmodule ProcessHub do
   @doc """
   Starts multiple child processes that will be distributed across the cluster.
 
-  Same as `start_child/3`, except that it starts multiple children at once and is much more
-  efficient than calling `start_child/3` multiple times.
+  This function works similarly to `start_child/3`, but it handles multiple children simultaneously,
+  making it much more efficient than calling `start_child/3` multiple times. Each child process
+  will be distributed according to the configured distribution strategy.
 
-  See `t:init_opts/0` for more options.
+  All child specifications must have unique `:id` fields across the entire cluster.
+
+  See `t:init_opts/0` for all available options including failure handling strategies.
 
   ## Examples
       iex> child_specs = [
@@ -307,7 +313,7 @@ defmodule ProcessHub do
 
   > #### Handling startup results {: .info}
   >
-  > See more how to handle startup results at [Starting and stopping processes](startstop.html#startresult-api-functions)
+  > See more about how to handle startup results at [Starting and stopping processes](startstop.html#startresult-api-functions)
 
   > #### Warning {: .warning}
   >
@@ -327,17 +333,21 @@ defmodule ProcessHub do
   end
 
   @doc """
-  Stops a child process in the cluster.
+  Stops a single child process across the entire cluster.
 
-  By default, this function is **asynchronous** and returns immediately.
-  You can wait for the child to stop by passing `awaitable: true` in the `opts` argument and
-  using the `ProcessHub.Future.await/1` function on the returned value.
+  This function will terminate the specified child process on all nodes where it is currently running.
+  By default, this function is **asynchronous** and returns immediately with a confirmation
+  that the stop operation has been initiated. The actual process termination happens in the background.
 
-  ## Example
+  To wait for the child to stop and get detailed results about the termination, you can pass 
+  `awaitable: true` in the `opts` argument and use the `ProcessHub.Future.await/1` function 
+  on the returned future.
+
+  ## Basic Usage
       iex> ProcessHub.stop_child(:my_hub, :my_child)
       {:ok, :stop_initiated}
 
-  See `t:stop_opts/0` for more options.
+  See `t:stop_opts/0` for all available options including timeout control.
 
   ## Example with synchronous wait
       iex> ProcessHub.stop_child(:my_hub, "child1", [awaitable: true]) |> ProcessHub.Future.await()
@@ -349,7 +359,7 @@ defmodule ProcessHub do
 
   > #### Handling stop results {: .info}
   >
-  > See more how to handle stop results at [Starting and stopping processes](startstop.html#stopresult-api-functions)
+  > See more about how to handle stop results at [Starting and stopping processes](startstop.html#stopresult-api-functions)
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
           {:ok, :stop_initiated} | {:ok, Future.t()}
@@ -358,12 +368,13 @@ defmodule ProcessHub do
   end
 
   @doc """
-  Stops multiple child processes in the cluster.
+  Stops multiple child processes across the entire cluster.
 
-  This function is similar to `stop_child/3`, but it stops multiple children at once, making it more
-  efficient than calling `stop_child/3` multiple times.
+  This function works similarly to `stop_child/3`, but handles multiple children simultaneously,
+  making it much more efficient than calling `stop_child/3` multiple times. Each specified
+  child process will be terminated on all nodes where it is currently running.
 
-  See `t:stop_opts/0` for more options.
+  See `t:stop_opts/0` for all available options including timeout control.
 
   ## Examples
 
@@ -388,18 +399,18 @@ defmodule ProcessHub do
   end
 
   @doc """
-  Works similarly to `Supervisor.which_children/1`, but wraps the result in a tuple
-  containing the node name and the children.
+  Returns information about child processes in a format similar to `Supervisor.which_children/1`,
+  but wraps the result in a tuple containing the node name and the children.
 
-  > #### Info {: .info}
+  > #### Performance Warning {: .warning}
   >
   > The `Supervisor.which_children/1` function is known to consume a lot of memory
-  > and this can affect performance. The problem is even more relevant when
-  > using the `:global` option as it will make a network call to all nodes in the cluster.
+  > and can significantly affect performance. This problem is even more relevant when
+  > using the `:global` option, as it will make network calls to all nodes in the cluster.
   >
-  > It is highly recommended to use `ProcessHub.process_list/2` instead.
+  > It is **highly recommended** to use `ProcessHub.process_list/2` instead, which is more efficient.
 
-  Available options:
+  ## Available Options:
   - `:global` - returns a list of all child processes started by all nodes in the cluster.
     The return result will be in the format of `[{:node, children}]`.
   - `:local` - returns a list of all child processes started by the local node.
@@ -415,10 +426,10 @@ defmodule ProcessHub do
   end
 
   @doc """
-  Checks if the `ProcessHub` with the given `t:hub_id/0` is alive.
+  Checks if a `ProcessHub` instance with the given `t:hub_id/0` is currently alive and operational.
 
   A hub is considered alive if the `ProcessHub.Coordinator` process is
-  running for the hub to function properly.
+  running and the hub is ready to handle requests and manage processes.
 
   ## Example
       iex> ProcessHub.is_alive?(:not_existing)
@@ -468,6 +479,11 @@ defmodule ProcessHub do
   @doc """
   Returns the child specification for the `ProcessHub.Initializer` supervisor.
 
+  This function generates the proper supervisor child specification needed to start
+  a ProcessHub instance under a supervision tree. The returned specification follows
+  the standard Supervisor child_spec format and can be used directly in supervisor
+  child lists.
+
   ## Examples
       iex> ProcessHub.child_spec(%ProcessHub{hub_id: :my_hub})
       %{
@@ -514,9 +530,14 @@ defmodule ProcessHub do
   end
 
   @doc """
-  Starts the `ProcessHub` with the given `t:hub_id/0` and settings.
+  Starts a new `ProcessHub` instance with the specified configuration.
 
-  It is recommended to start the `ProcessHub` under a supervision tree.
+  This function initializes a complete ProcessHub system including the coordinator,
+  distributed supervisor, and all necessary supporting processes. The hub will be
+  ready to accept and manage child processes according to the configured strategies.
+
+  It is **strongly recommended** to start the ProcessHub under a supervision tree
+  to ensure proper fault tolerance and automatic restart capabilities.
 
   ## Example
 
@@ -527,7 +548,11 @@ defmodule ProcessHub do
   defdelegate start_link(hub_settings), to: ProcessHub.Initializer, as: :start_link
 
   @doc """
-  Stops the `ProcessHub` with the given `t:hub_id/0`.
+  Gracefully stops a running `ProcessHub` instance.
+
+  This function will cleanly shut down the ProcessHub system, including terminating
+  all managed child processes and cleaning up associated resources. The shutdown
+  process follows proper OTP shutdown protocols.
 
   ## Example
       iex> ProcessHub.stop(:my_hub)
@@ -537,15 +562,17 @@ defmodule ProcessHub do
   defdelegate stop(hub_id), to: ProcessHub.Initializer, as: :stop
 
   @doc """
-  Returns information about processes that are registered with the given `t:child_id/0`.
+  Returns detailed information about a specific child process registered with the given `t:child_id/0`.
 
-  This function queries results from the local `ets` table and does not make any network calls.
+  This function performs a fast local lookup by querying the local `ets` table and does not make
+  any network calls. The lookup returns the original child specification and location information
+  for all instances of the process across the cluster.
 
-  The return results contain the `t:child_spec/0` and a list of tuples where the first element is the node
-  where the child is started, and the second element is the `pid()` of the started child.
+  The return value is a tuple containing the `t:child_spec/0` and a list of `{node, pid}` tuples
+  indicating where the child process is running and its corresponding process ID.
 
-  Optionally, you can pass the `with_metadata` option to include the metadata
-  that was passed to the child process when it was started.
+  Optionally, you can pass the `with_metadata: true` option to include any metadata
+  that was provided when the child process was started.
 
   ## Examples
       # Lookup a child process by its ID.
@@ -568,14 +595,14 @@ defmodule ProcessHub do
   defdelegate child_lookup(hub_id, child_id, opts \\ []), to: ProcessRegistry, as: :lookup
 
   @doc """
-  Returns all processes that are registered with the given tag.
+  Returns all processes that are registered with a specific tag.
 
   This function queries the process registry and returns all children that
-  are registered with the given tag.
-  Useful when you need to group processes by a specific tag.
+  are registered with the given tag. This is particularly useful when you need
+  to group and query processes by category or type using custom tags.
 
-  To register a child with a tag, you can pass the `metadata` option to the `start_child/3` function
-  with the `:tag` key.
+  To register a child with a tag, pass the `metadata` option to `start_child/3` or `start_children/3`
+  with a `:tag` key containing the desired tag value.
 
   ## Example
       iex> ProcessHub.start_children(:my_hub, child_specs, [metadata: %{tag: "my_tag"}]) |> ProcessHub.Future.await()
@@ -591,10 +618,12 @@ defmodule ProcessHub do
   defdelegate tag_query(hub_id, tag), to: ProcessRegistry, as: :match_tag
 
   @doc """
-  Dumps all information in the registry.
+  Dumps all information currently stored in the process registry.
 
-  Returns all information in the registry such as the child specification, pids,
-  nodes, and metadata.
+  This function returns a comprehensive view of the registry, including child specifications,
+  process IDs, node locations, and metadata for all registered processes. This is useful
+  for debugging, monitoring, or administrative tasks where you need a complete overview
+  of all managed processes in the hub.
 
   ## Example
       iex> ProcessHub.registry_dump(:my_hub)
@@ -619,16 +648,23 @@ defmodule ProcessHub do
   defdelegate registry_dump(hub_id), to: ProcessRegistry, as: :dump
 
   @doc """
-  Returns all information in the registry.
+  Returns all information stored in the process registry.
 
-  This function queries results from the local `ets` table and does not make any network calls.
+  This function performs a local query against the `ets` table and does not make any network calls.
+
+  > #### Deprecation Notice {: .warning}
+  >
+  > This function is deprecated and will be removed in a future version.
   """
   @deprecated "Use `ProcessHub.registry_dump/1` instead"
   @spec process_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry()
   defdelegate process_registry(hub_id), to: ProcessRegistry, as: :registry
 
   @doc """
-  Returns a list of pids for the given child_id.
+  Returns all process IDs (PIDs) for a specific child process.
+
+  This function retrieves all PIDs associated with a given child ID across the cluster.
+  If the child is running on multiple nodes (due to replication), all PIDs will be returned.
 
   ## Example
       iex> ProcessHub.get_pids(:my_hub, :my_child)
@@ -638,10 +674,16 @@ defmodule ProcessHub do
   defdelegate get_pids(hub_id, child_id), to: ProcessRegistry, as: :get_pids
 
   @doc """
-  Returns the first pid for the given child_id.
+  Returns the first available process ID (PID) for a specific child process.
 
-  Although this function can be handy to quickly get the pid of the child, it is
-  not recommended for use with replication strategies as it will return only the first pid.
+  This function provides a convenient way to quickly get a PID for a child process.
+  However, when using replication strategies, this function will only return the first
+  available PID, which may not be suitable for all use cases where you need to interact
+  with all replicas.
+
+  > #### Replication Warning {: .warning}
+  >
+  > When using replication strategies, consider using `get_pids/2` instead to get all PIDs.
 
   ## Example
       iex> ProcessHub.get_pid(:my_hub, :my_child)
@@ -651,19 +693,19 @@ defmodule ProcessHub do
   defdelegate get_pid(hub_id, child_id), to: ProcessRegistry, as: :get_pid
 
   @doc """
-  Returns a list of processes that are registered.
+  Returns a list of all registered processes in the hub.
 
-  The process list contains the `t:child_id/0` and depending on the scope
-  option, it may contain the node and `pid()` of the child.
+  This function provides an efficient way to enumerate all child processes managed by the hub.
+  The returned list contains child IDs and, depending on the scope option, may include
+  node locations and process IDs.
 
-  This function queries results from the local `ets` table and does not make any network calls.
+  This function performs a fast local query against the `ets` table and does not make any network calls.
 
-  Available options:
-  - `:global` - returns a list of all child processes on all nodes in the cluster.
+  ## Available Options:
+  - `:global` - returns a list of all child processes across all nodes in the cluster.
     The return result will be in the format of `[{child_id, [{:node, pid}]}]`.
-  - `:local` - returns a list of child processes that belong to the local node.
-    The return result will be in the format of `[{child_id, [pid]}]`
-    but only the processes that belong to the local node will be returned.
+  - `:local` - returns only child processes that are running on the local node.
+    The return result will be in the format of `[{child_id, [pid]}]`.
 
   ## Example
       iex> ProcessHub.process_list(:my_hub, :global)
@@ -696,11 +738,12 @@ defmodule ProcessHub do
   end
 
   @doc """
-  Checks if the `ProcessHub` with the given `t:hub_id/0` is in a network-partitioned state.
+  Checks if a `ProcessHub` instance with the given `t:hub_id/0` is currently in a network-partitioned state.
 
-  A hub is considered partitioned if the `ProcessHub.Strategy.PartitionTolerance` strategy
-  has detected a network partition. When a network partition is detected, the hub will
-  terminate the `ProcessHub.DistributedSupervisor` process along with its children.
+  A hub is considered partitioned when the configured `ProcessHub.Strategy.PartitionTolerance` strategy
+  has detected a network partition event. When a network partition is detected, the hub will
+  terminate the `ProcessHub.DistributedSupervisor` process along with all its managed child processes
+  to maintain data consistency and prevent split-brain scenarios.
 
   ## Example
       iex> ProcessHub.is_partitioned?(:my_hub)
@@ -712,10 +755,13 @@ defmodule ProcessHub do
   end
 
   @doc """
-  Returns a list of nodes where the `ProcessHub` with the given `t:hub_id/0` is running.
+  Returns a list of all nodes where a `ProcessHub` instance with the given `t:hub_id/0` is currently running.
 
-  Nodes where the `ProcessHub` is running with the same `t:hub_id/0` are considered
-  to be part of the same cluster.
+  All nodes running the same `ProcessHub` instance (identified by the same `t:hub_id/0`) are considered
+  to be part of the same logical cluster and can coordinate process distribution and management.
+
+  ## Options:
+  - `[:include_local]` - includes the local node in the returned list (default: excludes local node)
 
   ## Example
       iex> ProcessHub.nodes(:my_hub, [:include_local])
@@ -727,16 +773,18 @@ defmodule ProcessHub do
   end
 
   @doc """
-  Promotes the `ProcessHub` with the given `t:hub_id/0` to a node.
+  Promotes a `ProcessHub` instance to run in distributed node mode.
 
-  This function should be used when the `ProcessHub` has been started in a
-  non-node mode and you want to promote it to a node.
+  This function should be used when the `ProcessHub` was initially started in
+  non-distributed mode (for example, during development or testing) and you want
+  to promote it to participate in a distributed cluster.
 
-  The function will update all existing child processes
-  on the registry to match the new node name.
+  The promotion process will update all existing child process registrations
+  in the registry to reflect the new node name, ensuring proper cluster coordination.
 
-  Optionally, you can pass the `node_name` argument to specify the name of the node.
-  By default, the current node name will be used.
+  ## Parameters:
+  - `node_name` (optional) - specifies the node name to use. If not provided,
+    the current node name (`Node.self()`) will be used.
   """
   @spec promote_to_node(hub_id()) :: :ok | {:error, :not_alive}
   def promote_to_node(hub_id, node_name \\ node()) do
@@ -745,7 +793,17 @@ defmodule ProcessHub do
 
   # TODO: add tests.
   @doc """
-  Registers hook handlers dynamically.
+  Dynamically registers hook handlers for specific hub events.
+
+  Hook handlers allow you to execute custom logic when specific events occur
+  within the ProcessHub lifecycle, such as process startup, shutdown, node joining,
+  or cluster events. This provides a powerful extension mechanism for monitoring,
+  logging, or custom business logic.
+
+  ## Parameters:
+  - `hub_id` - the hub to register handlers for
+  - `hook_key` - the specific event type to handle (use `ProcessHub.Constant.Hook` constants)
+  - `hook_handlers` - a list of `ProcessHub.Service.HookManager` structs defining the handlers
 
   ## Examples
       iex> ProcessHub.register_hook_handlers(
