@@ -1,20 +1,23 @@
 # Creating custom strategy
 
 It's time to extend the functionality of the `ProcessHub` and we will do this
-by creating a custom strategy distribution strategy.
+by creating a custom distribution strategy.
+
+## Prerequisites
+As always, we should have some process template to follow. You can reuse the `MyProcess` GenServer from the [Manual Distribution](ManualDistribution.md#example-genserver) guide.
 
 ## Implementation
 
 Our custom distribution strategy will be very simple and probably not very
 useful in practice, but it will serve as a good example of how to create one.
 
-This distribution strategy will distribute processes by comparing the node names. We will also take advance
-of using hook system to further customize the behavior of the system.
+This distribution strategy will distribute processes by comparing the node names. We will also take advantage
+of the hook system to further customize the behavior of the system.
 
 Let's start by creating a new file called `compare.ex`. We can place the file anywhere
 in the project as long as it is picked up by the compiler.
 
-It is a good practice to add some custom name spacing to the module to avoid conflicts
+It is a good practice to add some custom namespacing to the module to avoid conflicts
 with other modules. We will use `CustomStrategy` as the namespace.
 ```elixir
 defmodule CustomStrategy.Compare do
@@ -26,10 +29,9 @@ number of custom options. In our example, we will define a single option called
 `direction` which will determine if the selected node is either the first or the last
 node in the list of nodes.
 
-We will also create our implementation the `ProcessHub.Strategy.Distribution.Base` protocol.
+We will also create our implementation of the `ProcessHub.Strategy.Distribution.Base` protocol.
 ```elixir
 defmodule CustomStrategy.Compare do
-
     alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
     # We can define custom options.
@@ -43,9 +45,8 @@ end
 ```
 
 The `ProcessHub.Strategy.Distribution.Base` protocol defines some functions that we need to implement. The first function is the `init/2` function which is called very early when
-the coordinator is started. This can be very good place to register any custom
-hook handlers that we need to use. We will register a handler that will print the name of
-the node that is joining the hub.
+the coordinator is started. This can be a good place to register any custom hook handlers that we need to use. We're going to use this function to register a hook handler that will print the name of
+the node that is joining the hub just to demonstrate the hook system.
 
 ```elixir
 ...
@@ -92,18 +93,18 @@ def children_init(_struct, _hub, _child_specs, _opts), do: :ok
 ...
 ```
 
-We now have the last function to implement which is the `belongs_to/4` function. This function will determine the node that the process should be distributed to. In our case, we will select a node based on it's name. 
+We now have the last function to implement which is the `belongs_to/4` function. This function will determine the node that the process should be distributed to. In our case, we will select a node based on its name. 
 
 The very same function will also be used when processes are redistributed.
 
-We also return a list of nodes although we only select one, the reason for this is that the function can return multiple nodes in case the process should be replicated.
+We also return a list of nodes although we only select one. The reason for this is that the function can return multiple nodes in case the process should be replicated.
 For the sake of simplicity, we will ignore the replication factor in this example.
 
 ```elixir
 ...
 @impl true
 def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_id, _replication_factor) do
-    hub_nodes = ProcessHub.nodes(hub, [:include_local])
+    hub_nodes = ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
 
     selected_node = case struct.direction do
         :asc -> Enum.sort(hub_nodes) |> Enum.at(0)
@@ -155,7 +156,7 @@ defmodule CustomStrategy.Compare do
 
     @impl true
     def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_id, _replication_factor) do
-        hub_nodes = ProcessHub.nodes(hub, [:include_local])
+        hub_nodes = ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
 
         selected_node = case struct.direction do
             :asc -> Enum.sort(hub_nodes) |> Enum.at(0)
@@ -172,7 +173,7 @@ end
 
 Replace the default distribution strategy with our custom strategy in the `ProcessHub` configuration.
 ```elixir
-defmodule MyAp.Application do
+defmodule MyApp.Application do
   use Application
 
   @impl true
@@ -225,13 +226,13 @@ iex> ProcessHub.start_children(:my_hub, [
 {:ok, :start_initiated}
 iex> ProcessHub.process_list(:my_hub, :global)
 [
-  process1: ["node2@127.0.0.1": #PID<23066.269.0>],
-  process2: ["node2@127.0.0.1": #PID<23066.270.0>],
-  process3: ["node2@127.0.0.1": #PID<23066.271.0>],
-  process4: ["node2@127.0.0.1": #PID<23066.272.0>],
-  process5: ["node2@127.0.0.1": #PID<23066.273.0>]
+  {"process1", ["node2@127.0.0.1": #PID<23391.238.0>]},
+  {"process2", ["node2@127.0.0.1": #PID<23391.239.0>]},
+  {"process3", ["node2@127.0.0.1": #PID<23391.240.0>]},
+  {"process4", ["node2@127.0.0.1": #PID<23391.241.0>]},
+  {"process5", ["node2@127.0.0.1": #PID<23391.242.0>]}
 ]
 ```
-We can confirm that all processes are started on the second node if we
+We can confirm that all processes are started on the second node when we
 pass the `:desc` option to the struct.
 
