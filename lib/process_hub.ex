@@ -225,16 +225,37 @@ defmodule ProcessHub do
   `pid()` of the started child. By default, the list should contain only one tuple, but if the
   redundancy strategy is configured for replicas, it may contain more than one tuple.
 
-      iex> child_spec = %{id: :my_child, start: {MyProcess, :start_link, [nil]}}
+      iex> child_spec = %{id: "my_child", start: {MyProcess, :start_link, [nil]}}
       iex> future = ProcessHub.start_child(:my_hub, child_spec, [awaitable: true])
-      {:ok, %ProcessHub.Future{}}
+      {
+        :ok,
+        %ProcessHub.Future{
+          future_resolver: #PID<0.253.0>,
+          ref: #Reference<0.717952655.487849985.214641>,
+          timeout: 60000
+        }
+      }
+
+      # Wait for the child to start and get the result.
       iex> ProcessHub.Future.await(future)
       %ProcessHub.StartResult{
         status: :ok,
-        started: [{"my_child", [{:mynode, #PID<0.123.0>}]}],
+        started: [{"my_child", ["node2@127.0.0.1": #PID<23618.225.0>]}],
         errors: [],
         rollback: false
       }
+
+      # Get the status.
+      iex> ProcessHub.StartResult.status(result)
+      :ok
+
+      # Get the pid.
+      iex> ProcessHub.StartResult.pid(result)
+      #PID<23618.225.0>
+
+  > #### Handling startup results {: .info}
+  >
+  > See more how to handle startup results at [Starting and stopping processes](startstop.html#startresult-api-functions)
   """
   @spec start_child(hub_id(), child_spec(), init_opts()) ::
           {:ok, :start_initiated}
@@ -247,13 +268,52 @@ defmodule ProcessHub do
   @doc """
   Starts multiple child processes that will be distributed across the cluster.
 
-  Same as `start_child/3`, except that it starts multiple children at once and is more
+  Same as `start_child/3`, except that it starts multiple children at once and is much more
   efficient than calling `start_child/3` multiple times.
+
+  See `t:init_opts/0` for more options.
+
+  ## Examples
+      iex> child_specs = [
+      iex>  %{id: "child1", start: {MyProcess, :start_link, [nil]}},
+      iex>  %{id: "child2", start: {MyProcess, :start_link, [nil]}}
+      iex> ]
+      iex> # Start the child processes.
+      iex> future = ProcessHub.start_children(:my_hub, child_specs, [awaitable: true])
+      {
+        :ok,
+        %ProcessHub.Future{
+          future_resolver: #PID<0.222.0>,
+          ref: #Reference<0.2401267543.3981705217.217572>,
+          timeout: 60000
+        }
+      }
+
+      iex> # Wait for the children to start and get the result.
+      iex> result = ProcessHub.Future.await(future)
+      %ProcessHub.StartResult{
+        status: :ok,
+        started: [
+          {"child2", ["node1@127.0.0.1": #PID<0.237.0>]},
+          {"child1", ["node1@127.0.0.1": #PID<0.236.0>]}
+        ],
+        errors: [],
+        rollback: false
+      }
+
+      iex> # Get the pids.
+      iex> ProcessHub.StartResult.pids(result)
+      [#PID<0.237.0>, #PID<0.236.0>]
+
+  > #### Handling startup results {: .info}
+  >
+  > See more how to handle startup results at [Starting and stopping processes](startstop.html#startresult-api-functions)
 
   > #### Warning {: .warning}
   >
   > Using `start_children/3` with `awaitable: true` can lead to timeout errors,
   > especially when the number of children is large.
+
   """
   @spec start_children(hub_id(), [child_spec()], init_opts()) ::
           {:ok, :start_initiated}
@@ -280,12 +340,16 @@ defmodule ProcessHub do
   See `t:stop_opts/0` for more options.
 
   ## Example with synchronous wait
-      iex> ProcessHub.stop_child(:my_hub, :my_child, [awaitable: true]) |> ProcessHub.Future.await()
+      iex> ProcessHub.stop_child(:my_hub, "child1", [awaitable: true]) |> ProcessHub.Future.await()
       %ProcessHub.StopResult{
         status: :ok,
-        stopped: [{"my_child", [:node1]}],
+        stopped: [{"child1", [:"node1@127.0.0.1"]}],
         errors: []
       }
+
+  > #### Handling stop results {: .info}
+  >
+  > See more how to handle stop results at [Starting and stopping processes](startstop.html#stopresult-api-functions)
   """
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
           {:ok, :stop_initiated} | {:ok, Future.t()}
@@ -299,10 +363,21 @@ defmodule ProcessHub do
   This function is similar to `stop_child/3`, but it stops multiple children at once, making it more
   efficient than calling `stop_child/3` multiple times.
 
-  > #### Warning {: .info}
+  See `t:stop_opts/0` for more options.
+
+  ## Examples
+
+      iex> ProcessHub.stop_children(:my_hub, ["child1", "child2"], [])
+      {:ok, :stop_initiated}
+
+  > #### Warning {: .warning}
   >
   > Using `stop_children/3` with `awaitable: true` can lead to timeout errors
   > when stopping a large number of child processes.
+
+  > #### Handling stop results {: .info}
+  >
+  > See more how to handle stop results at [Starting and stopping processes](startstop.html#stopresult-api-functions)
   """
   @spec stop_children(hub_id(), [child_id()], stop_opts()) ::
           {:ok, :stop_initiated}
@@ -357,8 +432,7 @@ defmodule ProcessHub do
     end
   end
 
-  @deprecated "Use `ProcessHub.Future.await/1` instead. This function will be removed in the 0.5.x version.
-  The `:rollback` option does not work with this function."
+  @deprecated "Use `ProcessHub.Future.await/1` instead. The implementation of this function will be replaced in the 0.5.x version. The `:rollback` option does not work with this function."
   @doc """
   This function can be used to wait for the `ProcessHub` child start or stop
   functions to complete.
@@ -393,6 +467,38 @@ defmodule ProcessHub do
 
   @doc """
   Returns the child specification for the `ProcessHub.Initializer` supervisor.
+
+  ## Examples
+      iex> ProcessHub.child_spec(%ProcessHub{hub_id: :my_hub})
+      %{
+        id: :my_hub,
+        start: {
+          ProcessHub.Initializer,
+          :start_link,
+          [
+            %ProcessHub{
+              hub_id: :my_hub,
+              child_specs: [],
+              hooks: %{},
+              redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
+              migration_strategy: %ProcessHub.Strategy.Migration.ColdSwap{},
+              synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{
+                sync_interval: 15000
+              },
+              partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
+              distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
+              hubs_discover_interval: 10000,
+              deadlock_recovery_timeout: 60000,
+              storage_purge_interval: 15000,
+              migr_base_timeout: 15000,
+              dsup_max_restarts: 100,
+              dsup_max_seconds: 4,
+              dsup_shutdown_timeout: 60000
+            }
+          ]
+        },
+        type: :supervisor
+      }
   """
   @spec child_spec(t()) :: %{
           id: ProcessHub,
@@ -411,12 +517,21 @@ defmodule ProcessHub do
   Starts the `ProcessHub` with the given `t:hub_id/0` and settings.
 
   It is recommended to start the `ProcessHub` under a supervision tree.
+
+  ## Example
+
+      iex> ProcessHub.start_link(%ProcessHub{hub_id: :my_hub})
+      {:ok, #PID<0.123.0>}
   """
   @spec start_link(ProcessHub.t()) :: {:ok, pid()} | {:error, term()}
   defdelegate start_link(hub_settings), to: ProcessHub.Initializer, as: :start_link
 
   @doc """
   Stops the `ProcessHub` with the given `t:hub_id/0`.
+
+  ## Example
+      iex> ProcessHub.stop(:my_hub)
+      :ok
   """
   @spec stop(atom) :: :ok | {:error, :not_alive}
   defdelegate stop(hub_id), to: ProcessHub.Initializer, as: :stop
@@ -432,12 +547,21 @@ defmodule ProcessHub do
   Optionally, you can pass the `with_metadata` option to include the metadata
   that was passed to the child process when it was started.
 
-  ## Example
-      iex> {_child_spec, _node_pid_tuples} = ProcessHub.child_lookup(:my_hub, :my_child)
-      {%{id: :my_child, start: {MyProcess, :start_link, [nil]}}, [{:mynode, #PID<0.123.0>}]}
+  ## Examples
+      # Lookup a child process by its ID.
+      iex> {child_spec, node_pids_tuples} = ProcessHub.child_lookup(:my_hub, "child1")
+      {
+        %{id: "child1", start: {MyProcess, :start_link, [nil]}},
+        ["node1@127.0.0.1": #PID<0.1487.0>]
+      }
 
-      iex> {_child_spec, _node_pid_tuples, _metadata} = ProcessHub.child_lookup(:my_hub, :my_child, with_metadata: true)
-      {%{id: :my_child, start: {MyProcess, :start_link, [nil]}}, [{:mynode, #PID<0.123.0>}], %{tag: "my_metadata"}}
+      # Lookup a child process by its ID and include metadata.
+      iex> {child_spec, node_pid_tuples, metadata} = ProcessHub.child_lookup(:my_hub, "child1", with_metadata: true)
+      {
+        %{id: "child1", start: {MyProcess, :start_link, [nil]}},
+        ["node1@127.0.0.1": #PID<0.1487.0>],
+        %{}
+      }
   """
   @spec child_lookup(hub_id(), child_id(), with_metadata: boolean()) ::
           {child_spec(), [{node(), pid()}]} | nil
@@ -454,10 +578,9 @@ defmodule ProcessHub do
   with the `:tag` key.
 
   ## Example
-      iex> ref = ProcessHub.start_child(:my_hub, child_spec, [metadata: %{tag: "my_tag"}])
-      {:ok, :start_initiated}
-
-      iex> Process.sleep(300) # Just to ensure the process has started. You can await the future if needed.
+      iex> ProcessHub.start_children(:my_hub, child_specs, [metadata: %{tag: "my_tag"}]) |> ProcessHub.Future.await()
+      iex>
+      iex> # get the processes by tag name.
       iex> ProcessHub.tag_query(:my_hub, "my_tag")
       [
         {:my_child, [{:mynode, #PID<0.123.0>}],
@@ -472,6 +595,25 @@ defmodule ProcessHub do
 
   Returns all information in the registry such as the child specification, pids,
   nodes, and metadata.
+
+  ## Example
+      iex> ProcessHub.registry_dump(:my_hub)
+      %{
+        "child1" => {
+          %{id: "child1", start: {MyProcess, :start_link, [nil]}},
+          [
+            "node1@127.0.0.1": #PID<0.1487.0>
+          ],
+          %{}
+        },
+        "child2" => {
+          %{id: "child2", start: {MyProcess, :start_link, [nil]}},
+          [
+            "node1@127.0.0.1": #PID<0.1488.0>
+          ],
+          %{}
+        }
+      }
   """
   @spec registry_dump(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry_dump()
   defdelegate registry_dump(hub_id), to: ProcessRegistry, as: :dump
@@ -526,8 +668,8 @@ defmodule ProcessHub do
   ## Example
       iex> ProcessHub.process_list(:my_hub, :global)
       [
-        {:my_child1, [{:node1, #PID<0.123.0>}, {:node2, #PID<2.123.0>}]},
-        {:my_child2, [{:node2, #PID<5.124.0>}]}
+        {:my_child1, [{:node1, #PID<0.123.0>}, {:node2, #PID<2.129.0>}]},
+        {:my_child2, [{:node1, #PID<0.126.0>}, {:node2, #PID<2.124.0>}]}
       ]
       iex> ProcessHub.process_list(:my_hub, :local)
       [{:my_child1, #PID<0.123.0>}]
@@ -577,7 +719,7 @@ defmodule ProcessHub do
 
   ## Example
       iex> ProcessHub.nodes(:my_hub, [:include_local])
-      [:remote_node]
+      [:"node1@127.0.0.1", :"node2@127.0.0.1"]
   """
   @spec nodes(hub_id(), [:include_local] | nil) :: [node()]
   def nodes(hub_id, opts \\ []) do
@@ -604,6 +746,22 @@ defmodule ProcessHub do
   # TODO: add tests.
   @doc """
   Registers hook handlers dynamically.
+
+  ## Examples
+      iex> ProcessHub.register_hook_handlers(
+      iex>   :my_hub,
+      iex>   ProcessHub.Constant.Hook.pre_cluster_join(),
+      iex>   [
+      iex>     %ProcessHub.Service.HookManager{
+      iex>       id: :my_hook_id,
+      iex>       m: SomeModule,
+      iex>       f: :some_function,
+      iex>       a: [:my_first_argument]
+      iex>     }
+      iex>   ]
+      iex> )
+      [:ok]
+
   """
   @spec register_hook_handlers(hub_id(), HookManager.hook_key(), [HookManager.t()]) ::
           :ok | {:error, {:handler_id_not_unique, [HookManager.handler_id()]}}

@@ -51,7 +51,7 @@ defmodule ProcessHub.Future do
       {:process_hub, :async_results, ^ref, results} ->
         results
     after
-      future.timeout + 1000 ->
+      future.timeout + 50_000 ->
         {:error, :timeout}
     end
   end
