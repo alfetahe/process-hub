@@ -195,6 +195,13 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_call({:cancel_hook_handlers, hook_key, handler_ids}, _from, state) do
+    result = unregister_handlers(state.storage.hook, hook_key, handler_ids)
+
+    {:reply, result, state}
+  end
+
+  @impl true
   def handle_call({:init_children_start, child_specs, opts}, _from, state) do
     result =
       Distributor.init_children(
@@ -595,6 +602,12 @@ defmodule ProcessHub.Coordinator do
   defp register_handlers(hook_storage, hooks) when is_map(hooks) do
     for {hook_key, hook_handlers} <- hooks do
       HookManager.register_handlers(hook_storage, hook_key, hook_handlers)
+    end
+  end
+
+  defp unregister_handlers(hook_storage, hook_key, handler_ids) do
+    for handler_ids <- handler_id do
+      HookManager.cancel_handler(hook_storage, hook_key, handler_id)
     end
   end
 

@@ -339,8 +339,8 @@ defmodule ProcessHub do
   By default, this function is **asynchronous** and returns immediately with a confirmation
   that the stop operation has been initiated. The actual process termination happens in the background.
 
-  To wait for the child to stop and get detailed results about the termination, you can pass 
-  `awaitable: true` in the `opts` argument and use the `ProcessHub.Future.await/1` function 
+  To wait for the child to stop and get detailed results about the termination, you can pass
+  `awaitable: true` in the `opts` argument and use the `ProcessHub.Future.await/1` function
   on the returned future.
 
   ## Basic Usage
@@ -825,5 +825,11 @@ defmodule ProcessHub do
           :ok | {:error, {:handler_id_not_unique, [HookManager.handler_id()]}}
   def register_hook_handlers(hub_id, hook_key, hook_handlers) do
     GenServer.call(hub_id, {:register_hook_handlers, hook_key, hook_handlers})
+  end
+
+  # TODO: add docs and tests.
+  @spec cancel_hook_handlers(:ets.tid(), hook_key(), [handler_id()]) :: :ok
+  def cancel_hook_handlers(hub_id, hook_key, handler_ids) do
+    GenServer.call(hub_id, {:cancel_hook_handlers, hook_key, handler_ids})
   end
 end
