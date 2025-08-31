@@ -606,7 +606,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp unregister_handlers(hook_storage, hook_key, handler_ids) do
-    for handler_ids <- handler_id do
+    for handler_id <- handler_ids do
       HookManager.cancel_handler(hook_storage, hook_key, handler_id)
     end
   end
