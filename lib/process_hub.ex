@@ -828,7 +828,8 @@ defmodule ProcessHub do
   end
 
   # TODO: add docs and tests.
-  @spec cancel_hook_handlers(:ets.tid(), hook_key(), [handler_id()]) :: :ok
+  @spec cancel_hook_handlers(:ets.tid(), HookManager.hook_key(), [HookManager.handler_id()]) ::
+          :ok
   def cancel_hook_handlers(hub_id, hook_key, handler_ids) do
     GenServer.call(hub_id, {:cancel_hook_handlers, hook_key, handler_ids})
   end
