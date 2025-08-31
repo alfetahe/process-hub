@@ -605,14 +605,14 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
+  defp register_handlers(hook_storage, _hooks) do
+    register_handlers(hook_storage, %{})
+  end
+
   defp unregister_handlers(hook_storage, hook_key, handler_ids) do
     for handler_id <- handler_ids do
       HookManager.cancel_handler(hook_storage, hook_key, handler_id)
     end
-  end
-
-  defp register_handlers(hook_storage, _hooks) do
-    register_handlers(hook_storage, %{})
   end
 
   defp schedule_sync(sync_strat) do
