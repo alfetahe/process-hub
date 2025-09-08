@@ -59,7 +59,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
 
   defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
     @impl true
-    def init(_strategy, _hub), do: nil
+    def init(strategy, _hub), do: strategy
 
     @impl true
     def toggle_unlock?(strategy, hub, up_node) do

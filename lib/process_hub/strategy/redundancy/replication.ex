@@ -91,6 +91,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           p: 100
         }
       )
+
+      strategy
     end
 
     @impl true

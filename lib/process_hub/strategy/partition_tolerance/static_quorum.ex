@@ -41,6 +41,8 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
           State.toggle_quorum_failure(hub)
         end
       end
+
+      strategy
     end
 
     @impl true

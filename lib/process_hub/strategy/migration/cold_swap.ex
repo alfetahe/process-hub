@@ -25,7 +25,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.ColdSwap do
     @impl true
-    def init(_strategy, _hub), do: nil
+    def init(strategy, _hub), do: strategy
 
     @impl true
     def handle_migration(_struct, hub, children_data, added_node, sync_strategy) do

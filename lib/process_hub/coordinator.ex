@@ -59,22 +59,22 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   @spec init({ProcessHub.t(), map(), map()}) :: {:ok, Hub.t(), {:continue, :additional_setup}}
-  def init({settings, procs, storage}) do
+  def init({hub_conf, procs, storage}) do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
 
     hub_nodes = get_hub_nodes(storage.misc)
-    setup_misc_storage(settings, hub_nodes, storage)
 
     state = %Hub{
-      hub_id: settings.hub_id,
+      hub_id: hub_conf.hub_id,
       procs: procs,
       storage: storage
     }
 
-    init_strategies(state, settings)
+    hub_conf = init_strategies(state, hub_conf)
     register_handlers(procs)
-    register_handlers(storage.hook, settings.hooks)
+    register_handlers(storage.hook, hub_conf.hooks)
+    setup_misc_storage(hub_conf, hub_nodes, storage)
 
     local_store = state.storage.misc
     event_queue = state.procs.event_queue
@@ -542,26 +542,38 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
-  defp init_strategies(hub, settings) do
-    DistributionStrategy.init(
-      settings.distribution_strategy,
-      hub
-    )
+  defp init_strategies(hub, hub_conf) do
+    dist_strat =
+      DistributionStrategy.init(
+        hub_conf.distribution_strategy,
+        hub
+      )
 
-    SynchronizationStrategy.init(
-      settings.synchronization_strategy,
-      hub
-    )
+    sync_strat =
+      SynchronizationStrategy.init(
+        hub_conf.synchronization_strategy,
+        hub
+      )
 
-    MigrationStrategy.init(
-      settings.migration_strategy,
-      hub
-    )
+    migr_strat =
+      MigrationStrategy.init(
+        hub_conf.migration_strategy,
+        hub
+      )
 
-    RedundancyStrategy.init(
-      settings.redundancy_strategy,
-      hub
-    )
+    redun_strat =
+      RedundancyStrategy.init(
+        hub_conf.redundancy_strategy,
+        hub
+      )
+
+    %ProcessHub{
+      hub_conf
+      | distribution_strategy: dist_strat,
+        synchronization_strategy: sync_strat,
+        migration_strategy: migr_strat,
+        redundancy_strategy: redun_strat
+    }
   end
 
   defp setup_misc_storage(%ProcessHub{} = settings, hub_nodes, storage) do

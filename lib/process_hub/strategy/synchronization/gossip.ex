@@ -165,7 +165,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     alias ProcessHub.Strategy.Synchronization.Gossip
 
     @impl true
-    def init(_strategy, _hub), do: nil
+    def init(strategy, _hub), do: strategy
 
     @impl true
     @spec propagate(

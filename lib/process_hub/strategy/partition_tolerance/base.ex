@@ -11,7 +11,7 @@ defprotocol ProcessHub.Strategy.PartitionTolerance.Base do
 
   Could be used to perform initialization.
   """
-  @spec init(struct(), Hub.t()) :: any()
+  @spec init(struct(), Hub.t()) :: struct()()
   def init(strategy, hub)
 
   @doc """

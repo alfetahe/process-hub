@@ -26,7 +26,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     use Event
 
     @impl true
-    def init(_strategy, _hub_id), do: nil
+    def init(strategy, _hub_id), do: strategy
 
     @impl SynchronizationStrategy
     def propagate(_strategy, %Hub{} = hub, children, node, :add, opts) do

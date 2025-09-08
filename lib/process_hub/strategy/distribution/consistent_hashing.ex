@@ -46,7 +46,7 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.ConsistentHashing do
     @impl true
-    def init(_strategy, hub) do
+    def init(strategy, hub) do
       hub_nodes = Storage.get(hub.storage.misc, StorageKey.hn())
 
       Storage.insert(
@@ -87,6 +87,8 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
         Hook.coordinator_shutdown(),
         shutdown_handler
       )
+
+      strategy
     end
 
     @impl true

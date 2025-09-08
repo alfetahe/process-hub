@@ -134,6 +134,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         Hook.process_startups(),
         process_startups_handler
       )
+
+      struct
     end
 
     @impl true
