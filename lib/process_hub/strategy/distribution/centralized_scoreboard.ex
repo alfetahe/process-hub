@@ -1,36 +1,6 @@
 defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   @moduledoc """
-  Provides implementation for distribution behaviour using consistent hashing.
-
-  This strategy uses consistent hashing to determine the nodes and child processes
-  mapping.
-
-  The consensus is achieved in the cluster by creating a hash ring. The hash ring
-  is a ring of nodes where each node is responsible for a range of hash values.
-  The hash value of a child process is used to determine which node is responsible
-  for the child process.
-
-  When the cluster is updated, the hash ring is recalculated.
-  The recalculation is done in a way that each node is assigned a unique
-  hash value, and they form a **hash ring**. Each node in the cluster keeps track of
-  the ProcessHub cluster and updates its local hash ring accordingly.
-
-  To find the node that the process belongs to, the system will use the hash ring to calculate
-  the hash value of the process ID (`child_id`) and assign it to the node with the closest hash value.
-
-  When the cluster is updated and the hash ring is recalculated, it does not mean that all
-  processes will be shuffled. Only the processes that are affected by the change will
-  be redistributed. This is done to avoid unnecessary process migrations.
-
-  For example, when a node leaves the cluster, only the processes that were running on that node
-  will be redistributed. The rest of the processes will stay on the same node. When a new node
-  joins the cluster, only some of the processes will be redistributed to the new node, and the
-  rest will stay on the same node.
-
-  > The hash ring implementation **does not guarantee** that all processes will always be
-  > evenly distributed, but it does its best to distribute them as evenly as possible.
-
-  This is the default distribution strategy.
+  TODO:
   """
 
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -40,16 +10,31 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   alias ProcessHub.Hub
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias :elector, as: Elector
 
-  @type t() :: %__MODULE__{}
+  use GenServer
+
+  @type t() :: %__MODULE__{
+          scoreboard: %{node() => pos_integer()},
+          query_info_fn: (Hub.t() -> any()),
+          calculate_score_fn: (Hub.t(), map(), any() -> any()),
+          calculator_pid: pid() | nil
+        }
   defstruct scoreboard: %{},
-            query_node_fn: nil,
-            arrange_scoreboard_fn: nil
+            query_info_fn: &default_query_info_fn/1,
+            calculate_score_fn: &default_calculate_score_fn/3,
+            calculator_pid: nil
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.CentralizedScoreboard do
+    alias ProcessHub.Strategy.Distribution.CentralizedScoreboard
+
     @impl true
-    def init(_strategy, hub) do
+    def init(strategy, hub) do
+      pid = CentralizedScoreboard.start_link({hub, strategy})
+
       Application.ensure_started(:elector)
+
+      %__MODULE__{strategy | calculator_pid: pid}
     end
 
     @impl true
@@ -61,6 +46,64 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
     @impl true
     def children_init(_strategy, _hub, _child_specs, _opts), do: :ok
   end
+
+  def start_link(args) do
+    {:ok, pid} = GenServer.start_link(__MODULE__, args)
+    pid
+  end
+
+  @impl true
+  def init({hub, strategy}) do
+    schedule_scores_calc()
+
+    {:ok, %{hub: hub, strategy: strategy}}
+  end
+
+  @impl true
+  def handle_info(:schedule_scores_calc, state) do
+    # Check if current node is the leader.
+    if Elector.leader?() do
+      nodes = Cluster.get_nodes(state.hub.storage.misc, [:include_local])
+      caller = self()
+
+      # Spawn a process on the remote nodes to
+      for node <- nodes do
+        Node.spawn(node, fn ->
+          hub = ProcessHub.Coordinator.get_hub(state.hub.hub_id)
+          dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+
+          info = dist_strat.query_info_fn.(hub)
+          Process.send(caller, {:calculate_score, node(), info})
+        end)
+      end
+
+      # Reschedule the next calculation.
+      schedule_scores_calc()
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:calculate_score, node, info}, state) do
+    # Update the scoreboard with the new info from the node.
+    node_score = state.strategy.calculate_score_fn.(state.hub, state.scoreboard, info)
+    new_scoreboard = Map.put(state.scoreboard, node, node_score)
+
+    {:noreply, %{state | scoreboard: new_scoreboard}}
+  end
+
+  # TODO:
+  def default_query_info_fn(_hub), do: %{}
+
+  # TODO:
+  def default_calculate_score_fn(_hub, _scoreboard, _info), do: 0
+
+  defp schedule_scores_calc() do
+    # TODO: make the interval configurable.
+    Process.send_after(self(), :schedule_scores_calc, 5_000)
+  end
 end
 
 # TODO: document that only one hub in the cluster should be able to use the centralized scoreboard strategy at the same time.
+# TODO: handle node leave/join.

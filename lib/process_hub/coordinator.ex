@@ -111,10 +111,13 @@ defmodule ProcessHub.Coordinator do
   def handle_continue(:additional_setup, state) do
     # Handle partition strategy initialization. This needs to be done
     # after the coordinator has been started.
-    PartitionToleranceStrategy.init(
-      Storage.get(state.storage.misc, StorageKey.strpart()),
-      state
-    )
+    part_strat =
+      PartitionToleranceStrategy.init(
+        Storage.get(state.storage.misc, StorageKey.strpart()),
+        state
+      )
+
+    Storage.insert(state.storage.misc, StorageKey.strpart(), part_strat)
 
     {:noreply, state}
   end
