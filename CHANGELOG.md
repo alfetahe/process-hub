@@ -29,6 +29,9 @@ This avoids the potential issue of generating new atoms when calling those funct
 ### Soft deprecations
 - `ProcessHub.which_children/2` is soft deprecated. Use `ProcessHub.process_list/2` instead.
 
+### Breaking changes
+- If you are defining your own custom distribution strategy, you must update the `belongs_to/4` to accepts a **list** of child ids instead of a single child id. This allows the strategy to optimize the node selection for multiple children at once.
+
 ## v0.3.3-alpha - 2025-06-21
 This release focuses on improving process migrations and the state handover mechanism.
 Users who previously implemented custom callbacks for the `HotSwap` migration strategy must update their code to use the new macro-based approach.

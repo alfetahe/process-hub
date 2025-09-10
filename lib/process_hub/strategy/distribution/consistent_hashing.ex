@@ -95,13 +95,15 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
     @spec belongs_to(
             ProcessHub.Strategy.Distribution.ConsistentHashing.t(),
             Hub.t(),
-            ProcessHub.child_id(),
+            [ProcessHub.child_id()],
             pos_integer()
           ) :: [atom]
-    def belongs_to(_strategy, hub, child_id, replication_factor) do
-      hub.storage.misc
-      |> Storage.get(StorageKey.hr())
-      |> Ring.key_to_nodes(child_id, replication_factor)
+    def belongs_to(_strategy, hub, child_ids, replication_factor) do
+      hash_ring = Storage.get(hub.storage.misc, StorageKey.hr())
+
+      Enum.map(child_ids, fn child_id ->
+        {child_id, Ring.key_to_nodes(hash_ring, child_id, replication_factor)}
+      end)
     end
 
     @impl true

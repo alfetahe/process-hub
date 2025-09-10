@@ -11,6 +11,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Utility.Bag
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -224,10 +225,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
            } = arg
          ) do
       local_node = node()
+      cids = Enum.map(lc, fn {child_id, _} -> child_id end)
+      cid_pid_node_pairs = DistributionStrategy.belongs_to(dist_strat, arg.hub, cids, rp)
 
       {keep, migrate} =
         Enum.reduce(lc, {[], []}, fn {child_id, {cs, _, m}}, {keep, migrate} = acc ->
-          cn = DistributionStrategy.belongs_to(dist_strat, arg.hub, child_id, rp)
+          cn = Bag.get_by_key(cid_pid_node_pairs, child_id, [])
 
           case Enum.member?(cn, node) do
             true ->

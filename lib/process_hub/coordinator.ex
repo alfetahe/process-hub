@@ -63,7 +63,12 @@ defmodule ProcessHub.Coordinator do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
 
-    hub_nodes = get_hub_nodes(storage.misc)
+    # Store the current hub nodes in the misc storage.
+    Storage.insert(
+      storage.misc,
+      StorageKey.hn(),
+      get_hub_nodes(storage.misc)
+    )
 
     state = %Hub{
       hub_id: hub_conf.hub_id,
@@ -74,7 +79,7 @@ defmodule ProcessHub.Coordinator do
     hub_conf = init_strategies(state, hub_conf)
     register_handlers(procs)
     register_handlers(storage.hook, hub_conf.hooks)
-    setup_misc_storage(hub_conf, hub_nodes, storage)
+    setup_misc_storage(hub_conf, storage)
 
     local_store = state.storage.misc
     event_queue = state.procs.event_queue
@@ -579,8 +584,7 @@ defmodule ProcessHub.Coordinator do
     }
   end
 
-  defp setup_misc_storage(%ProcessHub{} = settings, hub_nodes, storage) do
-    Storage.insert(storage.misc, StorageKey.hn(), hub_nodes)
+  defp setup_misc_storage(%ProcessHub{} = settings, storage) do
     Storage.insert(storage.misc, StorageKey.strred(), settings.redundancy_strategy)
     Storage.insert(storage.misc, StorageKey.strdist(), settings.distribution_strategy)
     Storage.insert(storage.misc, StorageKey.strmigr(), settings.migration_strategy)

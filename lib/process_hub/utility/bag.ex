@@ -25,6 +25,16 @@ defmodule ProcessHub.Utility.Bag do
     DateTime.utc_now() |> DateTime.to_unix(precision)
   end
 
+  # TODO: add tests and docs.
+  def get_by_key(list, key, default \\ nil) do
+    result = Enum.find(list, default, fn {k, _v} -> k === key end)
+
+    case result do
+      {^key, v} -> v
+      _ -> default
+    end
+  end
+
   @doc """
   Waits and receives multiple messages.
   """

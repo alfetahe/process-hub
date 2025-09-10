@@ -13,6 +13,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Utility.Bag
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Hub
@@ -298,16 +299,20 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       # Check if the child belongs to this node.
       local_node = node()
       replication_factor = RedundancyStrategy.replication_factor(redun_strat)
+      cids = Enum.map(children, & &1.child_spec.id)
+
+      cid_pid_node_pids =
+        DistributionStrategy.belongs_to(dist_strat, hub, cids, replication_factor)
 
       {valid, forw} =
         Enum.reduce(children, {[], []}, fn %{child_id: cid, nodes: n_orig} = cdata,
                                            {valid, forw} ->
-          nodes = DistributionStrategy.belongs_to(dist_strat, hub, cid, replication_factor)
-
           # Recheck if the child processes that are supposed to be started current node are
           # still assigned to current node or not. If not then forward to the correct node.
           #
           # These cases can happen when multiple nodes are added to the cluster simultaneously.
+          nodes = Bag.get_by_key(cid_pid_node_pids, cid, [])
+
           case Enum.member?(nodes, local_node) do
             true ->
               {[cdata | valid], forw}

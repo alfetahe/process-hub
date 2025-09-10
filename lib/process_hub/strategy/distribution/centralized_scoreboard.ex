@@ -3,17 +3,12 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   TODO:
   """
 
-  require Logger
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.Service.Storage
-  alias ProcessHub.Service.HookManager
-  alias ProcessHub.Service.Cluster
   alias ProcessHub.Hub
-  alias ProcessHub.Constant.Hook
-  alias ProcessHub.Constant.StorageKey
   alias :elector, as: Elector
 
   use GenServer
+  require Logger
 
   @type node_metrics() :: %{
           scheduler_utilization: float(),
@@ -39,8 +34,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
           weight_decay_factor: float()
         }
   defstruct scoreboard: %{},
-            query_info_fn: &default_query_info_fn/1,
-            calculate_score_fn: &default_calculate_score_fn/3,
+            query_info_fn: &__MODULE__.default_query_info_fn/1,
+            calculate_score_fn: &__MODULE__.default_calculate_score_fn/3,
             calculator_pid: nil,
             max_history_size: 20,
             weight_decay_factor: 0.9
@@ -54,13 +49,15 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
 
       Application.ensure_started(:elector)
 
-      %__MODULE__{strategy | calculator_pid: pid}
+      %CentralizedScoreboard{strategy | calculator_pid: pid}
     end
 
     @impl true
-    def belongs_to(_strategy, hub, child_id, replication_factor) do
-      nodes = Cluster.get_nodes(hub.storage.misc, [:include_local])
-      Cluster.key_to_node(nodes, child_id, replication_factor)
+    def belongs_to(_strategy, _hub, child_ids, _replication_factor) do
+      # TODO: Implement.
+      Enum.map(child_ids, fn child_id ->
+        {child_id, [node()]}
+      end)
     end
 
     @impl true
@@ -143,14 +140,15 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   def default_query_info_fn(_hub) do
     scheduler_usage = :scheduler.sample_all()
     scheduler_utilization = calculate_scheduler_utilization(scheduler_usage)
-    
-    run_queue_total = :erlang.statistics(:run_queue) + 
-                     :erlang.statistics(:run_queue_sizes_all)
-                     |> Enum.sum()
-    
+
+    run_queue_total =
+      (:erlang.statistics(:run_queue) +
+         :erlang.statistics(:run_queue_sizes_all))
+      |> Enum.sum()
+
     process_count = :erlang.system_info(:process_count)
     memory_usage = :erlang.memory(:total)
-    
+
     %{
       scheduler_utilization: scheduler_utilization,
       run_queue_total: run_queue_total,
@@ -168,10 +166,10 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   def default_calculate_score_fn(hub, scoreboard, metrics) do
     strategy = hub.strategy
     current_node = Node.self()
-    
+
     # Calculate current load score (normalized between 0 and 1)
     current_score = calculate_load_score(metrics)
-    
+
     case Map.get(scoreboard, current_node) do
       nil ->
         # First measurement for this node
@@ -181,21 +179,23 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
           sample_count: 1,
           last_updated: metrics.timestamp
         }
-      
+
       existing_score ->
         # Update existing score with exponential moving average
-        updated_historical = update_historical_scores(
-          existing_score.historical_scores,
-          current_score,
-          strategy.max_history_size
-        )
-        
+        updated_historical =
+          update_historical_scores(
+            existing_score.historical_scores,
+            current_score,
+            strategy.max_history_size
+          )
+
         # Calculate weighted average with decay factor
-        weighted_score = calculate_weighted_average(
-          updated_historical,
-          strategy.weight_decay_factor
-        )
-        
+        weighted_score =
+          calculate_weighted_average(
+            updated_historical,
+            strategy.weight_decay_factor
+          )
+
         %{
           current_score: weighted_score,
           historical_scores: updated_historical,
@@ -206,57 +206,60 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   end
 
   # Private helper functions for score calculations
-  
+
   defp calculate_scheduler_utilization(scheduler_usage) do
     case scheduler_usage do
-      :undefined -> 0.0
+      :undefined ->
+        0.0
+
       usage_data ->
-        total_usage = Enum.reduce(usage_data, 0.0, fn {_id, active, total}, acc ->
-          utilization = if total > 0, do: active / total, else: 0.0
-          acc + utilization
-        end)
-        
+        total_usage =
+          Enum.reduce(usage_data, 0.0, fn {_id, active, total}, acc ->
+            utilization = if total > 0, do: active / total, else: 0.0
+            acc + utilization
+          end)
+
         scheduler_count = length(usage_data)
         if scheduler_count > 0, do: total_usage / scheduler_count, else: 0.0
     end
   end
-  
+
   defp calculate_load_score(metrics) do
     # Normalize metrics to 0-1 scale and combine with weights
     scheduler_score = min(metrics.scheduler_utilization, 1.0)
-    
+
     # Normalize run queue (assuming typical values 0-100)
     run_queue_score = min(metrics.run_queue_total / 100.0, 1.0)
-    
+
     # Normalize process count (assuming typical values 0-10000)
     process_score = min(metrics.process_count / 10_000.0, 1.0)
-    
+
     # Normalize memory usage (assuming typical values 0-1GB)
     memory_score = min(metrics.memory_usage / (1024 * 1024 * 1024), 1.0)
-    
+
     # Weighted combination of metrics
     scheduler_score * 0.4 + run_queue_score * 0.3 + process_score * 0.2 + memory_score * 0.1
   end
-  
+
   defp update_historical_scores(historical_scores, new_score, max_size) do
     updated_scores = [new_score | historical_scores]
-    
+
     if length(updated_scores) > max_size do
       Enum.take(updated_scores, max_size)
     else
       updated_scores
     end
   end
-  
+
   defp calculate_weighted_average(scores, decay_factor) do
-    {weighted_sum, weight_sum} = 
+    {weighted_sum, weight_sum} =
       scores
       |> Enum.with_index()
       |> Enum.reduce({0.0, 0.0}, fn {score, index}, {sum, weights} ->
         weight = :math.pow(decay_factor, index)
         {sum + score * weight, weights + weight}
       end)
-    
+
     if weight_sum > 0, do: weighted_sum / weight_sum, else: 0.0
   end
 

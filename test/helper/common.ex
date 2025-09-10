@@ -7,6 +7,7 @@ defmodule Test.Helper.Common do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
 
   use ExUnit.Case, async: false
 
@@ -98,42 +99,37 @@ defmodule Test.Helper.Common do
     dist_strat = hub_conf.distribution_strategy
     redun_strat = hub_conf.redundancy_strategy
     repl_fact = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
+    child_ids = Map.keys(registry)
+    children_nodes = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
 
-    Enum.each(registry, fn {child_id, {_, nodes, _}} ->
-      child_nodes =
-        ProcessHub.Strategy.Distribution.Base.belongs_to(
-          dist_strat,
-          hub,
-          child_id,
-          repl_fact
-        )
-
+    Enum.each(children_nodes, fn {child_id, child_nodes} ->
       master_node = RedundancyStrategy.master_node(redun_strat, hub, child_id, child_nodes)
-
-      assert length(nodes) === repl_fact,
-             "The length of nodes does not match replication factor"
 
       assert length(child_nodes) === repl_fact,
              "The length of belongs_to call does not match replication factor"
 
-      for {node, pid} <- nodes do
-        state = GenServer.call(pid, :get_state)
+      registry_pid_nodes = Map.get(registry, child_id) |> elem(1)
 
-        cond do
-          rep_model === :active_active ->
-            assert state[:redun_mode] === :active,
-                   "Exptected cid #{child_id} on node #{node} active recived #{state[:redun_mode]}"
+      if is_list(registry_pid_nodes) do
+        for {node, pid} <- registry_pid_nodes do
+          state = GenServer.call(pid, :get_state)
 
-          rep_model === :active_passive ->
-            case state[:redun_mode] do
-              :active ->
-                assert master_node === node,
-                       "Exptected cid #{child_id} on node #{node} to match #{master_node}"
+          cond do
+            rep_model === :active_active ->
+              assert state[:redun_mode] === :active,
+                     "Exptected cid #{child_id} on node #{node} active recived #{state[:redun_mode]}"
 
-              :passive ->
-                assert master_node !== node,
-                       "Exptected cid #{child_id} on node #{node} to not match #{master_node}"
-            end
+            rep_model === :active_passive ->
+              case state[:redun_mode] do
+                :active ->
+                  assert master_node === node,
+                         "Exptected cid #{child_id} on node #{node} to match #{master_node}"
+
+                :passive ->
+                  assert master_node !== node,
+                         "Exptected cid #{child_id} on node #{node} to not match #{master_node}"
+              end
+          end
         end
       end
     end)

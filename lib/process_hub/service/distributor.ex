@@ -13,6 +13,7 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Handler.ChildrenRem.StopHandle
+  alias ProcessHub.Utility.Bag
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -81,9 +82,10 @@ defmodule ProcessHub.Service.Distributor do
     redun_strat = Storage.get(hub.storage.misc, StorageKey.strred())
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
+    cid_pid_node_pids = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
-      child_nodes = DistributionStrategy.belongs_to(dist_strat, hub, child_id, repl_fact)
+      child_nodes = Bag.get_by_key(cid_pid_node_pids, child_id, [])
       child_data = %{nodes: child_nodes, child_id: child_id}
 
       append_items =
@@ -440,11 +442,18 @@ defmodule ProcessHub.Service.Distributor do
 
   defp init_attach_nodes(hub, child_specs, %{distribution: dist, redundancy: redun}) do
     repl_fact = RedundancyStrategy.replication_factor(redun)
+    cids = Enum.map(child_specs, & &1.id)
+    cid_pid_node_pids = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
 
-    {:ok,
-     Enum.map(child_specs, fn child_spec ->
-       {child_spec, DistributionStrategy.belongs_to(dist, hub, child_spec.id, repl_fact)}
-     end)}
+    {
+      :ok,
+      Enum.map(child_specs, fn child_spec ->
+        {
+          child_spec,
+          Bag.get_by_key(cid_pid_node_pids, child_spec.id, [])
+        }
+      end)
+    }
   end
 
   defp init_registry_check(%Hub{hub_id: hub_id}, child_specs, opts) do

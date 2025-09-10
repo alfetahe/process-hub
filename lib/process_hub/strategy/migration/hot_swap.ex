@@ -351,25 +351,32 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       Storage.get(hub.storage.misc, StorageKey.strred())
       |> RedundancyStrategy.replication_factor()
 
-    Enum.reduce(local_data, %{}, fn {cid, {_, cn, _m}}, acc ->
-      nodes = Keyword.keys(cn)
-      new_nodes = DistributionStrategy.belongs_to(dist_strat, hub, cid, repl_fact)
-      migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
-      node_data = Map.get(acc, migration_node, [])
+    cids = Enum.map(local_data, & &1.cid)
 
-      case migration_node do
+    Enum.reduce(cids, %{}, fn {cid, new_nodes}, acc ->
+      case Map.get(local_data, cid) do
         nil ->
           acc
 
-        _ ->
-          migr_data =
-            (Enum.find(
-               states,
-               fn {child_id, _} -> child_id === cid end
-             ) || {nil, nil})
-            |> elem(1)
+        {_, cn, _m} ->
+          nodes = Keyword.keys(cn)
+          migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
+          node_data = Map.get(acc, migration_node, [])
 
-          Map.put(acc, migration_node, [{cid, migr_data} | node_data])
+          case migration_node do
+            nil ->
+              acc
+
+            _ ->
+              migr_data =
+                (Enum.find(
+                   states,
+                   fn {child_id, _} -> child_id === cid end
+                 ) || {nil, nil})
+                |> elem(1)
+
+              Map.put(acc, migration_node, [{cid, migr_data} | node_data])
+          end
       end
     end)
   end

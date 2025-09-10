@@ -13,7 +13,7 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
 
   Could be used to perform initialization.
   """
-  @spec init(struct(), Hub.t()) :: struct()()
+  @spec init(struct(), Hub.t()) :: struct()
   def init(strategy, hub)
 
   @doc """

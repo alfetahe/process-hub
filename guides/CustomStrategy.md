@@ -155,15 +155,18 @@ defmodule CustomStrategy.Compare do
     def children_init(_struct, _hub, _child_specs, _opts), do: :ok
 
     @impl true
-    def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_id, _replication_factor) do
+    def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_ids, _replication_factor) do
         hub_nodes = ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
 
-        selected_node = case struct.direction do
+        Enum.map(child_ids, fn child_id ->
+          selected_node = case struct.direction do
             :asc -> Enum.sort(hub_nodes) |> Enum.at(0)
             :desc -> Enum.sort(hub_nodes) |> Enum.reverse() |> Enum.at(0)
-        end
+          end
 
-        [selected_node] # Ignore the replication factor and just return one node
+          # Ignore the replication factor and just return one node
+          {child_id, [selected_node]}
+        end)
     end
   end
 end

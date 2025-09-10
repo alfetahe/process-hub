@@ -23,10 +23,10 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   @spec belongs_to(
           strategy :: struct(),
           hub :: Hub.t(),
-          child_id :: atom() | binary(),
+          child_ids :: [ProcessHub.child_id()],
           replication_factor :: pos_integer()
-        ) :: [node()]
-  def belongs_to(strategy, hub, child_id, replication_factor)
+        ) :: [{ProcessHub.child_id(), [node()]}]
+  def belongs_to(strategy, hub, child_ids, replication_factor)
 
   @doc """
   Perform any necessary initialization and validation for the started children.
