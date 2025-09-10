@@ -3,6 +3,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   TODO:
   """
 
+  require Logger
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.HookManager
@@ -54,32 +55,39 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
 
   @impl true
   def init({hub, strategy}) do
-    schedule_scores_calc()
+    schedule_stats_push()
 
     {:ok, %{hub: hub, strategy: strategy}}
   end
 
   @impl true
-  def handle_info(:schedule_scores_calc, state) do
-    # Check if current node is the leader.
-    if Elector.leader?() do
-      nodes = Cluster.get_nodes(state.hub.storage.misc, [:include_local])
-      caller = self()
+  def handle_info(:schedule_stats_push, state) do
+    local_stats = state.strategy.query_info_fn.(state.hub)
 
-      # Spawn a process on the remote nodes to
-      for node <- nodes do
-        Node.spawn(node, fn ->
-          hub = ProcessHub.Coordinator.get_hub(state.hub.hub_id)
-          dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+    case Elector.get_leader() do
+      {:ok, leader_node} ->
+        if leader_node === Node.self() do
+          GenServer.cast(
+            state.strategy.calculator_pid,
+            {:calculate_score, Node.self(), local_stats}
+          )
+        else
+          Node.spawn(leader_node, fn ->
+            hub = ProcessHub.Coordinator.get_hub(state.hub.hub_id)
 
-          info = dist_strat.query_info_fn.(hub)
-          Process.send(caller, {:calculate_score, node(), info})
-        end)
-      end
+            GenServer.cast(
+              hub.strategy.calculator_pid,
+              {:calculate_score, Node.self(), local_stats}
+            )
+          end)
+        end
 
-      # Reschedule the next calculation.
-      schedule_scores_calc()
+      _ ->
+        Logger.error("[ProcessHub][CentralizedScoreboard] Failed to get leader node.")
     end
+
+    # Reschedule the next calculation.
+    schedule_stats_push()
 
     {:noreply, state}
   end
@@ -99,9 +107,9 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   # TODO:
   def default_calculate_score_fn(_hub, _scoreboard, _info), do: 0
 
-  defp schedule_scores_calc() do
+  defp schedule_stats_push() do
     # TODO: make the interval configurable.
-    Process.send_after(self(), :schedule_scores_calc, 5_000)
+    Process.send_after(self(), :schedule_stats_push, 5_000)
   end
 end
 
