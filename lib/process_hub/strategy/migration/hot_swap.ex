@@ -57,6 +57,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Strategy.Migration.HotSwap
   alias ProcessHub.StartResult
+  alias ProcessHub.Utility.Bag
 
   @typedoc """
   Hot-swap migration strategy configuration.
@@ -351,10 +352,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       Storage.get(hub.storage.misc, StorageKey.strred())
       |> RedundancyStrategy.replication_factor()
 
-    cids = Enum.map(local_data, & &1.cid)
+    cids = Enum.map(local_data, &elem(&1, 0))
+    cid_pid_node_pairs = DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
 
-    Enum.reduce(cids, %{}, fn {cid, new_nodes}, acc ->
-      case Map.get(local_data, cid) do
+    Enum.reduce(cid_pid_node_pairs, %{}, fn {cid, new_nodes}, acc ->
+      case Bag.get_by_key(local_data, cid) do
         nil ->
           acc
 

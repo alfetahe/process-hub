@@ -398,20 +398,17 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp removed_node_processes(arg) do
       repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
+      reg_dump = ProcessRegistry.dump(arg.hub.hub_id)
+      cids = Enum.map(reg_dump, fn {cid, _} -> cid end)
 
-      ProcessRegistry.dump(arg.hub.hub_id)
-      |> Enum.reduce([], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
+      cid_pid_node_pairs =
+        DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
+
+      Enum.reduce(reg_dump, [], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
         nodes_orig = Keyword.keys(node_pids)
 
         if Enum.member?(nodes_orig, arg.removed_node) do
-          nodes_updated =
-            DistributionStrategy.belongs_to(
-              arg.dist_strat,
-              arg.hub,
-              child_id,
-              repl_fact
-            )
-
+          nodes_updated = Bag.get_by_key(cid_pid_node_pairs, child_id, [])
           [{child_id, child_spec, metadata, nodes_orig, nodes_updated} | acc]
         else
           acc
