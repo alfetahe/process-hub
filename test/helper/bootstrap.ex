@@ -229,6 +229,9 @@ defmodule Test.Helper.Bootstrap do
       :consistent_hashing ->
         %ProcessHub.Strategy.Distribution.ConsistentHashing{}
 
+      :centralized_scoreboard ->
+        %ProcessHub.Strategy.Distribution.CentralizedScoreboard{}
+
       _ ->
         %ProcessHub.Strategy.Distribution.ConsistentHashing{}
     end
