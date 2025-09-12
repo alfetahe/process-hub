@@ -5,6 +5,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
 
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Hub
+  alias ProcessHub.Service.Cluster
   alias :elector, as: Elector
 
   use GenServer
@@ -53,15 +54,90 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
     end
 
     @impl true
-    def belongs_to(_strategy, _hub, child_ids, _replication_factor) do
-      # TODO: Implement.
-      Enum.map(child_ids, fn child_id ->
-        {child_id, [node()]}
-      end)
+    def belongs_to(strategy, hub, child_ids, _replication_factor) do
+      case strategy.scoreboard do
+        scoreboard when map_size(scoreboard) == 0 ->
+          # Fallback to random node selection if no scoreboard data
+          available_nodes = Cluster.nodes(hub.storage.misc)
+
+          Enum.map(child_ids, fn child_id ->
+            {child_id, [Enum.random(available_nodes)]}
+          end)
+
+        scoreboard ->
+          distribute_children_by_capacity(child_ids, scoreboard)
+      end
     end
 
     @impl true
     def children_init(_strategy, _hub, _child_specs, _opts), do: :ok
+
+    defp distribute_children_by_capacity(child_ids, scoreboard) do
+      # Calculate capacity for each node (higher capacity = lower load score)
+      node_capacities =
+        Enum.map(scoreboard, fn {node, score} ->
+          # Invert score and ensure minimum 10% capacity
+          capacity = max(0.1, 1.0 - score.current_score)
+          {node, capacity}
+        end)
+
+      total_capacity =
+        Enum.reduce(node_capacities, 0.0, fn {_node, capacity}, acc ->
+          acc + capacity
+        end)
+
+      child_count = length(child_ids)
+
+      # Calculate how many children each node should get
+      node_allocations =
+        Enum.map(node_capacities, fn {node, capacity} ->
+          allocation = round(capacity / total_capacity * child_count)
+          {node, allocation}
+        end)
+
+      # Distribute children using the calculated allocations
+      distribute_with_allocations(child_ids, node_allocations)
+    end
+
+    defp distribute_with_allocations(child_ids, node_allocations) do
+      # Create a list of nodes repeated by their allocation count
+      node_list =
+        Enum.flat_map(node_allocations, fn {node, allocation} ->
+          List.duplicate(node, allocation)
+        end)
+
+      # Handle case where allocations don't sum to child count due to rounding
+      final_node_list =
+        case length(node_list) do
+          node_count when node_count < length(child_ids) ->
+            # Add extra nodes from highest capacity nodes
+            extra_needed = length(child_ids) - node_count
+
+            sorted_nodes =
+              Enum.sort_by(node_allocations, fn {_node, allocation} ->
+                -allocation
+              end)
+
+            extra_nodes =
+              sorted_nodes
+              |> Enum.take(extra_needed)
+              |> Enum.map(fn {node, _} -> node end)
+
+            node_list ++ extra_nodes
+
+          node_count when node_count > length(child_ids) ->
+            # Remove excess nodes
+            Enum.take(node_list, length(child_ids))
+
+          _ ->
+            node_list
+        end
+
+      # Zip children with assigned nodes
+      child_ids
+      |> Enum.zip(final_node_list)
+      |> Enum.map(fn {child_id, node} -> {child_id, [node]} end)
+    end
   end
 
   def start_link(args) do
