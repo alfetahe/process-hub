@@ -34,7 +34,22 @@ defmodule Test.IntegrationTest do
     child_count = 10
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
-    # # Starts children on all nodes.
+    # Register custom hook handler.
+    ProcessHub.Service.HookManager.register_handler(
+      context.hub.storage.hook,
+      :scoreboard_updated,
+      %ProcessHub.Service.HookManager{
+        id: :test_scoreboard_updated,
+        m: Process,
+        f: :send,
+        a: [self(), {:scoreboard_update_hook, :ok}, []]
+      }
+    )
+
+    # Make sure we receive at least some of the scoreboard updates before starting children.
+    Bag.receive_multiple(50, :scoreboard_update_hook)
+
+    # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)
 
     # Tests if all child_specs are used for starting children.
@@ -51,6 +66,13 @@ defmodule Test.IntegrationTest do
 
     # # Tests children removing and syncing.
     # Common.validate_sync(context)
+
+    # Remove custom hook handler.
+    ProcessHub.Service.HookManager.cancel_handler(
+      context.hub.storage.hook,
+      :scoreboard_updated,
+      :test_scoreboard_updated
+    )
   end
 
   # @tag hub_id: :pubsub_start_rem_test

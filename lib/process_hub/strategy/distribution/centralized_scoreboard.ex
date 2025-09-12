@@ -7,6 +7,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   alias ProcessHub.Hub
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.StorageKey
   alias :elector, as: Elector
 
@@ -34,14 +35,16 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
           calculate_score_fn: (Hub.t(), t(), node_metrics() -> node_score()),
           calculator_pid: pid() | nil,
           max_history_size: pos_integer(),
-          weight_decay_factor: float()
+          weight_decay_factor: float(),
+          push_interval: pos_integer()
         }
   defstruct scoreboard: %{},
             query_info_fn: &__MODULE__.default_query_info_fn/1,
             calculate_score_fn: &__MODULE__.default_calculate_score_fn/3,
             calculator_pid: nil,
-            max_history_size: 20,
-            weight_decay_factor: 0.9
+            max_history_size: 100,
+            weight_decay_factor: 0.9,
+            push_interval: 10_000
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.CentralizedScoreboard do
     alias ProcessHub.Strategy.Distribution.CentralizedScoreboard
@@ -51,6 +54,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
       pid = CentralizedScoreboard.start_link({hub, strategy})
 
       Application.ensure_started(:elector)
+      Application.put_env(:elector, :strategy_module, :elector_ut_high_strategy)
+      Elector.elect()
 
       %CentralizedScoreboard{strategy | calculator_pid: pid}
     end
@@ -184,7 +189,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
 
   @impl true
   def init({hub, strategy}) do
-    schedule_stats_push()
+    schedule_stats_push(strategy.push_interval)
 
     {:ok, %{hub: hub, strategy: strategy}}
   end
@@ -221,8 +226,15 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
         Logger.error("[ProcessHub][CentralizedScoreboard] Failed to get leader node.")
     end
 
+    # Dispatch hook event.
+    HookManager.dispatch_hook(
+      state.hub.storage.hook,
+      :scoreboard_updated,
+      state.strategy.scoreboard
+    )
+
     # Reschedule the next calculation.
-    schedule_stats_push()
+    schedule_stats_push(state.strategy.push_interval)
 
     {:noreply, state}
   end
@@ -402,9 +414,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
     if weight_sum > 0, do: weighted_sum / weight_sum, else: 0.0
   end
 
-  defp schedule_stats_push() do
-    # TODO: make the interval configurable.
-    Process.send_after(self(), :schedule_stats_push, 5_000)
+  defp schedule_stats_push(interval) do
+    Process.send_after(self(), :schedule_stats_push, interval)
   end
 end
 
