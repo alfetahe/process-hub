@@ -6,6 +6,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Hub
   alias ProcessHub.Service.Cluster
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Constant.StorageKey
   alias :elector, as: Elector
 
   use GenServer
@@ -29,7 +31,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   @type t() :: %__MODULE__{
           scoreboard: %{node() => node_score()},
           query_info_fn: (Hub.t() -> node_metrics()),
-          calculate_score_fn: (Hub.t(), map(), node_metrics() -> node_score()),
+          calculate_score_fn: (Hub.t(), t(), node_metrics() -> node_score()),
           calculator_pid: pid() | nil,
           max_history_size: pos_integer(),
           weight_decay_factor: float()
@@ -55,17 +57,52 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
 
     @impl true
     def belongs_to(strategy, hub, child_ids, _replication_factor) do
-      case strategy.scoreboard do
-        scoreboard when map_size(scoreboard) == 0 ->
-          # Fallback to random node selection if no scoreboard data
-          available_nodes = Cluster.nodes(hub.storage.misc)
+      {:ok, leader_node} = Elector.get_leader()
 
-          Enum.map(child_ids, fn child_id ->
-            {child_id, [Enum.random(available_nodes)]}
+      case leader_node === Node.self() do
+        true ->
+          case strategy.scoreboard do
+            scoreboard when map_size(scoreboard) == 0 ->
+              # Fallback to random node selection if no scoreboard data
+              available_nodes = Cluster.nodes(hub.storage.misc)
+
+              Enum.map(child_ids, fn child_id ->
+                {child_id, [node()]}
+              end)
+
+            scoreboard ->
+              distribute_children_by_capacity(child_ids, scoreboard)
+          end
+
+        false ->
+          self = self()
+          node = node()
+
+          Node.spawn(leader_node, fn ->
+            hub = ProcessHub.Coordinator.get_hub(hub.hub_id)
+
+            dist_strat =
+              Storage.get(
+                hub.storage.misc,
+                StorageKey.strdist()
+              )
+
+            assignments =
+              DistributionStrategy.belongs_to(dist_strat, hub, child_ids, 1)
+
+            send(self, {:child_assignments, assignments})
           end)
 
-        scoreboard ->
-          distribute_children_by_capacity(child_ids, scoreboard)
+          receive do
+            {:child_assignments, assignments} -> assignments
+          after
+            5_000 ->
+              Logger.error(
+                "[ProcessHub][CentralizedScoreboard] Timeout waiting for leader node response."
+              )
+
+              []
+          end
       end
     end
 
@@ -167,8 +204,14 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
           Node.spawn(leader_node, fn ->
             hub = ProcessHub.Coordinator.get_hub(state.hub.hub_id)
 
+            dist_strat =
+              Storage.get(
+                hub.storage.misc,
+                StorageKey.strdist()
+              )
+
             GenServer.cast(
-              hub.strategy.calculator_pid,
+              dist_strat.calculator_pid,
               {:calculate_score, Node.self(), local_stats}
             )
           end)
@@ -187,7 +230,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   @impl true
   def handle_cast({:calculate_score, node, info}, state) do
     # Update the scoreboard with the new info from the node.
-    node_score = state.strategy.calculate_score_fn.(state.hub, state.strategy.scoreboard, info)
+    node_score = state.strategy.calculate_score_fn.(state.hub, state.strategy, info)
     new_scoreboard = Map.put(state.strategy.scoreboard, node, node_score)
     updated_strategy = %{state.strategy | scoreboard: new_scoreboard}
 
@@ -217,10 +260,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
     scheduler_usage = :scheduler.sample_all()
     scheduler_utilization = calculate_scheduler_utilization(scheduler_usage)
 
-    run_queue_total =
-      (:erlang.statistics(:run_queue) +
-         :erlang.statistics(:run_queue_sizes_all))
-      |> Enum.sum()
+    run_queue_total = :erlang.statistics(:run_queue)
 
     process_count = :erlang.system_info(:process_count)
     memory_usage = :erlang.memory(:total)
@@ -239,8 +279,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   Lower scores indicate lower load (better for new process placement).
   Uses exponential moving average to give more weight to recent measurements.
   """
-  def default_calculate_score_fn(hub, scoreboard, metrics) do
-    strategy = hub.strategy
+  def default_calculate_score_fn(_hub, strategy, metrics) do
+    scoreboard = strategy.scoreboard
     current_node = Node.self()
 
     # Calculate current load score (normalized between 0 and 1)
@@ -288,15 +328,38 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
       :undefined ->
         0.0
 
-      usage_data ->
+      {:scheduler_wall_time_all, usage_data} ->
         total_usage =
-          Enum.reduce(usage_data, 0.0, fn {_id, active, total}, acc ->
-            utilization = if total > 0, do: active / total, else: 0.0
-            acc + utilization
+          Enum.reduce(usage_data, 0.0, fn
+            {_type, _id, active, total}, acc ->
+              utilization = if total > 0, do: active / total, else: 0.0
+              acc + utilization
+
+            {_id, active, total}, acc ->
+              utilization = if total > 0, do: active / total, else: 0.0
+              acc + utilization
           end)
 
         scheduler_count = length(usage_data)
         if scheduler_count > 0, do: total_usage / scheduler_count, else: 0.0
+
+      usage_data when is_list(usage_data) ->
+        total_usage =
+          Enum.reduce(usage_data, 0.0, fn
+            {_type, _id, active, total}, acc ->
+              utilization = if total > 0, do: active / total, else: 0.0
+              acc + utilization
+
+            {_id, active, total}, acc ->
+              utilization = if total > 0, do: active / total, else: 0.0
+              acc + utilization
+          end)
+
+        scheduler_count = length(usage_data)
+        if scheduler_count > 0, do: total_usage / scheduler_count, else: 0.0
+
+      _ ->
+        0.0
     end
   end
 

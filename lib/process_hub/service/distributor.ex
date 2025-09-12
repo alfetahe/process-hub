@@ -82,6 +82,8 @@ defmodule ProcessHub.Service.Distributor do
     redun_strat = Storage.get(hub.storage.misc, StorageKey.strred())
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
+
+    # TODO: find from the storage instead of recalculating.
     cid_pid_node_pids = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
 
     Enum.reduce(child_ids, [], fn child_id, acc ->

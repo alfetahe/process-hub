@@ -37,14 +37,14 @@ defmodule Test.IntegrationTest do
     # # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)
 
-    # # Tests if all child_specs are used for starting children.
-    # Common.validate_registry_length(context, child_specs)
+    # Tests if all child_specs are used for starting children.
+    Common.validate_registry_length(context, child_specs)
 
-    # # Tests if all child_specs are started on all nodes.
-    # Common.validate_started_children(context, child_specs)
+    # Tests if all child_specs are started on all nodes.
+    Common.validate_started_children(context, child_specs)
 
-    # # Tests children adding and syncing.
-    # Common.validate_sync(context)
+    # Tests children adding and syncing.
+    Common.validate_sync(context)
 
     # # Stops children on all nodes.
     # Common.sync_base_test(context, child_specs, :rem, scope: :global)
