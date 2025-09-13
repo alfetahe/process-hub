@@ -30,24 +30,31 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global}
        ]
-  test "pubsub children starting and removing centralized", %{hub_id: hub_id} = context do
+  test "pubsub children starting and removing centralized", %{hub: hub} = context do
+    # TODO: increase to 1000
     child_count = 10
-    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub.hub_id))
 
     # Register custom hook handler.
     ProcessHub.Service.HookManager.register_handler(
       context.hub.storage.hook,
       :scoreboard_updated,
-      %ProcessHub.Service.HookManager{
-        id: :test_scoreboard_updated,
-        m: Process,
-        f: :send,
-        a: [self(), {:scoreboard_update_hook, :ok}, []]
-      }
+      Bag.recv_hook(:scoreboard_update_hook, self())
     )
 
-    # Make sure we receive at least some of the scoreboard updates before starting children.
-    Bag.receive_multiple(50, :scoreboard_update_hook)
+    # Make sure we receive the stats from all nodes.
+    context.hub.storage.misc
+    |> ProcessHub.Service.Cluster.nodes()
+    |> Enum.each(fn node ->
+      for y <- 1..10 do
+        receive do
+          {:scoreboard_update_hook, {_scoreboard, ^node}} ->
+            :ok
+        after
+          1000 -> raise("failed iteration: #{y}. Did not receive scoreboard update from #{node}")
+        end
+      end
+    end)
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)
@@ -60,6 +67,8 @@ defmodule Test.IntegrationTest do
 
     # Tests children adding and syncing.
     Common.validate_sync(context)
+
+    # TODO: removeProcessHub.Service.ProcessRegistry.dump(hub.hub_id) |> dbg()
 
     # # Stops children on all nodes.
     # Common.sync_base_test(context, child_specs, :rem, scope: :global)

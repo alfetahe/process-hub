@@ -25,7 +25,6 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
   @type node_score() :: %{
           current_score: float(),
           historical_scores: [float()],
-          sample_count: non_neg_integer(),
           last_updated: integer()
         }
 
@@ -68,7 +67,9 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
         true ->
           case strategy.scoreboard do
             scoreboard when map_size(scoreboard) == 0 ->
-              # Fallback to random node selection if no scoreboard data
+              dbg({node(), leader_node})
+
+              # Fallback to current node selection if no scoreboard data
               available_nodes = Cluster.nodes(hub.storage.misc)
 
               Enum.map(child_ids, fn child_id ->
@@ -189,21 +190,22 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
 
   @impl true
   def init({hub, strategy}) do
-    schedule_stats_push(strategy.push_interval)
+    schedule_stats_push(strategy)
 
-    {:ok, %{hub: hub, strategy: strategy}}
+    {:ok, %{hub: hub}}
   end
 
   @impl true
-  def handle_info(:schedule_stats_push, state) do
-    local_stats = state.strategy.query_info_fn.(state.hub)
+  def handle_info({:schedule_stats_push, strategy}, state) do
+    local_stats = strategy.query_info_fn.(state.hub)
+    node = Node.self()
 
     case Elector.get_leader() do
       {:ok, leader_node} ->
         if leader_node === Node.self() do
           GenServer.cast(
-            state.strategy.calculator_pid,
-            {:calculate_score, Node.self(), local_stats}
+            self(),
+            {:calculate_score, node, local_stats}
           )
         else
           Node.spawn(leader_node, fn ->
@@ -217,7 +219,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
 
             GenServer.cast(
               dist_strat.calculator_pid,
-              {:calculate_score, Node.self(), local_stats}
+              {:calculate_score, node, local_stats}
             )
           end)
         end
@@ -226,37 +228,48 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
         Logger.error("[ProcessHub][CentralizedScoreboard] Failed to get leader node.")
     end
 
-    # Dispatch hook event.
-    HookManager.dispatch_hook(
-      state.hub.storage.hook,
-      :scoreboard_updated,
-      state.strategy.scoreboard
-    )
-
     # Reschedule the next calculation.
-    schedule_stats_push(state.strategy.push_interval)
+    schedule_stats_push(strategy)
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:calculate_score, node, info}, state) do
-    # Update the scoreboard with the new info from the node.
-    node_score = state.strategy.calculate_score_fn.(state.hub, state.strategy, info)
-    new_scoreboard = Map.put(state.strategy.scoreboard, node, node_score)
-    updated_strategy = %{state.strategy | scoreboard: new_scoreboard}
+  def handle_cast({:calculate_score, node, stats}, state) do
+    strategy = Storage.get(state.hub.storage.misc, StorageKey.strdist())
 
-    {:noreply, %{state | strategy: updated_strategy}}
+    # Make sure the strategy exists in the cache.
+    # It may not exist if the coordinator has not yet stored
+    # it before the first stats push.
+    case strategy do
+      nil ->
+        {:noreply, state}
+
+      _ ->
+        # Update the scoreboard with the new info from the node.
+        node_score = strategy.calculate_score_fn.(state.hub, strategy, stats)
+        new_scoreboard = Map.put(strategy.scoreboard, node, node_score)
+        updated_strategy = %{strategy | scoreboard: new_scoreboard}
+
+        # Dispatch hook event.
+        HookManager.dispatch_hook(
+          state.hub.storage.hook,
+          :scoreboard_updated,
+          {strategy.scoreboard, node}
+        )
+
+        # Persist updated strategy.
+        Storage.insert(state.hub.storage.misc, StorageKey.strdist(), updated_strategy)
+    end
+
+    {:noreply, state}
   end
 
-  @doc """
-  Returns nodes sorted by their load score (lowest first).
-  Nodes with lower scores are better candidates for new processes.
-  """
-  def get_sorted_nodes_by_load(strategy) do
-    strategy.scoreboard
-    |> Enum.sort_by(fn {_node, score} -> score.current_score end)
-    |> Enum.map(fn {node, _score} -> node end)
+  @impl true
+  def handle_call(:get_scoreboard, _from, state) do
+    strategy = Storage.get(state.hub.storage.misc, StorageKey.strdist())
+
+    {:reply, strategy.scoreboard, state}
   end
 
   @doc """
@@ -304,7 +317,6 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
         %{
           current_score: current_score,
           historical_scores: [current_score],
-          sample_count: 1,
           last_updated: metrics.timestamp
         }
 
@@ -327,7 +339,6 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
         %{
           current_score: weighted_score,
           historical_scores: updated_historical,
-          sample_count: existing_score.sample_count + 1,
           last_updated: metrics.timestamp
         }
     end
@@ -414,8 +425,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
     if weight_sum > 0, do: weighted_sum / weight_sum, else: 0.0
   end
 
-  defp schedule_stats_push(interval) do
-    Process.send_after(self(), :schedule_stats_push, interval)
+  defp schedule_stats_push(strategy) do
+    Process.send_after(self(), {:schedule_stats_push, strategy}, strategy.push_interval)
   end
 end
 
