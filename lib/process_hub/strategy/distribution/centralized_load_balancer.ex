@@ -30,16 +30,12 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
   @type t() :: %__MODULE__{
           scoreboard: %{node() => node_score()},
-          query_info_fn: (Hub.t() -> node_metrics()),
-          calculate_score_fn: (Hub.t(), t(), node_metrics() -> node_score()),
           calculator_pid: pid() | nil,
           max_history_size: pos_integer(),
           weight_decay_factor: float(),
           push_interval: pos_integer()
         }
   defstruct scoreboard: %{},
-            query_info_fn: &__MODULE__.default_query_info_fn/1,
-            calculate_score_fn: &__MODULE__.default_calculate_score_fn/3,
             calculator_pid: nil,
             max_history_size: 100,
             weight_decay_factor: 0.9,
@@ -197,7 +193,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
   @impl true
   def handle_info({:schedule_stats_push, strategy}, state) do
-    local_stats = strategy.query_info_fn.(state.hub)
+    local_stats = query_stats(state.hub)
     node = Node.self()
 
     case Elector.get_leader() do
@@ -247,7 +243,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
       _ ->
         # Update the scoreboard with the new info from the node.
-        node_score = strategy.calculate_score_fn.(state.hub, strategy, stats)
+        node_score = calculate_score(state.hub, strategy, stats)
         new_scoreboard = Map.put(strategy.scoreboard, node, node_score)
         updated_strategy = %{strategy | scoreboard: new_scoreboard}
 
@@ -281,7 +277,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   Collects BEAM VM metrics for load balancing decisions.
   Returns scheduler utilization, run queue lengths, process count, and memory usage.
   """
-  def default_query_info_fn(_hub) do
+  defp query_stats(_hub) do
     scheduler_usage = :scheduler.sample_all()
     scheduler_utilization = calculate_scheduler_utilization(scheduler_usage)
 
@@ -304,7 +300,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   Lower scores indicate lower load (better for new process placement).
   Uses exponential moving average to give more weight to recent measurements.
   """
-  def default_calculate_score_fn(_hub, strategy, metrics) do
+  defp calculate_score(_hub, strategy, metrics) do
     scoreboard = strategy.scoreboard
     current_node = Node.self()
 
