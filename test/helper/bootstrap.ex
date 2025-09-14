@@ -27,6 +27,9 @@ defmodule Test.Helper.Bootstrap do
   @default_quorum_threshold_time 30000
   @default_startup_quorum_confirm false
 
+  # Distrbution options
+  @dist_stats_push_interval 30_000
+
   def init_nodes(nr_of_peers) do
     peer_nodes = TestNode.start_nodes(nr_of_peers)
 
@@ -231,7 +234,7 @@ defmodule Test.Helper.Bootstrap do
 
       :centralized_load_balancer ->
         %ProcessHub.Strategy.Distribution.CentralizedLoadBalancer{
-          push_interval: 10
+          push_interval: context[:dist_stats_push_interval] || @dist_stats_push_interval
         }
 
       _ ->

@@ -162,12 +162,16 @@ defmodule Test.Helper.Common do
   def sync_type_exec(actions, hub_id, opts) do
     Enum.each(actions, fn {function_name, hook_key, timeout_msg, children} ->
       apply(ProcessHub, function_name, [hub_id, children, Keyword.get(opts, :start_opts, [])])
+      |> dbg()
 
       message_count =
         case Keyword.get(opts, :scope, :local) do
           :local -> length(children)
           :global -> length(children) * (length(Node.list()) + 1)
         end * Keyword.get(opts, :replication_factor, 1)
+
+      Process.sleep(000)
+      ProcessHub.process_list(hub_id, :global) |> dbg()
 
       Bag.receive_multiple(
         message_count,

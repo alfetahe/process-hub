@@ -61,20 +61,24 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
       case leader_node === Node.self() do
         true ->
-          case strategy.scoreboard do
-            scoreboard when map_size(scoreboard) == 0 ->
-              dbg({node(), leader_node})
+          result =
+            case strategy.scoreboard do
+              scoreboard when map_size(scoreboard) == 0 ->
+                dbg({node(), leader_node})
 
-              # Fallback to current node selection if no scoreboard data
-              available_nodes = Cluster.nodes(hub.storage.misc)
+                # Fallback to current node selection if no scoreboard data
+                available_nodes = Cluster.nodes(hub.storage.misc)
 
-              Enum.map(child_ids, fn child_id ->
-                {child_id, [node()]}
-              end)
+                Enum.map(child_ids, fn child_id ->
+                  {child_id, [node()]}
+                end)
 
-            scoreboard ->
-              distribute_children_by_capacity(child_ids, scoreboard)
-          end
+              scoreboard ->
+                distribute_children_by_capacity(child_ids, scoreboard)
+            end
+
+          dbg({node(), child_ids, result})
+          result
 
         false ->
           self = self()
