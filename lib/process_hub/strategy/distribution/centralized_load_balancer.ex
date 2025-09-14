@@ -1,4 +1,4 @@
-defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
+defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   @moduledoc """
   TODO:
   """
@@ -45,18 +45,18 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
             weight_decay_factor: 0.9,
             push_interval: 10_000
 
-  defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.CentralizedScoreboard do
-    alias ProcessHub.Strategy.Distribution.CentralizedScoreboard
+  defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
+    alias ProcessHub.Strategy.Distribution.CentralizedLoadBalancer
 
     @impl true
     def init(strategy, hub) do
-      pid = CentralizedScoreboard.start_link({hub, strategy})
+      pid = CentralizedLoadBalancer.start_link({hub, strategy})
 
       Application.ensure_started(:elector)
       Application.put_env(:elector, :strategy_module, :elector_ut_high_strategy)
       Elector.elect()
 
-      %CentralizedScoreboard{strategy | calculator_pid: pid}
+      %CentralizedLoadBalancer{strategy | calculator_pid: pid}
     end
 
     @impl true
@@ -104,7 +104,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
           after
             5_000 ->
               Logger.error(
-                "[ProcessHub][CentralizedScoreboard] Timeout waiting for leader node response."
+                "[ProcessHub][CentralizedLoadBalancer] Timeout waiting for leader node response."
               )
 
               []
@@ -225,7 +225,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedScoreboard do
         end
 
       _ ->
-        Logger.error("[ProcessHub][CentralizedScoreboard] Failed to get leader node.")
+        Logger.error("[ProcessHub][CentralizedLoadBalancer] Failed to get leader node.")
     end
 
     # Reschedule the next calculation.

@@ -229,8 +229,8 @@ defmodule Test.Helper.Bootstrap do
       :consistent_hashing ->
         %ProcessHub.Strategy.Distribution.ConsistentHashing{}
 
-      :centralized_scoreboard ->
-        %ProcessHub.Strategy.Distribution.CentralizedScoreboard{
+      :centralized_load_balancer ->
+        %ProcessHub.Strategy.Distribution.CentralizedLoadBalancer{
           push_interval: 10
         }
 

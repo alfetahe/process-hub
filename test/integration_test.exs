@@ -23,7 +23,7 @@ defmodule Test.IntegrationTest do
 
   @tag hub_id: :pubsub_start_rem_test_centralized
   @tag sync_strategy: :pubsub
-  @tag dist_strategy: :centralized_scoreboard
+  @tag dist_strategy: :centralized_load_balancer
   @tag validate_metadata: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
