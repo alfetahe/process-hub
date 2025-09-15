@@ -24,7 +24,6 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :pubsub_start_rem_test_centralized
   @tag sync_strategy: :pubsub
   @tag dist_strategy: :centralized_load_balancer
-  @tag dist_stats_push_interval: 10
   @tag validate_metadata: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
@@ -35,58 +34,23 @@ defmodule Test.IntegrationTest do
     # TODO: increase to 1000
     child_count = 10
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub.hub_id))
+    scoreboard = ProcessHubTest.Fixture.ScoreboardFixture.scoreboard1()
 
-    # Register custom hook handler.
-    ProcessHub.Service.HookManager.register_handler(
-      context.hub.storage.hook,
-      :scoreboard_updated,
-      Bag.recv_hook(:scoreboard_update_hook, self())
-    )
+    {:ok, leader_node} = :elector.get_leader()
 
-    # Make sure we receive some X amount of stats from all nodes.
-    context.hub.storage.misc
-    |> ProcessHub.Service.Cluster.nodes()
-    |> Enum.each(fn node ->
-      for y <- 1..10 do
-        receive do
-          {:scoreboard_update_hook, {_scoreboard, ^node}} ->
-            :ok
-        after
-          1000 -> raise("failed iteration: #{y}. Did not receive scoreboard update from #{node}")
-        end
-      end
-    end)
+    Node.spawn(leader_node, fn ->
+      hub = ProcessHub.Coordinator.get_hub(context.hub_id)
 
-    # Reset the stats send schedule interval to avoid excessive messages during the test.
-    caller = self()
-
-    ProcessHub.Service.Cluster.nodes(hub.hub_id, [:include_local])
-    |> Enum.each(fn node ->
-      Node.spawn(node, fn ->
-        hub = ProcessHub.Coordinator.get_hub(hub.hub_id)
-
-        dist_strat =
-          ProcessHub.Service.Storage.get(
-            hub.storage.misc,
-            ProcessHub.Constant.StorageKey.strdist()
-          )
-
-        ProcessHub.Service.Storage.insert(
+      dist_strat =
+        ProcessHub.Service.Storage.get(
           hub.storage.misc,
-          ProcessHub.Constant.StorageKey.strdist(),
-          %{dist_strat | push_interval: 30_000}
+          ProcessHub.Constant.StorageKey.strdist()
         )
 
-        Process.send(caller, :dist_strat_updated, [])
-      end)
-
-      receive do
-        {:dist_strat_updated} ->
-          :ok
-      after
-        1000 ->
-          raise("Did not receive dist_strat_updated from #{node}")
-      end
+      GenServer.call(
+        dist_strat.calculator_pid,
+        {:set_scoreboard, scoreboard}
+      )
     end)
 
     IO.puts("  ----------------------- STARRRT  -----------------------")
@@ -105,20 +69,11 @@ defmodule Test.IntegrationTest do
     # # Tests children adding and syncing.
     # Common.validate_sync(context)
 
-    # TODO: removeProcessHub.Service.ProcessRegistry.dump(hub.hub_id) |> dbg()
-
     # # Stops children on all nodes.
     # Common.sync_base_test(context, child_specs, :rem, scope: :global)
 
     # # Tests children removing and syncing.
     # Common.validate_sync(context)
-
-    # Remove custom hook handler.
-    ProcessHub.Service.HookManager.cancel_handler(
-      context.hub.storage.hook,
-      :scoreboard_updated,
-      :test_scoreboard_updated
-    )
   end
 
   # @tag hub_id: :pubsub_start_rem_test

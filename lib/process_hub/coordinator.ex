@@ -211,6 +211,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_call({:init_children_start, child_specs, opts}, _from, state) do
+    opts = Keyword.put(opts, :init_cids, Enum.map(child_specs, & &1.id))
+
     result =
       Distributor.init_children(
         state,

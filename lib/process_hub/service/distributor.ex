@@ -82,9 +82,9 @@ defmodule ProcessHub.Service.Distributor do
     redun_strat = Storage.get(hub.storage.misc, StorageKey.strred())
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
+    cid_pid_node_pids = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
 
     # TODO: find from the storage instead of recalculating.
-    cid_pid_node_pids = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
       child_nodes = Bag.get_by_key(cid_pid_node_pids, child_id, [])
@@ -168,6 +168,7 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:on_failure, :continue)
     |> Keyword.put_new(:metadata, %{})
     |> Keyword.put_new(:await_timeout, 60000)
+    |> Keyword.put_new(:init_cids, [])
   end
 
   defp pre_start_children(hub, startup_children, opts) do

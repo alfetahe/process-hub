@@ -298,11 +298,16 @@ defmodule ProcessHub.Handler.ChildrenAdd do
          }) do
       # Check if the child belongs to this node.
       local_node = node()
-      replication_factor = RedundancyStrategy.replication_factor(redun_strat)
       cids = Enum.map(children, & &1.child_spec.id)
 
       cid_pid_node_pids =
-        DistributionStrategy.belongs_to(dist_strat, hub, cids, replication_factor)
+        DistributionStrategy.belongs_to(
+          dist_strat,
+          hub,
+          start_opts[:init_cids],
+          RedundancyStrategy.replication_factor(redun_strat)
+        )
+        |> Enum.filter(fn {cid, _} -> Enum.member?(cids, cid) end)
 
       {valid, forw} =
         Enum.reduce(children, {[], []}, fn %{child_id: cid, nodes: n_orig} = cdata,

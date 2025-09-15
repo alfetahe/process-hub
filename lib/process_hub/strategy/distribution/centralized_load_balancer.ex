@@ -4,7 +4,6 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   """
 
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.Hub
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.HookManager
@@ -61,40 +60,31 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
       case leader_node === Node.self() do
         true ->
-          result =
-            case strategy.scoreboard do
-              scoreboard when map_size(scoreboard) == 0 ->
-                dbg({node(), leader_node})
+          case strategy.scoreboard do
+            scoreboard when map_size(scoreboard) == 0 ->
+              # Fallback to current node selection if no scoreboard data
+              Enum.map(child_ids, fn child_id ->
+                {child_id, [node()]}
+              end)
 
-                # Fallback to current node selection if no scoreboard data
-                available_nodes = Cluster.nodes(hub.storage.misc)
-
-                Enum.map(child_ids, fn child_id ->
-                  {child_id, [node()]}
-                end)
-
-              scoreboard ->
-                distribute_children_by_capacity(child_ids, scoreboard)
-            end
-
-          dbg({node(), child_ids, result})
-          result
+            scoreboard ->
+              distribute_children_by_capacity(child_ids, scoreboard)
+          end
 
         false ->
           self = self()
-          node = node()
 
           Node.spawn(leader_node, fn ->
-            hub = ProcessHub.Coordinator.get_hub(hub.hub_id)
+            nhub = ProcessHub.Coordinator.get_hub(hub.hub_id)
 
             dist_strat =
               Storage.get(
-                hub.storage.misc,
+                nhub.storage.misc,
                 StorageKey.strdist()
               )
 
             assignments =
-              DistributionStrategy.belongs_to(dist_strat, hub, child_ids, 1)
+              DistributionStrategy.belongs_to(dist_strat, nhub, child_ids, 1)
 
             send(self, {:child_assignments, assignments})
           end)
@@ -270,6 +260,16 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     strategy = Storage.get(state.hub.storage.misc, StorageKey.strdist())
 
     {:reply, strategy.scoreboard, state}
+  end
+
+  @impl true
+  def handle_call({:set_scoreboard, new_scoreboard}, _from, state) do
+    strategy = Storage.get(state.hub.storage.misc, StorageKey.strdist())
+
+    updated_strategy = %{strategy | scoreboard: new_scoreboard}
+    Storage.insert(state.hub.storage.misc, StorageKey.strdist(), updated_strategy)
+
+    {:reply, :ok, state}
   end
 
   @doc """
