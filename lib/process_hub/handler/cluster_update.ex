@@ -73,7 +73,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       )
 
       # Handle the redistribution of processes.
-      distribute_processes(arg)
+      if Map.get(arg.dist_strat, :nodeup_redistribution, true) do
+        distribute_processes(arg)
+      end
 
       # Propagate the local children to the new node.
       propagate_local_children(hub, node)

@@ -32,13 +32,15 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
           calculator_pid: pid() | nil,
           max_history_size: pos_integer(),
           weight_decay_factor: float(),
-          push_interval: pos_integer()
+          push_interval: pos_integer(),
+          nodeup_redistribution: boolean()
         }
   defstruct scoreboard: %{},
             calculator_pid: nil,
             max_history_size: 100,
             weight_decay_factor: 0.9,
-            push_interval: 10_000
+            push_interval: 10_000,
+            nodeup_redistribution: false
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     alias ProcessHub.Strategy.Distribution.CentralizedLoadBalancer
@@ -195,6 +197,11 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     updated_strategy = %{strategy | scoreboard: new_scoreboard}
     Storage.insert(state.hub.storage.misc, StorageKey.strdist(), updated_strategy)
 
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:nodeup, node}, state) do
     {:noreply, state}
   end
 
