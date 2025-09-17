@@ -38,6 +38,7 @@ defmodule Test.IntegrationTest do
 
     {:ok, leader_node} = :elector.get_leader()
 
+    # Manually settings the scoreboard to the leader node.
     Node.spawn(leader_node, fn ->
       hub = ProcessHub.Coordinator.get_hub(context.hub_id)
 
@@ -53,27 +54,23 @@ defmodule Test.IntegrationTest do
       )
     end)
 
-    IO.puts("  ----------------------- STARRRT  -----------------------")
-
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)
 
-    IO.puts(" ----------------------- END -----------------------")
+    # Tests if all child_specs are used for starting children.
+    Common.validate_registry_length(context, child_specs)
 
-    # # Tests if all child_specs are used for starting children.
-    # Common.validate_registry_length(context, child_specs)
+    # Tests if all child_specs are started on all nodes.
+    Common.validate_started_children(context, child_specs)
 
-    # # Tests if all child_specs are started on all nodes.
-    # Common.validate_started_children(context, child_specs)
+    # Tests children adding and syncing.
+    Common.validate_sync(context)
 
-    # # Tests children adding and syncing.
-    # Common.validate_sync(context)
+    # Stops children on all nodes.
+    Common.sync_base_test(context, child_specs, :rem, scope: :global)
 
-    # # Stops children on all nodes.
-    # Common.sync_base_test(context, child_specs, :rem, scope: :global)
-
-    # # Tests children removing and syncing.
-    # Common.validate_sync(context)
+    # Tests children removing and syncing.
+    Common.validate_sync(context)
   end
 
   # @tag hub_id: :pubsub_start_rem_test
