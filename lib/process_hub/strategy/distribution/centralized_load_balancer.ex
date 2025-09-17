@@ -180,9 +180,22 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
   @impl true
   def init({hub, strategy}) do
+    :net_kernel.monitor_nodes(true)
+
     schedule_stats_push(strategy)
 
     {:ok, %{hub: hub}}
+  end
+
+  @impl true
+  def handle_info({:nodedown, node}, state) do
+    # Remove node from scoreboard.
+    strategy = Storage.get(state.hub.storage.misc, StorageKey.strdist())
+    new_scoreboard = Map.delete(strategy.scoreboard, node)
+    updated_strategy = %{strategy | scoreboard: new_scoreboard}
+    Storage.insert(state.hub.storage.misc, StorageKey.strdist(), updated_strategy)
+
+    {:noreply, state}
   end
 
   @impl true
