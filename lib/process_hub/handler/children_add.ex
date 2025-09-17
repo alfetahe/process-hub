@@ -304,7 +304,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         DistributionStrategy.belongs_to(
           dist_strat,
           hub,
-          start_opts[:init_cids],
+          Keyword.get(start_opts, :init_cids, cids),
           RedundancyStrategy.replication_factor(redun_strat)
         )
         |> Enum.filter(fn {cid, _} -> Enum.member?(cids, cid) end)

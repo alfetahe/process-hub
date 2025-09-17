@@ -91,6 +91,7 @@ defmodule Test.Service.DistributorTest do
     Distributor.init_children(hub, [cs1, cs2],
       awaitable: true,
       check_existing: true,
+      init_cids: [:dist_child_add, :dist_child_add2],
       timeout: 5000
     )
     |> ProcessHub.Future.await()
@@ -116,6 +117,7 @@ defmodule Test.Service.DistributorTest do
     Distributor.init_children(hub, [child_spec, child_spec2],
       awaitable: true,
       check_existing: false,
+      init_cids: [:dist_child_add, :dist_child_add2],
       timeout: 5000
     )
     |> ProcessHub.Future.await()
@@ -141,6 +143,7 @@ defmodule Test.Service.DistributorTest do
     Distributor.init_children(hub, [child_spec],
       awaitable: true,
       check_existing: true,
+      init_cids: [:dist_child_stop],
       timeout: 1000
     )
     |> ProcessHub.Future.await()
