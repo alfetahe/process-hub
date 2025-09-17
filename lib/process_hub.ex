@@ -175,7 +175,8 @@ defmodule ProcessHub do
             | ProcessHub.Strategy.PartitionTolerance.DynamicQuorum.t(),
           distribution_strategy:
             ProcessHub.Strategy.Distribution.ConsistentHashing.t()
-            | ProcessHub.Strategy.Distribution.Guided.t(),
+            | ProcessHub.Strategy.Distribution.Guided.t()
+            | ProcessHub.Strategy.Distribution.CentralizedLoadBalancer.t(),
           hubs_discover_interval: pos_integer(),
           deadlock_recovery_timeout: pos_integer(),
           storage_purge_interval: pos_integer(),

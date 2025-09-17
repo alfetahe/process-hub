@@ -33,6 +33,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
           max_history_size: pos_integer(),
           weight_decay_factor: float(),
           push_interval: pos_integer(),
+          # Do not change.
           nodeup_redistribution: boolean()
         }
   defstruct scoreboard: %{},
