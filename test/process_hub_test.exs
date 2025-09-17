@@ -224,7 +224,10 @@ defmodule ProcessHubTest do
 
     assert ProcessHub.StopResult.status(stop_none_result) === :error
     assert ProcessHub.StopResult.cids(stop_none_result) === []
-    assert ProcessHub.StopResult.errors(stop_none_result) === [{:child_none, node(), :not_found}]
+
+    assert ProcessHub.StopResult.errors(stop_none_result) === [
+             {:undefined, node(), :node_receive_timeout}
+           ]
 
     stop3_result =
       ProcessHub.stop_children(hub_id, [:child3], awaitable: true, timeout: 1000)
@@ -250,7 +253,10 @@ defmodule ProcessHubTest do
 
     assert ProcessHub.StopResult.status(stop_non_result) === :error
     assert ProcessHub.StopResult.cids(stop_non_result) === []
-    assert ProcessHub.StopResult.errors(stop_non_result) === [{:non_existing, node(), :not_found}]
+
+    assert ProcessHub.StopResult.errors(stop_non_result) === [
+             {:undefined, node(), :node_receive_timeout}
+           ]
 
     stop_child3_result =
       ProcessHub.stop_child(hub_id, :child3, awaitable: true, timeout: 100)
@@ -278,7 +284,7 @@ defmodule ProcessHubTest do
     assert ProcessHub.StopResult.cids(stop_str_non_result) === []
 
     assert ProcessHub.StopResult.errors(stop_str_non_result) === [
-             {"non_existing", node(), :not_found}
+             {:undefined, node(), :node_receive_timeout}
            ]
 
     stop_str_child3_result =

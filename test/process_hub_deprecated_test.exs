@@ -166,7 +166,7 @@ defmodule ProcessHubDeprecatedTest do
 
     assert ProcessHub.stop_children(hub_id, [:child_none], async_wait: true, timeout: 1000)
            |> ProcessHub.await() ===
-             {:error, {[{:child_none, node(), :not_found}], []}}
+             {:error, {[{:undefined, node(), :node_receive_timeout}], []}}
 
     assert ProcessHub.stop_children(hub_id, [:child3], async_wait: true, timeout: 1000)
            |> ProcessHub.await() === {:ok, [child3: [node()]]}
@@ -181,7 +181,7 @@ defmodule ProcessHubDeprecatedTest do
     assert ProcessHub.stop_child(hub_id, :child2) === {:ok, :stop_initiated}
 
     assert ProcessHub.stop_child(hub_id, :non_existing, async_wait: true, timeout: 100)
-           |> ProcessHub.await() === {:error, {{:non_existing, node(), :not_found}, []}}
+           |> ProcessHub.await() === {:error, {{:undefined, node(), :node_receive_timeout}, []}}
 
     assert ProcessHub.stop_child(hub_id, :child3, async_wait: true, timeout: 100)
            |> ProcessHub.await() === {:ok, {:child3, [node()]}}
@@ -196,7 +196,7 @@ defmodule ProcessHubDeprecatedTest do
     assert ProcessHub.stop_child(hub_id, "child2") === {:ok, :stop_initiated}
 
     assert ProcessHub.stop_child(hub_id, "non_existing", async_wait: true, timeout: 100)
-           |> ProcessHub.await() === {:error, {{"non_existing", node(), :not_found}, []}}
+           |> ProcessHub.await() === {:error, {{:undefined, node(), :node_receive_timeout}, []}}
 
     assert ProcessHub.stop_child(hub_id, "child3", async_wait: true, timeout: 100)
            |> ProcessHub.await() === {:ok, {"child3", [node()]}}
