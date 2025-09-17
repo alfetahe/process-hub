@@ -82,12 +82,14 @@ defmodule ProcessHub.Service.Distributor do
     redun_strat = Storage.get(hub.storage.misc, StorageKey.strred())
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(redun_strat)
-    cid_pid_node_pids = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
-
-    # TODO: find from the storage instead of recalculating.
 
     Enum.reduce(child_ids, [], fn child_id, acc ->
-      child_nodes = Bag.get_by_key(cid_pid_node_pids, child_id, [])
+      child_nodes =
+        case ProcessRegistry.lookup(hub.hub_id, child_id) do
+          nil -> []
+          {_, node_pids} -> Keyword.keys(node_pids)
+        end
+
       child_data = %{nodes: child_nodes, child_id: child_id}
 
       append_items =
@@ -446,14 +448,14 @@ defmodule ProcessHub.Service.Distributor do
   defp init_attach_nodes(hub, child_specs, %{distribution: dist, redundancy: redun}) do
     repl_fact = RedundancyStrategy.replication_factor(redun)
     cids = Enum.map(child_specs, & &1.id)
-    cid_pid_node_pids = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
+    cid_node_pids = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
 
     {
       :ok,
       Enum.map(child_specs, fn child_spec ->
         {
           child_spec,
-          Bag.get_by_key(cid_pid_node_pids, child_spec.id, [])
+          Bag.get_by_key(cid_node_pids, child_spec.id, [])
         }
       end)
     }
