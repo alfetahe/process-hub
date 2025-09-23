@@ -8,7 +8,6 @@ defmodule Test.IntegrationTest do
   use ExUnit.Case, async: false
 
   # Total nr of nodes to start (without the main node)
-  # TODO: change back to 5.
   @nr_of_peers 5
 
   setup_all context do
@@ -31,8 +30,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_removed(), :global}
        ]
   test "pubsub children starting and removing centralized", %{hub: hub} = context do
-    # TODO: increase to 1000
-    child_count = 10
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub.hub_id))
     scoreboard = ProcessHubTest.Fixture.ScoreboardFixture.scoreboard1()
 
