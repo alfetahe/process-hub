@@ -10,9 +10,12 @@ processes within a cluster of nodes while providing a globally synchronized proc
 ProcessHub takes care of starting, stopping and monitoring processes in the cluster.
 It scales automatically when cluster is updated and handles network partitions.
 
-ProcessHub is designed to be **decentralized** in its architecture. It does not rely on a
-single node to manage the cluster. Each node in the cluster is considered equal.
-The default distribution strategy is based on consistent hashing.
+ProcessHub provides different configuration options to define whether it operates in a
+**decentralized** or **leader-based** architecture. The default distribution strategy is
+decentralized and based on consistent hashing, where each node in the cluster is considered
+equal. Alternatively, you can configure ProcessHub to use a centralized load balancer
+strategy that relies on a leader node to make distribution decisions based on real-time
+cluster metrics.
 
 > #### ProcessHub is eventually consistent {: .info}
 > ProcessHub is built with scalability and availability in mind. 
