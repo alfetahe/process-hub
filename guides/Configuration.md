@@ -2,7 +2,7 @@
 
 ## Configurable strategies
 
-ProcessHub comes with 11 different strategies that can be used to configure the hub.
+ProcessHub comes with 12 different strategies that can be used to configure the hub.
 All strategies are Elixir structs that implement their own base protocol.
 
 In fact, you can define your own strategies by implementing the base protocols.
@@ -135,9 +135,31 @@ will terminate along with its children.
 `ProcessHub.Strategy.Distribution.Base` - defines the base protocol for distribution
 strategies which define the method to determine the node/process mapping.
 
-ProcessHub currently supports 2 distribution strategies:
+ProcessHub currently supports 3 distribution strategies:
+
 - `ProcessHub.Strategy.Distribution.ConsistentHashing` - uses a consistent hash ring to determine
-the node/process mapping. This strategy is the default strategy.
+the node/process mapping. This strategy is the default strategy and operates in a decentralized manner.
+Each node is responsible for a range of hash values, and process IDs are hashed to determine their
+node assignment. When the cluster topology changes, only affected processes are redistributed,
+minimizing unnecessary migrations. Supports process replication and requires no configuration options.
+
 - `ProcessHub.Strategy.Distribution.Guided` - uses a predefined mapping to determine the
 node/process mapping. This strategy is useful when we want to control the mapping of
-processes to nodes.
+processes to nodes. You must explicitly specify which nodes each child process should run on
+during startup. Processes are bound to their assigned nodes and **do not support migration**.
+This is ideal for scenarios requiring specific node placement based on hardware requirements
+or geographic distribution.
+
+- `ProcessHub.Strategy.Distribution.CentralizedLoadBalancer` - uses a leader-based approach where
+a single leader node collects performance metrics from all nodes and makes distribution decisions
+based on real-time load data. The leader is determined by highest uptime and is not configurable.
+
+  > #### Experimental Strategy {: .warning}
+  > The `CentralizedLoadBalancer` strategy is currently **experimental** and should not be used
+  > in production environments.
+
+  **Configuration options:**
+  - `:max_history_size` (default: 30) - Maximum historical load scores to maintain
+  - `:weight_decay_factor` (default: 0.9) - Exponential decay factor for historical scores
+  - `:push_interval` (default: 10,000) - Metrics collection interval in milliseconds
+  - `:nodeup_redistribution` (default: false) - Process redistribution on node join (should not be changed)
