@@ -1,6 +1,99 @@
 defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   @moduledoc """
-  TODO:
+  Provides implementation for distribution behavior using centralized load balancing.
+
+  This strategy implements a centralized approach to process distribution where a single
+  leader node collects performance metrics from all nodes in the cluster and makes
+  distribution decisions based on real-time load data.
+
+  Unlike the `ProcessHub.Strategy.Distribution.ConsistentHashing` strategy that uses
+  deterministic hash-based distribution, the centralized load balancer actively monitors
+  cluster resources and dynamically assigns processes to the least loaded nodes.
+
+  ## How It Works
+
+  The centralized load balancer operates through a leader election mechanism:
+
+  1. **Leader Election**: Uses the `:elector` library to elect a single leader node.
+     The leader is determined by **highest uptime** - the node that has been running
+     the longest becomes the leader. This selection criteria is currently not configurable.
+  2. **Metrics Collection**: Each node periodically sends performance metrics to the leader
+  3. **Load Scoring**: The leader calculates load scores based on multiple system metrics
+  4. **Distribution**: New processes are assigned to nodes with the lowest load scores
+
+  The load scoring algorithm considers the following BEAM VM metrics:
+  - **Scheduler utilization** (40% weight) - CPU usage across schedulers
+  - **Run queue length** (30% weight) - Number of processes waiting to run
+  - **Process count** (20% weight) - Total number of processes on the node
+  - **Memory usage** (10% weight) - Total memory consumption
+
+  ## Key Characteristics
+
+  ### No Process Replication
+  > #### Important Limitation {: .warning}
+  >
+  > This strategy **does not support process replication**. Only a single instance
+  > of each process can exist at any time across the cluster. This makes it unsuitable
+  > for use cases requiring high availability through process redundancy.
+
+  ### Experimental Status
+  > #### Experimental Feature {: .warning}
+  >
+  > This distribution strategy is currently **experimental** and should not be used
+  > in production environments without thorough testing. The implementation may
+  > change in future versions.
+
+  ### Single Hub Limitation
+  > #### Configuration Constraint {: .warning}
+  >
+  > When ProcessHub is used with multiple different hubs and configurations,
+  > **only one single hub** can be configured to use the centralized load balancer
+  > strategy at any given time in the cluster.
+
+  ### No Process Shuffling
+  Unlike some distribution strategies, the centralized load balancer does **not**
+  shuffle existing processes when new nodes join the cluster. New processes will
+  be distributed to optimal nodes based on current load, but existing processes
+  remain where they are. However, when a node leaves the cluster, its processes
+  **will be redistributed** to other available nodes.
+
+  ## Configuration Options
+
+  The strategy can be configured using the following struct fields:
+
+  - `:max_history_size` (default: `30`) - Maximum number of historical load scores
+    to maintain for each node. Used for calculating weighted averages and trend analysis.
+
+  - `:weight_decay_factor` (default: `0.9`) - Exponential decay factor applied to
+    historical scores. Values closer to 1.0 give more weight to historical data,
+    while values closer to 0.0 prioritize recent measurements.
+
+  - `:push_interval` (default: `10_000`) - Interval in milliseconds between
+    metric collection and transmission from each node to the leader.
+
+  ## Usage Example
+
+      iex> distribution_strategy = %ProcessHub.Strategy.Distribution.CentralizedLoadBalancer{
+      iex>   max_history_size: 50,
+      iex>   weight_decay_factor: 0.8,
+      iex>   push_interval: 5_000
+      iex> }
+      iex>
+      iex> hub_config = %ProcessHub{
+      iex>   hub_id: :my_hub,
+      iex>   distribution_strategy: distribution_strategy
+      iex> }
+
+  ## Comparison with ConsistentHashing
+
+  | Feature | CentralizedLoadBalancer | ConsistentHashing |
+  |---------|------------------------|-------------------|
+  | **Distribution Basis** | Real-time load metrics | Deterministic hashing |
+  | **Process Shuffling** | No (on node join) | Yes (minimal) |
+  | **Replication Support** | No | Yes |
+  | **Leader Dependency** | Yes | No |
+  | **Production Ready** | No (experimental) | Yes |
+  | **Multiple Hubs** | No (single hub only) | Yes |
   """
 
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -297,10 +390,10 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   """
   def get_scoreboard(strategy), do: strategy.scoreboard
 
-  @doc """
-  Collects BEAM VM metrics for load balancing decisions.
-  Returns scheduler utilization, run queue lengths, process count, and memory usage.
-  """
+  # Private helper functions for score calculations
+
+  # Collects BEAM VM metrics for load balancing decisions.
+  # Returns scheduler utilization, run queue lengths, process count, and memory usage.
   defp query_stats(_hub) do
     scheduler_usage = :scheduler.sample_all()
     scheduler_utilization = calculate_scheduler_utilization(scheduler_usage)
@@ -319,11 +412,9 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     }
   end
 
-  @doc """
-  Calculates a probabilistic load score for a node based on current and historical metrics.
-  Lower scores indicate lower load (better for new process placement).
-  Uses exponential moving average to give more weight to recent measurements.
-  """
+  # Calculates a probabilistic load score for a node based on current and historical metrics.
+  # Lower scores indicate lower load (better for new process placement).
+  # Uses exponential moving average to give more weight to recent measurements.
   defp calculate_score(_hub, strategy, metrics) do
     scoreboard = strategy.scoreboard
     current_node = Node.self()
@@ -363,8 +454,6 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
         }
     end
   end
-
-  # Private helper functions for score calculations
 
   defp calculate_scheduler_utilization(scheduler_usage) do
     case scheduler_usage do
@@ -449,6 +538,3 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     Process.send_after(self(), {:schedule_stats_push, strategy}, strategy.push_interval)
   end
 end
-
-# TODO: document that only one hub in the cluster should be able to use the centralized scoreboard strategy at the same time.
-# TODO: handle node leave/join.
