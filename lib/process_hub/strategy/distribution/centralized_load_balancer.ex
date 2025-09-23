@@ -4,7 +4,6 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   """
 
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.StorageKey
@@ -38,7 +37,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
         }
   defstruct scoreboard: %{},
             calculator_pid: nil,
-            max_history_size: 100,
+            max_history_size: 30,
             weight_decay_factor: 0.9,
             push_interval: 10_000,
             nodeup_redistribution: false
@@ -202,7 +201,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   end
 
   @impl true
-  def handle_info({:nodeup, node}, state) do
+  def handle_info({:nodeup, _node}, state) do
     {:noreply, state}
   end
 

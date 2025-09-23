@@ -519,7 +519,7 @@ defmodule ProcessHub do
   """
   @spec child_spec(t()) :: %{
           id: ProcessHub,
-          start: {ProcessHub.Initializer, :start_link, [...]},
+          start: {ProcessHub.Initializer, :start_link, [t()]},
           type: :supervisor
         }
   def child_spec(opts) do

@@ -79,10 +79,6 @@ defmodule ProcessHub.Service.Distributor do
   @spec stop_children(Hub.t(), [ProcessHub.child_id()], keyword()) ::
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
   def stop_children(hub, child_ids, opts) do
-    redun_strat = Storage.get(hub.storage.misc, StorageKey.strred())
-    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
-    repl_fact = RedundancyStrategy.replication_factor(redun_strat)
-
     Enum.reduce(child_ids, [], fn child_id, acc ->
       child_nodes =
         case ProcessRegistry.lookup(hub.hub_id, child_id) do
