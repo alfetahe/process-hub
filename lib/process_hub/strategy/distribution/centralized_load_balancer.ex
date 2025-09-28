@@ -155,50 +155,79 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
       case leader_node === Node.self() do
         true ->
-          case strategy.scoreboard do
-            scoreboard when map_size(scoreboard) == 0 ->
-              # Fallback to current node selection if no scoreboard data
-              Enum.map(child_ids, fn child_id ->
-                {child_id, [node()]}
-              end)
-
-            scoreboard ->
-              distribute_children_by_capacity(child_ids, scoreboard)
-          end
+          local_belongs_to(strategy, child_ids)
 
         false ->
-          self = self()
+          node_list = Node.list(:this)
 
-          Node.spawn(leader_node, fn ->
-            nhub = ProcessHub.Coordinator.get_hub(hub.hub_id)
+          case Enum.member?(node_list, leader_node) do
+            false ->
+              # Start new election if leader is unreachable.
+              new_leader =
+                case Elector.elect_sync() do
+                  {:ok, leader_node} -> leader_node
+                  {:error, _} -> Node.self()
+                end
 
-            dist_strat =
-              Storage.get(
-                nhub.storage.misc,
-                StorageKey.strdist()
-              )
+              case new_leader === Node.self() do
+                true ->
+                  local_belongs_to(strategy, child_ids)
 
-            assignments =
-              DistributionStrategy.belongs_to(dist_strat, nhub, child_ids, 1)
+                false ->
+                  remote_belongs_to(hub.hub_id, new_leader, child_ids)
+              end
 
-            send(self, {:child_assignments, assignments})
-          end)
-
-          receive do
-            {:child_assignments, assignments} -> assignments
-          after
-            5_000 ->
-              Logger.error(
-                "[ProcessHub][CentralizedLoadBalancer] Timeout waiting for leader node response."
-              )
-
-              []
+            true ->
+              remote_belongs_to(hub.hub_id, leader_node, child_ids)
           end
       end
     end
 
     @impl true
     def children_init(_strategy, _hub, _child_specs, _opts), do: :ok
+
+    defp local_belongs_to(strategy, child_ids) do
+      case strategy.scoreboard do
+        scoreboard when map_size(scoreboard) == 0 ->
+          # Fallback to current node selection if no scoreboard data
+          Enum.map(child_ids, fn child_id ->
+            {child_id, [node()]}
+          end)
+
+        scoreboard ->
+          distribute_children_by_capacity(child_ids, scoreboard)
+      end
+    end
+
+    defp remote_belongs_to(hub_id, leader_node, child_ids) do
+      self = self()
+
+      Node.spawn(leader_node, fn ->
+        nhub = ProcessHub.Coordinator.get_hub(hub_id)
+
+        dist_strat =
+          Storage.get(
+            nhub.storage.misc,
+            StorageKey.strdist()
+          )
+
+        assignments =
+          DistributionStrategy.belongs_to(dist_strat, nhub, child_ids, 1)
+
+        send(self, {:child_assignments, assignments})
+      end)
+
+      receive do
+        {:child_assignments, assignments} -> assignments
+      after
+        10_000 ->
+          Logger.error(
+            "[ProcessHub][CentralizedLoadBalancer] Timeout waiting for leader node response."
+          )
+
+          []
+      end
+    end
 
     defp distribute_children_by_capacity(child_ids, scoreboard) do
       # Calculate capacity for each node (higher capacity = lower load score)
