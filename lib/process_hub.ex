@@ -828,8 +828,31 @@ defmodule ProcessHub do
     GenServer.call(hub_id, {:register_hook_handlers, hook_key, hook_handlers})
   end
 
-  # TODO: add docs and tests.
-  @spec cancel_hook_handlers(:ets.tid(), HookManager.hook_key(), [HookManager.handler_id()]) ::
+  @doc """
+  Dynamically removes previously registered hook handlers for specific hub events.
+
+  This function allows you to unregister hook handlers that were previously
+  registered using `register_hook_handlers/3`. This is useful for cleanup,
+  reconfiguration, or when certain handlers are no longer needed.
+
+  The function delegates to the coordinator process, which will call the
+  `ProcessHub.Service.HookManager.cancel_handler/3` function for each handler ID.
+
+  ## Parameters:
+  - `hub_id` - the hub to remove handlers from
+  - `hook_key` - the specific event type (use `ProcessHub.Constant.Hook` constants)
+  - `handler_ids` - a list of handler IDs to remove
+
+  ## Examples
+      iex> ProcessHub.cancel_hook_handlers(
+      iex>   :my_hub,
+      iex>   ProcessHub.Constant.Hook.pre_cluster_join(),
+      iex>   [:my_hook_id, :another_hook_id]
+      iex> )
+      :ok
+
+  """
+  @spec cancel_hook_handlers(hub_id(), HookManager.hook_key(), [HookManager.handler_id()]) ::
           :ok
   def cancel_hook_handlers(hub_id, hook_key, handler_ids) do
     GenServer.call(hub_id, {:cancel_hook_handlers, hook_key, handler_ids})
