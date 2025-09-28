@@ -792,7 +792,6 @@ defmodule ProcessHub do
     GenServer.call(hub_id, {:promote_to_node, node_name})
   end
 
-  # TODO: add tests.
   @doc """
   Dynamically registers hook handlers for specific hub events.
 
@@ -823,9 +822,14 @@ defmodule ProcessHub do
 
   """
   @spec register_hook_handlers(hub_id(), HookManager.hook_key(), [HookManager.t()]) ::
-          :ok | {:error, {:handler_id_not_unique, [HookManager.handler_id()]}}
+          :ok | {:error, term()}
   def register_hook_handlers(hub_id, hook_key, hook_handlers) do
-    GenServer.call(hub_id, {:register_hook_handlers, hook_key, hook_handlers})
+    results = GenServer.call(hub_id, {:register_hook_handlers, hook_key, hook_handlers})
+
+    case Enum.all?(results, &(&1 == :ok)) do
+      true -> :ok
+      false -> {:error, :failed_to_register_some_handlers}
+    end
   end
 
   @doc """
@@ -853,8 +857,13 @@ defmodule ProcessHub do
 
   """
   @spec cancel_hook_handlers(hub_id(), HookManager.hook_key(), [HookManager.handler_id()]) ::
-          :ok
+          :ok | {:error, term()}
   def cancel_hook_handlers(hub_id, hook_key, handler_ids) do
-    GenServer.call(hub_id, {:cancel_hook_handlers, hook_key, handler_ids})
+    results = GenServer.call(hub_id, {:cancel_hook_handlers, hook_key, handler_ids})
+
+    case Enum.all?(results, &(&1 == :ok)) do
+      true -> :ok
+      false -> {:error, :failed_to_cancel_some_handlers}
+    end
   end
 end

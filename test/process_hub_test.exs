@@ -495,4 +495,191 @@ defmodule ProcessHubTest do
     assert is_pid(c2_pid)
     assert not_existing === nil
   end
+
+  test "register hook handlers", %{hub_id: hub_id} = _context do
+    # Test registering single handler
+    handler1 = %ProcessHub.Service.HookManager{
+      id: :test_hook_1,
+      m: :erlang,
+      f: :send,
+      a: [self(), :hook_test_1],
+      p: 100
+    }
+
+    result1 =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.pre_cluster_join(),
+        [handler1]
+      )
+
+    assert result1 === :ok
+
+    # Test registering multiple handlers
+    handler2 = %ProcessHub.Service.HookManager{
+      id: :test_hook_2,
+      m: :erlang,
+      f: :send,
+      a: [self(), :hook_test_2],
+      p: 50
+    }
+
+    handler3 = %ProcessHub.Service.HookManager{
+      id: :test_hook_3,
+      m: :erlang,
+      f: :send,
+      a: [self(), :hook_test_3],
+      p: 150
+    }
+
+    result2 =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.post_cluster_join(),
+        [handler2, handler3]
+      )
+
+    assert result2 === :ok
+
+    # Test registering duplicate handler (should fail)
+    duplicate_result =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.pre_cluster_join(),
+        [handler1]
+      )
+
+    assert duplicate_result === {:error, :failed_to_register_some_handlers}
+
+    # Test registering multiple handlers with duplicates
+    duplicate_multiple_result =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.post_cluster_join(),
+        [handler2, handler3]
+      )
+
+    assert duplicate_multiple_result ===
+             {:error, :failed_to_register_some_handlers}
+  end
+
+  test "cancel hook handlers", %{hub_id: hub_id} = _context do
+    # First register some handlers
+    handler1 = %ProcessHub.Service.HookManager{
+      id: :cancel_test_hook_1,
+      m: :erlang,
+      f: :send,
+      a: [self(), :cancel_hook_test_1],
+      p: 100
+    }
+
+    handler2 = %ProcessHub.Service.HookManager{
+      id: :cancel_test_hook_2,
+      m: :erlang,
+      f: :send,
+      a: [self(), :cancel_hook_test_2],
+      p: 50
+    }
+
+    handler3 = %ProcessHub.Service.HookManager{
+      id: :cancel_test_hook_3,
+      m: :erlang,
+      f: :send,
+      a: [self(), :cancel_hook_test_3],
+      p: 150
+    }
+
+    ProcessHub.register_hook_handlers(
+      hub_id,
+      ProcessHub.Constant.Hook.registry_pid_inserted(),
+      [handler1, handler2, handler3]
+    )
+
+    # Test canceling single handler
+    result1 =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [:cancel_test_hook_1]
+      )
+
+    assert result1 === :ok
+
+    # Test canceling multiple handlers
+    result2 =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [:cancel_test_hook_2, :cancel_test_hook_3]
+      )
+
+    assert result2 === :ok
+
+    # Test canceling non-existing handlers (should still return :ok)
+    result3 =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [:non_existing_handler]
+      )
+
+    assert result3 === :ok
+
+    # Test canceling from empty hook key (should still return :ok)
+    result4 =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_removed(),
+        [:some_handler]
+      )
+
+    assert result4 === :ok
+  end
+
+  test "hook handlers integration", %{hub_id: hub_id} = _context do
+    # Test full cycle: register, use, cancel
+    test_pid = self()
+
+    handler = %ProcessHub.Service.HookManager{
+      id: :integration_test_hook,
+      m: :erlang,
+      f: :send,
+      a: [test_pid, :integration_hook_fired],
+      p: 100
+    }
+
+    # Register handler
+    :ok =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [handler]
+      )
+
+    # Trigger the hook by starting a child (which registers a PID)
+    [child_spec] = ProcessHub.Utility.Bag.gen_child_specs(1)
+
+    ProcessHub.start_child(hub_id, child_spec, awaitable: true)
+    |> ProcessHub.Future.await()
+
+    # Verify the hook was called
+    assert_receive :integration_hook_fired, 1000
+
+    # Cancel the handler
+    :ok =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [:integration_test_hook]
+      )
+
+    # Start another child to verify hook is no longer active
+    [child_spec2] = ProcessHub.Utility.Bag.gen_child_specs(1, id_type: :atom)
+
+    ProcessHub.start_child(hub_id, child_spec2, awaitable: true)
+    |> ProcessHub.Future.await()
+
+    # Verify the hook was NOT called this time
+    refute_receive :integration_hook_fired, 100
+  end
 end
