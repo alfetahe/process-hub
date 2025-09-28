@@ -382,10 +382,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           end
         end)
 
-      # TODO: make sure no processing for empty children.
+      case Enum.empty?(redist) do
+        true ->
+          nil
 
-      handle_redundancy(arg, redun)
-      handle_redistribution(arg.hub, redist)
+        false ->
+          handle_redundancy(arg, redun)
+          handle_redistribution(arg.hub, redist)
+      end
 
       Map.put(arg, :rem_node_cids, cids)
     end

@@ -25,9 +25,44 @@ defmodule ProcessHub.Utility.Bag do
     DateTime.utc_now() |> DateTime.to_unix(precision)
   end
 
-  # TODO: add tests and docs.
+  @doc """
+  Retrieves the value associated with a key from a list of key-value tuples.
+
+  This function searches through a list of `{key, value}` tuples and returns the value
+  associated with the first matching key. If no matching key is found, the default
+  value is returned.
+
+  ## Parameters
+  - `list` - A list of `{key, value}` tuples to search through
+  - `key` - The key to search for
+  - `default` - The value to return if the key is not found (default: `nil`)
+
+  ## Examples
+      iex> ProcessHub.Utility.Bag.get_by_key([{:a, 1}, {:b, 2}, {:c, 3}], :b)
+      2
+
+      iex> ProcessHub.Utility.Bag.get_by_key([{:a, 1}, {:b, 2}], :c, :not_found)
+      :not_found
+
+      iex> ProcessHub.Utility.Bag.get_by_key([], :any_key, "default")
+      "default"
+
+      iex> ProcessHub.Utility.Bag.get_by_key([{"key1", "value1"}, {"key2", "value2"}], "key1")
+      "value1"
+
+  ## Notes
+  - Only searches for exact key matches using strict equality (`===`)
+  - Returns the value from the first matching tuple found
+  - Works with any key/value types (atoms, strings, integers, etc.)
+  - Gracefully ignores non-tuple elements in the list
+  - Only considers tuples with at least 2 elements (key-value pairs)
+  """
+  @spec get_by_key([{any(), any()}], any(), any()) :: any()
   def get_by_key(list, key, default \\ nil) do
-    result = Enum.find(list, default, fn {k, _v} -> k === key end)
+    result = Enum.find(list, default, fn
+      {k, _v} -> k === key
+      _ -> false
+    end)
 
     case result do
       {^key, v} -> v

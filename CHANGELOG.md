@@ -1,8 +1,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.3.4-alpha - YYYY-mm-dd
-TODO:
+## v0.3.4-alpha - 2025-01-18
+This release introduces improvements to ProcessHub's API design and internal architecture. The major focus is on enhancing the developer experience with new promise-based return types and improving system performance with experimental load balancing capabilities.
+
+This release maintains backward compatibility with the main ProcessHub module while introducing new patterns that will become the standard in future versions.
 
 ### Added
 - `ProcessHub.StartResult` module which can be used to format and manipulate the results of process startups. This struct is returned by the `ProcessHub.Future.await/1` function.

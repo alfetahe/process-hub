@@ -173,7 +173,14 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @doc """
   Inserts information about a child process into the registry.
 
-  Calling this function will dispatch the `:registry_pid_insert_hook` hook unless the `:skip_hooks` option is set to `true`.
+  ## Hook Behavior
+  This function will dispatch the `:registry_pid_insert_hook` hook if the `:hook_storage`
+  option is provided. If `:hook_storage` is `nil` or not provided, no hooks will be fired.
+
+  ## Options
+  - `:metadata` - Additional metadata to store with the process (default: `%{}`)
+  - `:table` - Alternative table to use for storage (default: `hub_id`)
+  - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
   """
   @spec insert(ProcessHub.hub_id(), ProcessHub.child_spec(), [{node(), pid()}], keyword() | nil) ::
           :ok
@@ -196,11 +203,15 @@ defmodule ProcessHub.Service.ProcessRegistry do
     :ok
   end
 
-  # TODO: update documentation about the skip hooks option for all functions.
   @doc """
   Deletes information about a child process from the registry.
 
-  Calling this function will dispatch the `:registry_pid_remove_hook` hook unless the `:skip_hooks` option is set to `true`.
+  ## Hook Behavior
+  This function will dispatch the `:registry_pid_remove_hook` hook if the `:hook_storage`
+  option is provided. If `:hook_storage` is `nil` or not provided, no hooks will be fired.
+
+  ## Options
+  - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
   """
   @spec delete(ProcessHub.hub_id(), ProcessHub.child_id(), keyword() | nil) :: :ok
   def delete(hub_id, child_id, opts \\ []) do
@@ -218,7 +229,18 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @doc """
   Inserts information about multiple child processes into the registry.
 
-  Calling this function will dispatch the `:registry_pid_insert_hook` hook unless the `:skip_hooks` option is set to `true`.
+  ## Hook Behavior
+  This function will dispatch the `:registry_pid_insert_hook` hook for each child process
+  if the `:hook_storage` option is provided. If `:hook_storage` is `nil` or not provided,
+  no hooks will be fired.
+
+  ## Options
+  - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
+
+  ## Parameters
+  - `hub_id` - The hub identifier
+  - `children` - Map of child_id to {child_spec, node_pids, metadata} tuples
+  - `opts` - Options keyword list
   """
   @spec bulk_insert(
           ProcessHub.hub_id(),
@@ -270,8 +292,18 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @doc """
   Deletes information about multiple child processes from the registry.
 
-  Calling this function will dispatch the `:registry_pid_remove_hook` hooks unless
-  the `:skip_hooks` option is set to `true`.
+  ## Hook Behavior
+  This function will dispatch the `:registry_pid_remove_hook` hook for each child process
+  if the `:hook_storage` option is provided. If `:hook_storage` is `nil` or not provided,
+  no hooks will be fired.
+
+  ## Options
+  - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
+
+  ## Parameters
+  - `hub_id` - The hub identifier
+  - `children` - Map of child_id to list of nodes to remove
+  - `opts` - Options keyword list
   """
   @spec bulk_delete(
           ProcessHub.hub_id(),
@@ -321,6 +353,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @doc """
   Updates the row on the registry.
 
+  ## Hook Behavior
+  This function intentionally skips hook dispatching during the update operation to avoid
+  duplicate or conflicting hook events. Updates are performed as atomic operations.
+
+  ## Parameters
   The `update_fn` must be a function that accepts 3 parameters containing the existing values:
   - `child_spec` - the child specification in map format.
   - `node_pids` - a keyword list containing a list of node pid pairs. Example: `[{:mynode, pid()}]`
@@ -329,9 +366,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
   The function should return a tuple in the following format: `{child_spec, node_pids, metadata}`
   and those values will be then used to update the row.
 
-  If no child is found for the given `child_id` an error will be returned: `{:error, "No child found"}`
-  On successful update the function returns `:ok`.
+  ## Return Values
+  - `:ok` - On successful update
+  - `{:error, "No child found"}` - If no child is found for the given `child_id`
+  - `{:error, "Invalid arguments returned from the update function"}` - If the update function returns invalid data
 
+  ## Important
   Use this function with care as any invalid data may corrupt the registry.
   """
   @spec update(ProcessHub.hub_id(), ProcessHub.child_id(), function()) ::
