@@ -259,7 +259,8 @@ defmodule Test.Service.DistributorTest do
 
     assert Keyword.get(result, :metadata) === nil
     assert Keyword.get(result, :init_cids) === nil
-    assert Keyword.get(result, :timeout) === 10_000  # Default applied
+    # Default applied
+    assert Keyword.get(result, :timeout) === 10_000
 
     # Test with zero/false values (should be preserved)
     input_opts2 = [timeout: 0, awaitable: false]
@@ -267,7 +268,8 @@ defmodule Test.Service.DistributorTest do
 
     assert Keyword.get(result2, :timeout) === 0
     assert Keyword.get(result2, :awaitable) === false
-    assert Keyword.get(result2, :check_existing) === true  # Default applied
+    # Default applied
+    assert Keyword.get(result2, :check_existing) === true
   end
 
   test "default_init_opts order preservation" do

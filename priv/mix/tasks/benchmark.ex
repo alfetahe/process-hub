@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Benchmark do
-  @moduledoc "Run benchmarks. Example: `mix benchmark 5 100`"
+  @moduledoc "Run benchmarks. Example: `mix benchmark 10 1000`"
   @shortdoc "Runs benchmarks"
 
   @hub_id :benchmark_hub
@@ -68,7 +68,7 @@ defmodule Mix.Tasks.Benchmark do
 
     hub = Test.Helper.Bootstrap.gen_hub(settings)
 
-    Test.Helper.Bootstrap.start_hubs(hub, [node() | Node.list()], listed_hooks)
+    Test.Helper.Bootstrap.start_hubs(hub, [node() | Node.list()], listed_hooks, [msg_count: nr_of_peers])
   end
 
   defp start_stop_processes(hub_id, child_specs, cids) do

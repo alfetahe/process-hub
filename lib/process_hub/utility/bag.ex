@@ -59,10 +59,11 @@ defmodule ProcessHub.Utility.Bag do
   """
   @spec get_by_key([{any(), any()}], any(), any()) :: any()
   def get_by_key(list, key, default \\ nil) do
-    result = Enum.find(list, default, fn
-      {k, _v} -> k === key
-      _ -> false
-    end)
+    result =
+      Enum.find(list, default, fn
+        {k, _v} -> k === key
+        _ -> false
+      end)
 
     case result do
       {^key, v} -> v

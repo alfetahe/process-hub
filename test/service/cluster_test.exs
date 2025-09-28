@@ -70,7 +70,7 @@ defmodule Test.Service.ClusterTest do
 
     [{peer_node, peer_pid}] = TestNode.start_nodes(1, prefix: :promote)
     hub = Bootstrap.gen_hub(%{hub_id: hub_id})
-    Bootstrap.start_hubs(hub, [peer_node], [], true)
+    Bootstrap.start_hubs(hub, [peer_node], [], new_nodes: true)
 
     child_specs = Bag.gen_child_specs(10, prefix: Atom.to_string(hub_id))
 

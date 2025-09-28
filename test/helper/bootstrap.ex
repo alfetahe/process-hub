@@ -91,7 +91,7 @@ defmodule Test.Helper.Bootstrap do
     end
   end
 
-  def start_hubs(hub, nodes, listed_hooks, new_nodes \\ false) do
+  def start_hubs(hub, nodes, listed_hooks, opts \\ []) do
     host_pid = self()
     local_node = node()
 
@@ -122,8 +122,11 @@ defmodule Test.Helper.Bootstrap do
 
       :erpc.call(node, fn ->
         case ProcessHub.Initializer.start_link(%ProcessHub{hub | hooks: hooks}) do
-          {:ok, pid} -> :erlang.unlink(pid)
-          {:error, error} -> throw(error)
+          {:ok, pid} ->
+            :erlang.unlink(pid)
+
+          {:error, error} ->
+            throw(error)
         end
       end)
     end)
@@ -132,9 +135,15 @@ defmodule Test.Helper.Bootstrap do
     nodes_count = length(Node.list())
 
     msg_count =
-      case new_nodes do
+      case Keyword.get(opts, :new_nodes, false) do
         false -> nodes_count * length(nodes)
         true -> length(nodes)
+      end
+
+    msg_count =
+      case Keyword.get(opts, :msg_count, nil) do
+        nil -> msg_count
+        v -> v
       end
 
     if nodes_count > 1 do

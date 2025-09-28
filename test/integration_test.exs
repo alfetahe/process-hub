@@ -381,7 +381,7 @@ defmodule Test.IntegrationTest do
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(peer_names, lh, true)
+    |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true)
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
@@ -421,7 +421,7 @@ defmodule Test.IntegrationTest do
     new_peers = TestNode.start_nodes(peers_to_start, prefix: :static_quorum_test_batch1)
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
-    Bootstrap.gen_hub(context) |> Bootstrap.start_hubs(peer_names, lh, true)
+    Bootstrap.gen_hub(context) |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true)
     Bag.receive_multiple(peers_to_start, Hook.post_nodes_redistribution())
 
     # We have added `peers_to_start` nodes so our cluster shouldn't be partitioned anymore.
@@ -468,7 +468,7 @@ defmodule Test.IntegrationTest do
     new_peers = TestNode.start_nodes(peer_to_start, prefix: :dynamic_quorum_test)
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
-    Bootstrap.gen_hub(context) |> Bootstrap.start_hubs(peer_names, lh, true)
+    Bootstrap.gen_hub(context) |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true)
     Bag.receive_multiple(peer_to_start, Hook.post_nodes_redistribution())
 
     assert ProcessHub.is_partitioned?(hub_id) === false
@@ -532,7 +532,7 @@ defmodule Test.IntegrationTest do
 
     # Restart hubs on peer nodes and confirm they are up and running.
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(Node.list(), lh, true)
+    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true)
 
     ring = ProcessHub.Service.Ring.get_ring(hub.storage.misc)
     local_node = node()
@@ -619,7 +619,7 @@ defmodule Test.IntegrationTest do
 
     # Restart hubs on peer nodes and confirm they are up and running.
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(Node.list(), lh, true)
+    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true)
 
     # Node ups
     Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
