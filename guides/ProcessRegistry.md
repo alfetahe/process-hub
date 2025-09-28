@@ -168,7 +168,12 @@ iex> ProcessHub.start_child(
   %{id: :my_process_1, start: {MyProcess, :start_link, [nil]}}, 
   [metadata: %{some_info: "my data"}, awaitable: true]
 ) |> ProcessHub.Future.await()
-{:ok, #PID<0.228.0>} # TODO: update
+%ProcessHub.StartResult{
+  status: :ok,
+  started: [my_process_1: ["node1@127.0.0.1": #PID<0.293.0>]],
+  errors: [],
+  rollback: false
+}
 
 # Now we can query the process with metadata
 iex> ProcessHub.child_lookup(:my_hub, :my_process_1, [with_metadata: true])

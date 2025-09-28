@@ -54,7 +54,7 @@ defmodule ProcessHub.MixProject do
       {:blockade, "~> 0.2.2"},
       {:hash_ring, "~> 0.4.2"},
       # {:elector, "~> 0.3.0", runtime: false}, TODO: revert
-      {:elector, git: "git@github.com:alfetahe/elector.git", branch: "dev", runtime: false},
+      {:elector, path: "../elector", runtime: false, override: true},
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
       {:benchee, "~> 1.2", only: [:dev, :test]}
     ]
