@@ -18,6 +18,11 @@ The new `:await_timeout` option specifies a timeout for the spawned collector pr
 When new nodes joining the cluster this leads to errors when trying to call the dead distributed supervisor process.
 
 ### Changed
+- **Internal messaging system redesigned**: ProcessHub no longer converts `hub_id` atoms to other process-specific atoms internally. Instead, it uses Registry with tuples for message dispatching. This change:
+  - Eliminates the overhead of atom conversion
+  - Prevents dangerous dynamic atom generation
+  - Reduces the number of dynamic atoms created per `hub_id`
+  - **Breaking change**: Users directly accessing ProcessHub service modules (instead of the main `ProcessHub` module) may experience issues. Users who only use the main `ProcessHub` module are unaffected.
 - All public API functions defined in the `ProcessHub` module now call the coordinator process instead of calling the services directly.
 This avoids the potential issue of generating new atoms when calling those functions with a `hub_id` that is not known to the system.
 - Calling `ProcessHub.start_child/3`, `ProcessHub.start_children/3`, `ProcessHub.stop_child/3`, `ProcessHub.stop_child/3` with the `awaitable: true` option (or deprecated `async_wait: true`) now returns a `ProcessHub.Future.t()` struct that can be awaited instead of regular anonymous function. Calling `ProcessHub.Future.await/1` will either return `ProcessHub.StartResult.t()` or `ProcessHub.StopResult.t()` instead of tuples.
