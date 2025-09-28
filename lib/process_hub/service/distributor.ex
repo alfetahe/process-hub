@@ -157,7 +157,41 @@ defmodule ProcessHub.Service.Distributor do
     |> Enum.map(fn {_status, result} -> result end)
   end
 
-  # TODO: add tests and documentation.
+  @doc """
+  Applies default initialization options to the provided options keyword list.
+
+  This function takes a keyword list of options and merges it with sensible default
+  values for process initialization operations. Only missing keys are added; existing
+  values in the input options are preserved.
+
+  ## Parameters
+  - `opts` - A keyword list of initialization options
+
+  ## Default Values Applied
+  - `:timeout` - `#{@default_init_timeout}` ms (#{@default_init_timeout / 1000} seconds) - Maximum time to wait for process initialization
+  - `:awaitable` - `false` - Whether to return an awaitable `ProcessHub.Future.t()` struct
+  - `:async_wait` - `false` - **Deprecated** - Use `:awaitable` instead
+  - `:check_existing` - `true` - Whether to check if processes already exist before starting
+  - `:on_failure` - `:continue` - Action on failure (`:continue` or `:rollback`)
+  - `:metadata` - `%{}` - Additional metadata to attach to processes
+  - `:await_timeout` - `60000` ms (60 seconds) - Maximum lifetime for collector processes
+  - `:init_cids` - `[]` - List of child IDs expected to be initialized
+
+  ## Examples
+      iex> ProcessHub.Service.Distributor.default_init_opts([timeout: 5000, awaitable: true])
+      [
+        timeout: 5000,
+        awaitable: true,
+        async_wait: false,
+        check_existing: true,
+        on_failure: :continue,
+        metadata: %{},
+        await_timeout: 60000,
+        init_cids: []
+      ]
+
+  """
+  @spec default_init_opts(keyword()) :: keyword()
   def default_init_opts(opts) do
     Keyword.put_new(opts, :timeout, @default_init_timeout)
     |> Keyword.put_new(:awaitable, false)

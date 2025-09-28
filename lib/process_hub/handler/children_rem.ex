@@ -94,7 +94,6 @@ defmodule ProcessHub.Handler.ChildrenRem do
         )
       end
 
-      # TODO: try wrapping in the if statement.
       send_collect_results(args.children, args.stop_opts)
 
       :ok
