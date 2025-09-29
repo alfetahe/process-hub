@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Benchmark do
-  @moduledoc "Run benchmarks. Example: `mix benchmark 10 1000`"
+  @moduledoc "Run benchmarks. Example: `mix benchmark 5 100`"
   @shortdoc "Runs benchmarks"
 
   @hub_id :benchmark_hub
@@ -36,17 +36,25 @@ defmodule Mix.Tasks.Benchmark do
     child_specs = ProcessHub.Utility.Bag.gen_child_specs(nr_of_processes)
     cids = Enum.map(child_specs, fn %{id: id} -> id end)
 
-    Benchee.run(
-      %{
-        "start_&_stop_processes" => fn ->
-          start_stop_processes(hub_id, child_specs, cids)
-        end
-      },
-      memory_time: 5,
-      warmup: 5,
-      time: 5,
-      parallel: 1
-    )
+        ProcessHub.start_children(hub_id, child_specs, awaitable: true, timeout: 10_000)
+    |> ProcessHub.Future.await()
+    |> dbg()
+
+    ProcessHub.stop_children(hub_id, cids, awaitable: true, timeout: 10_000)
+    |> ProcessHub.Future.await()
+    |> dbg()
+
+    # Benchee.run(
+    #   %{
+    #     "start_&_stop_processes" => fn ->
+    #       start_stop_processes(hub_id, child_specs, cids)
+    #     end
+    #   },
+    #   memory_time: 5,
+    #   warmup: 5,
+    #   time: 5,
+    #   parallel: 1
+    # )
 
     :ok
   end
@@ -68,14 +76,20 @@ defmodule Mix.Tasks.Benchmark do
 
     hub = Test.Helper.Bootstrap.gen_hub(settings)
 
-    Test.Helper.Bootstrap.start_hubs(hub, [node() | Node.list()], listed_hooks, [msg_count: nr_of_peers])
+    # Make sure the local nodes is already running a hub.
+    Test.Helper.Bootstrap.start_hubs(hub, [node()], listed_hooks, [msg_count: 0])
+
+    # TODO: Fix by removing the sleeps.
+    Test.Helper.Bootstrap.start_hubs(hub, Node.list(), listed_hooks, [new_nodes: true])
   end
 
   defp start_stop_processes(hub_id, child_specs, cids) do
-    ProcessHub.start_children(hub_id, child_specs, awaitable: true, timeout: 60_000)
+    ProcessHub.start_children(hub_id, child_specs, awaitable: true, timeout: 10_000)
     |> ProcessHub.Future.await()
+    |> dbg()
 
-    ProcessHub.stop_children(hub_id, cids, awaitable: true, timeout: 60_000)
+    ProcessHub.stop_children(hub_id, cids, awaitable: true, timeout: 10_000)
     |> ProcessHub.Future.await()
+    |> dbg()
   end
 end

@@ -110,7 +110,9 @@ defmodule ProcessHub.Handler.ChildrenRem do
         end)
         |> Enum.map(fn {cid, result, _node} -> {cid, result} end)
 
-      if reply_to do
+      # Only send response if we have actual results from this node
+      # This prevents nodes from sending empty responses for other nodes' results
+      if reply_to && !Enum.empty?(receiver_data) do
         Enum.each(reply_to, fn respondent ->
           send(respondent, {:collect_stop_results, receiver_data, local_node})
         end)

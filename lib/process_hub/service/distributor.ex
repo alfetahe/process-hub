@@ -80,8 +80,10 @@ defmodule ProcessHub.Service.Distributor do
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
   def stop_children(hub, child_ids, opts) do
     Enum.reduce(child_ids, [], fn child_id, acc ->
+      registry_result = ProcessRegistry.lookup(hub.hub_id, child_id)
+
       child_nodes =
-        case ProcessRegistry.lookup(hub.hub_id, child_id) do
+        case registry_result do
           nil -> []
           {_, node_pids} -> Keyword.keys(node_pids)
         end
@@ -116,7 +118,6 @@ defmodule ProcessHub.Service.Distributor do
     shutdown_results =
       Enum.map(child_ids, fn child_id ->
         result = DistributedSupervisor.terminate_child(dist_sup, child_id)
-
         {child_id, result, node()}
       end)
 

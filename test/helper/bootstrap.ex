@@ -146,7 +146,7 @@ defmodule Test.Helper.Bootstrap do
         v -> v
       end
 
-    if nodes_count > 1 do
+    if nodes_count > 1 and msg_count > 0 do
       Bag.receive_multiple(
         msg_count,
         Hook.post_cluster_join(),
