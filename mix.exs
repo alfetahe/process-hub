@@ -53,8 +53,7 @@ defmodule ProcessHub.MixProject do
     [
       {:blockade, "~> 0.2.2"},
       {:hash_ring, "~> 0.4.2"},
-      # {:elector, "~> 0.3.0", runtime: false}, TODO: revert
-      {:elector, path: "../elector", runtime: false, override: true},
+      {:elector, "~> 0.3.2", runtime: false}, TODO: revert
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
       {:benchee, "~> 1.2", only: [:dev, :test]}
     ]
