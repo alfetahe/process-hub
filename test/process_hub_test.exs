@@ -80,6 +80,30 @@ defmodule ProcessHubTest do
     pids = ProcessHub.StartResult.pids(result67)
     assert length(pids) === 2
     Enum.each(pids, &assert(is_pid(&1)))
+
+    # === API Response Validation ===
+    # Validate that start count matches expected count
+    expected_child_specs = [cs6, cs7]
+    started_results = result67.started
+    assert length(started_results) === length(expected_child_specs),
+           "Expected to start #{length(expected_child_specs)} processes, but started #{length(started_results)}"
+
+    # Validate that all expected children are in the started list
+    expected_child_ids = MapSet.new(Enum.map(expected_child_specs, & &1.id))
+    actual_child_ids = MapSet.new(Enum.map(started_results, &elem(&1, 0)))
+    assert MapSet.equal?(expected_child_ids, actual_child_ids),
+           "Started children IDs don't match expected children IDs"
+
+    # Validate that each started process has a valid node and PID
+    Enum.each(started_results, fn {child_id, node_pids} ->
+      assert is_list(node_pids), "Node PIDs should be a list for child #{child_id}"
+      assert length(node_pids) > 0, "Should have at least one node/PID pair for child #{child_id}"
+
+      Enum.each(node_pids, fn {node, pid} ->
+        assert is_atom(node), "Node should be an atom for child #{child_id}"
+        assert is_pid(pid), "PID should be a valid PID for child #{child_id}"
+      end)
+    end)
   end
 
   test "start children error results", %{hub_id: hub_id} do
@@ -210,14 +234,24 @@ defmodule ProcessHubTest do
   test "stop children", %{hub_id: hub_id} = _context do
     child_specs = ProcessHub.Utility.Bag.gen_child_specs(3, id_type: :atom)
 
-    ProcessHub.start_children(hub_id, child_specs, awaitable: true)
-    |> ProcessHub.Future.await()
+    start_result =
+      ProcessHub.start_children(hub_id, child_specs, awaitable: true)
+      |> ProcessHub.Future.await()
 
+    # Validate start results for reference
+    assert ProcessHub.StartResult.status(start_result) === :ok
+    started_cids = ProcessHub.StartResult.cids(start_result)
+    expected_cids = [:child1, :child2, :child3]
+    assert length(started_cids) === 3
+    assert Enum.all?(expected_cids, &Enum.member?(started_cids, &1))
+
+    # Test non-awaitable stop operations
     assert ProcessHub.stop_children(hub_id, [:child1], awaitable: false) ===
              {:ok, :stop_initiated}
 
     assert ProcessHub.stop_children(hub_id, [:child2]) === {:ok, :stop_initiated}
 
+    # Test stopping non-existent child with comprehensive validation
     stop_none_result =
       ProcessHub.stop_children(hub_id, [:child_none], awaitable: true, timeout: 1000)
       |> ProcessHub.Future.await()
@@ -229,24 +263,47 @@ defmodule ProcessHubTest do
              {:undefined, node(), :node_receive_timeout}
            ]
 
+    # Test stopping existing child with comprehensive validation
     stop3_result =
       ProcessHub.stop_children(hub_id, [:child3], awaitable: true, timeout: 1000)
       |> ProcessHub.Future.await()
 
+    # Validate stop results comprehensively
     assert ProcessHub.StopResult.status(stop3_result) === :ok
-    assert ProcessHub.StopResult.cids(stop3_result) === [:child3]
-    assert ProcessHub.StopResult.nodes(stop3_result) === [node()]
+    stopped_cids = ProcessHub.StopResult.cids(stop3_result)
+    stopped_nodes = ProcessHub.StopResult.nodes(stop3_result)
+
+    # Validate child count and IDs - should stop exactly 1 child
+    assert length(stopped_cids) === 1
+    assert stopped_cids === [:child3]
+
+    # Validate node information - should be from current node
+    assert length(stopped_nodes) === 1
+    assert stopped_nodes === [node()]
+
+    # Validate no errors in successful stop
+    assert ProcessHub.StopResult.errors(stop3_result) === []
   end
 
   test "stop child", %{hub_id: hub_id} = _context do
     child_specs = ProcessHub.Utility.Bag.gen_child_specs(3, id_type: :atom)
 
-    ProcessHub.start_children(hub_id, child_specs, awaitable: true)
-    |> ProcessHub.Future.await()
+    start_result =
+      ProcessHub.start_children(hub_id, child_specs, awaitable: true)
+      |> ProcessHub.Future.await()
 
+    # Validate start results for reference
+    assert ProcessHub.StartResult.status(start_result) === :ok
+    started_cids = ProcessHub.StartResult.cids(start_result)
+    expected_cids = [:child1, :child2, :child3]
+    assert length(started_cids) === 3
+    assert Enum.all?(expected_cids, &Enum.member?(started_cids, &1))
+
+    # Test non-awaitable stop operations
     assert ProcessHub.stop_child(hub_id, :child1, awaitable: false) === {:ok, :stop_initiated}
     assert ProcessHub.stop_child(hub_id, :child2) === {:ok, :stop_initiated}
 
+    # Test stopping non-existent child with comprehensive validation
     stop_non_result =
       ProcessHub.stop_child(hub_id, :non_existing, awaitable: true, timeout: 100)
       |> ProcessHub.Future.await()
@@ -258,13 +315,26 @@ defmodule ProcessHubTest do
              {:undefined, node(), :node_receive_timeout}
            ]
 
+    # Test stopping existing child with comprehensive validation
     stop_child3_result =
       ProcessHub.stop_child(hub_id, :child3, awaitable: true, timeout: 100)
       |> ProcessHub.Future.await()
 
+    # Validate stop results comprehensively
     assert ProcessHub.StopResult.status(stop_child3_result) === :ok
-    assert ProcessHub.StopResult.cids(stop_child3_result) === [:child3]
-    assert ProcessHub.StopResult.nodes(stop_child3_result) === [node()]
+    stopped_cids = ProcessHub.StopResult.cids(stop_child3_result)
+    stopped_nodes = ProcessHub.StopResult.nodes(stop_child3_result)
+
+    # Validate child count and IDs - should stop exactly 1 child
+    assert length(stopped_cids) === 1
+    assert stopped_cids === [:child3]
+
+    # Validate node information - should be from current node
+    assert length(stopped_nodes) === 1
+    assert stopped_nodes === [node()]
+
+    # Validate no errors in successful stop
+    assert ProcessHub.StopResult.errors(stop_child3_result) === []
   end
 
   test "stop child with string ids", %{hub_id: hub_id} = _context do

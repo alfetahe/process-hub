@@ -36,25 +36,18 @@ defmodule Mix.Tasks.Benchmark do
     child_specs = ProcessHub.Utility.Bag.gen_child_specs(nr_of_processes)
     cids = Enum.map(child_specs, fn %{id: id} -> id end)
 
-        ProcessHub.start_children(hub_id, child_specs, awaitable: true, timeout: 10_000)
-    |> ProcessHub.Future.await()
-    |> dbg()
-
-    ProcessHub.stop_children(hub_id, cids, awaitable: true, timeout: 10_000)
-    |> ProcessHub.Future.await()
-    |> dbg()
-
-    # Benchee.run(
-    #   %{
-    #     "start_&_stop_processes" => fn ->
-    #       start_stop_processes(hub_id, child_specs, cids)
-    #     end
-    #   },
-    #   memory_time: 5,
-    #   warmup: 5,
-    #   time: 5,
-    #   parallel: 1
-    # )
+    # TODO: Need to fix them. Running very long with timeouts.
+    Benchee.run(
+      %{
+        "start_&_stop_processes" => fn ->
+          start_stop_processes(hub_id, child_specs, cids)
+        end
+      },
+      memory_time: 5,
+      warmup: 5,
+      time: 5,
+      parallel: 1
+    )
 
     :ok
   end
@@ -86,10 +79,8 @@ defmodule Mix.Tasks.Benchmark do
   defp start_stop_processes(hub_id, child_specs, cids) do
     ProcessHub.start_children(hub_id, child_specs, awaitable: true, timeout: 10_000)
     |> ProcessHub.Future.await()
-    |> dbg()
 
     ProcessHub.stop_children(hub_id, cids, awaitable: true, timeout: 10_000)
     |> ProcessHub.Future.await()
-    |> dbg()
   end
 end
