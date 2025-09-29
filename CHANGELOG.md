@@ -1,7 +1,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.3.4-alpha - 2025-01-18
+## v0.4.0-beta - 2025-09-29
 This release introduces improvements to ProcessHub's API design and internal architecture. The major focus is on enhancing the developer experience with new promise-based return types and improving system performance with experimental load balancing capabilities.
 
 This release maintains backward compatibility with the main ProcessHub module while introducing new patterns that will become the standard in future versions.

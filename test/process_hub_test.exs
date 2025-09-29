@@ -85,12 +85,14 @@ defmodule ProcessHubTest do
     # Validate that start count matches expected count
     expected_child_specs = [cs6, cs7]
     started_results = result67.started
+
     assert length(started_results) === length(expected_child_specs),
            "Expected to start #{length(expected_child_specs)} processes, but started #{length(started_results)}"
 
     # Validate that all expected children are in the started list
     expected_child_ids = MapSet.new(Enum.map(expected_child_specs, & &1.id))
     actual_child_ids = MapSet.new(Enum.map(started_results, &elem(&1, 0)))
+
     assert MapSet.equal?(expected_child_ids, actual_child_ids),
            "Started children IDs don't match expected children IDs"
 
