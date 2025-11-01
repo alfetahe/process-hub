@@ -43,7 +43,7 @@ defmodule MyApp.Application do
       },
       # Configure the partition tolerance strategy.
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.StaticQuorum{
-        quorum_size: 3
+        quorum_size: 1
       },
       # Configure the distribution strategy.
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{}
