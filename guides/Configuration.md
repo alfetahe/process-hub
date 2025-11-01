@@ -42,8 +42,9 @@ defmodule MyApp.Application do
         sync_interval: 10000
       },
       # Configure the partition tolerance strategy.
-      partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.StaticQuorum{
-        quorum_size: 1
+      partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.MajorityQuorum{
+        initial_cluster_size: 1,
+        track_max_size: true
       },
       # Configure the distribution strategy.
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{}
@@ -130,6 +131,14 @@ will terminate along with its children.
   > When scaling down too many nodes at once, the system may consider itself to be in a
   > network partition. Read the documentation for the
   >`ProcessHub.Strategy.PartitionTolerance.DynamicQuorum` strategy for more information.
+- `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum` - this strategy provides automatic
+partition tolerance that adapts to cluster size. It tracks the maximum cluster size ever seen
+and requires a majority of those nodes to be present for the cluster to operate. The quorum is
+calculated as `floor(max_cluster_size / 2) + 1`. This strategy is ideal for clusters that start
+with a single node (development or initial deployment), scale up over time, and need proper
+split-brain protection once established without requiring manual quorum configuration. When
+intentionally downsizing your cluster, you can reset the expected cluster size using
+`ProcessHub.Strategy.PartitionTolerance.MajorityQuorum.reset_cluster_size/2`.
 
 ### Distribution Strategy:
 `ProcessHub.Strategy.Distribution.Base` - defines the base protocol for distribution

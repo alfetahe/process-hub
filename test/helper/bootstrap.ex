@@ -26,6 +26,8 @@ defmodule Test.Helper.Bootstrap do
   @default_quorum_size_dynamic 90
   @default_quorum_threshold_time 30000
   @default_startup_quorum_confirm false
+  @default_initial_cluster_size 1
+  @default_track_max_size true
 
   # Distrbution options
   @dist_stats_push_interval 30_000
@@ -223,6 +225,12 @@ defmodule Test.Helper.Bootstrap do
         %ProcessHub.Strategy.PartitionTolerance.DynamicQuorum{
           quorum_size: context[:quorum_size] || @default_quorum_size_dynamic,
           threshold_time: context[:quorum_threshold_time] || @default_quorum_threshold_time
+        }
+
+      :majority ->
+        %ProcessHub.Strategy.PartitionTolerance.MajorityQuorum{
+          initial_cluster_size: context[:initial_cluster_size] || @default_initial_cluster_size,
+          track_max_size: context[:track_max_size] || @default_track_max_size
         }
 
       :div ->

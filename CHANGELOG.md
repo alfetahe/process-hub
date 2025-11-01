@@ -3,10 +3,11 @@ All notable changes to this project will be documented in this file.
 
 ## v0.4.1-beta - YYYY-MM-DD
 
+### Added
+- `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum` - A new adaptive partition tolerance strategy that automatically tracks the maximum cluster size and requires a majority of nodes to operate. This strategy is ideal for clusters that start with a single node and scale up over time, providing proper split-brain protection without manual quorum configuration. The strategy calculates quorum as `floor(max_cluster_size / 2) + 1` and includes a `reset_cluster_size/2` function for intentional cluster downsizing.
+
 ### Fixed
 - Replication strategy mode switching during cluster topology changes. Multiple nodes could be in active mode when using active_passive replication model. [#15](https://github.com/alfetahe/process-hub/issues/15)
-
-
 
 ## v0.4.0-beta - 2025-09-29
 This release introduces improvements to ProcessHub's API design and internal architecture. The major focus is on enhancing the developer experience with new promise-based return types and improving system performance with experimental load balancing capabilities.

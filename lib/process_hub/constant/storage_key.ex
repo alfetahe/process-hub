@@ -12,6 +12,7 @@ defmodule ProcessHub.Constant.StorageKey do
   def gdc, do: :guided_distribution_cache
   def msk, do: :migration_hotswap_state
   def dqdn, do: :dynamic_quorum_down_nodes
+  def mqms, do: :majority_quorum_max_seen
   def gct, do: :gossip_node_timestamps
   def dlrt, do: :deadlock_recovery_timeout
   def hodw, do: :handover_data_wait
