@@ -120,14 +120,18 @@ defmodule Test.Helper.Common do
                      "Exptected cid #{child_id} on node #{node} active recived #{state[:redun_mode]}"
 
             rep_model === :active_passive ->
+              # Ensure redun_mode is set to either :active or :passive
+              assert state[:redun_mode] in [:active, :passive],
+                     "Expected cid #{child_id} on node #{node} to have redun_mode :active or :passive, got #{inspect(state[:redun_mode])}"
+
               case state[:redun_mode] do
                 :active ->
                   assert master_node === node,
-                         "Exptected cid #{child_id} on node #{node} to match #{master_node}"
+                         "Expected cid #{child_id} on node #{node} (active) to match master_node #{master_node}"
 
                 :passive ->
                   assert master_node !== node,
-                         "Exptected cid #{child_id} on node #{node} to not match #{master_node}"
+                         "Expected cid #{child_id} on node #{node} (passive) to not match master_node #{master_node}"
               end
           end
         end
