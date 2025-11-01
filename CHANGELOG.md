@@ -1,6 +1,13 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.4.1-beta - YYYY-MM-DD
+
+### Fixed
+- Replication strategy mode switching during cluster topology changes. Multiple nodes could be in active mode when using active_passive replication model. [#15](https://github.com/alfetahe/process-hub/issues/15)
+
+
+
 ## v0.4.0-beta - 2025-09-29
 This release introduces improvements to ProcessHub's API design and internal architecture. The major focus is on enhancing the developer experience with new promise-based return types and improving system performance with experimental load balancing capabilities.
 

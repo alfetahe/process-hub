@@ -186,10 +186,14 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     prev_master =
       case node_action do
         :up ->
-          RedundancyStrategy.master_node(strategy, hub, child_id, nodes)
+          # Remove the new node from the list to calculate the previous master
+          prev_nodes = Enum.filter(nodes, fn n -> n !== node end)
+          RedundancyStrategy.master_node(strategy, hub, child_id, prev_nodes)
 
         :down ->
-          [node | nodes]
+          # Add the removed node back to calculate the previous master
+          prev_nodes = Enum.sort([node | nodes])
+          RedundancyStrategy.master_node(strategy, hub, child_id, prev_nodes)
       end
 
     {prev_master, curr_master}
@@ -206,14 +210,16 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         # Do nothing because the same node still holds the active process.
         :ok
 
-      Enum.member?([:all, :active], strategy.redundancy_signal) ->
-        if curr_master === local_node and prev_master !== curr_master do
+      # Node transitioned from passive to active
+      curr_master === local_node and prev_master !== local_node ->
+        if Enum.member?([:all, :active], strategy.redundancy_signal) do
           # Current node is the new active node.
           child_pid(hub, child_id, opts) |> send_redundancy_signal(:active)
         end
 
-      Enum.member?([:all, :passive], strategy.redundancy_signal) ->
-        if curr_master !== local_node and prev_master === local_node do
+      # Node transitioned from active to passive
+      prev_master === local_node and curr_master !== local_node ->
+        if Enum.member?([:all, :passive], strategy.redundancy_signal) do
           # Current node is the new passive node.
           child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
         end

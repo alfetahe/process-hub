@@ -177,16 +177,29 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         Task.async(fn ->
           if !Enum.empty?(keep) do
             handle_redundancy(hub, node, keep)
-
-            Distributor.children_redist_init(
-              hub,
-              node,
-              Enum.map(keep, fn %{child_spec: cs, metadata: m} -> {cs, m} end)
-            )
+            handle_redistribution(hub, node, keep)
           end
         end)
 
       %__MODULE__{arg | async_tasks: [task | async_tasks]}
+    end
+
+    defp handle_redistribution(hub, node, children) do
+      redist_children =
+        Enum.map(children, fn %{child_spec: cs, child_nodes: cn, metadata: m} ->
+          %{
+            hub_id: hub.hub_id,
+            nodes: cn,
+            child_id: cs.id,
+            child_spec: cs,
+            metadata: m,
+            migration_add: true
+          }
+        end)
+
+      Dispatcher.children_migrate(hub.procs.event_queue, [{node, redist_children}],
+        migration_add: true
+      )
     end
 
     defp handle_redundancy(hub, node, children) do
@@ -196,7 +209,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         Enum.map(children, fn %{child_spec: cs, child_nodes: cn} ->
           x = (Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil}) |> elem(1)
 
-          {cs.id, cn, {:pid, x}}
+          {cs.id, cn, [pid: x]}
         end)
 
       HookManager.dispatch_hook(
