@@ -1,7 +1,9 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.4.1-beta - YYYY-MM-DD
+## v0.4.1-beta - 2025-11-02
+This release introduces a new adaptive partition tolerance strategy, `MajorityQuorum`, which automatically adjusts to the cluster size. This strategy is ideal for clusters that start with a single node and scale up over time, providing proper split-brain protection without manual quorum configuration.
+Includes also bug fixes related to replication strategy mode switching during cluster topology changes.
 
 ### Added
 - `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum` - A new adaptive partition tolerance strategy that automatically tracks the maximum cluster size and requires a majority of nodes to operate. This strategy is ideal for clusters that start with a single node and scale up over time, providing proper split-brain protection without manual quorum configuration. The strategy calculates quorum as `floor(max_cluster_size / 2) + 1` and includes a `reset_cluster_size/2` function for intentional cluster downsizing.
