@@ -205,7 +205,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           {:error, {errors, sresults}} ->
             Enum.each(errors, fn
               {error, node, reason} ->
-                Logger.error("Child process migration failed on node #{node}: #{inspect(error)}, reason: #{inspect(reason)}")
+                Logger.error(
+                  "Child process migration failed on node #{node}: #{inspect(error)}, reason: #{inspect(reason)}"
+                )
+
               {error, node} ->
                 Logger.error("Child process migration failed on node #{node}: #{inspect(error)}")
             end)

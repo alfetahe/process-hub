@@ -105,7 +105,8 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
   require a majority of 3 (i.e., 2 nodes) instead of a majority of 5 (i.e., 3 nodes).
   """
   @spec reset_cluster_size(atom(), pos_integer()) :: :ok | {:error, term()}
-  def reset_cluster_size(hub_id, new_size) when is_atom(hub_id) and is_integer(new_size) and new_size > 0 do
+  def reset_cluster_size(hub_id, new_size)
+      when is_atom(hub_id) and is_integer(new_size) and new_size > 0 do
     # Get the coordinator PID for the hub
     case ProcessHub.Coordinator.get_hub(hub_id) do
       %{storage: %{misc: misc_storage}} ->
@@ -144,7 +145,9 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
 
       # Update max_seen if tracking is enabled and cluster grew
       if strategy.track_max_size do
-        max_seen = Storage.get(hub.storage.misc, StorageKey.mqms()) || strategy.initial_cluster_size
+        max_seen =
+          Storage.get(hub.storage.misc, StorageKey.mqms()) || strategy.initial_cluster_size
+
         new_max = max(max_seen, current_size)
 
         if new_max > max_seen do

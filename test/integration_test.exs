@@ -504,7 +504,10 @@ defmodule Test.IntegrationTest do
     # Remove 1 node → 9 nodes remaining
     # max_seen still 10, quorum still 6, we have 9 >= 6
     removed_peers = Common.stop_peers(new_peers, 1)
-    remaining_new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
+
+    remaining_new_peers =
+      Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
+
     Bag.receive_multiple(1, Hook.post_nodes_redistribution())
 
     assert ProcessHub.is_partitioned?(hub_id) === false
@@ -512,7 +515,10 @@ defmodule Test.IntegrationTest do
     # Remove 2 more nodes → 7 nodes remaining
     # max_seen still 10, quorum still 6, we have 7 >= 6
     removed_peers = Common.stop_peers(remaining_new_peers, 2)
-    remaining_new_peers = Enum.filter(remaining_new_peers, fn node -> !Enum.member?(removed_peers, node) end)
+
+    remaining_new_peers =
+      Enum.filter(remaining_new_peers, fn node -> !Enum.member?(removed_peers, node) end)
+
     Bag.receive_multiple(2, Hook.post_nodes_redistribution())
 
     assert ProcessHub.is_partitioned?(hub_id) === false
@@ -520,7 +526,10 @@ defmodule Test.IntegrationTest do
     # Remove 1 more node → 6 nodes remaining (exactly at quorum)
     # max_seen still 10, quorum still 6, we have 6 >= 6
     removed_peers = Common.stop_peers(remaining_new_peers, 1)
-    _remaining_new_peers = Enum.filter(remaining_new_peers, fn node -> !Enum.member?(removed_peers, node) end)
+
+    _remaining_new_peers =
+      Enum.filter(remaining_new_peers, fn node -> !Enum.member?(removed_peers, node) end)
+
     Bag.receive_multiple(1, Hook.post_nodes_redistribution())
 
     assert ProcessHub.is_partitioned?(hub_id) === false
