@@ -813,7 +813,7 @@ defmodule Test.IntegrationTest do
       error_msg: "Post redistribution timeout"
     )
 
-    Process.sleep(100)
+    # Process.sleep(100)
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
