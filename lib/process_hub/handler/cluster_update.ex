@@ -39,7 +39,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             keep: list(),
             migrate: list(),
             migr_base_timeout: pos_integer(),
-            async_tasks: list()
+            async_tasks: list(),
+            operation_id: reference(),
+            migration_count: non_neg_integer()
           }
 
     @enforce_keys [
@@ -58,12 +60,17 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                   :partition_strat,
                   :dist_strat,
                   :migr_base_timeout,
+                  :operation_id,
+                  :migration_count,
                   async_tasks: []
                 ]
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{hub: hub, node: node} = arg) do
       arg = attach_data(arg)
+
+      # Generate unique operation ID for tracking migration completions
+      operation_id = make_ref()
 
       # Dispatch the nodes pre redistribution event.
       HookManager.dispatch_hook(
@@ -73,12 +80,18 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       )
 
       # Handle the redistribution of processes.
-      if Map.get(arg.dist_strat, :nodeup_redistribution, true) do
-        distribute_processes(arg)
-      end
+      expected_completions =
+        if Map.get(arg.dist_strat, :nodeup_redistribution, true) do
+          distribute_processes(arg, operation_id)
+        else
+          0
+        end
 
       # Propagate the local children to the new node.
       propagate_local_children(hub, node)
+
+      # Wait for all migration completions before firing hook
+      wait_for_migration_completions(expected_completions, operation_id, arg)
 
       # Dispatch the nodes post redistribution event.
       HookManager.dispatch_hook(
@@ -93,14 +106,20 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :ok
     end
 
-    defp distribute_processes(arg) do
-      arg
-      |> Map.put(:repl_fact, RedundancyStrategy.replication_factor(arg.redun_strat))
-      |> local_children()
-      |> dist_children()
-      |> handle_migrate()
-      |> handle_keep()
-      |> wait_for_tasks()
+    defp distribute_processes(arg, operation_id) do
+      result =
+        arg
+        |> Map.put(:repl_fact, RedundancyStrategy.replication_factor(arg.redun_strat))
+        |> Map.put(:operation_id, operation_id)
+        |> Map.put(:migration_count, 0)
+        |> local_children()
+        |> dist_children()
+        |> handle_migrate()
+        |> handle_keep()
+        |> wait_for_tasks()
+
+      # Return the count of expected migration completions
+      result.migration_count
     end
 
     defp attach_data(arg) do
@@ -132,13 +151,31 @@ defmodule ProcessHub.Handler.ClusterUpdate do
              async_tasks: async_tasks,
              migr_strat: migr_strat,
              migr_base_timeout: migr_base_timeout
-           } = _arg
+           } = arg
          ) do
       Task.await_many(async_tasks, migration_timeout(migr_strat, migr_base_timeout))
 
-      #  %__MODULE__{arg | async_tasks: []}
+      arg
+    end
 
-      :ok
+    defp wait_for_migration_completions(0, _operation_id, _arg), do: :ok
+
+    defp wait_for_migration_completions(expected_count, operation_id, arg) do
+      timeout = migration_timeout(arg.migr_strat, arg.migr_base_timeout)
+
+      wait_for_completions_loop(expected_count, operation_id, timeout)
+    end
+
+    defp wait_for_completions_loop(0, _operation_id, _timeout), do: :ok
+
+    defp wait_for_completions_loop(remaining, operation_id, timeout) do
+      receive do
+        {:migration_complete, ^operation_id} ->
+          wait_for_completions_loop(remaining - 1, operation_id, timeout)
+      after
+        timeout ->
+          :ok
+      end
     end
 
     defp handle_migrate(
@@ -147,9 +184,22 @@ defmodule ProcessHub.Handler.ClusterUpdate do
              async_tasks: async_tasks,
              migr_strat: migr_strat,
              sync_strat: sync_strat,
-             node: node
+             node: node,
+             operation_id: operation_id,
+             migration_count: migration_count
            } = arg
          ) do
+      # Calculate how many migrations will be sent (one per batch to this node)
+      new_migration_count =
+        if !Enum.empty?(data) do
+          migration_count + 1
+        else
+          migration_count
+        end
+
+      # Capture self() before async task
+      handler_pid = self()
+
       task =
         Task.async(fn ->
           child_data =
@@ -158,11 +208,21 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             end)
 
           if !Enum.empty?(child_data) do
-            MigrationStrategy.handle_migration(migr_strat, arg.hub, child_data, node, sync_strat)
+            # Store migration options in hub storage for Distributor to use
+            opts = [operation_id: operation_id, migration_reply_to: handler_pid]
+            Storage.insert(arg.hub.storage.misc, :migration_opts, opts)
+
+            MigrationStrategy.handle_migration(
+              migr_strat,
+              arg.hub,
+              child_data,
+              node,
+              sync_strat
+            )
           end
         end)
 
-      %__MODULE__{arg | async_tasks: [task | async_tasks]}
+      %__MODULE__{arg | async_tasks: [task | async_tasks], migration_count: new_migration_count}
     end
 
     defp handle_keep(
@@ -170,21 +230,34 @@ defmodule ProcessHub.Handler.ClusterUpdate do
              hub: hub,
              keep: keep,
              async_tasks: async_tasks,
-             node: node
+             node: node,
+             operation_id: operation_id,
+             migration_count: migration_count
            } = arg
          ) do
+      # Calculate how many migrations will be sent (one per batch to this node)
+      new_migration_count =
+        if !Enum.empty?(keep) do
+          migration_count + 1
+        else
+          migration_count
+        end
+
+      # Capture self() before async task since self() inside task would be task's PID
+      handler_pid = self()
+
       task =
         Task.async(fn ->
           if !Enum.empty?(keep) do
             handle_redundancy(hub, node, keep)
-            handle_redistribution(hub, node, keep)
+            handle_redistribution(hub, node, keep, operation_id, handler_pid)
           end
         end)
 
-      %__MODULE__{arg | async_tasks: [task | async_tasks]}
+      %__MODULE__{arg | async_tasks: [task | async_tasks], migration_count: new_migration_count}
     end
 
-    defp handle_redistribution(hub, node, children) do
+    defp handle_redistribution(hub, node, children, operation_id, reply_to) do
       redist_children =
         Enum.map(children, fn %{child_spec: cs, child_nodes: cn, metadata: m} ->
           %{
@@ -198,7 +271,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         end)
 
       Dispatcher.children_migrate(hub.procs.event_queue, [{node, redist_children}],
-        migration_add: true
+        migration_add: true,
+        operation_id: operation_id,
+        migration_reply_to: reply_to
       )
     end
 

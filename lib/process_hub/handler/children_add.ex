@@ -158,6 +158,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           %__MODULE__{arg | process_data: start_children(arg)}
           |> post_start_hook()
           |> update_registry()
+          |> verify_supervisor_sync()
+          |> dispatch_migration_registered_hook()
           |> dispatch_process_startups()
           |> handle_sync_callback()
           |> release_lock()
@@ -205,6 +207,66 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         ]
       )
       |> Task.await()
+
+      arg
+    end
+
+    defp verify_supervisor_sync(%__MODULE__{hub: hub, process_data: pd, start_opts: so} = arg) do
+      # Only verify during migrations to ensure supervisor state is consistent
+      if Keyword.get(so, :migration_add, false) === true && !Enum.empty?(pd) do
+        # Get the child IDs we just started (only successful starts)
+        started_child_ids =
+          pd
+          |> Enum.filter(fn %PostStartData{result: res} -> elem(res, 0) === :ok end)
+          |> Enum.map(fn %PostStartData{cid: cid} -> cid end)
+
+        # Poll until supervisor sees all children (with timeout)
+        # Max 200 attempts × 1ms = 200ms total timeout
+        wait_for_supervisor_sync(hub.procs.dist_sup, started_child_ids, 200, 1)
+      end
+
+      arg
+    end
+
+    defp wait_for_supervisor_sync(_dist_sup, [], _max_attempts, _sleep_ms), do: :ok
+    defp wait_for_supervisor_sync(_dist_sup, _remaining, 0, _sleep_ms), do: :ok
+
+    defp wait_for_supervisor_sync(dist_sup, remaining_ids, attempts, sleep_ms) do
+      supervisor_ids = DistributedSupervisor.local_child_ids(dist_sup)
+
+      still_missing =
+        Enum.filter(remaining_ids, fn id -> not Enum.member?(supervisor_ids, id) end)
+
+      if Enum.empty?(still_missing) do
+        :ok
+      else
+        Process.sleep(sleep_ms)
+        wait_for_supervisor_sync(dist_sup, still_missing, attempts - 1, sleep_ms)
+      end
+    end
+
+    defp dispatch_migration_registered_hook(%__MODULE__{hub: hub, process_data: pd, start_opts: so} = arg) do
+      # Only fire hook for migration operations
+      if Keyword.get(so, :migration_add, false) === true do
+        HookManager.dispatch_hook(
+          hub.storage.hook,
+          Hook.post_migration_registered(),
+          pd
+        )
+
+        # Send completion message back to ClusterUpdate.NodeUp handler
+        case Keyword.get(so, :operation_id) do
+          nil ->
+            :ok
+
+          operation_id ->
+            migration_reply_to = Keyword.get(so, :migration_reply_to)
+
+            if migration_reply_to do
+              send(migration_reply_to, {:migration_complete, operation_id})
+            end
+        end
+      end
 
       arg
     end

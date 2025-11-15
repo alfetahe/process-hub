@@ -14,6 +14,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
+  alias ProcessHub.Service.Storage
 
   @typedoc """
   The cold swap migration struct.
@@ -35,7 +36,10 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         sync_strategy
       )
 
-      Distributor.children_redist_init(hub, added_node, children_data, [])
+      # Read migration options from storage (if set by ClusterUpdate)
+      opts = Storage.get(hub.storage.misc, :migration_opts) || []
+
+      Distributor.children_redist_init(hub, added_node, children_data, opts)
 
       HookManager.dispatch_hook(
         hub.storage.hook,
