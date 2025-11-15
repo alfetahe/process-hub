@@ -44,6 +44,9 @@ defmodule ProcessHub.DistributedSupervisor do
   def init({sup, mod, args}), do: :supervisor.init({sup, mod, args})
 
   def init(args) do
+    # Store hub_id in process dictionary for later retrieval
+    Process.put(:hub_id, args.hub_id)
+
     Supervisor.init(children(args.hub_id),
       strategy: :one_for_one,
       auto_shutdown: :never,
@@ -112,6 +115,10 @@ defmodule ProcessHub.DistributedSupervisor do
         handle_child_exit(state, new_state, pid)
         {:noreply, new_state}
 
+      {:noreply, new_state, timeout} ->
+        handle_child_exit(state, new_state, pid)
+        {:noreply, new_state, timeout}
+
       {:stop, reason, new_state} ->
         handle_child_exit(state, new_state, pid)
         {:stop, reason, new_state}
@@ -120,30 +127,46 @@ defmodule ProcessHub.DistributedSupervisor do
 
   # Asynchronous function to handle the child specification removal.
   def handle_info({:delete_child_spec, child_id}, state) do
-    {_code, _res, new_state} = :supervisor.handle_call({:delete_child, child_id}, nil, state)
+    case :supervisor.handle_call({:delete_child, child_id}, nil, state) do
+      {:reply, _res, new_state} ->
+        {:noreply, new_state}
 
-    {:noreply, new_state}
+      {:reply, _res, new_state, _timeout} ->
+        {:noreply, new_state}
+    end
   end
 
   defp handle_child_exit(old_state, new_state, pid) do
-    hub_id = elem(old_state, 11) |> Map.get(:hub_id)
-    hub = Coordinator.get_hub(hub_id)
+    hub_id = Process.get(:hub_id)
 
-    cid = find_cid_from_pid(old_state, pid)
-    old_pid = find_pid_from_cid(old_state, cid)
-    new_pid = find_pid_from_cid(new_state, cid)
+    # Get hub state, but handle case where coordinator is shutting down
+    hub =
+      try do
+        Coordinator.get_hub(hub_id)
+      catch
+        :exit, _ -> nil
+      end
 
-    cond do
-      # No new pid found, the child process has been terminated.
-      new_pid === :undefined ->
-        handle_child_removal(hub.procs.event_queue, cid)
+    # If coordinator is unavailable, skip handling (system is shutting down)
+    if hub == nil do
+      :ok
+    else
+      cid = find_cid_from_pid(old_state, pid)
+      old_pid = find_pid_from_cid(old_state, cid)
+      new_pid = find_pid_from_cid(new_state, cid)
 
-      # The child process has been restarted with a new pid.
-      is_pid(new_pid) and old_pid !== new_pid ->
-        handle_child_restart(hub.procs.event_queue, cid, new_pid)
+      cond do
+        # No new pid found, the child process has been terminated.
+        new_pid === :undefined ->
+          handle_child_removal(hub.procs.event_queue, cid)
 
-      true ->
-        nil
+        # The child process has been restarted with a new pid.
+        is_pid(new_pid) and old_pid !== new_pid ->
+          handle_child_restart(hub.procs.event_queue, cid, new_pid)
+
+        true ->
+          nil
+      end
     end
   end
 

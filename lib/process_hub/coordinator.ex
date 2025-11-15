@@ -400,28 +400,32 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_child_process_pid_update, {child_id, {node, pid}}}, state) do
-    {cs, nodes_pids, metadata} =
-      ProcessRegistry.lookup(
-        state.hub_id,
-        child_id,
-        with_metadata: true
-      )
+    case ProcessRegistry.lookup(
+           state.hub_id,
+           child_id,
+           with_metadata: true
+         ) do
+      nil ->
+        # Child not found in registry, skip update
+        {:noreply, state}
 
-    ProcessRegistry.insert(
-      state.hub_id,
-      cs,
-      Keyword.put(nodes_pids, node, pid),
-      metadata: metadata,
-      hook_storage: state.storage.hook
-    )
+      {cs, nodes_pids, metadata} ->
+        ProcessRegistry.insert(
+          state.hub_id,
+          cs,
+          Keyword.put(nodes_pids, node, pid),
+          metadata: metadata,
+          hook_storage: state.storage.hook
+        )
 
-    HookManager.dispatch_hook(
-      state.storage.hook,
-      Hook.child_process_pid_update(),
-      {node, pid}
-    )
+        HookManager.dispatch_hook(
+          state.storage.hook,
+          Hook.child_process_pid_update(),
+          {node, pid}
+        )
 
-    {:noreply, state}
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -552,7 +556,7 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
-  defp init_strategies(hub, hub_conf) do
+  defp init_strategies(hub, %ProcessHub{} = hub_conf) do
     dist_strat =
       DistributionStrategy.init(
         hub_conf.distribution_strategy,

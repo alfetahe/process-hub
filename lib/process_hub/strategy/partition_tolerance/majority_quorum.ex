@@ -121,7 +121,8 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
       {:error, e}
   end
 
-  defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
+  defimpl PartitionToleranceStrategy,
+    for: ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
     alias ProcessHub.Service.Cluster
     alias ProcessHub.Service.Storage
     alias ProcessHub.Constant.StorageKey
