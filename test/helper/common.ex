@@ -57,7 +57,7 @@ defmodule Test.Helper.Common do
         } =
           _context
       ) do
-    registry = ProcessHub.registry_dump(hub_id)
+    registry = ProcessHub.registry_dump(hub_id) |> dbg()
     replication_factor = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes, metadata}} ->
