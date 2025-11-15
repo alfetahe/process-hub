@@ -737,10 +737,21 @@ defmodule Test.IntegrationTest do
       GenServer.call(pid, {:set_value, :shutdown, true})
     end)
 
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+
+    dist_strat =
+      ProcessHub.Service.Storage.get(hub.storage.misc, ProcessHub.Constant.StorageKey.strdist())
+
+    child_ids = Enum.map(child_specs, & &1.id)
+    stopped_node = Node.list() |> List.first()
+
+    migrated_children_count =
+      dist_strat
+      |> ProcessHub.Strategy.Distribution.Base.belongs_to(hub, child_ids, 1)
+      |> Enum.count(fn {_child_id, [node]} -> node === stopped_node end)
+
     # Stop hubs on peer nodes.
-    # Enum.each(Node.list(), fn node ->
-    :erpc.call(Node.list() |> List.first(), ProcessHub.Initializer, :stop, [hub_id])
-    # end)
+    :erpc.call(stopped_node, ProcessHub.Initializer, :stop, [hub_id])
 
     # Node downs
     Bag.receive_multiple(1, Hook.post_nodes_redistribution(),
@@ -749,6 +760,12 @@ defmodule Test.IntegrationTest do
 
     # Confirm that hubs are stopped.
     Bag.receive_multiple(1, Hook.post_cluster_leave(), error_msg: "Cluster leave timeout")
+
+    Bag.receive_multiple(
+      migrated_children_count,
+      Hook.registry_pid_inserted(),
+      error_msg: "Children migration timeout"
+    )
 
     # Confirm that all processes have their states migrated.
     ProcessHub.registry_dump(hub_id)
