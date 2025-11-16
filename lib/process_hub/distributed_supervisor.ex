@@ -81,6 +81,7 @@ defmodule ProcessHub.DistributedSupervisor do
     Supervisor.which_children(distributed_sup)
     |> Enum.find({nil, nil}, &(elem(&1, 0) === child_id))
     |> elem(1)
+    |> dbg()
   end
 
   @doc "Returns a list of processe pairs in the form of `{child_id, pid}`

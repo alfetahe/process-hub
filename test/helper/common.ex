@@ -57,7 +57,7 @@ defmodule Test.Helper.Common do
         } =
           _context
       ) do
-    registry = ProcessHub.registry_dump(hub_id)
+    registry = ProcessHub.registry_dump(hub_id) |> dbg()
     replication_factor = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes, metadata}} ->
@@ -68,17 +68,24 @@ defmodule Test.Helper.Common do
       ring = Ring.get_ring(hub.storage.misc)
       ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
 
-      assert length(nodes) === replication_factor,
-             "The child #{child_id} is started on #{length(nodes)} nodes but #{replication_factor} is expected."
+      if length(nodes) !== replication_factor do
+        Process.sleep(1000)
 
-      assert length(ring_nodes) === replication_factor,
-             "The length of ring nodes does not match replication factor"
+        ProcessHub.registry_dump(hub_id) |> dbg()
+
+        assert false,
+          "The child #{child_id} is started on #{length(nodes)} nodes but #{replication_factor} is expected."
+      end
+
+      # TODO: we cannot test this because we may start of with bigger number of replicas than nodes.
+      # assert length(ring_nodes) === replication_factor,
+      #        "The length of ring nodes does not match replication factor"
 
       assert Enum.all?(Keyword.keys(nodes), &Enum.member?(ring_nodes, &1)),
              "The child #{child_id} nodes do not match ring nodes"
 
       assert Enum.all?(ring_nodes, &Enum.member?(Keyword.keys(nodes), &1)),
-             "The ring nodes do not match child #{child_id} nodes"
+             "The ring nodes #{inspect(ring_nodes)} do not match child #{child_id} nodes #{inspect(Keyword.keys(nodes))}"
     end)
   end
 
@@ -103,7 +110,7 @@ defmodule Test.Helper.Common do
     children_nodes = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
 
     Enum.each(children_nodes, fn {child_id, child_nodes} ->
-      master_node = RedundancyStrategy.master_node(redun_strat, hub, child_id, child_nodes)
+      master_node = RedundancyStrategy.master_node(redun_strat, hub, child_id, child_nodes) |> dbg()
 
       assert length(child_nodes) === repl_fact,
              "The length of belongs_to call does not match replication factor"
@@ -113,6 +120,8 @@ defmodule Test.Helper.Common do
       if is_list(registry_pid_nodes) do
         for {node, pid} <- registry_pid_nodes do
           state = GenServer.call(pid, :get_state)
+
+          dbg({child_id, node, state})
 
           cond do
             rep_model === :active_active ->
@@ -126,8 +135,10 @@ defmodule Test.Helper.Common do
 
               case state[:redun_mode] do
                 :active ->
-                  assert master_node === node,
-                         "Expected cid #{child_id} on node #{node} (active) to match master_node #{master_node}"
+
+                  if master_node !== node do
+                    assert false, "Expected cid #{child_id} on node #{node} (active) to match master_node #{master_node}"
+                  end
 
                 :passive ->
                   assert master_node !== node,

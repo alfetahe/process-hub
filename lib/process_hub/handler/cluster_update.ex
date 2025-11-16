@@ -23,6 +23,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     @moduledoc """
     Handler for the node up event.
     """
+    alias Hex.API.Key
     alias ProcessHub.Constant.PriorityLevel
     use Event
 
@@ -94,6 +95,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       wait_for_migration_completions(expected_completions, operation_id, arg)
 
       # Dispatch the nodes post redistribution event.
+      # TODO:
+      dbg({"EMITTING POST NODES", node(), node})
       HookManager.dispatch_hook(
         hub.storage.hook,
         Hook.post_nodes_redistribution(),
@@ -279,12 +282,15 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp handle_redundancy(hub, node, children) do
       children_pids = ProcessRegistry.local_data(hub.hub_id)
+      |> Enum.map(fn {k, {_cs, cn, _meta}} ->
+        {k, Keyword.get(cn, node())}
+      end)
 
       redun_data =
         Enum.map(children, fn %{child_spec: cs, child_nodes: cn} ->
-          x = (Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil}) |> elem(1)
+          local_pid = (Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil}) |> elem(1)
 
-          {cs.id, cn, [pid: x]}
+          {cs.id, cn, [pid: local_pid]}
         end)
 
       HookManager.dispatch_hook(

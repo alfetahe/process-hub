@@ -193,6 +193,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
     if hook_storage do
+      # TODO: add back for testing dbg({"PID SOLO INSERT", node(), child_spec.id, child_nodes})
+
       HookManager.dispatch_hook(
         hook_storage,
         Hook.registry_pid_inserted(),
@@ -277,6 +279,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           end
 
         if is_list(diff) && length(diff) > 0 do
+          # TODO: add back for testing  dbg({"PID BULK INSERT", node(), child_spec.id, diff})
           {Hook.registry_pid_inserted(), {child_spec.id, diff}}
         end
       end)

@@ -802,15 +802,24 @@ defmodule Test.IntegrationTest do
 
     # Now let's start few more nodes and see if replication is maintained
     peer_to_start = 1
-    new_peers = TestNode.start_nodes(peer_to_start, prefix: :redunc_activ_pass_test)
+    new_peers = TestNode.start_nodes(peer_to_start, prefix: :redunc_activ_pass_testx)
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true)
 
-    (@nr_of_peers + peer_to_start) * (@nr_of_peers + peer_to_start + 1)
-    |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
-      error_msg: "Post redistribution timeout"
+    # TODO: (@nr_of_peers + peer_to_start) * (@nr_of_peers + peer_to_start + 1) |> dbg()
+    # (initial 2 from each node) + 2 from existing nodes + 2 for new node
+    6 |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
+      error_msg: "Post redistribution timeout",
+      timeout: 3000
+    )
+
+    # TODO:
+    # We need to wait for all processes are registered in the registry after redistribution
+    6 |> Bag.receive_multiple(Hook.registry_pid_inserted(),
+      error_msg: "Post redistribution registry insert timeout",
+      timeout: 3000
     )
 
     # Tests if all child_specs are used for starting children.

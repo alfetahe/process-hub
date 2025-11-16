@@ -166,6 +166,10 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         hub,
         {processes_data, {node_action, node}}
       ) do
+
+
+    dbg({"POST UPDATE", node(), node_action, node, processes_data})
+
     Enum.each(processes_data, fn {child_id, child_nodes, opts} ->
       handle_redundancy_signal(
         strategy,
@@ -196,6 +200,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           RedundancyStrategy.master_node(strategy, hub, child_id, prev_nodes)
       end
 
+      dbg({"NODE MODES", node(), child_id, prev_master, curr_master, nodes, node_action})
+
     {prev_master, curr_master}
   end
 
@@ -220,8 +226,10 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       # Node transitioned from active to passive
       prev_master === local_node and curr_master !== local_node ->
         if Enum.member?([:all, :passive], strategy.redundancy_signal) do
+          dbg({"SEND PASSIVE", node(), child_id})
+
           # Current node is the new passive node.
-          child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
+          child_pid(hub, child_id, opts)|> dbg() |> send_redundancy_signal(:passive)
         end
 
       true ->
@@ -245,6 +253,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   end
 
   defp child_pid(hub, child_id, opts) do
+    dbg()
+
     case Keyword.get(opts, :pid) do
       nil ->
         DistributedSupervisor.local_pid(hub.procs.dist_sup, child_id)
