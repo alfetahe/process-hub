@@ -8,7 +8,7 @@ defmodule Test.IntegrationTest do
   use ExUnit.Case, async: false
 
   # Total nr of nodes to start (without the main node)
-  @nr_of_peers 1
+  @nr_of_peers 2
 
   setup_all context do
     context = Map.put(context, :validate_metadata, false)
@@ -798,9 +798,8 @@ defmodule Test.IntegrationTest do
     child_count = 3
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
-    # TODO: (@nr_of_peers + peer_to_start) * (@nr_of_peers + peer_to_start + 1) |> dbg()
-    # (initial 2 from each node) + 2 from existing nodes + 2 for new node
-    2
+    # n(n + 1)
+    @nr_of_peers * (@nr_of_peers + 1)
     |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
       error_msg: "Post redistribution timeout",
       timeout: 3000
@@ -810,24 +809,23 @@ defmodule Test.IntegrationTest do
     Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
 
     # Now let's start few more nodes and see if replication is maintained
-    peer_to_start = 1
+    peer_to_start = @nr_of_peers
     new_peers = TestNode.start_nodes(peer_to_start, prefix: :redunc_activ_pass_test)
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true)
 
-    # TODO: (@nr_of_peers + peer_to_start) * (@nr_of_peers + peer_to_start + 1) |> dbg()
-    # (initial 2 from each node) + 2 from existing nodes + 2 for new node
-    4
+    # n(3n+1) if new peers = initial_peers
+    @nr_of_peers * ((3 * @nr_of_peers) + 1)
     |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
       error_msg: "Post redistribution timeout",
       timeout: 3000
     )
 
-    # TODO:
     # We need to wait for all processes are registered in the registry after redistribution
-    6
+    # TODO:
+    7
     |> Bag.receive_multiple(Hook.registry_pid_inserted(),
       error_msg: "Post redistribution registry insert timeout",
       timeout: 3000
@@ -848,22 +846,28 @@ defmodule Test.IntegrationTest do
     # Tests redundancy mode and check if replicated children are in passive/active mode.
     Common.validate_redundancy_mode(context)
 
+
+
+    Process.sleep(1000)
+    Bag.all_messages() |> dbg()
+
     # Now scale down back to original nodes and see if replication is still maintained
-    # Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
-    #   removed_peers = Common.stop_peers(acc, 1)
-    #   Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
-    # end)
+    Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
+      removed_peers = Common.stop_peers(acc, 1)
+      Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
+    end)
 
-    # @nr_of_peers * (@nr_of_peers + 1)
-    # |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
-    #   error_msg: "Post redistribution timeout"
-    # )
+    @nr_of_peers * (@nr_of_peers + 1)
+    |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
+      error_msg: "Post redistribution timeout"
+    )
 
-    # Process.sleep(1000)
+    Process.sleep(1000)
+    Bag.all_messages() |> dbg()
 
-    # Common.validate_registry_length(context, child_specs)
-    # Common.validate_replication(context)
-    # Common.validate_redundancy_mode(context)
+    Common.validate_registry_length(context, child_specs)
+    Common.validate_replication(context)
+    Common.validate_redundancy_mode(context)
 
     :net_kernel.monitor_nodes(false)
   end
