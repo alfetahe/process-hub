@@ -57,7 +57,7 @@ defmodule Test.Helper.Common do
         } =
           _context
       ) do
-    registry = ProcessHub.registry_dump(hub_id) |> dbg()
+    registry = ProcessHub.registry_dump(hub_id)
     replication_factor = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
 
     Enum.each(registry, fn {child_id, {_, nodes, metadata}} ->
@@ -102,7 +102,10 @@ defmodule Test.Helper.Common do
   def validate_redundancy_mode(
         %{hub_id: hub_id, replication_model: rep_model, hub_conf: hub_conf, hub: hub} = _context
       ) do
-    registry = ProcessHub.registry_dump(hub_id)
+    # TODO:
+    Process.sleep(2000)
+
+    registry = ProcessHub.registry_dump(hub_id) # |> dbg()
     dist_strat = hub_conf.distribution_strategy
     redun_strat = hub_conf.redundancy_strategy
     repl_fact = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
@@ -121,7 +124,7 @@ defmodule Test.Helper.Common do
         for {node, pid} <- registry_pid_nodes do
           state = GenServer.call(pid, :get_state)
 
-          dbg({child_id, node, state})
+          # dbg({child_id, node, state})
 
           cond do
             rep_model === :active_active ->
@@ -136,6 +139,7 @@ defmodule Test.Helper.Common do
               case state[:redun_mode] do
                 :active ->
 
+                  # TODO: change back and remove the if statement.
                   if master_node !== node do
                     assert false, "Expected cid #{child_id} on node #{node} (active) to match master_node #{master_node}"
                   end

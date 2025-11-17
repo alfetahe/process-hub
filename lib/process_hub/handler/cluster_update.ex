@@ -23,7 +23,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     @moduledoc """
     Handler for the node up event.
     """
-    alias Hex.API.Key
     alias ProcessHub.Constant.PriorityLevel
     use Event
 
@@ -95,8 +94,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       wait_for_migration_completions(expected_completions, operation_id, arg)
 
       # Dispatch the nodes post redistribution event.
-      # TODO:
-      dbg({"EMITTING POST NODES", node(), node})
       HookManager.dispatch_hook(
         hub.storage.hook,
         Hook.post_nodes_redistribution(),
@@ -476,13 +473,10 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           end
         end)
 
-      case Enum.empty?(redist) do
-        true ->
-          nil
+      handle_redundancy(arg, redun)
 
-        false ->
-          handle_redundancy(arg, redun)
-          handle_redistribution(arg.hub, redist)
+      if !Enum.empty?(redist) do
+        handle_redistribution(arg.hub, redist)
       end
 
       Map.put(arg, :rem_node_cids, cids)
