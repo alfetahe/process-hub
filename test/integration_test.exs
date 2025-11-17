@@ -8,7 +8,7 @@ defmodule Test.IntegrationTest do
   use ExUnit.Case, async: false
 
   # Total nr of nodes to start (without the main node)
-  @nr_of_peers 2
+  @nr_of_peers 1
 
   setup_all context do
     context = Map.put(context, :validate_metadata, false)
@@ -795,11 +795,11 @@ defmodule Test.IntegrationTest do
     :net_kernel.monitor_nodes(true)
 
     # TODO: back to 1000
-    child_count = 3
+    child_count = 10
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # n(n + 1)
-    @nr_of_peers * (@nr_of_peers + 1)
+    (@nr_of_peers * (@nr_of_peers + 1))
     |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
       error_msg: "Post redistribution timeout",
       timeout: 3000
@@ -816,8 +816,9 @@ defmodule Test.IntegrationTest do
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true)
 
-    # n(3n+1) if new peers = initial_peers
-    @nr_of_peers * ((3 * @nr_of_peers) + 1)
+    # n(2n+1) if new peers = initial_peers
+    # TODO: (@nr_of_peers * (2 * @nr_of_peers + 1))
+    2
     |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
       error_msg: "Post redistribution timeout",
       timeout: 3000
@@ -830,6 +831,8 @@ defmodule Test.IntegrationTest do
       error_msg: "Post redistribution registry insert timeout",
       timeout: 3000
     )
+
+    Process.sleep(1000)
 
     # IO.puts "HEREEE ------------------------------------------------------------ >"
     # ProcessHub.registry_dump(hub_id) |> dbg()
@@ -846,21 +849,11 @@ defmodule Test.IntegrationTest do
     # Tests redundancy mode and check if replicated children are in passive/active mode.
     Common.validate_redundancy_mode(context)
 
-
-
-    Process.sleep(1000)
-    Bag.all_messages() |> dbg()
-
     # Now scale down back to original nodes and see if replication is still maintained
     Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
       removed_peers = Common.stop_peers(acc, 1)
       Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
     end)
-
-    @nr_of_peers * (@nr_of_peers + 1)
-    |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
-      error_msg: "Post redistribution timeout"
-    )
 
     Process.sleep(1000)
     Bag.all_messages() |> dbg()

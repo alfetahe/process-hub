@@ -149,6 +149,10 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
       mode = process_mode(strategy, hub, child_id, combined_nodes)
 
+      if node() === :"redunc_activ_pass_test_1@127.0.0.1" do
+        #  dbg({"POST START", node(), child_id, res, mode})
+      end
+
       if elem(res, 0) === :ok do
         cond do
           strategy.redundancy_signal === :all ->
@@ -178,20 +182,13 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         hub,
         {processes_data, {node_action, node}}
       ) do
-    # dbg({"POST UPDATE", node(), node_action, node, processes_data})
-
-    # TODO: siia kutsustakse aga me ei nimeta process2 sest ta varasemalt juba kaivitatud node1 peal
-    # Kyll aga nüüd on ta mode muutunud passive pealt active peale, aga me ei teavita teda sellest sest
-    # ta puudub processes_data listis. Ausalt öeldes ta ei tohiks ka seal olla.
-    # Peaksime dünaamiliselt kuidagi siin stepis välja uurima kas on teisi protsesse mille mode on muutunud veel
-    # Või siis teha süsteem selliselt, et mode ei muutu
-
-    Enum.each(processes_data, fn {child_id, child_nodes, opts} ->
+    Enum.each(processes_data, fn {child_id, child_nodes, child_nodes_old, opts} ->
       handle_redundancy_signal(
         strategy,
         hub,
         child_id,
         child_nodes,
+        child_nodes_old,
         {node_action, node},
         opts
       )
@@ -200,20 +197,16 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   def handle_post_update(_, _, _), do: :ok
 
-  defp node_modes(strategy, hub, node_action, child_id, nodes, node) do
+  defp node_modes(strategy, hub, node_action, child_id, nodes, nodes_old, node) do
     curr_master = RedundancyStrategy.master_node(strategy, hub, child_id, nodes)
 
     prev_master =
       case node_action do
         :up ->
-          # Remove the new node from the list to calculate the previous master
-          prev_nodes = Enum.filter(nodes, fn n -> n !== node end)
-          RedundancyStrategy.master_node(strategy, hub, child_id, prev_nodes)
+          RedundancyStrategy.master_node(strategy, hub, child_id, nodes_old)
 
         :down ->
-          # Add the removed node back to calculate the previous master
-          prev_nodes = Enum.sort([node | nodes])
-          RedundancyStrategy.master_node(strategy, hub, child_id, prev_nodes)
+          RedundancyStrategy.master_node(strategy, hub, child_id, nodes_old)
       end
 
     # dbg({"NODE MODES", node(), child_id, prev_master, curr_master, nodes, node_action})
@@ -221,11 +214,24 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     {prev_master, curr_master}
   end
 
-  defp handle_redundancy_signal(strategy, hub, child_id, nodes, {node_action, node}, opts) do
+  defp handle_redundancy_signal(
+         strategy,
+         hub,
+         child_id,
+         nodes,
+         nodes_old,
+         {node_action, node},
+         opts
+       ) do
     local_node = node()
 
     {prev_master, curr_master} =
-      node_modes(strategy, hub, node_action, child_id, nodes, node)
+      node_modes(strategy, hub, node_action, child_id, nodes, nodes_old, node)
+
+    if node() === :"process_hub@127.0.0.1" and child_id === "redunc_activ_pass_test8" and
+         node_action === :up do
+      dbg({"DBG6", node(), prev_master, curr_master, node})
+    end
 
     cond do
       prev_master === curr_master ->

@@ -231,7 +231,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
              keep: keep,
              async_tasks: async_tasks,
              node: node,
-             operation_id: operation_id,
              migration_count: migration_count
            } = arg
          ) do
@@ -243,38 +242,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           migration_count
         end
 
-      # Capture self() before async task since self() inside task would be task's PID
-      handler_pid = self()
-
       task =
         Task.async(fn ->
           if !Enum.empty?(keep) do
             handle_redundancy(hub, node, keep)
-            handle_redistribution(hub, node, keep, operation_id, handler_pid)
           end
         end)
 
       %__MODULE__{arg | async_tasks: [task | async_tasks], migration_count: new_migration_count}
-    end
-
-    defp handle_redistribution(hub, node, children, operation_id, reply_to) do
-      redist_children =
-        Enum.map(children, fn %{child_spec: cs, child_nodes: cn, metadata: m} ->
-          %{
-            hub_id: hub.hub_id,
-            nodes: cn,
-            child_id: cs.id,
-            child_spec: cs,
-            metadata: m,
-            migration_add: true
-          }
-        end)
-
-      Dispatcher.children_migrate(hub.procs.event_queue, [{node, redist_children}],
-        migration_add: true,
-        operation_id: operation_id,
-        migration_reply_to: reply_to
-      )
     end
 
     defp handle_redundancy(hub, node, children) do
@@ -285,12 +260,16 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         end)
 
       redun_data =
-        Enum.map(children, fn %{child_spec: cs, child_nodes: cn} ->
+        Enum.map(children, fn %{child_spec: cs, child_nodes: cn, child_nodes_old: cn_old} ->
           local_pid =
             (Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil}) |> elem(1)
 
-          {cs.id, cn, [pid: local_pid]}
+          {cs.id, cn, cn_old, [pid: local_pid]}
         end)
+
+      if node() === :"process_hub@127.0.0.1" do
+        #  dbg({"DBG4", node(), redun_data})
+      end
 
       HookManager.dispatch_hook(
         hub.storage.hook,
@@ -330,21 +309,15 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         end
 
       {keep, migrate} =
-        Enum.reduce(lc, {[], []}, fn {child_id, {cs, _, m}}, {keep, migrate} = acc ->
+        Enum.reduce(lc, {[], []}, fn {child_id, {cs, cn_old, m}}, {keep, migrate} = _acc ->
           cn = Bag.get_by_key(cid_pid_node_pairs, child_id, [])
+          cn_old = Keyword.keys(cn_old)
+          new_item = %{child_spec: cs, child_nodes: cn, child_nodes_old: cn_old, metadata: m}
 
-          case Enum.member?(cn, node) do
-            true ->
-              case Enum.member?(cn, local_node) do
-                true ->
-                  {[%{child_spec: cs, child_nodes: cn, metadata: m} | keep], migrate}
-
-                false ->
-                  {keep, [%{child_spec: cs, child_nodes: cn, metadata: m} | migrate]}
-              end
-
-            false ->
-              acc
+          if Enum.member?(cn, node) and not Enum.member?(cn, local_node) do
+            {keep, [new_item | migrate]}
+          else
+            {[new_item | keep], migrate}
           end
         end)
 
@@ -462,7 +435,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         |> Enum.reduce({[], [], []}, fn {cid, cspec, m, nlist1, nlist2}, {redun, redist, cids} ->
           case Enum.member?(nlist1, local_node) do
             true ->
-              {[{cid, nlist2, []} | redun], redist, [cid | cids]}
+              {[{cid, nlist2, [], []} | redun], redist, [cid | cids]}
 
             false ->
               case Enum.member?(nlist2, local_node) do
