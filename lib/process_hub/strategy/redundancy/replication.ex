@@ -136,18 +136,18 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   def handle_post_start(strategy, hub, post_start_data) do
     Enum.each(post_start_data, fn {child_id, res, child_pid, child_nodes} ->
+      combined_nodes =
+        case ProcessRegistry.lookup(hub.hub_id, child_id) do
+          nil ->
+            []
 
-      combined_nodes = case ProcessRegistry.lookup(hub.hub_id, child_id) do
-        nil -> []
-        {_, cnodes} ->
-          cnodes
-          |> Enum.map(fn {node, _} -> node end)
-          |> Enum.filter(fn node -> Enum.member?(child_nodes, node) end)
-      end ++ child_nodes
+          {_, cnodes} ->
+            cnodes
+            |> Enum.map(fn {node, _} -> node end)
+            |> Enum.filter(fn node -> !Enum.member?(child_nodes, node) end)
+        end ++ child_nodes
 
       mode = process_mode(strategy, hub, child_id, combined_nodes)
-
-      # dbg({"POST START", node(), child_id, mode, res, child_nodes})
 
       if elem(res, 0) === :ok do
         cond do
@@ -178,10 +178,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         hub,
         {processes_data, {node_action, node}}
       ) do
-
-
-    dbg({"POST UPDATE", node(), node_action, node, processes_data})
-
+    # dbg({"POST UPDATE", node(), node_action, node, processes_data})
 
     # TODO: siia kutsustakse aga me ei nimeta process2 sest ta varasemalt juba kaivitatud node1 peal
     # Kyll aga nüüd on ta mode muutunud passive pealt active peale, aga me ei teavita teda sellest sest
@@ -219,7 +216,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           RedundancyStrategy.master_node(strategy, hub, child_id, prev_nodes)
       end
 
-      # dbg({"NODE MODES", node(), child_id, prev_master, curr_master, nodes, node_action})
+    # dbg({"NODE MODES", node(), child_id, prev_master, curr_master, nodes, node_action})
 
     {prev_master, curr_master}
   end

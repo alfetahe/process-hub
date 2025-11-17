@@ -278,14 +278,16 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp handle_redundancy(hub, node, children) do
-      children_pids = ProcessRegistry.local_data(hub.hub_id)
-      |> Enum.map(fn {k, {_cs, cn, _meta}} ->
-        {k, Keyword.get(cn, node())}
-      end)
+      children_pids =
+        ProcessRegistry.local_data(hub.hub_id)
+        |> Enum.map(fn {k, {_cs, cn, _meta}} ->
+          {k, Keyword.get(cn, node())}
+        end)
 
       redun_data =
         Enum.map(children, fn %{child_spec: cs, child_nodes: cn} ->
-          local_pid = (Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil}) |> elem(1)
+          local_pid =
+            (Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil}) |> elem(1)
 
           {cs.id, cn, [pid: local_pid]}
         end)

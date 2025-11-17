@@ -245,7 +245,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       end
     end
 
-    defp dispatch_migration_registered_hook(%__MODULE__{hub: hub, process_data: pd, start_opts: so} = arg) do
+    defp dispatch_migration_registered_hook(
+           %__MODULE__{hub: hub, process_data: pd, start_opts: so} = arg
+         ) do
       # Only fire hook for migration operations
       if Keyword.get(so, :migration_add, false) === true do
         HookManager.dispatch_hook(

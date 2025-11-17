@@ -71,10 +71,11 @@ defmodule Test.Helper.Common do
       if length(nodes) !== replication_factor do
         Process.sleep(1000)
 
-        ProcessHub.registry_dump(hub_id) |> dbg()
+        res = ProcessHub.registry_dump(hub_id) |> Map.get(child_id)
+        dbg(res)
 
         assert false,
-          "The child #{child_id} is started on #{length(nodes)} nodes but #{replication_factor} is expected."
+               "The child #{child_id} is started on #{length(nodes)} nodes but #{replication_factor} is expected."
       end
 
       # TODO: we cannot test this because we may start of with bigger number of replicas than nodes.
@@ -102,10 +103,7 @@ defmodule Test.Helper.Common do
   def validate_redundancy_mode(
         %{hub_id: hub_id, replication_model: rep_model, hub_conf: hub_conf, hub: hub} = _context
       ) do
-    # TODO:
-    Process.sleep(2000)
-
-    registry = ProcessHub.registry_dump(hub_id) # |> dbg()
+    registry = ProcessHub.registry_dump(hub_id)
     dist_strat = hub_conf.distribution_strategy
     redun_strat = hub_conf.redundancy_strategy
     repl_fact = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
@@ -113,7 +111,7 @@ defmodule Test.Helper.Common do
     children_nodes = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
 
     Enum.each(children_nodes, fn {child_id, child_nodes} ->
-      master_node = RedundancyStrategy.master_node(redun_strat, hub, child_id, child_nodes) |> dbg()
+      master_node = RedundancyStrategy.master_node(redun_strat, hub, child_id, child_nodes)
 
       assert length(child_nodes) === repl_fact,
              "The length of belongs_to call does not match replication factor"
@@ -138,10 +136,10 @@ defmodule Test.Helper.Common do
 
               case state[:redun_mode] do
                 :active ->
-
                   # TODO: change back and remove the if statement.
                   if master_node !== node do
-                    assert false, "Expected cid #{child_id} on node #{node} (active) to match master_node #{master_node}"
+                    assert false,
+                           "Expected cid #{child_id} on node #{node} (active) to match master_node #{master_node}"
                   end
 
                 :passive ->

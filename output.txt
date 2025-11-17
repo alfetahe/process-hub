@@ -1,0 +1,4 @@
+Compiling 6 files (.ex)
+Generated process_hub app
+Running ExUnit with seed: 315789, max_cases: 16
+
