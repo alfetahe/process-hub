@@ -318,6 +318,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_join, node}, state) do
+    dbg({"DBG500", node(), node})
+
     handle_hub_join(state, node)
 
     {:noreply, state}
@@ -344,7 +346,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_migration_add, {children, start_opts}}, state) do
     if node() === :"redunc_activ_pass_test_1@127.0.0.1" do
-      #  dbg({"DBG1", children})
+      dbg({"DBG1", children})
     end
 
     if length(children) > 0 do
@@ -449,6 +451,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
+    dbg({"DBG501", node(), handlers})
+
     join_handlers(handlers, state)
 
     {:noreply, state}
@@ -475,6 +479,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({:EXIT, _pid, :normal}, state) do
+    # TODO: is this ok?
+
     {:noreply, state}
   end
 
@@ -506,7 +512,6 @@ defmodule ProcessHub.Coordinator do
 
     if Cluster.new_node?(hub_nodes, node) and node() !== node do
       Cluster.add_hub_node(state.storage.misc, node)
-
       HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
 
       unlock_status =

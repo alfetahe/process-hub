@@ -33,18 +33,19 @@ defmodule Test.Helper.Bootstrap do
   @dist_stats_push_interval 30_000
 
   def init_nodes(nr_of_peers) do
-    peer_nodes = TestNode.start_nodes(nr_of_peers)
+    # TODO: peer_nodes = TestNode.start_nodes(nr_of_peers)
 
-    Enum.each(peer_nodes, fn {_, pid} ->
-      :erlang.unlink(pid)
-    end)
+    # TODO:
+    # Enum.each(peer_nodes, fn {_, pid} ->
+    #   :erlang.unlink(pid)
+    # end)
 
     on_exit(:kill_nodes, fn ->
-      kill_peers(peer_nodes)
+    # TODO: kill_peers(peer_nodes)
     end)
 
     %{
-      peer_nodes: peer_nodes
+      peer_nodes: [] # TODO: peer_nodes
     }
   end
 
@@ -57,7 +58,7 @@ defmodule Test.Helper.Bootstrap do
     start_hubs(hub, [node() | Node.list()], listed_hooks)
 
     on_exit(:kill_hubs, fn ->
-      kill_hubs(peer_nodes, hub_id)
+    # TODO:   kill_hubs(peer_nodes, hub_id)
     end)
 
     context

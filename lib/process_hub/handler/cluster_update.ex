@@ -113,7 +113,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         |> Map.put(:operation_id, operation_id)
         |> Map.put(:migration_count, 0)
         |> local_children()
-        |> dist_children()
+        |> group_children()
         |> handle_migrate()
         |> handle_keep()
         |> wait_for_tasks()
@@ -268,7 +268,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         end)
 
       if node() === :"process_hub@127.0.0.1" do
-        #  dbg({"DBG4", node(), redun_data})
+       dbg({"DBG4", node(), redun_data})
       end
 
       HookManager.dispatch_hook(
@@ -290,7 +290,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       %__MODULE__{arg | local_children: local_children}
     end
 
-    defp dist_children(
+    defp group_children(
            %__MODULE__{
              local_children: lc,
              dist_strat: dist_strat,

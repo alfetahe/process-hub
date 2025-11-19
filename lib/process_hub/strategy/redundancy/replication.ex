@@ -197,7 +197,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   def handle_post_update(_, _, _), do: :ok
 
-  defp node_modes(strategy, hub, node_action, child_id, nodes, nodes_old, node) do
+  defp node_modes(strategy, hub, node_action, child_id, nodes, nodes_old, _node) do
     curr_master = RedundancyStrategy.master_node(strategy, hub, child_id, nodes)
 
     prev_master =
@@ -209,7 +209,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           RedundancyStrategy.master_node(strategy, hub, child_id, nodes_old)
       end
 
-    # dbg({"NODE MODES", node(), child_id, prev_master, curr_master, nodes, node_action})
+    dbg({"NODE MODES", node(), child_id, prev_master, curr_master, nodes, node_action})
 
     {prev_master, curr_master}
   end
@@ -230,7 +230,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
     if node() === :"process_hub@127.0.0.1" and child_id === "redunc_activ_pass_test8" and
          node_action === :up do
-      dbg({"DBG6", node(), prev_master, curr_master, node})
+    #   dbg({"DBG6", node(), prev_master, curr_master, node})
     end
 
     cond do

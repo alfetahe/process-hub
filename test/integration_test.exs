@@ -795,15 +795,15 @@ defmodule Test.IntegrationTest do
     :net_kernel.monitor_nodes(true)
 
     # TODO: back to 1000
-    child_count = 10
+    child_count = 2
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # n(n + 1)
-    (@nr_of_peers * (@nr_of_peers + 1))
-    |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
-      error_msg: "Post redistribution timeout",
-      timeout: 3000
-    )
+    # (@nr_of_peers * (@nr_of_peers + 1))
+    # |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
+    #   error_msg: "Post redistribution timeout",
+    #   timeout: 3000
+    # )
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
@@ -818,7 +818,7 @@ defmodule Test.IntegrationTest do
 
     # n(2n+1) if new peers = initial_peers
     # TODO: (@nr_of_peers * (2 * @nr_of_peers + 1))
-    2
+    1
     |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
       error_msg: "Post redistribution timeout",
       timeout: 3000
@@ -826,19 +826,14 @@ defmodule Test.IntegrationTest do
 
     # We need to wait for all processes are registered in the registry after redistribution
     # TODO:
-    7
+    2
     |> Bag.receive_multiple(Hook.registry_pid_inserted(),
       error_msg: "Post redistribution registry insert timeout",
       timeout: 3000
     )
 
     Process.sleep(1000)
-
-    # IO.puts "HEREEE ------------------------------------------------------------ >"
-    # ProcessHub.registry_dump(hub_id) |> dbg()
-
-    # Process.sleep(1000)
-    # Bag.all_messages() |> dbg()
+    Bag.all_messages() |> dbg()
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)

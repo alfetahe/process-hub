@@ -479,14 +479,14 @@ defmodule ProcessHub.Service.Distributor do
   defp init_attach_nodes(hub, child_specs, %{distribution: dist, redundancy: redun}) do
     repl_fact = RedundancyStrategy.replication_factor(redun)
     cids = Enum.map(child_specs, & &1.id)
-    cid_node_pids = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
+    cid_node_pairs = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
 
     {
       :ok,
       Enum.map(child_specs, fn child_spec ->
         {
           child_spec,
-          Bag.get_by_key(cid_node_pids, child_spec.id, [])
+          Bag.get_by_key(cid_node_pairs, child_spec.id, [])
         }
       end)
     }
