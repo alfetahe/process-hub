@@ -301,7 +301,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       local_node = node()
       cids = Enum.map(lc, fn {child_id, _} -> child_id end)
 
-      cid_pid_node_pairs =
+      cid_node_pairs =
         if length(cids) > 0 do
           DistributionStrategy.belongs_to(dist_strat, arg.hub, cids, rp)
         else
@@ -310,7 +310,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
       {keep, migrate} =
         Enum.reduce(lc, {[], []}, fn {child_id, {cs, cn_old, m}}, {keep, migrate} = _acc ->
-          cn = Bag.get_by_key(cid_pid_node_pairs, child_id, [])
+          cn = Bag.get_by_key(cid_node_pairs, child_id, [])
           cn_old = Keyword.keys(cn_old)
           new_item = %{child_spec: cs, child_nodes: cn, child_nodes_old: cn_old, metadata: m}
 
