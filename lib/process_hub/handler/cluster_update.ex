@@ -245,36 +245,19 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       task =
         Task.async(fn ->
           if !Enum.empty?(keep) do
-            handle_redundancy(hub, node, keep)
+            handle_redundancy(hub, arg.redun_strat, node, keep)
           end
         end)
 
       %__MODULE__{arg | async_tasks: [task | async_tasks], migration_count: new_migration_count}
     end
 
-    defp handle_redundancy(hub, node, children) do
-      children_pids =
-        ProcessRegistry.local_data(hub.hub_id)
-        |> Enum.map(fn {k, {_cs, cn, _meta}} ->
-          {k, Keyword.get(cn, node())}
-        end)
-
-      redun_data =
-        Enum.map(children, fn %{child_spec: cs, child_nodes: cn, child_nodes_old: cn_old} ->
-          local_pid =
-            (Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil}) |> elem(1)
-
-          {cs.id, cn, cn_old, [pid: local_pid]}
-        end)
-
-      if node() === :"process_hub@127.0.0.1" do
-       dbg({"DBG4", node(), redun_data})
-      end
-
-      HookManager.dispatch_hook(
-        hub.storage.hook,
-        Hook.pre_children_redistribution(),
-        {redun_data, {:up, node}}
+    defp handle_redundancy(hub, redun_strat, node, children) do
+      RedundancyStrategy.handle_node_up(
+        redun_strat,
+        hub,
+        node,
+        children
       )
     end
 
@@ -292,6 +275,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp group_children(
            %__MODULE__{
+             hub: hub,
              local_children: lc,
              dist_strat: dist_strat,
              repl_fact: rp,
@@ -320,6 +304,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             {[new_item | keep], migrate}
           end
         end)
+
+      HookManager.dispatch_hook(
+        hub.storage.hook,
+        Hook.pre_children_redistribution(),
+        {:up, node, Enum.map(migrate, &{&1.child_spec, &1.child_nodes})}
+      )
 
       %__MODULE__{arg | keep: keep, migrate: migrate}
     end
@@ -440,7 +430,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             false ->
               case Enum.member?(nlist2, local_node) do
                 true ->
-                  {redun, [{cspec, m} | redist], [cid | cids]}
+                  {redun, [{cspec, nlist2, m} | redist], [cid | cids]}
 
                 false ->
                   {redun, redist, [cid | cids]}
@@ -449,6 +439,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         end)
 
       handle_redundancy(arg, redun)
+
+      HookManager.dispatch_hook(
+        arg.hub.storage.hook,
+        Hook.pre_children_redistribution(),
+        {:down, arg.removed_node, Enum.map(redist, &{elem(&1, 0), elem(&1, 1)})}
+      )
 
       if !Enum.empty?(redist) do
         handle_redistribution(arg.hub, redist)
@@ -460,15 +456,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     defp handle_redistribution(hub, children_data) do
       # Local node is part of the new nodes and therefore we need to start
       # the child process locally.
+      children_data = Enum.map(children_data, fn {cspec, _, m} -> {cspec, m} end)
       Distributor.children_redist_init(hub, node(), children_data)
     end
 
     defp handle_redundancy(arg, children) do
-      HookManager.dispatch_hook(
-        arg.hub.storage.hook,
-        Hook.pre_children_redistribution(),
-        {children, {:down, arg.removed_node}}
-      )
+      # TODO:
     end
 
     defp removed_node_processes(arg) do

@@ -152,10 +152,6 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_cast({:start_children, children, start_opts}, state) do
-    if node() === :"redunc_activ_pass_test_1@127.0.0.1" do
-      dbg({"DBG1"})
-    end
-
     if length(children) > 0 do
       Task.Supervisor.start_child(
         state.procs.task_sup,

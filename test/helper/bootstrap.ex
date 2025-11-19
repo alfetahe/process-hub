@@ -41,11 +41,13 @@ defmodule Test.Helper.Bootstrap do
     # end)
 
     on_exit(:kill_nodes, fn ->
-    # TODO: kill_peers(peer_nodes)
+      nil
+      # TODO: kill_peers(peer_nodes)
     end)
 
     %{
-      peer_nodes: [] # TODO: peer_nodes
+      # TODO: peer_nodes
+      peer_nodes: []
     }
   end
 
@@ -58,7 +60,8 @@ defmodule Test.Helper.Bootstrap do
     start_hubs(hub, [node() | Node.list()], listed_hooks)
 
     on_exit(:kill_hubs, fn ->
-    # TODO:   kill_hubs(peer_nodes, hub_id)
+      nil
+      # TODO:   kill_hubs(peer_nodes, hub_id)
     end)
 
     context

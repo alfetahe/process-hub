@@ -28,4 +28,11 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   """
   @spec master_node(struct(), Hub.t(), ProcessHub.child_id(), [node()]) :: node()
   def master_node(strategy, hub, child_id, child_nodes)
+
+  # TODO:
+  @doc """
+  Triggered when a new node is added to the cluster.
+  Can perform actions such as starting new replicas on the added node.
+  """
+  def handle_node_up(_strategy, _hub, _added_node, _children_data)
 end

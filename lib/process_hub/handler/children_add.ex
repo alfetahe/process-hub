@@ -364,7 +364,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       local_node = node()
       cids = Enum.map(children, & &1.child_spec.id)
 
-      cid_node_pids =
+      cid_node_pairs =
         DistributionStrategy.belongs_to(
           dist_strat,
           hub,
@@ -380,7 +380,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           # still assigned to current node or not. If not then forward to the correct node.
           #
           # These cases can happen when multiple nodes are added to the cluster simultaneously.
-          nodes = Bag.get_by_key(cid_node_pids, cid, [])
+          nodes = Bag.get_by_key(cid_node_pairs, cid, [])
 
           case Enum.member?(nodes, local_node) do
             true ->

@@ -359,9 +359,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       |> RedundancyStrategy.replication_factor()
 
     cids = Enum.map(local_data, &elem(&1, 0))
-    cid_pid_node_pairs = DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
+    cid_node_pairs = DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
 
-    Enum.reduce(cid_pid_node_pairs, %{}, fn {cid, new_nodes}, acc ->
+    Enum.reduce(cid_node_pairs, %{}, fn {cid, new_nodes}, acc ->
       case Bag.get_by_key(local_data, cid) do
         nil ->
           acc

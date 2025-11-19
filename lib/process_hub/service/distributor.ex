@@ -75,6 +75,12 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
+  # TODO: Add tests and documentation.
+  def dist_children(hub, children_nodes, opts) do
+    {:ok, composed_data} = init_compose_data(hub, children_nodes, opts)
+    pre_start_children(hub, composed_data, opts)
+  end
+
   @doc "Initiates processes shutdown."
   @spec stop_children(Hub.t(), [ProcessHub.child_id()], keyword()) ::
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
