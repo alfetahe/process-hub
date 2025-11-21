@@ -27,8 +27,14 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
       List.first(child_nodes)
     end
 
+    # TODO:
     @impl true
     def handle_node_up(_strategy, _hub, _added_node, _children_data) do
+      :ok
+    end
+
+    @impl true
+    def handle_node_down(_strategy, _hub, _removed_node, _data) do
       :ok
     end
   end

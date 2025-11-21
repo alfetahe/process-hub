@@ -117,6 +117,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       Enum.at(child_nodes, index)
     end
 
+    # TODO:
     @impl true
     def handle_node_up(strategy, hub, _added_node, children_data) do
       local_node = node()
@@ -134,7 +135,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
                                                   child_nodes_old: cn_old
                                                 },
                                                 {sigd, startd} ->
-          {_cid, local_pid, meta} = Enum.find(children_pids, fn {k, _v, m} -> k === cs.id end)
+          {_cid, local_pid, _meta} = Enum.find(children_pids, fn {k, _v, m} -> k === cs.id end)
 
           # Find all nodes where the process will run and where it used to run.
           existing_nodes =
@@ -164,6 +165,12 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
       Replication.handle_post_update(strategy, hub, {signal_data, {:up, node()}})
     end
+  end
+
+  # TODO:
+  @impl true
+  def handle_node_down(_strategy, _hub, _removed_node, _data) do
+    dbg("LHLLOOS")
   end
 
   @spec handle_post_start(struct(), Hub.t(), [
@@ -264,10 +271,6 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
     {prev_master, curr_master} =
       node_modes(strategy, hub, node_action, child_id, nodes, nodes_old, node)
-
-    if node() === :"process_hub@127.0.0.1" and child_id === "redunc_activ_pass_test8" and
-         node_action === :up do
-      #   dbg({"DBG6", node(), prev_master, curr_master, node})
     end
 
     cond do

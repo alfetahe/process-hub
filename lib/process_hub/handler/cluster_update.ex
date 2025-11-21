@@ -91,7 +91,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       propagate_local_children(hub, node)
 
       # Wait for all migration completions before firing hook
-      wait_for_migration_completions(expected_completions, operation_id, arg)
+      # wait_for_migration_completions(expected_completions, operation_id, arg)
 
                           dbg({"DBG502", State.is_locked?(hub) })
 
@@ -430,7 +430,13 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
       {redun, redist, cids} =
         removed_node_processes(arg)
-        |> Enum.reduce({[], [], []}, fn {cid, cspec, m, nlist1, nlist2}, {redun, redist, cids} ->
+        |> Enum.reduce({[], [], []}, fn dataset, {redun, redist, cids} ->
+          cid = dataset.child_spec.id
+          cspec = dataset.child_spec
+          nlist1 = dataset.child_nodes_old
+          nlist2 = dataset.child_nodes
+          m = dataset.metadata
+
           case Enum.member?(nlist1, local_node) do
             true ->
               {[{cid, nlist2, [], []} | redun], redist, [cid | cids]}
@@ -446,7 +452,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           end
         end)
 
-      handle_redundancy(arg, redun)
+      handle_redundancy(arg.hub, arg.redun_strat, arg.removed_node, redun)
 
       HookManager.dispatch_hook(
         arg.hub.storage.hook,
@@ -461,6 +467,15 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       Map.put(arg, :rem_node_cids, cids)
     end
 
+    defp handle_redundancy(hub, redun_strat, node, children) do
+      RedundancyStrategy.handle_node_down(
+        redun_strat,
+        hub,
+        node,
+        children
+      )
+    end
+
     defp handle_redistribution(hub, children_data) do
       # Local node is part of the new nodes and therefore we need to start
       # the child process locally.
@@ -468,24 +483,28 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       Distributor.children_redist_init(hub, node(), children_data)
     end
 
-    defp handle_redundancy(arg, children) do
-      # TODO:
-    end
-
     defp removed_node_processes(arg) do
       repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
       reg_dump = ProcessRegistry.dump(arg.hub.hub_id)
       cids = Enum.map(reg_dump, fn {cid, _} -> cid end)
 
-      cid_pid_node_pairs =
+      cid_node_pairs =
         DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
 
       Enum.reduce(reg_dump, [], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
         nodes_orig = Keyword.keys(node_pids)
+        cn = Bag.get_by_key(cid_node_pairs, child_id, [])
+        cn_old = Keyword.keys(node_pids)
+
+        new_item = %{
+          child_spec: child_spec,
+          child_nodes: cn,
+          child_nodes_old: cn_old,
+          metadata: metadata
+        }
 
         if Enum.member?(nodes_orig, arg.removed_node) do
-          nodes_updated = Bag.get_by_key(cid_pid_node_pairs, child_id, [])
-          [{child_id, child_spec, metadata, nodes_orig, nodes_updated} | acc]
+          [new_item | acc]
         else
           acc
         end

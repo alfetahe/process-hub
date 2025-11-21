@@ -278,7 +278,6 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_leave, node}, state) do
-    dbg({"DBG504", node(), node})
     {:noreply, handle_node_down(state, node)}
   end
 
@@ -287,7 +286,6 @@ defmodule ProcessHub.Coordinator do
     Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave, node, %{
       members: :local
     })
-
 
     State.is_locked?(state) |> dbg()
 
@@ -551,7 +549,6 @@ defmodule ProcessHub.Coordinator do
   defp handle_node_down(state, down_node) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
-    dbg()
     if Enum.member?(hub_nodes, down_node) do
       HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), down_node)
 
