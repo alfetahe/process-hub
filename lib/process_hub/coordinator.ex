@@ -278,6 +278,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_leave, node}, state) do
+    dbg({"DBG504", node(), node})
     {:noreply, handle_node_down(state, node)}
   end
 
@@ -286,6 +287,12 @@ defmodule ProcessHub.Coordinator do
     Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave, node, %{
       members: :local
     })
+
+
+    State.is_locked?(state) |> dbg()
+
+    {:ok, pids} = :blockade.get_handlers(state.procs.event_queue, :cluster_leave_event) |> dbg()
+     List.first(pids) |> node() |> dbg()
 
     {:noreply, state}
   end
@@ -314,8 +321,6 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_join, node}, state) do
-    dbg({"DBG500", node(), node})
-
     handle_hub_join(state, node)
 
     {:noreply, state}
@@ -346,7 +351,7 @@ defmodule ProcessHub.Coordinator do
     end
 
     if length(children) > 0 do
-      State.lock_event_handler(state)
+      #TODO: State.lock_event_handler(state)
 
       Task.Supervisor.start_child(
         state.procs.task_sup,
@@ -447,8 +452,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
-    dbg({"DBG501", node(), handlers})
-
+    dbg("DBG501")
     join_handlers(handlers, state)
 
     {:noreply, state}
@@ -494,11 +498,19 @@ defmodule ProcessHub.Coordinator do
   defp join_handlers(handlers, state) do
     node_list = Node.list()
 
-    Enum.each(handlers, fn handler_pid ->
+    Enum.reduce(handlers, [], fn handler_pid, joined_nodes ->
       node = node(handler_pid)
 
       if Enum.member?(node_list, node) do
-        handle_hub_join(state, node)
+        joined_nodes = [node | joined_nodes]
+
+        if (!Enum.member?(joined_nodes, node)) do
+                        dbg({"DBG500", node(), node})
+
+          handle_hub_join(state, node)
+        end
+
+        joined_nodes
       end
     end)
   end
@@ -507,6 +519,8 @@ defmodule ProcessHub.Coordinator do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
     if Cluster.new_node?(hub_nodes, node) and node() !== node do
+
+
       Cluster.add_hub_node(state.storage.misc, node)
       HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
 
@@ -528,6 +542,8 @@ defmodule ProcessHub.Coordinator do
       })
 
       State.lock_event_handler(state)
+            State.is_locked?(state) |> dbg()
+
       HookManager.dispatch_hook(state.storage.hook, Hook.post_cluster_join(), node)
     end
   end
@@ -535,6 +551,7 @@ defmodule ProcessHub.Coordinator do
   defp handle_node_down(state, down_node) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
+    dbg()
     if Enum.member?(hub_nodes, down_node) do
       HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), down_node)
 

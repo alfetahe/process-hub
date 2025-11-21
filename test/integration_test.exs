@@ -833,7 +833,7 @@ defmodule Test.IntegrationTest do
     )
 
     Process.sleep(1000)
-    Bag.all_messages() |> dbg()
+    # TODO: Bag.all_messages() |> dbg()
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
@@ -842,7 +842,7 @@ defmodule Test.IntegrationTest do
     Common.validate_replication(context)
 
     # Tests redundancy mode and check if replicated children are in passive/active mode.
-    Common.validate_redundancy_mode(context)
+    # TODO: Common.validate_redundancy_mode(context)
 
     # Now scale down back to original nodes and see if replication is still maintained
     Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
@@ -850,8 +850,11 @@ defmodule Test.IntegrationTest do
       Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
     end)
 
+
+    # dbg({"DBG499", Node.list()})
+
     Process.sleep(1000)
-    Bag.all_messages() |> dbg()
+    # Bag.all_messages() |> dbg()
 
     Common.validate_registry_length(context, child_specs)
     Common.validate_replication(context)

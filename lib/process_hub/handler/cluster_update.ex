@@ -93,6 +93,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       # Wait for all migration completions before firing hook
       wait_for_migration_completions(expected_completions, operation_id, arg)
 
+                          dbg({"DBG502", State.is_locked?(hub) })
+
+
       # Dispatch the nodes post redistribution event.
       HookManager.dispatch_hook(
         hub.storage.hook,
@@ -100,8 +103,13 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         {:nodeup, node}
       )
 
+
+
       # Unlock the event handler.
       State.unlock_event_handler(hub)
+
+      State.is_locked?(hub) |> dbg()
+
 
       :ok
     end

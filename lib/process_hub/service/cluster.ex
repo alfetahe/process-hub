@@ -34,8 +34,12 @@ defmodule ProcessHub.Service.Cluster do
   @doc "Removes a node from the cluster and returns new list of nodes."
   @spec rem_hub_node(:ets.tid(), node()) :: [node()]
   def rem_hub_node(misc_storage, node) do
-    hub_nodes = Storage.get(misc_storage, StorageKey.hn())
-    hub_nodes = Enum.filter(hub_nodes, fn n -> n != node end)
+    hub_nodes =
+      misc_storage
+      |> Storage.get(StorageKey.hn())
+      |> Enum.filter(fn n -> n != node end)
+      |> dbg()
+
     Storage.insert(misc_storage, StorageKey.hn(), hub_nodes)
 
     hub_nodes

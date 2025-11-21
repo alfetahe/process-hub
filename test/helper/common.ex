@@ -108,6 +108,9 @@ defmodule Test.Helper.Common do
     redun_strat = hub_conf.redundancy_strategy
     repl_fact = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
     child_ids = Map.keys(registry)
+
+    # dbg({"DBG501", node(), dist_strat, child_ids})
+
     children_nodes = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, repl_fact)
 
     Enum.each(children_nodes, fn {child_id, child_nodes} ->
