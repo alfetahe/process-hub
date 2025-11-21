@@ -90,11 +90,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       # Propagate the local children to the new node.
       propagate_local_children(hub, node)
 
+      # TODO: fix or remove.
       # Wait for all migration completions before firing hook
       # wait_for_migration_completions(expected_completions, operation_id, arg)
-
-                          dbg({"DBG502", State.is_locked?(hub) })
-
 
       # Dispatch the nodes post redistribution event.
       HookManager.dispatch_hook(
@@ -103,13 +101,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         {:nodeup, node}
       )
 
-
-
       # Unlock the event handler.
       State.unlock_event_handler(hub)
-
-      State.is_locked?(hub) |> dbg()
-
 
       :ok
     end
@@ -365,7 +358,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           dist_strat: Storage.get(hub.storage.misc, StorageKey.strdist())
       }
       |> dispatch_down_hook()
-      |> distribute_processes()
+      |> group_children()
       |> clear_registry()
       |> handle_locking()
       |> dispatch_post_hooks()
@@ -425,7 +418,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       arg
     end
 
-    defp distribute_processes(%__MODULE__{} = arg) do
+    defp group_children(%__MODULE__{} = arg) do
       local_node = node()
 
       {redun, redist, cids} =
@@ -437,20 +430,29 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           nlist2 = dataset.child_nodes
           m = dataset.metadata
 
+          redun_item = %{
+            child_spec: cspec,
+            child_nodes_old: nlist1,
+            child_nodes: nlist2,
+            metadata: []
+          }
+
           case Enum.member?(nlist1, local_node) do
             true ->
-              {[{cid, nlist2, [], []} | redun], redist, [cid | cids]}
+              {[redun_item | redun], redist, [cid | cids]}
 
             false ->
               case Enum.member?(nlist2, local_node) do
                 true ->
-                  {redun, [{cspec, nlist2, m} | redist], [cid | cids]}
+                  {[redun_item | redun], [{cspec, nlist2, m} | redist], [cid | cids]}
 
                 false ->
                   {redun, redist, [cid | cids]}
               end
           end
         end)
+
+      dbg({"DBG601", redun})
 
       handle_redundancy(arg.hub, arg.redun_strat, arg.removed_node, redun)
 

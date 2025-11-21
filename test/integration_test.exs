@@ -850,7 +850,6 @@ defmodule Test.IntegrationTest do
       Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
     end)
 
-
     # dbg({"DBG499", Node.list()})
 
     Process.sleep(1000)

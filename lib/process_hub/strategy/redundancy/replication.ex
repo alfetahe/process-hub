@@ -112,6 +112,11 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         |> Enum.sum()
 
       nodes_total = length(child_nodes)
+
+      if nodes_total == 0 do
+        raise "No child nodes available to select master node."
+      end
+
       index = rem(child_total, nodes_total)
 
       Enum.at(child_nodes, index)
@@ -157,20 +162,57 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         opts =
           []
           |> Distributor.default_init_opts()
-          |> Keyword.put(:init_cids, Enum.map(start_data, &(elem(&1, 0).id)))
-          |> Keyword.put(:metadata, %{tag: "redunc_activ_pass_test"}) # TODO: remove, think of something else. Perhaps tag per cid is better option.
+          |> Keyword.put(:init_cids, Enum.map(start_data, &elem(&1, 0).id))
+          # TODO: remove, think of something else. Perhaps tag per cid is better option.
+          |> Keyword.put(:metadata, %{tag: "redunc_activ_pass_test"})
 
         Distributor.dist_children(hub, start_data, opts)
+        # TODO: this code above should be somewhere else, I dont think
       end
 
       Replication.handle_post_update(strategy, hub, {signal_data, {:up, node()}})
     end
-  end
 
-  # TODO:
-  @impl true
-  def handle_node_down(_strategy, _hub, _removed_node, _data) do
-    dbg("LHLLOOS")
+    # TODO:
+    @impl true
+    def handle_node_down(strategy, hub, _removed_node, children_data) do
+      local_node = node()
+
+      children_pids =
+        ProcessRegistry.local_data(hub.hub_id)
+        |> Enum.map(fn {k, {_cs, cn, meta}} ->
+          {k, Keyword.get(cn, node()), meta}
+        end)
+
+      {signal_data, start_data} =
+        Enum.reduce(children_data, {[], []}, fn %{
+                                                  child_spec: cs,
+                                                  child_nodes: cn,
+                                                  child_nodes_old: cn_old
+                                                },
+                                                {sigd, startd} ->
+          {_cid, local_pid, _meta} = Enum.find(children_pids, fn {k, _v, _m} -> k === cs.id end)
+
+          # Find all nodes where the process will run and where it used to run.
+          existing_nodes =
+            cn
+            |> Enum.filter(fn n -> Enum.member?(cn_old, n) end)
+            |> Enum.sort()
+
+          # If the local node is first node in the list, then push item to start_data.
+          startd =
+            case List.first(existing_nodes) === local_node do
+              true -> [{cs, Enum.filter(cn, &(!Enum.member?(existing_nodes, &1)))} | startd]
+              false -> startd
+            end
+
+          {[{cs.id, cn, cn_old, [pid: local_pid]} | sigd], startd}
+        end)
+
+      # TODO: above is duplicate of handle_node_up, refactor.
+
+      Replication.handle_post_update(strategy, hub, {signal_data, {:down, node()}})
+    end
   end
 
   @spec handle_post_start(struct(), Hub.t(), [
@@ -253,7 +295,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           RedundancyStrategy.master_node(strategy, hub, child_id, nodes_old)
       end
 
-# TODO:    dbg({"NODE MODES", node(), child_id, prev_master, curr_master, nodes, node_action})
+    # TODO:    dbg({"NODE MODES", node(), child_id, prev_master, curr_master, nodes, node_action})
 
     {prev_master, curr_master}
   end
@@ -271,7 +313,6 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
     {prev_master, curr_master} =
       node_modes(strategy, hub, node_action, child_id, nodes, nodes_old, node)
-    end
 
     cond do
       prev_master === curr_master ->

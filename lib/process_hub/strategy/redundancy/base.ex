@@ -36,7 +36,7 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   """
   def handle_node_up(strategy, hub, added_node, children_data)
 
-    # TODO:
+  # TODO:
   @doc """
   Triggered when a new node is added to the cluster.
   Can perform actions such as starting new replicas on the added node.

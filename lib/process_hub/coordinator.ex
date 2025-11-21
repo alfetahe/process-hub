@@ -287,11 +287,6 @@ defmodule ProcessHub.Coordinator do
       members: :local
     })
 
-    State.is_locked?(state) |> dbg()
-
-    {:ok, pids} = :blockade.get_handlers(state.procs.event_queue, :cluster_leave_event) |> dbg()
-     List.first(pids) |> node() |> dbg()
-
     {:noreply, state}
   end
 
@@ -349,7 +344,7 @@ defmodule ProcessHub.Coordinator do
     end
 
     if length(children) > 0 do
-      #TODO: State.lock_event_handler(state)
+      # TODO: State.lock_event_handler(state)
 
       Task.Supervisor.start_child(
         state.procs.task_sup,
@@ -450,7 +445,6 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
-    dbg("DBG501")
     join_handlers(handlers, state)
 
     {:noreply, state}
@@ -502,8 +496,8 @@ defmodule ProcessHub.Coordinator do
       if Enum.member?(node_list, node) do
         joined_nodes = [node | joined_nodes]
 
-        if (!Enum.member?(joined_nodes, node)) do
-                        dbg({"DBG500", node(), node})
+        if !Enum.member?(joined_nodes, node) do
+          dbg({"DBG500", node(), node})
 
           handle_hub_join(state, node)
         end
@@ -517,8 +511,6 @@ defmodule ProcessHub.Coordinator do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
     if Cluster.new_node?(hub_nodes, node) and node() !== node do
-
-
       Cluster.add_hub_node(state.storage.misc, node)
       HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
 
@@ -540,7 +532,6 @@ defmodule ProcessHub.Coordinator do
       })
 
       State.lock_event_handler(state)
-            State.is_locked?(state) |> dbg()
 
       HookManager.dispatch_hook(state.storage.hook, Hook.post_cluster_join(), node)
     end

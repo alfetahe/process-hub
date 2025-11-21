@@ -38,7 +38,6 @@ defmodule ProcessHub.Service.Cluster do
       misc_storage
       |> Storage.get(StorageKey.hn())
       |> Enum.filter(fn n -> n != node end)
-      |> dbg()
 
     Storage.insert(misc_storage, StorageKey.hn(), hub_nodes)
 
