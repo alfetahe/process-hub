@@ -43,6 +43,12 @@ defmodule ProcessHub do
         }
 
   @typedoc """
+  Defines a map of child_id to metadata for per-child metadata configuration.
+  Used with the `:child_metadata` option in `init_opts()`.
+  """
+  @type child_metadata_map() :: %{child_id() => child_metadata()}
+
+  @typedoc """
   The `init_opts()` defines the options that can be passed to the `start_children/3`, `start_child/3`,
   `stop_children/3`, and `stop_child/3` functions.
 
@@ -59,7 +65,11 @@ defmodule ProcessHub do
   which will stop all the children that have been started.
   - `:metadata` - is optional and is used to define the metadata that will be stored in the process registry
   when the child is started. The metadata can be used to store any information that is needed to identify
-  the child process.
+  the child process. This metadata will be applied to all children started in the batch.
+  - `:child_metadata` - is optional and is used to define metadata on a per-child basis. It should be a map
+  where keys are child_id values and values are metadata maps. When both `:metadata` and `:child_metadata` are
+  provided, children specified in `:child_metadata` will use their specific metadata, while other children will
+  fall back to the global `:metadata` value.
   - `:disable_logging` - is optional and is used to define whether logging should be disabled for the child process
   startup or shutdown. Mostly used for testing purposes.
   - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
@@ -73,6 +83,7 @@ defmodule ProcessHub do
           check_existing: boolean(),
           on_failure: :continue | :rollback,
           metadata: child_metadata(),
+          child_metadata: child_metadata_map(),
           disable_logging: boolean(),
           await_timeout: non_neg_integer()
         ]
@@ -312,6 +323,41 @@ defmodule ProcessHub do
       iex> # Get the pids.
       iex> ProcessHub.StartResult.pids(result)
       [#PID<0.237.0>, #PID<0.236.0>]
+
+  ## Per-child metadata
+  You can attach metadata to individual children using the `:child_metadata` option.
+  This is useful when you need to tag or categorize different children with specific metadata.
+
+      iex> child_specs = [
+      iex>  %{id: "worker1", start: {MyWorker, :start_link, [1]}},
+      iex>  %{id: "worker2", start: {MyWorker, :start_link, [2]}},
+      iex>  %{id: "worker3", start: {MyWorker, :start_link, [3]}}
+      iex> ]
+      iex> child_metadata = %{
+      iex>   "worker1" => %{tag: "critical"},
+      iex>   "worker2" => %{tag: "standard"},
+      iex>   "worker3" => %{tag: "batch"}
+      iex> }
+      iex> ProcessHub.start_children(:my_hub, child_specs, child_metadata: child_metadata)
+      {:ok, :start_initiated}
+
+  You can also combine per-child metadata with global metadata. Children specified in
+  `:child_metadata` will use their specific metadata, while others fall back to the global
+  `:metadata` value:
+
+      iex> child_specs = [
+      iex>  %{id: "priority_worker", start: {MyWorker, :start_link, [1]}},
+      iex>  %{id: "regular_worker", start: {MyWorker, :start_link, [2]}}
+      iex> ]
+      iex> ProcessHub.start_children(
+      iex>   :my_hub,
+      iex>   child_specs,
+      iex>   metadata: %{tag: "default"},
+      iex>   child_metadata: %{"priority_worker" => %{tag: "high_priority"}}
+      iex> )
+      {:ok, :start_initiated}
+      # In this example, "priority_worker" gets tag "high_priority"
+      # while "regular_worker" gets the default tag "default"
 
   > #### Handling startup results {: .info}
   >

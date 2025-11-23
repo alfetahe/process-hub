@@ -210,3 +210,73 @@ iex> ProcessHub.tag_query(:my_hub, "MY_TAG")
    [one@anuar: #PID<0.250.0>]}
 ]
 ```
+
+### Per-child metadata
+
+When starting multiple children at once using `start_children/3`, you can specify different
+metadata for each child using the `:child_metadata` option. This is particularly useful when
+you need to categorize or tag different processes individually.
+
+```elixir
+iex> child_specs = [
+  %{id: :worker1, start: {MyWorker, :start_link, [1]}},
+  %{id: :worker2, start: {MyWorker, :start_link, [2]}},
+  %{id: :worker3, start: {MyWorker, :start_link, [3]}}
+]
+
+iex> child_metadata = %{
+  :worker1 => %{tag: "critical"},
+  :worker2 => %{tag: "standard"},
+  :worker3 => %{tag: "batch"}
+}
+
+iex> ProcessHub.start_children(
+  :my_hub,
+  child_specs,
+  [child_metadata: child_metadata, awaitable: true]
+) |> ProcessHub.Future.await()
+
+# Now each worker has its own specific tag
+iex> ProcessHub.tag_query(:my_hub, "critical")
+[{:worker1, ["node1@127.0.0.1": #PID<0.293.0>]}]
+
+iex> ProcessHub.tag_query(:my_hub, "standard")
+[{:worker2, ["node1@127.0.0.1": #PID<0.294.0>]}]
+```
+
+You can also combine `:child_metadata` with the global `:metadata` option. When both are provided,
+children specified in `:child_metadata` will use their specific metadata, while other children
+will fall back to the global `:metadata` value.
+
+```elixir
+iex> child_specs = [
+  %{id: :priority_worker, start: {MyWorker, :start_link, [1]}},
+  %{id: :regular_worker, start: {MyWorker, :start_link, [2]}}
+]
+
+iex> ProcessHub.start_children(
+  :my_hub,
+  child_specs,
+  [
+    metadata: %{tag: "default"},
+    child_metadata: %{:priority_worker => %{tag: "high_priority"}},
+    awaitable: true
+  ]
+) |> ProcessHub.Future.await()
+
+# priority_worker gets the specific metadata
+iex> ProcessHub.child_lookup(:my_hub, :priority_worker, [with_metadata: true])
+{
+  %{id: :priority_worker, start: {MyWorker, :start_link, [1]}},
+  ["node1@127.0.0.1": #PID<0.295.0>],
+  %{tag: "high_priority"}
+}
+
+# regular_worker falls back to the global metadata
+iex> ProcessHub.child_lookup(:my_hub, :regular_worker, [with_metadata: true])
+{
+  %{id: :regular_worker, start: {MyWorker, :start_link, [2]}},
+  ["node1@127.0.0.1": #PID<0.296.0>],
+  %{tag: "default"}
+}
+```

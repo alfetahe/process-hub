@@ -784,7 +784,7 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :redunc_activ_pass_test
   @tag replication_model: :active_passive
   @tag validate_metadata: true
-  @tag replication_factor: 2
+  @tag replication_factor: 3
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
          {Hook.registry_pid_inserted(), :global},

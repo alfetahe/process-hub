@@ -754,4 +754,143 @@ defmodule ProcessHubTest do
     # Verify the hook was NOT called this time
     refute_receive :integration_hook_fired, 100
   end
+
+  test "per-child metadata only", %{hub_id: hub_id} = _context do
+    [cs1, cs2, cs3] = ProcessHub.Utility.Bag.gen_child_specs(3)
+
+    child_metadata = %{
+      "child1" => %{tag: "tag1"},
+      "child2" => %{tag: "tag2"},
+      "child3" => %{tag: "tag3"}
+    }
+
+    ProcessHub.start_children(
+      hub_id,
+      [cs1, cs2, cs3],
+      awaitable: true,
+      child_metadata: child_metadata
+    )
+    |> ProcessHub.Future.await()
+
+    # Verify each child has its specific metadata
+    %{"child1" => {^cs1, _nodepids1, metadata1}} = ProcessHub.registry_dump(hub_id)
+    %{"child2" => {^cs2, _nodepids2, metadata2}} = ProcessHub.registry_dump(hub_id)
+    %{"child3" => {^cs3, _nodepids3, metadata3}} = ProcessHub.registry_dump(hub_id)
+
+    assert metadata1 === %{tag: "tag1"}
+    assert metadata2 === %{tag: "tag2"}
+    assert metadata3 === %{tag: "tag3"}
+
+    # Verify tag_query works with per-child metadata
+    tag1_result = ProcessHub.tag_query(hub_id, "tag1")
+    tag2_result = ProcessHub.tag_query(hub_id, "tag2")
+    tag3_result = ProcessHub.tag_query(hub_id, "tag3")
+
+    assert length(tag1_result) === 1
+    assert elem(Enum.at(tag1_result, 0), 0) === "child1"
+    assert length(tag2_result) === 1
+    assert elem(Enum.at(tag2_result, 0), 0) === "child2"
+    assert length(tag3_result) === 1
+    assert elem(Enum.at(tag3_result, 0), 0) === "child3"
+  end
+
+  test "mixed per-child and global metadata", %{hub_id: hub_id} = _context do
+    [cs1, cs2, cs3] = ProcessHub.Utility.Bag.gen_child_specs(3)
+
+    global_metadata = %{tag: "global_tag"}
+
+    # Only provide specific metadata for child1 and child2
+    child_metadata = %{
+      "child1" => %{tag: "specific_tag1"},
+      "child2" => %{tag: "specific_tag2"}
+    }
+
+    ProcessHub.start_children(
+      hub_id,
+      [cs1, cs2, cs3],
+      awaitable: true,
+      metadata: global_metadata,
+      child_metadata: child_metadata
+    )
+    |> ProcessHub.Future.await()
+
+    # Verify child1 and child2 have their specific metadata
+    %{"child1" => {^cs1, _nodepids1, metadata1}} = ProcessHub.registry_dump(hub_id)
+    %{"child2" => {^cs2, _nodepids2, metadata2}} = ProcessHub.registry_dump(hub_id)
+
+    assert metadata1 === %{tag: "specific_tag1"}
+    assert metadata2 === %{tag: "specific_tag2"}
+
+    # Verify child3 falls back to global metadata
+    %{"child3" => {^cs3, _nodepids3, metadata3}} = ProcessHub.registry_dump(hub_id)
+    assert metadata3 === %{tag: "global_tag"}
+
+    # Verify tag_query works correctly
+    tag1_result = ProcessHub.tag_query(hub_id, "specific_tag1")
+    tag2_result = ProcessHub.tag_query(hub_id, "specific_tag2")
+    global_tag_result = ProcessHub.tag_query(hub_id, "global_tag")
+
+    assert length(tag1_result) === 1
+    assert elem(Enum.at(tag1_result, 0), 0) === "child1"
+    assert length(tag2_result) === 1
+    assert elem(Enum.at(tag2_result, 0), 0) === "child2"
+    assert length(global_tag_result) === 1
+    assert elem(Enum.at(global_tag_result, 0), 0) === "child3"
+  end
+
+  test "per-child metadata edge cases", %{hub_id: hub_id} = _context do
+    # Test 1: Empty child_metadata map - should use global metadata
+    [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
+    global_metadata = %{tag: "fallback_tag"}
+
+    ProcessHub.start_children(
+      hub_id,
+      [cs1, cs2],
+      awaitable: true,
+      metadata: global_metadata,
+      child_metadata: %{}
+    )
+    |> ProcessHub.Future.await()
+
+    dump1 = ProcessHub.registry_dump(hub_id)
+    %{"child1" => {^cs1, _nodepids1, metadata1}} = dump1
+    %{"child2" => {^cs2, _nodepids2, metadata2}} = dump1
+
+    # Both should have global metadata since child_metadata is empty
+    assert metadata1 === %{tag: "fallback_tag"}
+    assert metadata2 === %{tag: "fallback_tag"}
+
+    # Stop children for next test
+    ProcessHub.stop_children(hub_id, [cs1.id, cs2.id], awaitable: true)
+    |> ProcessHub.Future.await()
+
+    # Verify registry is cleared
+    assert ProcessHub.registry_dump(hub_id) === %{}
+
+    # Test 2: child_metadata but no global metadata
+    # Note: gen_child_specs starts from "child1" again, which is fine since previous ones were stopped
+    [cs3, cs4] = ProcessHub.Utility.Bag.gen_child_specs(2)
+
+    child_metadata_only = %{
+      "child1" => %{tag: "only_tag1"}
+      # child2 intentionally omitted
+    }
+
+    ProcessHub.start_children(
+      hub_id,
+      [cs3, cs4],
+      awaitable: true,
+      child_metadata: child_metadata_only
+    )
+    |> ProcessHub.Future.await()
+
+    dump2 = ProcessHub.registry_dump(hub_id)
+    %{"child1" => {^cs3, _nodepids3, metadata3}} = dump2
+    %{"child2" => {^cs4, _nodepids4, metadata4}} = dump2
+
+    # child1 should have specific metadata
+    assert metadata3 === %{tag: "only_tag1"}
+    # child2 should have empty metadata (no global fallback)
+    assert metadata4 === %{}
+  end
 end

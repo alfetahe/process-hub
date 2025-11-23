@@ -459,10 +459,13 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp init_compose_data(%Hub{hub_id: hub_id}, children, opts) do
-    metadata = Keyword.get(opts, :metadata, %{})
+    global_metadata = Keyword.get(opts, :metadata, %{})
+    child_metadata_map = Keyword.get(opts, :child_metadata, %{})
 
     {:ok,
      Enum.reduce(children, [], fn {child_spec, child_nodes}, acc ->
+       # Use per-child metadata if available, otherwise fall back to global metadata
+       metadata = Map.get(child_metadata_map, child_spec.id, global_metadata)
        child_data = init_data(child_nodes, hub_id, child_spec, metadata)
 
        append_items =

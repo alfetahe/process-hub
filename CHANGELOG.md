@@ -1,6 +1,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.4.2-beta - YYYY-MM-DD
+This release introduces per-child metadata support for `start_children/3`, allowing developers to specify different metadata for each child process in a single batch operation.
+
+### Added
+- New `:child_metadata` option for `ProcessHub.start_children/3` that allows specifying metadata on a per-child basis. The option accepts a map where keys are `child_id` values and values are metadata maps. When both `:metadata` (global) and `:child_metadata` (per-child) options are provided, children specified in `:child_metadata` will use their specific metadata, while other children will fall back to the global `:metadata` value. This enhancement makes it easier to categorize and tag different processes individually when starting multiple children at once.
+- New type `ProcessHub.child_metadata_map()` to represent per-child metadata configuration.
+- Documentation and examples for per-child metadata usage in the main API module and ProcessRegistry guide.
+
 ## v0.4.1-beta - 2025-11-02
 This release introduces a new adaptive partition tolerance strategy, `MajorityQuorum`, which automatically adjusts to the cluster size. This strategy is ideal for clusters that start with a single node and scale up over time, providing proper split-brain protection without manual quorum configuration.
 Includes also bug fixes related to replication strategy mode switching during cluster topology changes.
