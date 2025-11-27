@@ -137,6 +137,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     Enum.each(post_start_data, fn {child_id, res, child_pid, child_nodes} ->
       mode = process_mode(strategy, hub, child_id, child_nodes)
 
+      dbg({"DBG2", node(), child_id, child_nodes, mode, res})
+
       if elem(res, 0) === :ok do
         cond do
           strategy.redundancy_signal === :all ->
@@ -166,12 +168,12 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         hub,
         {processes_data, {node_action, node}}
       ) do
-    Enum.each(processes_data, fn {child_id, child_nodes, opts} ->
+    Enum.each(processes_data, fn {child_id, nodes, nodes_old, opts} ->
       handle_redundancy_signal(
         strategy,
         hub,
         child_id,
-        child_nodes,
+        {nodes, nodes_old},
         {node_action, node},
         opts
       )
@@ -180,30 +182,29 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   def handle_post_update(_, _, _), do: :ok
 
-  defp node_modes(strategy, hub, node_action, child_id, nodes, node) do
-    curr_master = RedundancyStrategy.master_node(strategy, hub, child_id, nodes)
+  defp node_modes(strategy, hub, node_action, child_id, nodes) do
+    {new_nodes, old_nodes} = nodes
+    curr_master = RedundancyStrategy.master_node(strategy, hub, child_id, new_nodes)
 
     prev_master =
       case node_action do
         :up ->
-          # Remove the new node from the list to calculate the previous master
-          prev_nodes = Enum.filter(nodes, fn n -> n !== node end)
-          RedundancyStrategy.master_node(strategy, hub, child_id, prev_nodes)
+          RedundancyStrategy.master_node(strategy, hub, child_id, old_nodes)
 
         :down ->
-          # Add the removed node back to calculate the previous master
-          prev_nodes = Enum.sort([node | nodes])
-          RedundancyStrategy.master_node(strategy, hub, child_id, prev_nodes)
+          RedundancyStrategy.master_node(strategy, hub, child_id, old_nodes)
       end
 
     {prev_master, curr_master}
   end
 
-  defp handle_redundancy_signal(strategy, hub, child_id, nodes, {node_action, node}, opts) do
+  defp handle_redundancy_signal(strategy, hub, child_id, nodes, {node_action, _node}, opts) do
     local_node = node()
 
     {prev_master, curr_master} =
-      node_modes(strategy, hub, node_action, child_id, nodes, node)
+      node_modes(strategy, hub, node_action, child_id, nodes)
+
+    dbg({"DBG1", node(), child_id, nodes, _node, node_action, prev_master, curr_master})
 
     cond do
       prev_master === curr_master ->
