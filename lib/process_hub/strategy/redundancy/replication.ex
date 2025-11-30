@@ -254,14 +254,21 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
   end
 
-  # TODO: Replace the call with ETS lookup for better performance.
   defp child_pid(hub, child_id, opts) do
     case Keyword.get(opts, :pid) do
       nil ->
         DistributedSupervisor.local_pid(hub.procs.dist_sup, child_id)
 
-      pid ->
+      # Handle case where pid is a registry entry tuple {child_spec, node_pids, metadata}
+      {_child_spec, node_pids, _metadata} when is_list(node_pids) ->
+        Keyword.get(node_pids, node())
+
+      pid when is_pid(pid) ->
         pid
+
+      _other ->
+        # Fallback to lookup if pid format is unexpected
+        DistributedSupervisor.local_pid(hub.procs.dist_sup, child_id)
     end
   end
 
