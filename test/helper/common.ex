@@ -127,11 +127,11 @@ defmodule Test.Helper.Common do
               case state[:redun_mode] do
                 :active ->
                   assert master_node === node,
-                         "Expected cid #{child_id} on node #{node} (active) to match master_node #{master_node}"
+                         "Expected cid #{child_id} on node #{node} (active) to match master node #{master_node}"
 
                 :passive ->
                   assert master_node !== node,
-                         "Expected cid #{child_id} on node #{node} (passive) to not match master_node #{master_node}"
+                         "Expected cid #{child_id} on node #{node} (passive) to not match master node #{master_node}"
               end
           end
         end

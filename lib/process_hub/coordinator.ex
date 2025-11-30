@@ -153,6 +153,8 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_cast({:start_children, children, start_opts}, state) do
     if length(children) > 0 do
+      dbg({"DBG66", node(), children, start_opts})
+
       Task.Supervisor.start_child(
         state.procs.task_sup,
         ChildrenAdd.StartHandle,
@@ -341,6 +343,8 @@ defmodule ProcessHub.Coordinator do
   def handle_info({@event_migration_add, {children, start_opts}}, state) do
     if length(children) > 0 do
       State.lock_event_handler(state)
+
+      dbg({"DBG55", node(), children, start_opts})
 
       Task.Supervisor.start_child(
         state.procs.task_sup,

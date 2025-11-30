@@ -134,12 +134,12 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   def handle_post_start(%__MODULE__{redundancy_signal: :none}, _, _), do: :ok
 
   def handle_post_start(strategy, hub, post_start_data) do
-    Enum.each(post_start_data, fn {child_id, res, child_pid, child_nodes} ->
+    Enum.each(post_start_data, fn {child_id, _res, child_pid, child_nodes} ->
       mode = process_mode(strategy, hub, child_id, child_nodes)
 
-      dbg({"DBG2", node(), child_id, child_nodes, mode, res})
+      dbg({"DBG2", node(), child_id, child_nodes, mode, _res})
 
-      if elem(res, 0) === :ok do
+      if is_pid(child_pid) do
         cond do
           strategy.redundancy_signal === :all ->
             send_redundancy_signal(child_pid, mode)
@@ -168,6 +168,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         hub,
         {processes_data, {node_action, node}}
       ) do
+    dbg({"DBG4_POST_UPDATE", node(), node_action, node, length(processes_data)})
     Enum.each(processes_data, fn {child_id, nodes, nodes_old, opts} ->
       handle_redundancy_signal(
         strategy,
@@ -201,31 +202,36 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   defp handle_redundancy_signal(strategy, hub, child_id, nodes, {node_action, _node}, opts) do
     local_node = node()
 
-    {prev_master, curr_master} =
-      node_modes(strategy, hub, node_action, child_id, nodes)
+    {prev_master, curr_master} = node_modes(strategy, hub, node_action, child_id, nodes)
 
     dbg({"DBG1", node(), child_id, nodes, _node, node_action, prev_master, curr_master})
 
     cond do
       prev_master === curr_master ->
         # Do nothing because the same node still holds the active process.
+        dbg({"DBG3_NOOP", node(), child_id, :same_master, prev_master})
         :ok
 
       # Node transitioned from passive to active
       curr_master === local_node and prev_master !== local_node ->
         if Enum.member?([:all, :active], strategy.redundancy_signal) do
           # Current node is the new active node.
-          child_pid(hub, child_id, opts) |> send_redundancy_signal(:active)
+          pid = child_pid(hub, child_id, opts)
+          dbg({"DBG3_SEND", node(), child_id, :passive_to_active, pid})
+          send_redundancy_signal(pid, :active)
         end
 
       # Node transitioned from active to passive
       prev_master === local_node and curr_master !== local_node ->
         if Enum.member?([:all, :passive], strategy.redundancy_signal) do
           # Current node is the new passive node.
-          child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
+          pid = child_pid(hub, child_id, opts)
+          dbg({"DBG3_SEND", node(), child_id, :active_to_passive, pid})
+          send_redundancy_signal(pid, :passive)
         end
 
       true ->
+        dbg({"DBG3_SKIP", node(), child_id, :neither_was_nor_is_master, local_node, prev_master, curr_master})
         :ok
     end
   end
@@ -245,6 +251,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
   end
 
+  # TODO: Replace the call with ETS lookup for better performance.
   defp child_pid(hub, child_id, opts) do
     case Keyword.get(opts, :pid) do
       nil ->
