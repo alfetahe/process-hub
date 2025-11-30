@@ -398,13 +398,15 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           end
         end)
 
-      case Enum.empty?(redist) do
-        true ->
-          nil
+      # Handle redundancy signals for processes that already exist locally
+      # This must be called even if redist is empty (no new processes to start)
+      if !Enum.empty?(redun) do
+        handle_redundancy(arg, redun)
+      end
 
-        false ->
-          handle_redundancy(arg, redun)
-          handle_redistribution(arg.hub, redist)
+      # Handle redistribution of processes that need to be started locally
+      if !Enum.empty?(redist) do
+        handle_redistribution(arg.hub, redist)
       end
 
       Map.put(arg, :rem_node_cids, cids)

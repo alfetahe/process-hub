@@ -8,7 +8,7 @@ defmodule Test.IntegrationTest do
   use ExUnit.Case, async: false
 
   # Total nr of nodes to start (without the main node)
-  @nr_of_peers 1
+  @nr_of_peers 5
 
   setup_all context do
     context = Map.put(context, :validate_metadata, false)
@@ -795,7 +795,7 @@ defmodule Test.IntegrationTest do
     :net_kernel.monitor_nodes(true)
 
     # TODO: back to 1000
-    child_count = 10
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # n(n + 1)

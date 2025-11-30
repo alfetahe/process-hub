@@ -140,18 +140,26 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     # Fetch canonical node list from distribution strategy to ensure consistent mode calculation
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(strategy)
+    local_node = node()
 
-    Enum.each(post_start_data, fn {child_id, _res, child_pid, _child_nodes} ->
-      # Get canonical nodes from distribution strategy instead of using migration message's nodes
-      canonical_nodes =
-        case DistributionStrategy.belongs_to(dist_strat, hub, [child_id], repl_fact) do
-          [{^child_id, nodes}] -> nodes
-          _ -> []
-        end
+    Enum.each(post_start_data, fn {child_id, res, child_pid, _child_nodes} ->
+      # Only process if:
+      # 1. child_pid is a local pid
+      # 2. The process was actually newly started (result is :ok), not already_started
+      # This prevents sending incorrect signals during redistribution when a migration
+      # event is received for a process that already exists locally
+      is_new_start = res === :ok or (is_tuple(res) and elem(res, 0) === :ok)
 
-      mode = process_mode(strategy, hub, child_id, canonical_nodes)
+      if is_new_start and is_pid(child_pid) and node(child_pid) === local_node do
+        # Get canonical nodes from distribution strategy instead of using migration message's nodes
+        canonical_nodes =
+          case DistributionStrategy.belongs_to(dist_strat, hub, [child_id], repl_fact) do
+            [{^child_id, nodes}] -> nodes
+            _ -> []
+          end
 
-      if is_pid(child_pid) do
+        mode = process_mode(strategy, hub, child_id, canonical_nodes)
+
         cond do
           strategy.redundancy_signal === :all ->
             send_redundancy_signal(child_pid, mode)
@@ -180,6 +188,9 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         hub,
         {processes_data, {node_action, node}}
       ) do
+    # Process both UP and DOWN events
+    # For UP events: use curr_master_on_stable (excludes joining node) for mode decisions
+    # For DOWN events: use curr_master_new (remaining nodes)
     Enum.each(processes_data, fn {child_id, nodes, nodes_old, opts} ->
       handle_redundancy_signal(
         strategy,
@@ -194,48 +205,122 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   def handle_post_update(_, _, _), do: :ok
 
-  defp node_modes(strategy, hub, node_action, child_id, nodes) do
+  defp node_modes(strategy, hub, child_id, nodes, node_action) do
     {new_nodes, old_nodes} = nodes
-    curr_master = RedundancyStrategy.master_node(strategy, hub, child_id, new_nodes)
 
-    prev_master =
+    # Calculate prev_master on old_nodes (the distribution before the event)
+    prev_master = RedundancyStrategy.master_node(strategy, hub, child_id, old_nodes)
+
+    # Calculate curr_master on new_nodes (the planned distribution after the event)
+    curr_master_on_new = RedundancyStrategy.master_node(strategy, hub, child_id, new_nodes)
+
+    # For UP events, also calculate master on stable nodes (intersection)
+    # This is used for conservative "becoming active" decisions
+    curr_master_on_stable =
       case node_action do
         :up ->
-          RedundancyStrategy.master_node(strategy, hub, child_id, old_nodes)
+          stable_nodes = Enum.filter(new_nodes, fn n -> Enum.member?(old_nodes, n) end)
+
+          if Enum.empty?(stable_nodes) do
+            # Fall back to old master if no stable nodes
+            prev_master
+          else
+            RedundancyStrategy.master_node(strategy, hub, child_id, stable_nodes)
+          end
 
         :down ->
-          RedundancyStrategy.master_node(strategy, hub, child_id, old_nodes)
+          curr_master_on_new
       end
 
-    {prev_master, curr_master}
+    # Return both: on_new for handoff decisions, on_stable for becoming active
+    {prev_master, curr_master_on_new, curr_master_on_stable}
   end
 
-  defp handle_redundancy_signal(strategy, hub, child_id, nodes, {node_action, _node}, opts) do
+  # Handle redundancy signals for both UP and DOWN events
+  # For UP events: Special handling based on whether joining node will be master
+  # For DOWN events: use curr_master_on_new (remaining nodes)
+  defp handle_redundancy_signal(
+         strategy,
+         hub,
+         child_id,
+         nodes,
+         {node_action, joining_or_leaving_node},
+         opts
+       ) do
     local_node = node()
+    {new_nodes, old_nodes_from_registry} = nodes
 
-    {prev_master, curr_master} = node_modes(strategy, hub, node_action, child_id, nodes)
+    # Use old_nodes from registry - it should be correct as it comes from group_children
+    # which reads from the local registry's node_pids for this child
+    old_nodes = old_nodes_from_registry
 
-    cond do
-      prev_master === curr_master ->
-        # Do nothing because the same node still holds the active process.
-        :ok
+    {prev_master, curr_master_new, _curr_master_stable} =
+      node_modes(strategy, hub, child_id, {new_nodes, old_nodes}, node_action)
 
-      # Node transitioned from passive to active
-      curr_master === local_node and prev_master !== local_node ->
-        if Enum.member?([:all, :active], strategy.redundancy_signal) do
-          # Current node is the new active node.
-          child_pid(hub, child_id, opts) |> send_redundancy_signal(:active)
-        end
+    # Only process if local_node was running the process before (in old_nodes)
+    if Enum.member?(old_nodes, local_node) do
+      case node_action do
+        :up ->
+          # For UP events: Check if the JOINING node will be the new master
+          # If so, only send :passive to the old master (if local)
+          # The joining node will get its :active mode from handle_post_start
+          # If joining node is NOT the new master, we can safely use curr_master_new
+          joining_node_is_new_master = curr_master_new === joining_or_leaving_node
 
-      # Node transitioned from active to passive
-      prev_master === local_node and curr_master !== local_node ->
-        if Enum.member?([:all, :passive], strategy.redundancy_signal) do
-          # Current node is the new passive node.
-          child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
-        end
+          cond do
+            joining_node_is_new_master and prev_master === local_node ->
+              # I was master, joining node will be master - I become passive
+              if Enum.member?([:all, :passive], strategy.redundancy_signal) do
+                child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
+              end
 
-      true ->
-        :ok
+            joining_node_is_new_master ->
+              # Joining node will be master, but I wasn't master before - no change
+              :ok
+
+            prev_master === curr_master_new ->
+              # Master didn't change - no mode change needed
+              :ok
+
+            prev_master === local_node and curr_master_new !== local_node ->
+              # I was master, now an existing node is master - I become passive
+              if Enum.member?([:all, :passive], strategy.redundancy_signal) do
+                child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
+              end
+
+            curr_master_new === local_node and prev_master !== local_node ->
+              # I become master (not the joining node) - I become active
+              if Enum.member?([:all, :active], strategy.redundancy_signal) do
+                child_pid(hub, child_id, opts) |> send_redundancy_signal(:active)
+              end
+
+            true ->
+              :ok
+          end
+
+        :down ->
+          # For DOWN events: use curr_master_new directly
+          cond do
+            prev_master === curr_master_new ->
+              # Master didn't change - no mode change needed
+              :ok
+
+            prev_master === local_node and curr_master_new !== local_node ->
+              # I was master, now someone else is - I become passive
+              if Enum.member?([:all, :passive], strategy.redundancy_signal) do
+                child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
+              end
+
+            curr_master_new === local_node and prev_master !== local_node ->
+              # Someone else was master, now I am - I become active
+              if Enum.member?([:all, :active], strategy.redundancy_signal) do
+                child_pid(hub, child_id, opts) |> send_redundancy_signal(:active)
+              end
+
+            true ->
+              :ok
+          end
+      end
     end
   end
 
@@ -273,7 +358,10 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   end
 
   defp send_redundancy_signal(pid, mode) when is_pid(pid) do
-    send(pid, {:process_hub, :redundancy_signal, mode})
+    # Only send if the process is alive and local
+    if Process.alive?(pid) do
+      send(pid, {:process_hub, :redundancy_signal, mode})
+    end
   end
 
   defp send_redundancy_signal(_pid, _mode), do: nil
