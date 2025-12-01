@@ -63,9 +63,6 @@ defmodule ProcessHub.Coordinator do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
 
-    # Initialize nodedown serialization state
-    Process.put(:nodedown_in_progress, false)
-    Process.put(:nodedown_queue, [])
 
     # Store the current hub nodes in the misc storage.
     Storage.insert(
@@ -285,13 +282,50 @@ defmodule ProcessHub.Coordinator do
     {:noreply, handle_node_down(state, node)}
   end
 
+  # Batch window for nodedown events. Can be configured via application env.
+  @nodedown_batch_window_ms Application.compile_env(:process_hub, :nodedown_batch_window_ms, 500)
+
   @impl true
   def handle_info({:nodedown, node}, state) do
-    Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave, node, %{
-      members: :local
-    })
+    # Batch rapid nodedown events together to avoid multiple independent redistributions.
+    # When nodes go down rapidly, we collect them and process as a single batch.
+    # The batch window ensures all nodedown events from rapid scale-down are captured
+    # together, allowing consistent redistribution calculations across all nodes.
+    case Process.get(:nodedown_batch) do
+      nil ->
+        # First nodedown - start batching timer
+        Process.put(:nodedown_batch, [node])
+        Process.send_after(self(), :process_nodedown_batch, @nodedown_batch_window_ms)
+
+      nodes ->
+        # Add to existing batch
+        Process.put(:nodedown_batch, [node | nodes])
+    end
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:process_nodedown_batch, state) do
+    nodes = Process.get(:nodedown_batch) || []
+    Process.delete(:nodedown_batch)
+
+    if length(nodes) > 0 do
+      # Dispatch a single batch event with all down nodes.
+      # This ensures we calculate redistribution once based on final cluster state.
+      Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave_batch, nodes, %{
+        members: :local,
+        atomic_priority_set: PriorityLevel.locked(),
+        local_priority_set: true
+      })
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({@event_cluster_leave_batch, nodes}, state) do
+    {:noreply, handle_node_down_batch(state, nodes)}
   end
 
   @impl true
@@ -443,22 +477,6 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-  @impl true
-  def handle_info(:nodedown_handler_complete, state) do
-    # Process ALL queued nodedown events together, or clear the in-progress flag
-    case Process.get(:nodedown_queue, []) do
-      [] ->
-        # No more pending, clear the flag
-        Process.put(:nodedown_in_progress, false)
-        {:noreply, state}
-
-      queued_nodes ->
-        # Process all queued nodedowns in a single batch
-        Process.put(:nodedown_queue, [])
-        start_nodedown_task(state, queued_nodes)
-        {:noreply, state}
-    end
-  end
 
   @impl true
   def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
@@ -550,49 +568,74 @@ defmodule ProcessHub.Coordinator do
     if Enum.member?(hub_nodes, down_node) do
       HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), down_node)
 
+      # Lock is already set via atomic_priority_set in {:nodedown} handler,
+      # but call again to ensure consistent state for hooks.
       State.lock_event_handler(state)
       Cluster.rem_hub_node(state.storage.misc, down_node)
 
-      # Serialize NodeDown handlers to prevent concurrent execution
-      case Process.get(:nodedown_in_progress, false) do
-        true ->
-          # Queue the nodedown event for later processing
-          queue = Process.get(:nodedown_queue, [])
-          Process.put(:nodedown_queue, queue ++ [down_node])
+      # Get current hub_nodes AFTER this node has been removed
+      updated_hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
-        false ->
-          # Start processing immediately
-          Process.put(:nodedown_in_progress, true)
-          start_nodedown_task(state, [down_node])
-      end
+      Task.Supervisor.start_child(
+        state.procs.task_sup,
+        fn ->
+          ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
+            removed_node: down_node,
+            hub_nodes: updated_hub_nodes,
+            hub: state
+          })
+        end
+      )
+    else
+      # Node not in hub - unlock immediately since we locked at dispatch time
+      State.unlock_event_handler(state)
     end
 
     state
   end
 
-  defp start_nodedown_task(state, down_nodes) do
-    parent = self()
-    # Get current hub_nodes AFTER all queued nodes have been removed from the cluster
+  # Handle multiple nodes going down together (batched).
+  # This removes all nodes from cluster state first, then does ONE redistribution.
+  defp handle_node_down_batch(state, down_nodes) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
-    Task.Supervisor.start_child(
-      state.procs.task_sup,
-      fn ->
-        try do
-          # Process all down nodes in a single handler
-          Enum.each(down_nodes, fn down_node ->
-            ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
-              removed_node: down_node,
-              hub_nodes: hub_nodes,
-              hub: state
-            })
-          end)
-        after
-          # Always notify completion, even on crash
-          send(parent, :nodedown_handler_complete)
+    # Filter to only nodes that are actually in the hub
+    valid_down_nodes = Enum.filter(down_nodes, &Enum.member?(hub_nodes, &1))
+
+    if length(valid_down_nodes) > 0 do
+      # Dispatch pre hooks for all nodes
+      Enum.each(valid_down_nodes, fn node ->
+        HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), node)
+      end)
+
+      State.lock_event_handler(state)
+
+      # Remove ALL down nodes from cluster state FIRST
+      Enum.each(valid_down_nodes, fn node ->
+        Cluster.rem_hub_node(state.storage.misc, node)
+      end)
+
+      # Get updated hub_nodes AFTER all nodes have been removed
+      updated_hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
+
+      # Start a single task that handles all down nodes together
+      Task.Supervisor.start_child(
+        state.procs.task_sup,
+        fn ->
+          # Use batched handler that processes all nodes in one pass
+          ClusterUpdate.NodeDownBatch.handle(%ClusterUpdate.NodeDownBatch{
+            removed_nodes: valid_down_nodes,
+            hub_nodes: updated_hub_nodes,
+            hub: state
+          })
         end
-      end
-    )
+      )
+    else
+      # No valid nodes - unlock since we locked at dispatch time
+      State.unlock_event_handler(state)
+    end
+
+    state
   end
 
   defp get_hub_nodes(misc_storage) do
@@ -663,6 +706,7 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_distribute_children)
     Blockade.add_handler(eq, @event_cluster_join)
     Blockade.add_handler(eq, @event_cluster_leave)
+    Blockade.add_handler(eq, @event_cluster_leave_batch)
     Blockade.add_handler(eq, @event_sync_remote_children)
     Blockade.add_handler(eq, @event_children_registration)
     Blockade.add_handler(eq, @event_children_unregistration)

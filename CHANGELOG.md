@@ -9,6 +9,11 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - New type `ProcessHub.child_metadata_map()` to represent per-child metadata configuration.
 - Documentation and examples for per-child metadata usage in the main API module and ProcessRegistry guide.
 
+### Fixed
+- Fixed under-replication during rapid node scale-down by implementing batched nodedown handling. When multiple nodes fail within a short window, their failures are now processed together, ensuring consistent redistribution calculations across all remaining nodes.
+- Added `NodeDownBatch` handler that processes multiple node failures in a single pass to prevent duplicate redistributions.
+- Batching window is configurable via `:nodedown_batch_window_ms` application env (default: 500ms).
+
 ## v0.4.1-beta - 2025-11-02
 This release introduces a new adaptive partition tolerance strategy, `MajorityQuorum`, which automatically adjusts to the cluster size. This strategy is ideal for clusters that start with a single node and scale up over time, providing proper split-brain protection without manual quorum configuration.
 Includes also bug fixes related to replication strategy mode switching during cluster topology changes.

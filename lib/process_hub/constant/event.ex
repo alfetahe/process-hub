@@ -48,6 +48,7 @@ defmodule ProcessHub.Constant.Event do
       @event_distribute_children :distribute_children_event
       @event_cluster_join :cluster_join_event
       @event_cluster_leave :cluster_leave_event
+      @event_cluster_leave_batch :cluster_leave_batch_event
       @event_children_registration :children_registration_event
       @event_children_unregistration :children_unregistration_event
       @event_sync_remote_children :sync_remote_children_event
