@@ -167,6 +167,9 @@ defmodule ProcessHub do
   - `:dsup_shutdown_timeout` is optional and is used to define the timeout in milliseconds
   for the distributed supervisor to wait before forcefully terminating itself
   when receiving a shutdown signal.
+  - `:event_batch_delay` is optional and is used to define the delay in milliseconds
+  for batching cluster events (nodedown, cluster_join). When multiple events occur within
+  this window, they are processed together in a single batch. The default is `500` (0.5 seconds).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -195,7 +198,8 @@ defmodule ProcessHub do
           migr_base_timeout: pos_integer(),
           dsup_max_restarts: pos_integer(),
           dsup_max_seconds: pos_integer(),
-          dsup_shutdown_timeout: pos_integer()
+          dsup_shutdown_timeout: pos_integer(),
+          event_batch_delay: pos_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -214,7 +218,8 @@ defmodule ProcessHub do
     migr_base_timeout: 15000,
     dsup_max_restarts: 100,
     dsup_max_seconds: 4,
-    dsup_shutdown_timeout: 60000
+    dsup_shutdown_timeout: 60000,
+    event_batch_delay: 500
   ]
 
   @doc """

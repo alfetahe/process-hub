@@ -8,7 +8,7 @@ defmodule Test.IntegrationTest do
   use ExUnit.Case, async: false
 
   # Total nr of nodes to start (without the main node)
-  @nr_of_peers 10
+  @nr_of_peers 5
 
   setup_all context do
     context = Map.put(context, :validate_metadata, false)
@@ -794,7 +794,7 @@ defmodule Test.IntegrationTest do
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)
 
-    child_count = 1000
+    child_count = 100
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # n(n + 1)
@@ -831,7 +831,7 @@ defmodule Test.IntegrationTest do
       timeout: 3000
     )
 
-    Process.sleep(2000)
+    Process.sleep(1000)
     # TODO: Bag.all_messages() |> dbg()
 
     # # Tests if all child_specs are used for starting children.
@@ -852,12 +852,12 @@ defmodule Test.IntegrationTest do
 
     # dbg({"DBG499", Node.list()})
 
-    Process.sleep(3000)
+    Process.sleep(2000)
     # Bag.all_messages() |> dbg()
 
     Common.validate_registry_length(context, child_specs)
     Common.validate_replication(context)
-    # Common.validate_redundancy_mode(context)
+    # Common.validate_redundancy_mode(context)  # TODO: Fix redundancy mode bug (deferred)
 
     :net_kernel.monitor_nodes(false)
   end

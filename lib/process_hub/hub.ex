@@ -1,4 +1,14 @@
 defmodule ProcessHub.Hub do
+  @typedoc """
+  State for batched event handling.
+  - `nodes`: List of nodes accumulated in the batch
+  - `timer_ref`: Reference to the timer that will trigger batch processing
+  """
+  @type batch_state() :: %{
+          nodes: [node()],
+          timer_ref: reference() | nil
+        }
+
   @type t() :: %__MODULE__{
           hub_id: atom(),
           procs: %{
@@ -12,11 +22,27 @@ defmodule ProcessHub.Hub do
           storage: %{
             misc: :ets.tid(),
             hook: :ets.tid()
+          },
+          event_batches: %{
+            nodedown: batch_state(),
+            cluster_join: batch_state()
           }
         }
+
+  @doc """
+  Returns the default event batch state.
+  """
+  def default_batch_state do
+    %{nodes: [], timer_ref: nil}
+  end
+
   defstruct [
     :hub_id,
     :procs,
-    :storage
+    :storage,
+    event_batches: %{
+      nodedown: %{nodes: [], timer_ref: nil},
+      cluster_join: %{nodes: [], timer_ref: nil}
+    }
   ]
 end

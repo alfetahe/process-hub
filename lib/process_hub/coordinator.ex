@@ -282,8 +282,9 @@ defmodule ProcessHub.Coordinator do
     {:noreply, handle_node_down(state, node)}
   end
 
-  # Batch window for nodedown events. Can be configured via application env.
-  @nodedown_batch_window_ms Application.compile_env(:process_hub, :nodedown_batch_window_ms, 500)
+  # Default batch window for events. Can be configured via application env.
+  # This will be replaced by runtime config via Storage in a future change.
+  @default_batch_window_ms Application.compile_env(:process_hub, :nodedown_batch_window_ms, 500)
 
   @impl true
   def handle_info({:nodedown, node}, state) do
@@ -291,24 +292,12 @@ defmodule ProcessHub.Coordinator do
     # When nodes go down rapidly, we collect them and process as a single batch.
     # The batch window ensures all nodedown events from rapid scale-down are captured
     # together, allowing consistent redistribution calculations across all nodes.
-    case Process.get(:nodedown_batch) do
-      nil ->
-        # First nodedown - start batching timer
-        Process.put(:nodedown_batch, [node])
-        Process.send_after(self(), :process_nodedown_batch, @nodedown_batch_window_ms)
-
-      nodes ->
-        # Add to existing batch
-        Process.put(:nodedown_batch, [node | nodes])
-    end
-
-    {:noreply, state}
+    {:noreply, batch_event(state, :nodedown, node)}
   end
 
   @impl true
-  def handle_info(:process_nodedown_batch, state) do
-    nodes = Process.get(:nodedown_batch) || []
-    Process.delete(:nodedown_batch)
+  def handle_info({:process_batch, :nodedown}, state) do
+    {state, nodes} = take_batch(state, :nodedown)
 
     if length(nodes) > 0 do
       # Dispatch a single batch event with all down nodes.
@@ -352,9 +341,21 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_join, node}, state) do
-    handle_hub_join(state, node)
+    # Batch cluster_join events similar to nodedown
+    {:noreply, batch_event(state, :cluster_join, node)}
+  end
 
-    {:noreply, state}
+  @impl true
+  def handle_info({:process_batch, :cluster_join}, state) do
+    {state, nodes} = take_batch(state, :cluster_join)
+
+    if length(nodes) > 0 do
+      # Process all joining nodes together
+      state = handle_hub_join_batch(state, nodes)
+      {:noreply, state}
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -520,6 +521,43 @@ defmodule ProcessHub.Coordinator do
   ### Private functions
   ##############################################################################
 
+  # Adds a node to the event batch and starts a timer if this is the first event.
+  # Returns the updated state.
+  @spec batch_event(Hub.t(), atom(), node()) :: Hub.t()
+  defp batch_event(state, event_type, node) do
+    batch = get_in(state.event_batches, [event_type]) || Hub.default_batch_state()
+    batch_window = get_batch_window(state)
+
+    new_batch =
+      case batch.timer_ref do
+        nil ->
+          # First event in batch - start timer
+          timer_ref = Process.send_after(self(), {:process_batch, event_type}, batch_window)
+          %{nodes: [node], timer_ref: timer_ref}
+
+        _ref ->
+          # Add to existing batch
+          %{batch | nodes: [node | batch.nodes]}
+      end
+
+    put_in(state.event_batches[event_type], new_batch)
+  end
+
+  # Takes all nodes from a batch and resets it.
+  # Returns {updated_state, nodes_list}.
+  @spec take_batch(Hub.t(), atom()) :: {Hub.t(), [node()]}
+  defp take_batch(state, event_type) do
+    batch = get_in(state.event_batches, [event_type]) || Hub.default_batch_state()
+    nodes = batch.nodes
+    state = put_in(state.event_batches[event_type], Hub.default_batch_state())
+    {state, nodes}
+  end
+
+  # Returns the configured batch window in milliseconds from storage.
+  defp get_batch_window(state) do
+    Storage.get(state.storage.misc, StorageKey.ebd()) || @default_batch_window_ms
+  end
+
   defp join_handlers(handlers, state) do
     node_list = Node.list()
 
@@ -562,6 +600,60 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
+  # Handle multiple nodes joining together (batched).
+  defp handle_hub_join_batch(state, nodes) do
+    hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
+    local_node = node()
+
+    # Filter to only new nodes (not ourselves and not already in cluster)
+    new_nodes =
+      Enum.filter(nodes, fn node ->
+        Cluster.new_node?(hub_nodes, node) and node !== local_node
+      end)
+
+    if length(new_nodes) > 0 do
+      # Add all new nodes to cluster state
+      Enum.each(new_nodes, fn node ->
+        Cluster.add_hub_node(state.storage.misc, node)
+      end)
+
+      # Dispatch pre hooks for all nodes
+      Enum.each(new_nodes, fn node ->
+        HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
+      end)
+
+      # Check if any node should trigger quorum unlock
+      part_strat = Storage.get(state.storage.misc, StorageKey.strpart())
+
+      unlock_status =
+        Enum.any?(new_nodes, fn node ->
+          PartitionToleranceStrategy.toggle_unlock?(part_strat, state, node)
+        end)
+
+      if unlock_status do
+        State.toggle_quorum_success(state)
+      end
+
+      # Dispatch distribute_children for each new node
+      Enum.each(new_nodes, fn node ->
+        Dispatcher.propagate_event(state.procs.event_queue, @event_distribute_children, node, %{
+          members: :local
+        })
+      end)
+
+      State.lock_event_handler(state)
+
+      # Dispatch post hooks for all nodes
+      Enum.each(new_nodes, fn node ->
+        HookManager.dispatch_hook(state.storage.hook, Hook.post_cluster_join(), node)
+      end)
+    end
+
+    state
+  end
+
+  # Handle a single node going down (from explicit @event_cluster_leave).
+  # Delegates to the same handler as batched events, but with a single-element list.
   defp handle_node_down(state, down_node) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
@@ -579,8 +671,9 @@ defmodule ProcessHub.Coordinator do
       Task.Supervisor.start_child(
         state.procs.task_sup,
         fn ->
+          # Use the unified handler with single-element list
           ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
-            removed_node: down_node,
+            removed_nodes: [down_node],
             hub_nodes: updated_hub_nodes,
             hub: state
           })
@@ -622,8 +715,8 @@ defmodule ProcessHub.Coordinator do
       Task.Supervisor.start_child(
         state.procs.task_sup,
         fn ->
-          # Use batched handler that processes all nodes in one pass
-          ClusterUpdate.NodeDownBatch.handle(%ClusterUpdate.NodeDownBatch{
+          # Use unified handler that processes all nodes in one pass
+          ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
             removed_nodes: valid_down_nodes,
             hub_nodes: updated_hub_nodes,
             hub: state
@@ -700,6 +793,7 @@ defmodule ProcessHub.Coordinator do
     Storage.insert(storage.misc, StorageKey.hdi(), settings.hubs_discover_interval)
     Storage.insert(storage.misc, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
     Storage.insert(storage.misc, StorageKey.mbt(), settings.migr_base_timeout)
+    Storage.insert(storage.misc, StorageKey.ebd(), settings.event_batch_delay)
   end
 
   defp register_handlers(%{event_queue: eq}) do
