@@ -846,7 +846,7 @@ defmodule Test.IntegrationTest do
     # Now scale down back to original nodes and see if replication is still maintained
     Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
       removed_peers = Common.stop_peers(acc, 1)
-      Process.sleep(1000)
+      # Process.sleep(500)
       Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
     end)
 
