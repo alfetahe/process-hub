@@ -299,26 +299,21 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           end
 
         :down ->
-          # For DOWN events: use curr_master_new directly
+          # For DOWN events: always send the correct signal based on curr_master.
+          # This ensures modes are synchronized even if previous signals were
+          # processed out of order or with stale ring data across different nodes.
           cond do
-            prev_master === curr_master_new ->
-              # Master didn't change - no mode change needed
-              :ok
-
-            prev_master === local_node and curr_master_new !== local_node ->
-              # I was master, now someone else is - I become passive
-              if Enum.member?([:all, :passive], strategy.redundancy_signal) do
-                child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
-              end
-
-            curr_master_new === local_node and prev_master !== local_node ->
-              # Someone else was master, now I am - I become active
+            curr_master_new === local_node ->
+              # I am the master based on current ring state - ensure I'm active
               if Enum.member?([:all, :active], strategy.redundancy_signal) do
                 child_pid(hub, child_id, opts) |> send_redundancy_signal(:active)
               end
 
             true ->
-              :ok
+              # I am not the master - ensure I'm passive
+              if Enum.member?([:all, :passive], strategy.redundancy_signal) do
+                child_pid(hub, child_id, opts) |> send_redundancy_signal(:passive)
+              end
           end
       end
     end
