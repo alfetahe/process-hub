@@ -852,13 +852,12 @@ defmodule Test.IntegrationTest do
 
     # dbg({"DBG499", Node.list()})
 
-    Process.sleep(3000)
+    Process.sleep(2000)
     # Bag.all_messages() |> dbg()
 
-    # Common.validate_registry_length(context, child_specs)
+    Common.validate_registry_length(context, child_specs)
     Common.validate_replication(context)
-    # TODO:
-    # Common.validate_redundancy_mode(context)
+    Common.validate_redundancy_mode(context)
 
     :net_kernel.monitor_nodes(false)
   end

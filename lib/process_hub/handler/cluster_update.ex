@@ -430,15 +430,27 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
       reg_dump = ProcessRegistry.dump(arg.hub.hub_id)
       cids = Enum.map(reg_dump, fn {cid, _} -> cid end)
+      local_node = node()
 
       cid_pid_node_pairs =
         DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
 
+      # Instead of only checking if removed_node is in nodes_orig, we also check
+      # if local should have the child but doesn't. This handles the case where
+      # propagation from another node arrived before this handler runs.
       Enum.reduce(reg_dump, [], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
         nodes_orig = Keyword.keys(node_pids)
+        nodes_updated = Bag.get_by_key(cid_pid_node_pairs, child_id, [])
 
-        if Enum.member?(nodes_orig, arg.removed_node) do
-          nodes_updated = Bag.get_by_key(cid_pid_node_pairs, child_id, [])
+        # Include child if:
+        # 1. The removed node was in the original nodes list (normal case), OR
+        # 2. Local should have it but doesn't (handles propagation race)
+        should_include =
+          Enum.member?(nodes_orig, arg.removed_node) or
+            (Enum.member?(nodes_updated, local_node) and
+               not Enum.member?(nodes_orig, local_node))
+
+        if should_include do
           [{child_id, child_spec, metadata, nodes_orig, nodes_updated} | acc]
         else
           acc

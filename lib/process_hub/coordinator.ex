@@ -63,6 +63,10 @@ defmodule ProcessHub.Coordinator do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
 
+    # Initialize nodedown serialization state
+    Process.put(:nodedown_in_progress, false)
+    Process.put(:nodedown_queue, [])
+
     # Store the current hub nodes in the misc storage.
     Storage.insert(
       storage.misc,
@@ -440,6 +444,23 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_info(:nodedown_handler_complete, state) do
+    # Process ALL queued nodedown events together, or clear the in-progress flag
+    case Process.get(:nodedown_queue, []) do
+      [] ->
+        # No more pending, clear the flag
+        Process.put(:nodedown_in_progress, false)
+        {:noreply, state}
+
+      queued_nodes ->
+        # Process all queued nodedowns in a single batch
+        Process.put(:nodedown_queue, [])
+        start_nodedown_task(state, queued_nodes)
+        {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
     join_handlers(handlers, state)
 
@@ -530,23 +551,48 @@ defmodule ProcessHub.Coordinator do
       HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), down_node)
 
       State.lock_event_handler(state)
-      hub_nodes = Cluster.rem_hub_node(state.storage.misc, down_node)
+      Cluster.rem_hub_node(state.storage.misc, down_node)
 
-      Task.Supervisor.start_child(
-        state.procs.task_sup,
-        ClusterUpdate.NodeDown,
-        :handle,
-        [
-          %ClusterUpdate.NodeDown{
-            removed_node: down_node,
-            hub_nodes: hub_nodes,
-            hub: state
-          }
-        ]
-      )
+      # Serialize NodeDown handlers to prevent concurrent execution
+      case Process.get(:nodedown_in_progress, false) do
+        true ->
+          # Queue the nodedown event for later processing
+          queue = Process.get(:nodedown_queue, [])
+          Process.put(:nodedown_queue, queue ++ [down_node])
+
+        false ->
+          # Start processing immediately
+          Process.put(:nodedown_in_progress, true)
+          start_nodedown_task(state, [down_node])
+      end
     end
 
     state
+  end
+
+  defp start_nodedown_task(state, down_nodes) do
+    parent = self()
+    # Get current hub_nodes AFTER all queued nodes have been removed from the cluster
+    hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
+
+    Task.Supervisor.start_child(
+      state.procs.task_sup,
+      fn ->
+        try do
+          # Process all down nodes in a single handler
+          Enum.each(down_nodes, fn down_node ->
+            ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
+              removed_node: down_node,
+              hub_nodes: hub_nodes,
+              hub: state
+            })
+          end)
+        after
+          # Always notify completion, even on crash
+          send(parent, :nodedown_handler_complete)
+        end
+      end
+    )
   end
 
   defp get_hub_nodes(misc_storage) do
