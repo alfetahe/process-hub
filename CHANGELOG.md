@@ -10,6 +10,7 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - Documentation and examples for per-child metadata usage in the main API module and ProcessRegistry guide.
 
 ### Fixed
+- Optimized interval synchronization to avoid unnecessary process registry updates when the local PID already matches the remote PID. Previously, the synchronizer would always write to the registry during sync even when data was unchanged, causing redundant operations.
 - Fixed under-replication during rapid node scale-down by implementing batched nodedown handling. When multiple nodes fail within a short window, their failures are now processed together, ensuring consistent redistribution calculations across all remaining nodes.
 - Added `NodeDownBatch` handler that processes multiple node failures in a single pass to prevent duplicate redistributions.
 - Batching window is configurable via `:nodedown_batch_window_ms` application env (default: 500ms).
