@@ -72,7 +72,6 @@ defmodule Mix.Tasks.Benchmark do
     # Make sure the local nodes is already running a hub.
     Test.Helper.Bootstrap.start_hubs(hub, [node()], listed_hooks, [msg_count: 0])
 
-    # TODO: Fix by removing the sleeps.
     Test.Helper.Bootstrap.start_hubs(hub, Node.list(), listed_hooks, [new_nodes: true])
   end
 
