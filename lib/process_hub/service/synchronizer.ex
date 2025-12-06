@@ -74,7 +74,6 @@ defmodule ProcessHub.Service.Synchronizer do
         # Check if local children contain remote node data.
         case ProcessRegistry.lookup(hub.hub_id, remote_cs.id) do
           nil ->
-            dbg({"1", remote_cs.id, remote_pid, remote_node})
             # We don't have data locally so add it.
             ProcessRegistry.insert(
               hub.hub_id,
