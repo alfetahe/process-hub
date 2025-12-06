@@ -100,7 +100,7 @@ def handle_info({:handle_request, _request}, %{mode: :passive} = state) do
     {:noreply, state}
 end
 
-def handle_info({:handle_request, request}, %{mode: :aactive} = state) do
+def handle_info({:handle_request, request}, %{mode: :active} = state) do
     # Handle the request because we're the active process.
     handle_request(request)
     {:noreply, state}
