@@ -55,7 +55,7 @@ defmodule ProcessHub.MixProject do
       {:hash_ring, "~> 0.4.2"},
       {:elector, "~> 0.3.2", runtime: false},
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
-      {:benchee, "~> 1.2", only: [:dev, :test]}
+      {:benchee, "~> 1.5", only: [:dev, :test]}
     ]
   end
 
