@@ -93,7 +93,7 @@ defmodule Test.Helper.Bootstrap do
     end
   end
 
-  def start_hubs(hub, nodes, listed_hooks, opts \\ []) do
+  def start_hubs(%ProcessHub{} = hub, nodes, listed_hooks, opts \\ []) do
     host_pid = self()
     local_node = node()
 

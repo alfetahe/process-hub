@@ -103,7 +103,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       |> wait_for_tasks()
     end
 
-    defp attach_data(arg) do
+    defp attach_data(%__MODULE__{} = arg) do
       %__MODULE__{
         arg
         | sync_strat: Storage.get(arg.hub.storage.misc, StorageKey.strsyn()),
