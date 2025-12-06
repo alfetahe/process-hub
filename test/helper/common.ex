@@ -300,4 +300,105 @@ defmodule Test.Helper.Common do
     ProcessHub.start_children(hub_id, child_specs, awaitable: true)
     |> ProcessHub.Future.await()
   end
+
+  def await_registry_stable(context, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 15000)
+    poll_interval = Keyword.get(opts, :poll_interval, 200)
+    stable_period = Keyword.get(opts, :stable_period, 500)
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    do_await_registry_stable(context, deadline, poll_interval, stable_period, nil)
+  end
+
+  defp do_await_registry_stable(context, deadline, poll_interval, stable_period, stable_since) do
+    now = System.monotonic_time(:millisecond)
+
+    if now >= deadline do
+      # Log what's still wrong for debugging
+      case check_registry_stable(context) do
+        {:error, errors} ->
+          IO.puts("Registry stability timeout. Sample errors (first 5):")
+          Enum.take(errors, 5) |> Enum.each(&IO.inspect/1)
+
+        _ ->
+          :ok
+      end
+
+      {:error, :timeout}
+    else
+      case check_registry_stable(context) do
+        :ok ->
+          # Registry is stable now - check if it's been stable long enough
+          stable_since = stable_since || now
+
+          if now - stable_since >= stable_period do
+            :ok
+          else
+            receive_wait(poll_interval)
+
+            do_await_registry_stable(
+              context,
+              deadline,
+              poll_interval,
+              stable_period,
+              stable_since
+            )
+          end
+
+        {:error, _reason} ->
+          # Registry not stable - reset stable_since
+          receive_wait(poll_interval)
+          do_await_registry_stable(context, deadline, poll_interval, stable_period, nil)
+      end
+    end
+  end
+
+  # Use receive with timeout as a non-blocking wait mechanism
+  defp receive_wait(timeout) do
+    ref = make_ref()
+
+    receive do
+      {:__await_registry_stable_wait__, ^ref} -> :ok
+    after
+      timeout -> :ok
+    end
+  end
+
+  defp check_registry_stable(%{hub_id: hub_id, hub_conf: hub_conf, hub: hub} = _context) do
+    registry = ProcessHub.registry_dump(hub_id)
+    replication_factor = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
+
+    if Enum.empty?(registry) do
+      :ok
+    else
+      # Use the same approach as validate_replication - get ring directly
+      ring = Ring.get_ring(hub.storage.misc)
+
+      errors =
+        Enum.reduce(registry, [], fn {child_id, {_cs, nodes, _meta}}, acc ->
+          ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
+          actual_nodes = Keyword.keys(nodes)
+
+          cond do
+            length(nodes) != replication_factor ->
+              [{:wrong_count, child_id, length(nodes), replication_factor} | acc]
+
+            not Enum.all?(actual_nodes, &Enum.member?(ring_nodes, &1)) ->
+              [{:wrong_nodes, child_id, actual_nodes, ring_nodes} | acc]
+
+            not Enum.all?(ring_nodes, &Enum.member?(actual_nodes, &1)) ->
+              [{:missing_nodes, child_id, actual_nodes, ring_nodes} | acc]
+
+            true ->
+              acc
+          end
+        end)
+
+      if Enum.empty?(errors) do
+        :ok
+      else
+        {:error, errors}
+      end
+    end
+  end
 end

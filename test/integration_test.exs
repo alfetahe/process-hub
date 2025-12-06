@@ -794,7 +794,7 @@ defmodule Test.IntegrationTest do
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)
 
-    child_count = 100
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # n(n + 1)
@@ -815,49 +815,30 @@ defmodule Test.IntegrationTest do
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true)
 
-    # n(2n+1) if new peers = initial_peers
-    # TODO: (@nr_of_peers * (2 * @nr_of_peers + 1))
-    1
-    |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
-      error_msg: "Post redistribution timeout",
-      timeout: 3000
-    )
+    # Wait for registry to stabilize after scale-up - all children should have correct replication
+    :ok = Common.await_registry_stable(context, timeout: 30000, stable_period: 1000)
 
-    # We need to wait for all processes are registered in the registry after redistribution
-    # TODO:
-    2
-    |> Bag.receive_multiple(Hook.registry_pid_inserted(),
-      error_msg: "Post redistribution registry insert timeout",
-      timeout: 3000
-    )
+    # Tests if all child_specs are used for starting children.
+    Common.validate_registry_length(context, child_specs)
 
-    Process.sleep(1000)
-    # TODO: Bag.all_messages() |> dbg()
+    # Tests redundancy and check if started children's count matches replication factor.
+    Common.validate_replication(context)
 
-    # # Tests if all child_specs are used for starting children.
-    # Common.validate_registry_length(context, child_specs)
-
-    # # Tests redundancy and check if started children's count matches replication factor.
-    # Common.validate_replication(context)
-
-    # # Tests redundancy mode and check if replicated children are in passive/active mode.
-    # Common.validate_redundancy_mode(context)
+    # Note: validate_redundancy_mode is skipped after scale-up due to inherent race conditions
+    # when multiple nodes join simultaneously. Mode is validated after scale-down instead.
 
     # Now scale down back to original nodes and see if replication is still maintained
     Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
       removed_peers = Common.stop_peers(acc, 1)
-      # Process.sleep(500)
       Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
     end)
 
-    # dbg({"DBG499", Node.list()})
-
-    Process.sleep(2000)
-    # Bag.all_messages() |> dbg()
+    # Wait for registry to stabilize after scale-down
+    :ok = Common.await_registry_stable(context, timeout: 30000, stable_period: 1000)
 
     Common.validate_registry_length(context, child_specs)
     Common.validate_replication(context)
-    # Common.validate_redundancy_mode(context)  # TODO: Fix redundancy mode bug (deferred)
+    Common.validate_redundancy_mode(context)
 
     :net_kernel.monitor_nodes(false)
   end
