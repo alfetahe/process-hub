@@ -63,7 +63,6 @@ defmodule ProcessHub.Coordinator do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
 
-
     # Store the current hub nodes in the misc storage.
     Storage.insert(
       storage.misc,
@@ -282,10 +281,6 @@ defmodule ProcessHub.Coordinator do
     {:noreply, handle_node_down(state, node)}
   end
 
-  # Default batch window for events. Can be configured via application env.
-  # This will be replaced by runtime config via Storage in a future change.
-  @default_batch_window_ms Application.compile_env(:process_hub, :nodedown_batch_window_ms, 500)
-
   @impl true
   def handle_info({:nodedown, node}, state) do
     # Batch rapid nodedown events together to avoid multiple independent redistributions.
@@ -478,7 +473,6 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
-
   @impl true
   def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
     join_handlers(handlers, state)
@@ -555,7 +549,7 @@ defmodule ProcessHub.Coordinator do
 
   # Returns the configured batch window in milliseconds from storage.
   defp get_batch_window(state) do
-    Storage.get(state.storage.misc, StorageKey.ebd()) || @default_batch_window_ms
+    Storage.get(state.storage.misc, StorageKey.ebd()) || 500
   end
 
   defp join_handlers(handlers, state) do
