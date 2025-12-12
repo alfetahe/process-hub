@@ -1,6 +1,7 @@
 defmodule ProcessHub.StartChildrenRequest do
   alias ProcessHub.Service.Dispatcher
 
+  @default_request_timeout :timer.minutes(10)
 
   @type t() :: %__MODULE__{
           transaction_id: reference(),
@@ -9,11 +10,14 @@ defmodule ProcessHub.StartChildrenRequest do
           child_specs: [ProcessHub.child_spec()],
           sub_requests: [NodeStartRequest.t()],
           future: ProcessHub.Future.t() | nil,
-          options: keyword()
+          options: keyword(),
+          expires_at: integer()
         }
+
   defstruct [
     :transaction_id,
     :hub_id,
+    :expires_at,
     nodes_data: [],
     child_specs: [],
     sub_requests: [],
@@ -33,6 +37,8 @@ defmodule ProcessHub.StartChildrenRequest do
 
   def new(hub, child_specs, mappings, opts) do
     ref = make_ref()
+    timeout = Keyword.get(opts, :request_timeout, @default_request_timeout)
+    expires_at = System.monotonic_time(:millisecond) + timeout
 
     future = %ProcessHub.Future{
       future_resolver: {node(), hub.hub_id},
@@ -43,12 +49,18 @@ defmodule ProcessHub.StartChildrenRequest do
     %__MODULE__{
       transaction_id: make_ref(),
       hub_id: hub.hub_id,
+      expires_at: expires_at,
       child_specs: child_specs,
       nodes_data: mappings,
       future: future,
       sub_requests: [],
       options: opts
     }
+  end
+
+  @spec expired?(t()) :: boolean()
+  def expired?(%__MODULE__{expires_at: expires_at}) do
+    System.monotonic_time(:millisecond) > expires_at
   end
 
   @spec compose_sub_requests(t()) :: {:ok, t()} | {:error, :no_children}

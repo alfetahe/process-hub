@@ -223,11 +223,11 @@ defmodule ProcessHub.Service.Distributor do
           true ->
             # For awaitable mode, use existing async_wait_startup pattern
             future = async_wait_startup(hub, children_mappings, opts)
-            {:ok, future}
+            {:ok, future, start_request}
 
           false ->
             case StartChildrenRequest.compose_sub_requests(start_request) do
-              {:ok, _updated_request} -> {:ok, :start_initiated}
+              {:ok, updated_request} -> {:ok, :start_initiated, updated_request}
               {:error, reason} -> {:error, reason}
             end
         end

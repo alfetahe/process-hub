@@ -42,6 +42,10 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.State
   alias ProcessHub.Hub
 
+  # TODO: make configurable.
+  # Pending request management
+  @cleanup_interval :timer.minutes(1)
+
   use Event
   use GenServer
 
@@ -94,6 +98,7 @@ defmodule ProcessHub.Coordinator do
     # Schedule periodic tasks.
     schedule_hub_discovery(Storage.get(local_store, StorageKey.hdi()))
     schedule_sync(Storage.get(local_store, StorageKey.strsyn()))
+    schedule_request_cleanup()
 
     # Monitor cluster join events.
     Blockade.monitor_handlers(event_queue, @event_cluster_join)
@@ -196,6 +201,19 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_cast({:start_children_response, transaction_id, response_node, results}, state) do
+    # TODO: Implement in next phase
+    # 1. Find the pending request by transaction_id
+    # 2. Update the NodeStartRequest for this node with results
+    # 3. Check if all nodes have responded
+    # 4. If all responded, finalize and potentially notify caller
+    _request = get_pending_request(state, transaction_id)
+    _node = response_node
+    _results = results
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_call({:register_hook_handlers, hook_key, handlers}, _from, state) do
     result = register_handlers(state.storage.hook, %{hook_key => handlers})
 
@@ -211,16 +229,19 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_call({:init_children_start, child_specs, opts}, _from, state) do
-    opts = Keyword.put(opts, :init_cids, Enum.map(child_specs, & &1.id))
+    opts =
+      opts
+      |> Keyword.put(:init_cids, Enum.map(child_specs, & &1.id))
+      |> Distributor.default_init_opts()
 
-    result =
-      Distributor.compose_start_request(
-        state,
-        child_specs,
-        Distributor.default_init_opts(opts)
-      )
+    case Distributor.compose_start_request(state, child_specs, opts) do
+      {:ok, result, start_request} ->
+        new_state = store_pending_request(state, start_request)
+        {:reply, {:ok, result}, new_state}
 
-    {:reply, result, state}
+      {:error, _reason} = error ->
+        {:reply, error, state}
+    end
   end
 
   @impl true
@@ -502,6 +523,20 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({:EXIT, _pid, :normal}, state) do
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:cleanup_expired_requests, state) do
+    alias ProcessHub.StartChildrenRequest
+
+    pending =
+      state.pending_requests
+      |> Enum.reject(fn {_id, request} -> StartChildrenRequest.expired?(request) end)
+      |> Map.new()
+
+    schedule_request_cleanup()
+
+    {:noreply, %{state | pending_requests: pending}}
   end
 
   @impl true
@@ -824,5 +859,23 @@ defmodule ProcessHub.Coordinator do
 
   defp schedule_hub_discovery(interval) do
     Process.send_after(self(), :propagate, interval)
+  end
+
+  defp store_pending_request(state, %ProcessHub.StartChildrenRequest{} = request) do
+    pending = Map.put(state.pending_requests, request.transaction_id, request)
+    %{state | pending_requests: pending}
+  end
+
+  defp get_pending_request(state, transaction_id) do
+    Map.get(state.pending_requests, transaction_id)
+  end
+
+  defp remove_pending_request(state, transaction_id) do
+    pending = Map.delete(state.pending_requests, transaction_id)
+    %{state | pending_requests: pending}
+  end
+
+  defp schedule_request_cleanup do
+    Process.send_after(self(), :cleanup_expired_requests, @cleanup_interval)
   end
 end

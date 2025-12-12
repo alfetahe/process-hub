@@ -26,7 +26,8 @@ defmodule ProcessHub.Hub do
           event_batches: %{
             nodedown: batch_state(),
             cluster_join: batch_state()
-          }
+          },
+          pending_requests: %{reference() => ProcessHub.StartChildrenRequest.t()}
         }
 
   @doc """
@@ -43,6 +44,7 @@ defmodule ProcessHub.Hub do
     event_batches: %{
       nodedown: %{nodes: [], timer_ref: nil},
       cluster_join: %{nodes: [], timer_ref: nil}
-    }
+    },
+    pending_requests: %{}
   ]
 end
