@@ -69,7 +69,7 @@ defmodule ProcessHub.Service.Distributor do
          :ok <- init_registry_check(hub, child_specs, opts),
          {:ok, mappings} <- init_attach_nodes(hub, child_specs, strategies),
          {:ok, composed_data} <- init_compose_data(hub, mappings, opts),
-         {:ok, start_request} <- init_start_request(hub, child_specs, mappings, opts) do
+         {:ok, start_request} <- init_start_request(hub, child_specs, composed_data, opts) do
       pre_start_children(hub, start_request)
     else
       err -> err
@@ -211,34 +211,24 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:init_cids, [])
   end
 
-  defp pre_start_children(hub, start_request) do
-    # TODO:
-
-
-    # Compose Node Start Children Requests and attach to the start request.
-
-    # Return the future and the start_request and store them in the coordinator state.
-
-
-
+  defp pre_start_children(hub, %ProcessHub.StartChildrenRequest{} = start_request) do
+    alias ProcessHub.StartChildrenRequest
+    opts = start_request.options
+    children_mappings = start_request.nodes_data
 
     # For backward compatibility we need to handle the old options.
     case Keyword.get(opts, :on_failure, :continue) do
       :continue ->
-        case Keyword.get(opts, :async_wait, false) do
+        case Keyword.get(opts, :async_wait, false) || Keyword.get(opts, :awaitable, false) do
           true ->
+            # For awaitable mode, use existing async_wait_startup pattern
             future = async_wait_startup(hub, children_mappings, opts)
             {:ok, future}
 
           false ->
-            case Keyword.get(opts, :awaitable, false) do
-              true ->
-                future = async_wait_startup(hub, children_mappings, opts)
-                {:ok, future}
-
-              false ->
-                Dispatcher.children_start(hub.hub_id, children_mappings, opts)
-                {:ok, :start_initiated}
+            case StartChildrenRequest.compose_sub_requests(start_request) do
+              {:ok, _updated_request} -> {:ok, :start_initiated}
+              {:error, reason} -> {:error, reason}
             end
         end
 
@@ -453,8 +443,8 @@ defmodule ProcessHub.Service.Distributor do
     {pid, ref, await_promise}
   end
 
-  defp init_distribution(start_request, hub, %{distribution: strategy}) do
-    DistributionStrategy.children_init(strategy, hub, start_request)
+  defp init_distribution(hub, child_specs, opts, %{distribution: strategy}) do
+    DistributionStrategy.children_init(strategy, hub, child_specs, opts)
   end
 
   defp init_strategies(%Hub{storage: %{misc: misc_storage}}) do

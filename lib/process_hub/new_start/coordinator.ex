@@ -1,4 +1,4 @@
-defmodule ProcessHub.Coordinator do
+defmodule ProcessHub.New.Coordinator do
   use GenServer
 
   # TODO: remove
@@ -11,7 +11,7 @@ defmodule ProcessHub.Coordinator do
     {:ok, %{}}
   end
 
-  def handle_call({:start_children, }, _from, state) do
+  def handle_call({:start_children}, _from, state) do
     {:reply, :ok, state}
   end
 end
