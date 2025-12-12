@@ -88,7 +88,7 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    Distributor.init_children(hub, [cs1, cs2],
+    Distributor.compose_start_request(hub, [cs1, cs2],
       awaitable: true,
       check_existing: true,
       init_cids: [:dist_child_add, :dist_child_add2],
@@ -114,7 +114,7 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    Distributor.init_children(hub, [child_spec, child_spec2],
+    Distributor.compose_start_request(hub, [child_spec, child_spec2],
       awaitable: true,
       check_existing: false,
       init_cids: [:dist_child_add, :dist_child_add2],
@@ -140,7 +140,7 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
     }
 
-    Distributor.init_children(hub, [child_spec],
+    Distributor.compose_start_request(hub, [child_spec],
       awaitable: true,
       check_existing: true,
       init_cids: [:dist_child_stop],

@@ -214,7 +214,7 @@ defmodule ProcessHub.Coordinator do
     opts = Keyword.put(opts, :init_cids, Enum.map(child_specs, & &1.id))
 
     result =
-      Distributor.init_children(
+      Distributor.compose_start_request(
         state,
         child_specs,
         Distributor.default_init_opts(opts)

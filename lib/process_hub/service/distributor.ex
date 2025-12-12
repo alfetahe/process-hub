@@ -53,7 +53,7 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   @doc "Initiates processes startup."
-  @spec init_children(ProcessHub.Hub.t(), [ProcessHub.child_spec()], keyword()) ::
+  @spec compose_start_request(ProcessHub.Hub.t(), [ProcessHub.child_spec()], keyword()) ::
           {:ok, :start_initiated}
           | (-> {:ok, list})
           | {:error,
@@ -61,18 +61,25 @@ defmodule ProcessHub.Service.Distributor do
              | :no_children
              | {:already_started, [ProcessHub.child_id()]}
              | any()}
-  def init_children(_hub, [], _opts), do: {:error, :no_children}
+  def compose_start_request(_hub, [], _opts), do: {:error, :no_children}
 
-  def init_children(hub, child_specs, opts) do
+  def compose_start_request(hub, child_specs, opts) do
     with {:ok, strategies} <- init_strategies(hub),
          :ok <- init_distribution(hub, child_specs, opts, strategies),
          :ok <- init_registry_check(hub, child_specs, opts),
-         {:ok, children_nodes} <- init_attach_nodes(hub, child_specs, strategies),
-         {:ok, composed_data} <- init_compose_data(hub, children_nodes, opts) do
-      pre_start_children(hub, composed_data, opts)
+         {:ok, mappings} <- init_attach_nodes(hub, child_specs, strategies),
+         {:ok, composed_data} <- init_compose_data(hub, mappings, opts),
+         {:ok, start_request} <- init_start_request(hub, child_specs, mappings, opts) do
+      pre_start_children(hub, start_request)
     else
       err -> err
     end
+  end
+
+  defp init_start_request(hub, child_specs, mappings, opts) do
+    start_request = ProcessHub.StartChildrenRequest.new(hub, child_specs, mappings, opts)
+
+    {:ok, start_request}
   end
 
   @doc "Initiates processes shutdown."
@@ -204,29 +211,39 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:init_cids, [])
   end
 
-  defp pre_start_children(hub, startup_children, opts) do
+  defp pre_start_children(hub, start_request) do
+    # TODO:
+
+
+    # Compose Node Start Children Requests and attach to the start request.
+
+    # Return the future and the start_request and store them in the coordinator state.
+
+
+
+
     # For backward compatibility we need to handle the old options.
     case Keyword.get(opts, :on_failure, :continue) do
       :continue ->
         case Keyword.get(opts, :async_wait, false) do
           true ->
-            future = async_wait_startup(hub, startup_children, opts)
+            future = async_wait_startup(hub, children_mappings, opts)
             {:ok, future}
 
           false ->
             case Keyword.get(opts, :awaitable, false) do
               true ->
-                future = async_wait_startup(hub, startup_children, opts)
+                future = async_wait_startup(hub, children_mappings, opts)
                 {:ok, future}
 
               false ->
-                Dispatcher.children_start(hub.hub_id, startup_children, opts)
+                Dispatcher.children_start(hub.hub_id, children_mappings, opts)
                 {:ok, :start_initiated}
             end
         end
 
       :rollback ->
-        spawn_failure_handler(hub, startup_children, opts)
+        spawn_failure_handler(hub, children_mappings, opts)
     end
   end
 
@@ -436,8 +453,8 @@ defmodule ProcessHub.Service.Distributor do
     {pid, ref, await_promise}
   end
 
-  defp init_distribution(hub, child_specs, opts, %{distribution: strategy}) do
-    DistributionStrategy.children_init(strategy, hub, child_specs, opts)
+  defp init_distribution(start_request, hub, %{distribution: strategy}) do
+    DistributionStrategy.children_init(strategy, hub, start_request)
   end
 
   defp init_strategies(%Hub{storage: %{misc: misc_storage}}) do
