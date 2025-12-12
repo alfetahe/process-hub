@@ -8,7 +8,7 @@ defmodule ProcessHub.Future do
   """
 
   @type t :: %__MODULE__{
-          future_resolver: pid(),
+          future_resolver: {atom(), node()},
           ref: reference(),
           timeout: non_neg_integer()
         }
@@ -22,7 +22,7 @@ defmodule ProcessHub.Future do
   Waits for the completion of an asynchronous operation and returns the results.
 
   This function blocks the calling process until the future resolves or times out.
-  It communicates with the future resolver process to collect the final results
+  It communicates with the coordinator process via GenServer.call to collect the final results
   of the distributed operation.
 
   Handles multiple input types:
@@ -43,16 +43,15 @@ defmodule ProcessHub.Future do
   """
   @spec await(future_input()) :: await_result()
   def await(future) when is_struct(future) do
+    {hub_id, resolver_node} = future.future_resolver
     ref = future.ref
+    timeout = future.timeout || 5000
 
-    Process.send(future.future_resolver, {:process_hub, :collect_results, self(), ref}, [])
-
-    receive do
-      {:process_hub, :async_results, ^ref, results} ->
-        results
-    after
-      future.timeout + 50_000 ->
-        {:error, :timeout}
+    try do
+      GenServer.call({hub_id, resolver_node}, {:await_start_result, ref}, timeout + 1000)
+    catch
+      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, {:noproc, _} -> {:error, :noproc}
     end
   end
 

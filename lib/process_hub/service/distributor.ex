@@ -211,29 +211,22 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:init_cids, [])
   end
 
-  defp pre_start_children(hub, %ProcessHub.StartChildrenRequest{} = start_request) do
+  defp pre_start_children(_hub, %ProcessHub.StartChildrenRequest{} = start_request) do
     alias ProcessHub.StartChildrenRequest
-    opts = start_request.options
-    children_mappings = start_request.nodes_data
 
-    # For backward compatibility we need to handle the old options.
-    case Keyword.get(opts, :on_failure, :continue) do
+    case Keyword.get(start_request.options, :on_failure, :continue) do
       :continue ->
-        case Keyword.get(opts, :async_wait, false) || Keyword.get(opts, :awaitable, false) do
-          true ->
-            # For awaitable mode, use existing async_wait_startup pattern
-            future = async_wait_startup(hub, children_mappings, opts)
-            {:ok, future, start_request}
-
-          false ->
-            case StartChildrenRequest.compose_sub_requests(start_request) do
-              {:ok, updated_request} -> {:ok, :start_initiated, updated_request}
-              {:error, reason} -> {:error, reason}
-            end
+        # Always use compose_sub_requests - coordinator handles awaitable logic
+        case StartChildrenRequest.compose_sub_requests(start_request) do
+          {:ok, updated_request} -> {:ok, updated_request}
+          {:error, reason} -> {:error, reason}
         end
 
       :rollback ->
-        spawn_failure_handler(hub, children_mappings, opts)
+        # TODO: Handle rollback case with new pattern
+        children_mappings = start_request.nodes_data
+        opts = start_request.options
+        {:error, {:rollback_not_implemented, children_mappings, opts}}
     end
   end
 

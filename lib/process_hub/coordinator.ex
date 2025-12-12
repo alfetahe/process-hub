@@ -40,6 +40,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.State
+  alias ProcessHub.StartChildrenRequest
   alias ProcessHub.Hub
 
   # TODO: make configurable.
@@ -202,15 +203,27 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_cast({:start_children_response, transaction_id, response_node, results}, state) do
-    # TODO: Implement in next phase
-    # 1. Find the pending request by transaction_id
-    # 2. Update the NodeStartRequest for this node with results
-    # 3. Check if all nodes have responded
-    # 4. If all responded, finalize and potentially notify caller
-    _request = get_pending_request(state, transaction_id)
-    _node = response_node
-    _results = results
-    {:noreply, state}
+    case get_pending_request(state, transaction_id) do
+      nil ->
+        # Request already completed or expired
+        {:noreply, state}
+
+      request ->
+        updated_request = StartChildrenRequest.record_node_response(request, response_node, results)
+
+        # Check if all nodes responded
+        if StartChildrenRequest.all_nodes_responded?(updated_request) do
+          # If someone is waiting, reply to them
+          if updated_request.awaiter do
+            GenServer.reply(updated_request.awaiter, StartChildrenRequest.to_start_result(updated_request))
+          end
+
+          # Always cleanup when all nodes have responded
+          {:noreply, remove_pending_request(state, transaction_id)}
+        else
+          {:noreply, update_pending_request(state, updated_request)}
+        end
+    end
   end
 
   @impl true
@@ -235,8 +248,17 @@ defmodule ProcessHub.Coordinator do
       |> Distributor.default_init_opts()
 
     case Distributor.compose_start_request(state, child_specs, opts) do
-      {:ok, result, start_request} ->
+      {:ok, start_request} ->
         new_state = store_pending_request(state, start_request)
+
+        # Return Future only if awaitable: true
+        result =
+          if Keyword.get(opts, :awaitable, false) do
+            start_request.future
+          else
+            :start_initiated
+          end
+
         {:reply, {:ok, result}, new_state}
 
       {:error, _reason} = error ->
@@ -254,6 +276,32 @@ defmodule ProcessHub.Coordinator do
       )
 
     {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:await_start_result, transaction_id}, from, state) do
+    case get_pending_request(state, transaction_id) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      request ->
+        if StartChildrenRequest.all_nodes_responded?(request) do
+          # All nodes responded - return result immediately and cleanup
+          result = StartChildrenRequest.to_start_result(request)
+          new_state = remove_pending_request(state, transaction_id)
+          {:reply, result, new_state}
+        else
+          # Not all nodes responded yet - store awaiter and defer reply
+          updated_request = StartChildrenRequest.set_awaiter(request, from)
+          new_state = update_pending_request(state, updated_request)
+
+          # Schedule timeout check
+          timeout = Keyword.get(request.options, :timeout, 5000)
+          Process.send_after(self(), {:await_timeout, transaction_id, from}, timeout)
+
+          {:noreply, new_state}
+        end
+    end
   end
 
   @impl true
@@ -523,6 +571,27 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({:EXIT, _pid, :normal}, state) do
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:await_timeout, transaction_id, from}, state) do
+    case get_pending_request(state, transaction_id) do
+      nil ->
+        # Already completed and removed
+        {:noreply, state}
+
+      request ->
+        # Check if awaiter is still the same (hasn't been replaced or already replied)
+        if request.awaiter == from do
+          # Timeout reached - return whatever we have
+          GenServer.reply(from, StartChildrenRequest.to_start_result(request))
+          new_state = remove_pending_request(state, transaction_id)
+          {:noreply, new_state}
+        else
+          # Awaiter changed or already handled
+          {:noreply, state}
+        end
+    end
   end
 
   @impl true
@@ -868,6 +937,11 @@ defmodule ProcessHub.Coordinator do
 
   defp get_pending_request(state, transaction_id) do
     Map.get(state.pending_requests, transaction_id)
+  end
+
+  defp update_pending_request(state, %ProcessHub.StartChildrenRequest{} = request) do
+    pending = Map.put(state.pending_requests, request.transaction_id, request)
+    %{state | pending_requests: pending}
   end
 
   defp remove_pending_request(state, transaction_id) do

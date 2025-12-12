@@ -1,4 +1,14 @@
 defmodule ProcessHub.StartChildrenRequest do
+  @moduledoc """
+  Represents a request to start child processes across multiple nodes.
+
+  This module encapsulates all the state and logic needed for tracking
+  a distributed start children operation, including:
+  - Composing and dispatching sub-requests to individual nodes
+  - Recording node responses as they arrive
+  - Building the final StartResult from aggregated responses
+  """
+
   alias ProcessHub.Service.Dispatcher
 
   @default_request_timeout :timer.minutes(10)
@@ -11,21 +21,35 @@ defmodule ProcessHub.StartChildrenRequest do
           sub_requests: [NodeStartRequest.t()],
           future: ProcessHub.Future.t() | nil,
           options: keyword(),
-          expires_at: integer()
+          expires_at: integer(),
+          awaiter: {pid(), reference()} | nil,
+          completed_nodes: MapSet.t()
         }
 
   defstruct [
     :transaction_id,
     :hub_id,
     :expires_at,
+    :awaiter,
     nodes_data: [],
     child_specs: [],
     sub_requests: [],
     future: nil,
-    options: []
+    options: [],
+    completed_nodes: MapSet.new()
   ]
 
   defmodule NodeStartRequest do
+    @moduledoc false
+
+    @type t() :: %__MODULE__{
+            node: node(),
+            children: [map()],
+            start_results: [{ProcessHub.child_id(), term()}] | nil,
+            caller: pid() | nil,
+            status: :pending | :dispatched | :completed
+          }
+
     defstruct [
       :node,
       :children,
@@ -36,25 +60,27 @@ defmodule ProcessHub.StartChildrenRequest do
   end
 
   def new(hub, child_specs, mappings, opts) do
-    ref = make_ref()
+    transaction_id = make_ref()
     timeout = Keyword.get(opts, :request_timeout, @default_request_timeout)
     expires_at = System.monotonic_time(:millisecond) + timeout
 
     future = %ProcessHub.Future{
-      future_resolver: {node(), hub.hub_id},
-      timeout: Keyword.get(opts, :timeout),
-      ref: ref
+      future_resolver: {hub.hub_id, node()},
+      timeout: Keyword.get(opts, :timeout, 5000),
+      ref: transaction_id
     }
 
     %__MODULE__{
-      transaction_id: make_ref(),
+      transaction_id: transaction_id,
       hub_id: hub.hub_id,
       expires_at: expires_at,
       child_specs: child_specs,
       nodes_data: mappings,
       future: future,
       sub_requests: [],
-      options: opts
+      options: opts,
+      awaiter: nil,
+      completed_nodes: MapSet.new()
     }
   end
 
@@ -63,12 +89,23 @@ defmodule ProcessHub.StartChildrenRequest do
     System.monotonic_time(:millisecond) > expires_at
   end
 
+  @spec all_nodes_responded?(t()) :: boolean()
+  def all_nodes_responded?(%__MODULE__{nodes_data: nodes_data, completed_nodes: completed}) do
+    expected_nodes = Enum.map(nodes_data, fn {node, _} -> node end) |> MapSet.new()
+    MapSet.equal?(expected_nodes, completed)
+  end
+
+  @spec mark_node_completed(t(), node()) :: t()
+  def mark_node_completed(%__MODULE__{} = request, node) do
+    %{request | completed_nodes: MapSet.put(request.completed_nodes, node)}
+  end
+
   @spec compose_sub_requests(t()) :: {:ok, t()} | {:error, :no_children}
   def compose_sub_requests(%__MODULE__{nodes_data: []} = _request) do
     {:error, :no_children}
   end
 
-  def compose_sub_requests(%__MODULE__{hub_id: hub_id, nodes_data: mappings, options: opts} = request) do
+  def compose_sub_requests(%__MODULE__{hub_id: hub_id, nodes_data: mappings, options: opts, transaction_id: tid} = request) do
     sub_requests =
       Enum.map(mappings, fn {node, children} ->
         %NodeStartRequest{
@@ -78,8 +115,115 @@ defmodule ProcessHub.StartChildrenRequest do
         }
       end)
 
-    Dispatcher.children_start(hub_id, mappings, opts)
+    # Add transaction info to opts for response routing
+    dispatch_opts =
+      opts
+      |> Keyword.put(:transaction_id, tid)
+      |> Keyword.put(:hub_id, hub_id)
+      |> Keyword.put(:originating_node, node())
+
+    Dispatcher.children_start(hub_id, mappings, dispatch_opts)
 
     {:ok, %{request | sub_requests: sub_requests}}
+  end
+
+  @doc """
+  Records a node's response to the start children request.
+
+  Updates the sub_request for the given node with the start results
+  and marks the node as completed.
+
+  ## Parameters
+    - `request` - The StartChildrenRequest struct
+    - `response_node` - The node that responded
+    - `results` - List of `{child_id, result}` tuples from the node
+
+  ## Returns
+    Updated StartChildrenRequest struct with the node's results recorded.
+  """
+  @spec record_node_response(t(), node(), [{ProcessHub.child_id(), term()}]) :: t()
+  def record_node_response(%__MODULE__{} = request, response_node, results) do
+    updated_sub_requests =
+      Enum.map(request.sub_requests, fn sub_req ->
+        if sub_req.node == response_node do
+          %{sub_req | start_results: results, status: :completed}
+        else
+          sub_req
+        end
+      end)
+
+    request
+    |> Map.put(:sub_requests, updated_sub_requests)
+    |> mark_node_completed(response_node)
+  end
+
+  @doc """
+  Sets the awaiter for this request.
+
+  The awaiter is the GenServer `from` tuple that will receive the result
+  when the request completes.
+
+  ## Parameters
+    - `request` - The StartChildrenRequest struct
+    - `from` - The GenServer `from` tuple `{pid, ref}`
+
+  ## Returns
+    Updated StartChildrenRequest struct with the awaiter set.
+  """
+  @spec set_awaiter(t(), {pid(), reference()}) :: t()
+  def set_awaiter(%__MODULE__{} = request, from) do
+    %{request | awaiter: from}
+  end
+
+  @doc """
+  Converts a completed request into a StartResult struct.
+
+  Aggregates results from all sub_requests into a single StartResult,
+  categorizing each child as either started successfully or errored.
+
+  ## Parameters
+    - `request` - The StartChildrenRequest struct
+
+  ## Returns
+    A `ProcessHub.StartResult` struct with:
+    - `:status` - `:ok` if all children started, `:error` if any failed
+    - `:started` - List of `{child_id, [{node, pid}]}` for successful starts
+    - `:errors` - List of `{child_id, reason}` for failed starts
+    - `:rollback` - Always `false` (rollback handled separately)
+  """
+  @spec to_start_result(t()) :: ProcessHub.StartResult.t()
+  def to_start_result(%__MODULE__{} = request) do
+    {started, errors} =
+      Enum.reduce(request.sub_requests, {[], []}, fn sub_req, {started_acc, errors_acc} ->
+        case sub_req.start_results do
+          nil ->
+            # Node didn't respond - treat as error
+            child_errors =
+              Enum.map(sub_req.children, fn child ->
+                {Map.get(child, :child_id), {:error, :no_response}}
+              end)
+
+            {started_acc, errors_acc ++ child_errors}
+
+          results ->
+            # Process each result
+            Enum.reduce(results, {started_acc, errors_acc}, fn {cid, result}, {s, e} ->
+              case result do
+                {:ok, pid} -> {[{cid, [{sub_req.node, pid}]} | s], e}
+                {:error, reason} -> {s, [{cid, reason} | e]}
+                pid when is_pid(pid) -> {[{cid, [{sub_req.node, pid}]} | s], e}
+              end
+            end)
+        end
+      end)
+
+    status = if Enum.empty?(errors), do: :ok, else: :error
+
+    %ProcessHub.StartResult{
+      status: status,
+      started: started,
+      errors: errors,
+      rollback: false
+    }
   end
 end

@@ -77,6 +77,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     end
 
     defp send_collect_results(post_start_results, start_opts) do
+      hub_id = Keyword.get(start_opts, :hub_id)
+      transaction_id = Keyword.get(start_opts, :transaction_id)
       reply_to = Keyword.get(start_opts, :reply_to, nil)
       local_node = node()
 
@@ -89,6 +91,17 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           {cid, res}
         end)
 
+      # Send to coordinator on the originating node (new pattern)
+      if hub_id && transaction_id do
+        originating_node = Keyword.get(start_opts, :originating_node, node())
+
+        GenServer.cast(
+          {hub_id, originating_node},
+          {:start_children_response, transaction_id, local_node, receiver_data}
+        )
+      end
+
+      # TODO: Keep legacy reply_to for backward compatibility
       if reply_to do
         Enum.each(reply_to, fn respondent ->
           send(respondent, {:collect_start_results, receiver_data, local_node})
