@@ -285,21 +285,27 @@ defmodule ProcessHub.Coordinator do
         {:reply, {:error, :not_found}, state}
 
       request ->
-        if StartChildrenRequest.all_nodes_responded?(request) do
-          # All nodes responded - return result immediately and cleanup
-          result = StartChildrenRequest.to_start_result(request)
-          new_state = remove_pending_request(state, transaction_id)
-          {:reply, result, new_state}
-        else
-          # Not all nodes responded yet - store awaiter and defer reply
-          updated_request = StartChildrenRequest.set_awaiter(request, from)
-          new_state = update_pending_request(state, updated_request)
+        timeout = Keyword.get(request.options, :timeout, 5000)
 
-          # Schedule timeout check
-          timeout = Keyword.get(request.options, :timeout, 5000)
-          Process.send_after(self(), {:await_timeout, transaction_id, from}, timeout)
+        cond do
+          StartChildrenRequest.all_nodes_responded?(request) ->
+            # All nodes responded - return result immediately and cleanup
+            result = StartChildrenRequest.to_start_result(request)
+            new_state = remove_pending_request(state, transaction_id)
+            {:reply, result, new_state}
 
-          {:noreply, new_state}
+          timeout == 0 ->
+            # Timeout is 0 - return immediately with what we have (non-responded = timeout errors)
+            result = StartChildrenRequest.to_start_result(request)
+            new_state = remove_pending_request(state, transaction_id)
+            {:reply, result, new_state}
+
+          true ->
+            # Not all nodes responded yet - store awaiter and defer reply
+            updated_request = StartChildrenRequest.set_awaiter(request, from)
+            new_state = update_pending_request(state, updated_request)
+            Process.send_after(self(), {:await_timeout, transaction_id, from}, timeout)
+            {:noreply, new_state}
         end
     end
   end
