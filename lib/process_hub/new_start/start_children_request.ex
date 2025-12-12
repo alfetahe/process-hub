@@ -13,6 +13,13 @@ defmodule ProcessHub.StartChildrenRequest do
 
   @default_request_timeout :timer.minutes(10)
 
+  # Type for PostStartData from children_add.ex (used by build_node_response)
+  @type post_start_data :: %{
+          cid: ProcessHub.child_id(),
+          result: term(),
+          for_node: {node(), keyword()}
+        }
+
   @type t() :: %__MODULE__{
           transaction_id: reference(),
           hub_id: ProcessHub.hub_id(),
@@ -225,5 +232,64 @@ defmodule ProcessHub.StartChildrenRequest do
       errors: errors,
       rollback: false
     }
+  end
+
+  ##############################################################################
+  # Node-side response handling
+  ##############################################################################
+
+  @doc """
+  Builds the response data to send back to the coordinator from PostStartData results.
+
+  This is used by nodes that receive sub-requests to format their results
+  before sending them back to the originating coordinator.
+
+  ## Parameters
+    - `post_start_results` - List of PostStartData structs from the node's child starts
+
+  ## Returns
+    List of `{child_id, result}` tuples for this node's children.
+  """
+  @spec build_node_response([post_start_data()]) :: [{ProcessHub.child_id(), term()}]
+  def build_node_response(post_start_results) do
+    local_node = node()
+
+    post_start_results
+    |> Enum.filter(fn %{for_node: {for_node, _}} -> for_node === local_node end)
+    |> Enum.map(fn %{cid: cid, result: res} -> {cid, res} end)
+  end
+
+  @doc """
+  Sends the node's start results back to the originating coordinator.
+
+  This function extracts the transaction info from start_opts and sends
+  a GenServer.cast to the coordinator on the originating node.
+
+  ## Parameters
+    - `start_opts` - Keyword list with `:hub_id`, `:transaction_id`, and `:originating_node`
+    - `results` - List of `{child_id, result}` tuples from this node
+
+  ## Returns
+    - `:ok` if the response was sent
+    - `:skip` if no transaction info was present (legacy mode)
+  """
+  @spec send_response_to_coordinator(keyword(), [{ProcessHub.child_id(), term()}]) :: :ok | :skip
+  def send_response_to_coordinator(start_opts, results) do
+    hub_id = Keyword.get(start_opts, :hub_id)
+    transaction_id = Keyword.get(start_opts, :transaction_id)
+
+    if hub_id && transaction_id do
+      originating_node = Keyword.get(start_opts, :originating_node, node())
+      local_node = node()
+
+      GenServer.cast(
+        {hub_id, originating_node},
+        {:start_children_response, transaction_id, local_node, results}
+      )
+
+      :ok
+    else
+      :skip
+    end
   end
 end

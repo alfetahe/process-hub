@@ -16,6 +16,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.StartChildrenRequest
   alias ProcessHub.Hub
 
   use Task
@@ -73,38 +74,21 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     def handle(%__MODULE__{hub: hub, post_start_results: psr, start_opts: start_opts}) do
       ProcessRegistry.bulk_insert(hub.hub_id, store_format(psr), hook_storage: hub.storage.hook)
 
-      send_collect_results(psr, start_opts)
+      # Use StartChildrenRequest for response handling
+      results = StartChildrenRequest.build_node_response(psr)
+      StartChildrenRequest.send_response_to_coordinator(start_opts, results)
+
+      # Legacy support for reply_to
+      send_legacy_results(results, start_opts)
     end
 
-    defp send_collect_results(post_start_results, start_opts) do
-      hub_id = Keyword.get(start_opts, :hub_id)
-      transaction_id = Keyword.get(start_opts, :transaction_id)
+    defp send_legacy_results(results, start_opts) do
       reply_to = Keyword.get(start_opts, :reply_to, nil)
       local_node = node()
 
-      # Each node sends only their own child process startup results.
-      receiver_data =
-        Enum.filter(post_start_results, fn %PostStartData{for_node: {for_node, _}} ->
-          for_node === local_node
-        end)
-        |> Enum.map(fn %PostStartData{cid: cid, result: res} ->
-          {cid, res}
-        end)
-
-      # Send to coordinator on the originating node (new pattern)
-      if hub_id && transaction_id do
-        originating_node = Keyword.get(start_opts, :originating_node, node())
-
-        GenServer.cast(
-          {hub_id, originating_node},
-          {:start_children_response, transaction_id, local_node, receiver_data}
-        )
-      end
-
-      # TODO: Keep legacy reply_to for backward compatibility
       if reply_to do
         Enum.each(reply_to, fn respondent ->
-          send(respondent, {:collect_start_results, receiver_data, local_node})
+          send(respondent, {:collect_start_results, results, local_node})
         end)
       end
     end
