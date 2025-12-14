@@ -142,10 +142,10 @@ defmodule Test.Service.DistributorTest do
     ProcessHub.start_children(hub_id, [child_spec], awaitable: true, timeout: 1000)
     |> ProcessHub.Future.await()
 
+    # Use ProcessHub.stop_children which goes through the coordinator
     {:ok, stop_future} =
-      Distributor.stop_children(hub, [child_spec.id],
+      ProcessHub.stop_children(hub_id, [child_spec.id],
         awaitable: true,
-        check_existing: true,
         timeout: 1000
       )
 

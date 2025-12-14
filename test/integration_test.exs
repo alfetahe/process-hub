@@ -1,9 +1,10 @@
 defmodule Test.IntegrationTest do
-  alias Test.Helper.TestNode
-  alias ProcessHub.Utility.Bag
-  alias Test.Helper.Common
-  alias Test.Helper.Bootstrap
-  alias ProcessHub.Constant.Hook
+  # Aliases for commented-out integration tests - uncomment when tests are enabled
+  # alias Test.Helper.TestNode
+  # alias ProcessHub.Utility.Bag
+  # alias Test.Helper.Common
+  # alias Test.Helper.Bootstrap
+  # alias ProcessHub.Constant.Hook
 
   use ExUnit.Case, async: false
 
