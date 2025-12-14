@@ -15,6 +15,7 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.StopChildrenRequest
   alias ProcessHub.Hub
 
   # 10 seconds
@@ -80,7 +81,58 @@ defmodule ProcessHub.Service.Distributor do
     {:ok, start_request}
   end
 
+  @doc "Composes a stop children request."
+  @spec compose_stop_request(Hub.t(), [ProcessHub.child_id()], keyword()) ::
+          {:ok, StopChildrenRequest.t()} | {:error, :no_children}
+  def compose_stop_request(_hub, [], _opts), do: {:error, :no_children}
+
+  def compose_stop_request(hub, child_ids, opts) do
+    # Group children by the nodes where they exist
+    # Also track children that were not found
+    {nodes_data, not_found} =
+      Enum.reduce(child_ids, {[], []}, fn child_id, {acc, not_found_acc} ->
+        registry_result = ProcessRegistry.lookup(hub.hub_id, child_id)
+
+        case registry_result do
+          nil ->
+            # Child not found in registry
+            {acc, [child_id | not_found_acc]}
+
+          {_, node_pids} ->
+            child_nodes = Keyword.keys(node_pids)
+            child_data = %{nodes: child_nodes, child_id: child_id}
+
+            append_items =
+              Enum.map(child_nodes, fn child_node ->
+                existing_children = acc[child_node] || []
+                {child_node, [child_data | existing_children]}
+              end)
+
+            {Keyword.merge(acc, append_items), not_found_acc}
+        end
+      end)
+
+    case {nodes_data, not_found} do
+      {[], []} ->
+        # No children specified
+        {:error, :no_children}
+
+      {[], not_found_children} ->
+        # All children were not found - still create a request so awaitable works
+        # The request will have empty nodes_data and complete immediately with errors
+        stop_request = StopChildrenRequest.new(hub, [], opts, not_found_children)
+        {:ok, stop_request}
+
+      _ ->
+        # Some children exist - proceed with normal stop
+        # Pass not_found to include them as errors in the result
+        stop_request = StopChildrenRequest.new(hub, nodes_data, opts, not_found)
+        pre_stop_children(stop_request)
+    end
+  end
+
   @doc "Initiates processes shutdown."
+  @deprecated "Use compose_stop_request/3 instead - the coordinator now handles stop requests."
   @spec stop_children(Hub.t(), [ProcessHub.child_id()], keyword()) ::
           (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
   def stop_children(hub, child_ids, opts) do
@@ -104,7 +156,7 @@ defmodule ProcessHub.Service.Distributor do
 
       Keyword.merge(acc, append_items)
     end)
-    |> pre_stop_children(hub, opts)
+    |> pre_stop_children_legacy(hub, opts)
   end
 
   @doc """
@@ -228,7 +280,16 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  defp pre_stop_children(stop_children, hub, opts) do
+  defp pre_stop_children(%StopChildrenRequest{} = stop_request) do
+    # Always use compose_sub_requests - coordinator handles awaitable logic
+    case StopChildrenRequest.compose_sub_requests(stop_request) do
+      {:ok, updated_request} -> {:ok, updated_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Legacy pre_stop_children for backward compatibility
+  defp pre_stop_children_legacy(stop_children, hub, opts) do
     # For backward compatibility we need to handle the old options.
     case Keyword.get(opts, :async_wait, false) do
       false ->

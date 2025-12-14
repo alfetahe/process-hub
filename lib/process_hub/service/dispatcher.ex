@@ -5,6 +5,7 @@ defmodule ProcessHub.Service.Dispatcher do
 
   alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.StartChildrenRequest.NodeStartRequest
+  alias ProcessHub.StopChildrenRequest.NodeStopRequest
   alias :blockade, as: Blockade
 
   use ProcessHub.Constant.Event
@@ -66,7 +67,22 @@ defmodule ProcessHub.Service.Dispatcher do
   end
 
   @doc """
-  Sends the coordinator process a message to stop the child processes passed in.
+  Sends NodeStopRequest structs to their target coordinator processes.
+
+  Each NodeStopRequest contains all routing information needed by the
+  remote node to process the request and send responses back.
+  """
+  @spec children_stop(ProcessHub.hub_id(), [NodeStopRequest.t()]) :: :ok
+  def children_stop(hub_id, node_stop_requests) when is_list(node_stop_requests) do
+    Enum.each(node_stop_requests, fn %NodeStopRequest{node: target_node} = request ->
+      GenServer.cast({hub_id, target_node}, {:stop_children, request})
+    end)
+  end
+
+  @doc """
+  Legacy: Sends the coordinator process a message to stop the child processes passed in.
+
+  @deprecated Use children_stop/2 with NodeStopRequest list instead.
   """
   @spec children_stop(ProcessHub.hub_id(), [{node(), [ProcessHub.child_id()]}], keyword()) :: :ok
   def children_stop(hub_id, children_nodes, stop_opts) do

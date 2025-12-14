@@ -4,6 +4,8 @@ defmodule ProcessHub.Handler.ChildrenRem do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
+  alias ProcessHub.StopChildrenRequest
+  alias ProcessHub.StopChildrenRequest.NodeStopRequest
   alias ProcessHub.Hub
 
   use Task
@@ -13,22 +15,27 @@ defmodule ProcessHub.Handler.ChildrenRem do
     Handler for stopping child processes.
     """
 
+    alias ProcessHub.Service.Storage
+    alias ProcessHub.Constant.StorageKey
+    alias ProcessHub.Service.Distributor
+    alias ProcessHub.StopChildrenRequest.NodeStopRequest
+
     @type t :: %__MODULE__{
             children: [
               %{
                 child_id: ProcessHub.child_id()
               }
             ],
-            hub: Hub.t(),
-            stop_opts: keyword()
+            hub: ProcessHub.Hub.t(),
+            stop_opts: keyword() | nil,
+            node_stop_request: NodeStopRequest.t() | nil
           }
 
     @enforce_keys [
       :children,
-      :stop_opts,
       :hub
     ]
-    defstruct @enforce_keys
+    defstruct [:children, :hub, :stop_opts, :node_stop_request]
 
     @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = arg) do
@@ -44,16 +51,27 @@ defmodule ProcessHub.Handler.ChildrenRem do
               [child_data.child_id | cids]
             end)
 
+          # Use effective_stop_opts to get opts from either new request or legacy opts
+          stop_opts = effective_stop_opts(arg)
+
           Distributor.children_terminate(
             arg.hub,
             cids,
             sync_strategy,
-            arg.stop_opts
+            stop_opts
           )
 
           :ok
       end
     end
+
+    # Get stop_opts from either the NodeStopRequest or the legacy stop_opts field
+    defp effective_stop_opts(%__MODULE__{node_stop_request: %NodeStopRequest{} = req}) do
+      NodeStopRequest.to_stop_opts(req)
+    end
+
+    defp effective_stop_opts(%__MODULE__{stop_opts: opts}) when is_list(opts), do: opts
+    defp effective_stop_opts(_), do: []
   end
 
   defmodule SyncHandle do
@@ -62,6 +80,8 @@ defmodule ProcessHub.Handler.ChildrenRem do
     """
 
     alias ProcessHub.Service.ProcessRegistry
+    alias ProcessHub.StopChildrenRequest
+    alias ProcessHub.StopChildrenRequest.NodeStopRequest
 
     @type t :: %__MODULE__{
             hub: Hub.t(),
@@ -69,16 +89,16 @@ defmodule ProcessHub.Handler.ChildrenRem do
               {ProcessHub.child_id(), :ok | {:error, :not_found}, node()}
             ],
             node: node(),
-            stop_opts: keyword()
+            stop_opts: keyword() | nil,
+            node_stop_request: NodeStopRequest.t() | nil
           }
 
     @enforce_keys [
       :hub,
       :children,
-      :node,
-      :stop_opts
+      :node
     ]
-    defstruct @enforce_keys
+    defstruct [:hub, :children, :node, :stop_opts, :node_stop_request]
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{} = args) do
@@ -94,21 +114,31 @@ defmodule ProcessHub.Handler.ChildrenRem do
         )
       end
 
-      send_collect_results(args.children, args.stop_opts)
+      # Build node response from post_stop_results
+      results = StopChildrenRequest.build_node_response(args.children)
+
+      # Send response to coordinator via the new pattern
+      stop_opts = effective_stop_opts(args)
+      StopChildrenRequest.send_response_to_coordinator(stop_opts, results)
+
+      # Also send legacy results for backward compatibility
+      send_legacy_results(results, stop_opts)
 
       :ok
     end
 
-    defp send_collect_results(post_stop_results, stop_opts) do
+    # Get stop_opts from either the NodeStopRequest or the legacy stop_opts field
+    defp effective_stop_opts(%__MODULE__{node_stop_request: %NodeStopRequest{} = req}) do
+      NodeStopRequest.to_stop_opts(req)
+    end
+
+    defp effective_stop_opts(%__MODULE__{stop_opts: opts}) when is_list(opts), do: opts
+    defp effective_stop_opts(_), do: []
+
+    # Send legacy results for backward compatibility
+    defp send_legacy_results(receiver_data, stop_opts) do
       reply_to = Keyword.get(stop_opts, :reply_to, nil)
       local_node = node()
-
-      # Each node sends only their own child process startup results.
-      receiver_data =
-        Enum.filter(post_stop_results, fn {_cid, _result, node} ->
-          node === local_node
-        end)
-        |> Enum.map(fn {cid, result, _node} -> {cid, result} end)
 
       # Only send response if we have actual results from this node
       # This prevents nodes from sending empty responses for other nodes' results

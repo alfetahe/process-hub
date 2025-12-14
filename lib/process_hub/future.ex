@@ -10,13 +10,14 @@ defmodule ProcessHub.Future do
   @type t :: %__MODULE__{
           future_resolver: {atom(), node()},
           ref: reference(),
-          timeout: non_neg_integer()
+          timeout: non_neg_integer(),
+          action: :start | :stop
         }
 
   @type future_input :: t() | {:ok, t()} | {:error, term()} | term()
   @type await_result :: ProcessHub.StartResult.t() | ProcessHub.StopResult.t() | {:error, term()}
 
-  defstruct [:future_resolver, :ref, :timeout]
+  defstruct [:future_resolver, :ref, :timeout, action: :start]
 
   @doc """
   Waits for the completion of an asynchronous operation and returns the results.
@@ -45,12 +46,19 @@ defmodule ProcessHub.Future do
   def await(future) when is_struct(future) do
     ref = future.ref
     timeout = future.timeout || 5000
+    action = Map.get(future, :action, :start)
 
     case future.future_resolver do
       # New coordinator-based format
       {hub_id, resolver_node} ->
+        await_call =
+          case action do
+            :start -> {:await_start_result, ref}
+            :stop -> {:await_stop_result, ref}
+          end
+
         try do
-          GenServer.call({hub_id, resolver_node}, {:await_start_result, ref}, timeout + 1000)
+          GenServer.call({hub_id, resolver_node}, await_call, timeout + 1000)
         catch
           :exit, {:timeout, _} -> {:error, :timeout}
           :exit, {:noproc, _} -> {:error, :noproc}
