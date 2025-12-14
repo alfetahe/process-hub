@@ -264,19 +264,11 @@ defmodule ProcessHub.Service.Distributor do
   defp pre_start_children(_hub, %ProcessHub.StartChildrenRequest{} = start_request) do
     alias ProcessHub.StartChildrenRequest
 
-    case Keyword.get(start_request.options, :on_failure, :continue) do
-      :continue ->
-        # Always use compose_sub_requests - coordinator handles awaitable logic
-        case StartChildrenRequest.compose_sub_requests(start_request) do
-          {:ok, updated_request} -> {:ok, updated_request}
-          {:error, reason} -> {:error, reason}
-        end
-
-      :rollback ->
-        # TODO: Handle rollback case with new pattern
-        children_mappings = start_request.nodes_data
-        opts = start_request.options
-        {:error, {:rollback_not_implemented, children_mappings, opts}}
+    # Both :continue and :rollback go through the same initial flow
+    # Rollback handling happens in coordinator after all nodes respond
+    case StartChildrenRequest.compose_sub_requests(start_request) do
+      {:ok, updated_request} -> {:ok, updated_request}
+      {:error, reason} -> {:error, reason}
     end
   end
 

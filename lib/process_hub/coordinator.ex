@@ -265,12 +265,20 @@ defmodule ProcessHub.Coordinator do
 
         # Check if all nodes responded
         if StartChildrenRequest.all_nodes_responded?(updated_request) do
+          # Build result and check if rollback is needed
+          result = StartChildrenRequest.to_start_result(updated_request)
+          on_failure = Keyword.get(updated_request.options, :on_failure, :continue)
+
+          final_result =
+            if on_failure == :rollback and result.status == :error do
+              perform_start_rollback(state, result)
+            else
+              result
+            end
+
           # If someone is waiting, reply to them
           if updated_request.awaiter do
-            GenServer.reply(
-              updated_request.awaiter,
-              StartChildrenRequest.to_start_result(updated_request)
-            )
+            GenServer.reply(updated_request.awaiter, final_result)
           end
 
           # Always cleanup when all nodes have responded
@@ -1125,6 +1133,31 @@ defmodule ProcessHub.Coordinator do
   defp remove_pending_stop_request(state, transaction_id) do
     pending = Map.delete(state.pending_stop_requests, transaction_id)
     %{state | pending_stop_requests: pending}
+  end
+
+  # Performs rollback by stopping all successfully started children
+  # Called when on_failure: :rollback is set and some children failed to start
+  defp perform_start_rollback(state, start_result) do
+    alias ProcessHub.DistributedSupervisor
+
+    # Extract successfully started child IDs
+    success_cids = Enum.map(start_result.started, fn {cid, _nodes} -> cid end)
+
+    if length(success_cids) > 0 do
+      # For rollback, we need synchronous cleanup. Instead of going through
+      # the async sync strategy, we directly:
+      # 1. Terminate each child process
+      # 2. Remove from registry directly
+      Enum.each(success_cids, fn cid ->
+        # Terminate the child process
+        DistributedSupervisor.terminate_child(state.procs.dist_sup, cid)
+        # Directly remove from registry (synchronous)
+        ProcessRegistry.delete(state.hub_id, cid)
+      end)
+    end
+
+    # Return result with rollback flag set
+    %{start_result | rollback: true}
   end
 
   defp schedule_request_cleanup do

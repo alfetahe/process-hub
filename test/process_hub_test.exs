@@ -208,8 +208,6 @@ defmodule ProcessHubTest do
     assert is_pid(ProcessHub.StartResult.pid(result5))
   end
 
-  # TODO: Rollback functionality not yet implemented in new flow
-  @tag :skip
   test "start children with rollback", %{hub_id: hub_id} = _context do
     working_spec = ProcessHub.Utility.Bag.gen_child_specs(1) |> List.first()
 
