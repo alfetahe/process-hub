@@ -84,6 +84,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           send_response_via_request(req, results)
           send_legacy_results(results, req.reply_to)
 
+        # TODO: remove the legacy support later.
         %{start_opts: opts} when is_list(opts) ->
           StartChildrenRequest.send_response_to_coordinator(opts, results)
           send_legacy_results(results, Keyword.get(opts, :reply_to))
