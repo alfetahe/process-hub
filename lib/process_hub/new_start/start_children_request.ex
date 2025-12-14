@@ -61,6 +61,8 @@ defmodule ProcessHub.StartChildrenRequest do
             # Child data
             node: node(),
             children: [map()],
+            # Additional options (disable_logging, etc.)
+            options: keyword(),
             # Response tracking
             start_results: [{ProcessHub.child_id(), term()}] | nil,
             caller: pid() | nil,
@@ -76,6 +78,7 @@ defmodule ProcessHub.StartChildrenRequest do
       :children,
       :start_results,
       :caller,
+      options: [],
       status: :pending
     ]
 
@@ -85,7 +88,10 @@ defmodule ProcessHub.StartChildrenRequest do
     """
     @spec to_start_opts(t()) :: keyword()
     def to_start_opts(%__MODULE__{} = req) do
-      opts = []
+      # Start with additional options (disable_logging, etc.)
+      opts = req.options || []
+
+      # Add routing fields
       opts = if req.transaction_id, do: [{:transaction_id, req.transaction_id} | opts], else: opts
       opts = if req.hub_id, do: [{:hub_id, req.hub_id} | opts], else: opts
 
@@ -152,6 +158,11 @@ defmodule ProcessHub.StartChildrenRequest do
     originating = node()
     reply_to = Keyword.get(opts, :reply_to)
 
+    # Pass through options that are needed on remote nodes (like disable_logging)
+    # Filter out routing options that are already explicitly set
+    passthrough_opts =
+      Keyword.drop(opts, [:reply_to, :transaction_id, :hub_id, :originating_node])
+
     sub_requests =
       Enum.map(mappings, fn {target_node, children} ->
         %NodeStartRequest{
@@ -161,6 +172,7 @@ defmodule ProcessHub.StartChildrenRequest do
           reply_to: reply_to,
           node: target_node,
           children: children,
+          options: passthrough_opts,
           status: :dispatched
         }
       end)
