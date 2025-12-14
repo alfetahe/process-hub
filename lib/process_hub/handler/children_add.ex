@@ -17,6 +17,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.StartChildrenRequest
+  alias ProcessHub.StartChildrenRequest.NodeStartRequest
   alias ProcessHub.Hub
 
   use Task
@@ -60,37 +61,65 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @type t :: %__MODULE__{
             hub: Hub.t(),
             post_start_results: [%PostStartData{}],
-            start_opts: keyword()
+            node_start_request: NodeStartRequest.t() | nil,
+            start_opts: keyword() | nil
           }
 
     @enforce_keys [
       :hub,
-      :post_start_results,
-      :start_opts
+      :post_start_results
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [:node_start_request, :start_opts]
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{hub: hub, post_start_results: psr, start_opts: start_opts}) do
+    def handle(%__MODULE__{hub: hub, post_start_results: psr} = arg) do
       ProcessRegistry.bulk_insert(hub.hub_id, store_format(psr), hook_storage: hub.storage.hook)
 
       # Use StartChildrenRequest for response handling
       results = StartChildrenRequest.build_node_response(psr)
-      StartChildrenRequest.send_response_to_coordinator(start_opts, results)
 
-      # Legacy support for reply_to
-      send_legacy_results(results, start_opts)
+      # Route response based on available data
+      case arg do
+        %{node_start_request: %NodeStartRequest{} = req} ->
+          send_response_via_request(req, results)
+          send_legacy_results(results, req.reply_to)
+
+        %{start_opts: opts} when is_list(opts) ->
+          StartChildrenRequest.send_response_to_coordinator(opts, results)
+          send_legacy_results(results, Keyword.get(opts, :reply_to))
+
+        _ ->
+          :ok
+      end
     end
 
-    defp send_legacy_results(results, start_opts) do
-      reply_to = Keyword.get(start_opts, :reply_to, nil)
+    defp send_response_via_request(
+           %NodeStartRequest{
+             hub_id: hub_id,
+             transaction_id: tid,
+             originating_node: origin
+           },
+           results
+         )
+         when not is_nil(hub_id) and not is_nil(tid) do
+      GenServer.cast(
+        {hub_id, origin || node()},
+        {:start_children_response, tid, node(), results}
+      )
+
+      :ok
+    end
+
+    defp send_response_via_request(_, _), do: :skip
+
+    defp send_legacy_results(_results, nil), do: :ok
+
+    defp send_legacy_results(results, reply_to) when is_list(reply_to) do
       local_node = node()
 
-      if reply_to do
-        Enum.each(reply_to, fn respondent ->
-          send(respondent, {:collect_start_results, results, local_node})
-        end)
-      end
+      Enum.each(reply_to, fn respondent ->
+        send(respondent, {:collect_start_results, results, local_node})
+      end)
     end
 
     defp store_format(post_start_results) do
@@ -115,21 +144,23 @@ defmodule ProcessHub.Handler.ChildrenAdd do
               }
             ],
             hub: Hub.t(),
+            node_start_request: NodeStartRequest.t() | nil,
             sync_strategy: SynchronizationStrategy.t(),
             redun_strategy: RedundancyStrategy.t(),
             dist_strategy: DistributionStrategy.t(),
             migr_strategy: MigrationStrategy.t(),
-            start_opts: keyword(),
+            start_opts: keyword() | nil,
             process_data: [%PostStartData{}]
           }
 
     @enforce_keys [
       :children,
-      :start_opts,
       :hub
     ]
     defstruct @enforce_keys ++
                 [
+                  :node_start_request,
+                  :start_opts,
                   :sync_strategy,
                   :redun_strategy,
                   :migr_strategy,
@@ -137,11 +168,27 @@ defmodule ProcessHub.Handler.ChildrenAdd do
                   :process_data
                 ]
 
+    @doc """
+    Returns the effective start options, preferring NodeStartRequest fields
+    when available, falling back to start_opts for legacy support.
+    """
+    @spec effective_start_opts(t()) :: keyword()
+    def effective_start_opts(%__MODULE__{node_start_request: %NodeStartRequest{} = req}) do
+      NodeStartRequest.to_start_opts(req)
+    end
+
+    def effective_start_opts(%__MODULE__{start_opts: opts}) when is_list(opts), do: opts
+    def effective_start_opts(%__MODULE__{}), do: []
+
     @spec handle(t()) :: :ok | {:error, :partitioned}
     def handle(%__MODULE__{} = arg) do
+      # Get effective options and set them for internal use
+      eff_opts = effective_start_opts(arg)
+
       arg = %__MODULE__{
         arg
-        | sync_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strsyn()),
+        | start_opts: eff_opts,
+          sync_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strsyn()),
           redun_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strred()),
           dist_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strdist()),
           migr_strategy: Storage.get(arg.hub.storage.misc, StorageKey.strmigr())
@@ -188,7 +235,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       arg
     end
 
-    defp update_registry(%__MODULE__{hub: hub, process_data: pd, start_opts: so} = arg) do
+    defp update_registry(
+           %__MODULE__{hub: hub, process_data: pd, node_start_request: nsr, start_opts: so} = arg
+         ) do
       Task.Supervisor.async(
         hub.procs.task_sup,
         SyncHandle,
@@ -197,6 +246,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           %SyncHandle{
             hub: hub,
             post_start_results: pd,
+            node_start_request: nsr,
             start_opts: so
           }
         ]

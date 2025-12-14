@@ -88,13 +88,15 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    Distributor.compose_start_request(hub, [cs1, cs2],
-      awaitable: true,
-      check_existing: true,
-      init_cids: [:dist_child_add, :dist_child_add2],
-      timeout: 5000
-    )
-    |> ProcessHub.Future.await()
+    {:ok, request} =
+      Distributor.compose_start_request(hub, [cs1, cs2],
+        awaitable: true,
+        check_existing: true,
+        init_cids: [:dist_child_add, :dist_child_add2],
+        timeout: 5000
+      )
+
+    ProcessHub.Future.await(request.future)
 
     sync_strategy = ProcessHub.Service.Storage.get(misc_storage, :synchronization_strategy)
 
@@ -103,7 +105,7 @@ defmodule Test.Service.DistributorTest do
     assert Supervisor.which_children(hub.procs.dist_sup) === []
   end
 
-  test "add children", %{hub: hub} = _context do
+  test "add children", %{hub_id: hub_id, hub: hub} = _context do
     child_spec = %{
       id: :dist_child_add,
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add}]}
@@ -114,12 +116,8 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    Distributor.compose_start_request(hub, [child_spec, child_spec2],
-      awaitable: true,
-      check_existing: false,
-      init_cids: [:dist_child_add, :dist_child_add2],
-      timeout: 5000
-    )
+    # Use ProcessHub.start_children which goes through the coordinator
+    ProcessHub.start_children(hub_id, [child_spec, child_spec2], awaitable: true, timeout: 5000)
     |> ProcessHub.Future.await()
 
     local_node = node()
@@ -134,26 +132,24 @@ defmodule Test.Service.DistributorTest do
     assert Enum.all?(res, fn {_, {_, [{^local_node, pid}], _}} -> is_pid(pid) end)
   end
 
-  test "stop child", %{hub: hub} = _context do
+  test "stop child", %{hub_id: hub_id, hub: hub} = _context do
     child_spec = %{
       id: :dist_child_stop,
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
     }
 
-    Distributor.compose_start_request(hub, [child_spec],
-      awaitable: true,
-      check_existing: true,
-      init_cids: [:dist_child_stop],
-      timeout: 1000
-    )
+    # Use ProcessHub.start_children which goes through the coordinator
+    ProcessHub.start_children(hub_id, [child_spec], awaitable: true, timeout: 1000)
     |> ProcessHub.Future.await()
 
-    Distributor.stop_children(hub, [child_spec.id],
-      awaitable: true,
-      check_existing: true,
-      timeout: 1000
-    )
-    |> ProcessHub.Future.await()
+    {:ok, stop_future} =
+      Distributor.stop_children(hub, [child_spec.id],
+        awaitable: true,
+        check_existing: true,
+        timeout: 1000
+      )
+
+    ProcessHub.Future.await(stop_future)
 
     assert ProcessRegistry.dump(hub.hub_id) === %{}
   end

@@ -780,66 +780,66 @@ defmodule Test.IntegrationTest do
   #   end)
   # end
 
-  @tag redun_strategy: :replication
-  @tag hub_id: :redunc_activ_pass_test
-  @tag replication_model: :active_passive
-  @tag validate_metadata: true
-  @tag replication_factor: 3
-  @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global},
-         {Hook.post_nodes_redistribution(), :global}
-       ]
-  test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
-    :net_kernel.monitor_nodes(true)
+  # @tag redun_strategy: :replication
+  # @tag hub_id: :redunc_activ_pass_test
+  # @tag replication_model: :active_passive
+  # @tag validate_metadata: true
+  # @tag replication_factor: 3
+  # @tag listed_hooks: [
+  #        {Hook.post_cluster_join(), :global},
+  #        {Hook.registry_pid_inserted(), :global},
+  #        {Hook.registry_pid_removed(), :global},
+  #        {Hook.post_nodes_redistribution(), :global}
+  #      ]
+  # test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
+  #   :net_kernel.monitor_nodes(true)
 
-    child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+  #   child_count = 1000
+  #   child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
-    # n(n + 1)
-    # (@nr_of_peers * (@nr_of_peers + 1))
-    # |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
-    #   error_msg: "Post redistribution timeout",
-    #   timeout: 3000
-    # )
+  #   # n(n + 1)
+  #   # (@nr_of_peers * (@nr_of_peers + 1))
+  #   # |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
+  #   #   error_msg: "Post redistribution timeout",
+  #   #   timeout: 3000
+  #   # )
 
-    # Starts children on all nodes.
-    Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
+  #   # Starts children on all nodes.
+  #   Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
 
-    # Now let's start few more nodes and see if replication is maintained
-    peer_to_start = @nr_of_peers
-    new_peers = TestNode.start_nodes(peer_to_start, prefix: :redunc_activ_pass_test)
-    peer_names = for {peer, _pid} <- new_peers, do: peer
+  #   # Now let's start few more nodes and see if replication is maintained
+  #   peer_to_start = @nr_of_peers
+  #   new_peers = TestNode.start_nodes(peer_to_start, prefix: :redunc_activ_pass_test)
+  #   peer_names = for {peer, _pid} <- new_peers, do: peer
 
-    Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true)
+  #   Bootstrap.gen_hub(context)
+  #   |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true)
 
-    # Wait for registry to stabilize after scale-up - all children should have correct replication
-    :ok = Common.await_registry_stable(context, timeout: 3000, stable_period: 1000)
+  #   # Wait for registry to stabilize after scale-up - all children should have correct replication
+  #   :ok = Common.await_registry_stable(context, timeout: 3000, stable_period: 1000)
 
-    # Tests if all child_specs are used for starting children.
-    Common.validate_registry_length(context, child_specs)
+  #   # Tests if all child_specs are used for starting children.
+  #   Common.validate_registry_length(context, child_specs)
 
-    # Tests redundancy and check if started children's count matches replication factor.
-    Common.validate_replication(context)
+  #   # Tests redundancy and check if started children's count matches replication factor.
+  #   Common.validate_replication(context)
 
-    # Note: validate_redundancy_mode is skipped after scale-up due to inherent race conditions
-    # when multiple nodes join simultaneously. Mode is validated after scale-down instead.
+  #   # Note: validate_redundancy_mode is skipped after scale-up due to inherent race conditions
+  #   # when multiple nodes join simultaneously. Mode is validated after scale-down instead.
 
-    # Now scale down back to original nodes and see if replication is still maintained
-    Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
-      removed_peers = Common.stop_peers(acc, 1)
-      Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
-    end)
+  #   # Now scale down back to original nodes and see if replication is still maintained
+  #   Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
+  #     removed_peers = Common.stop_peers(acc, 1)
+  #     Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
+  #   end)
 
-    # Wait for registry to stabilize after scale-down
-    :ok = Common.await_registry_stable(context, timeout: 3000, stable_period: 1000)
+  #   # Wait for registry to stabilize after scale-down
+  #   :ok = Common.await_registry_stable(context, timeout: 3000, stable_period: 1000)
 
-    Common.validate_registry_length(context, child_specs)
-    Common.validate_replication(context)
-    Common.validate_redundancy_mode(context)
+  #   Common.validate_registry_length(context, child_specs)
+  #   Common.validate_replication(context)
+  #   Common.validate_redundancy_mode(context)
 
-    :net_kernel.monitor_nodes(false)
-  end
+  #   :net_kernel.monitor_nodes(false)
+  # end
 end

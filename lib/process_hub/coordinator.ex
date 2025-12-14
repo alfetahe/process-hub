@@ -41,6 +41,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.State
   alias ProcessHub.StartChildrenRequest
+  alias ProcessHub.StartChildrenRequest.NodeStartRequest
   alias ProcessHub.Hub
 
   # TODO: make configurable.
@@ -156,8 +157,31 @@ defmodule ProcessHub.Coordinator do
     end)
   end
 
+  # New pattern - receives NodeStartRequest struct directly
   @impl true
-  def handle_cast({:start_children, children, start_opts}, state) do
+  def handle_cast({:start_children, %NodeStartRequest{children: children} = request}, state) do
+    if length(children) > 0 do
+      Task.Supervisor.start_child(
+        state.procs.task_sup,
+        ChildrenAdd.StartHandle,
+        :handle,
+        [
+          %ChildrenAdd.StartHandle{
+            children: children,
+            node_start_request: request,
+            hub: state
+          }
+        ]
+      )
+    end
+
+    {:noreply, state}
+  end
+
+  # TODO: remove in future versions
+  # Legacy pattern - receives children list and start_opts separately
+  @impl true
+  def handle_cast({:start_children, children, start_opts}, state) when is_list(children) do
     if length(children) > 0 do
       Task.Supervisor.start_child(
         state.procs.task_sup,
@@ -209,13 +233,17 @@ defmodule ProcessHub.Coordinator do
         {:noreply, state}
 
       request ->
-        updated_request = StartChildrenRequest.record_node_response(request, response_node, results)
+        updated_request =
+          StartChildrenRequest.record_node_response(request, response_node, results)
 
         # Check if all nodes responded
         if StartChildrenRequest.all_nodes_responded?(updated_request) do
           # If someone is waiting, reply to them
           if updated_request.awaiter do
-            GenServer.reply(updated_request.awaiter, StartChildrenRequest.to_start_result(updated_request))
+            GenServer.reply(
+              updated_request.awaiter,
+              StartChildrenRequest.to_start_result(updated_request)
+            )
           end
 
           # Always cleanup when all nodes have responded
@@ -251,9 +279,9 @@ defmodule ProcessHub.Coordinator do
       {:ok, start_request} ->
         new_state = store_pending_request(state, start_request)
 
-        # Return Future only if awaitable: true
+        # Return Future if awaitable: true or async_wait: true (deprecated)
         result =
-          if Keyword.get(opts, :awaitable, false) do
+          if Keyword.get(opts, :awaitable, false) or Keyword.get(opts, :async_wait, false) do
             start_request.future
           else
             :start_initiated

@@ -4,6 +4,7 @@ defmodule ProcessHub.Service.Dispatcher do
   """
 
   alias ProcessHub.Constant.PriorityLevel
+  alias ProcessHub.StartChildrenRequest.NodeStartRequest
   alias :blockade, as: Blockade
 
   use ProcessHub.Constant.Event
@@ -19,8 +20,22 @@ defmodule ProcessHub.Service.Dispatcher do
   end
 
   @doc """
-  Sends the coordinator process a message to start the child processes passed in.
+  Sends NodeStartRequest structs to their target coordinator processes.
 
+  Each NodeStartRequest contains all routing information needed by the
+  remote node to process the request and send responses back.
+  """
+  @spec children_start(ProcessHub.hub_id(), [NodeStartRequest.t()]) :: :ok
+  def children_start(hub_id, node_start_requests) when is_list(node_start_requests) do
+    Enum.each(node_start_requests, fn %NodeStartRequest{node: target_node} = request ->
+      GenServer.cast({hub_id, target_node}, {:start_children, request})
+    end)
+  end
+
+  @doc """
+  Legacy: Sends coordinator processes messages to start child processes.
+
+  @deprecated Use children_start/2 with NodeStartRequest list instead.
   @TODO: should use the underlying PubSub or Gossip.
   """
   @spec children_start(ProcessHub.hub_id(), [{node(), [map()]}], keyword()) :: :ok

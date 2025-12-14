@@ -43,15 +43,28 @@ defmodule ProcessHub.Future do
   """
   @spec await(future_input()) :: await_result()
   def await(future) when is_struct(future) do
-    {hub_id, resolver_node} = future.future_resolver
     ref = future.ref
     timeout = future.timeout || 5000
 
-    try do
-      GenServer.call({hub_id, resolver_node}, {:await_start_result, ref}, timeout + 1000)
-    catch
-      :exit, {:timeout, _} -> {:error, :timeout}
-      :exit, {:noproc, _} -> {:error, :noproc}
+    case future.future_resolver do
+      # New coordinator-based format
+      {hub_id, resolver_node} ->
+        try do
+          GenServer.call({hub_id, resolver_node}, {:await_start_result, ref}, timeout + 1000)
+        catch
+          :exit, {:timeout, _} -> {:error, :timeout}
+          :exit, {:noproc, _} -> {:error, :noproc}
+        end
+
+      # Legacy spawn_collector-based format (used by stop_children)
+      pid when is_pid(pid) ->
+        send(pid, {:process_hub, :collect_results, self(), ref})
+
+        receive do
+          {:process_hub, :async_results, ^ref, results} -> results
+        after
+          timeout -> {:error, :timeout}
+        end
     end
   end
 

@@ -47,23 +47,56 @@ defmodule ProcessHub.StartChildrenRequest do
   ]
 
   defmodule NodeStartRequest do
-    @moduledoc false
+    @moduledoc """
+    Represents a start request for a specific node, containing all data
+    needed for the remote node to start children and route responses.
+    """
 
     @type t() :: %__MODULE__{
+            # Routing fields
+            transaction_id: reference() | nil,
+            hub_id: ProcessHub.hub_id() | nil,
+            originating_node: node() | nil,
+            reply_to: [pid()] | nil,
+            # Child data
             node: node(),
             children: [map()],
+            # Response tracking
             start_results: [{ProcessHub.child_id(), term()}] | nil,
             caller: pid() | nil,
             status: :pending | :dispatched | :completed
           }
 
     defstruct [
+      :transaction_id,
+      :hub_id,
+      :originating_node,
+      :reply_to,
       :node,
       :children,
       :start_results,
       :caller,
       status: :pending
     ]
+
+    @doc """
+    Converts NodeStartRequest to keyword options for backward compatibility
+    with existing code that expects start_opts.
+    """
+    @spec to_start_opts(t()) :: keyword()
+    def to_start_opts(%__MODULE__{} = req) do
+      opts = []
+      opts = if req.transaction_id, do: [{:transaction_id, req.transaction_id} | opts], else: opts
+      opts = if req.hub_id, do: [{:hub_id, req.hub_id} | opts], else: opts
+
+      opts =
+        if req.originating_node,
+          do: [{:originating_node, req.originating_node} | opts],
+          else: opts
+
+      opts = if req.reply_to, do: [{:reply_to, req.reply_to} | opts], else: opts
+      opts
+    end
   end
 
   def new(hub, child_specs, mappings, opts) do
@@ -112,24 +145,28 @@ defmodule ProcessHub.StartChildrenRequest do
     {:error, :no_children}
   end
 
-  def compose_sub_requests(%__MODULE__{hub_id: hub_id, nodes_data: mappings, options: opts, transaction_id: tid} = request) do
+  def compose_sub_requests(
+        %__MODULE__{hub_id: hub_id, nodes_data: mappings, options: opts, transaction_id: tid} =
+          request
+      ) do
+    originating = node()
+    reply_to = Keyword.get(opts, :reply_to)
+
     sub_requests =
-      Enum.map(mappings, fn {node, children} ->
+      Enum.map(mappings, fn {target_node, children} ->
         %NodeStartRequest{
-          node: node,
+          transaction_id: tid,
+          hub_id: hub_id,
+          originating_node: originating,
+          reply_to: reply_to,
+          node: target_node,
           children: children,
           status: :dispatched
         }
       end)
 
-    # Add transaction info to opts for response routing
-    dispatch_opts =
-      opts
-      |> Keyword.put(:transaction_id, tid)
-      |> Keyword.put(:hub_id, hub_id)
-      |> Keyword.put(:originating_node, node())
-
-    Dispatcher.children_start(hub_id, mappings, dispatch_opts)
+    # Dispatch using the new signature that accepts NodeStartRequest list
+    Dispatcher.children_start(hub_id, sub_requests)
 
     {:ok, %{request | sub_requests: sub_requests}}
   end
