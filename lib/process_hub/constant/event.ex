@@ -43,6 +43,11 @@ defmodule ProcessHub.Constant.Event do
   """
   @type event_child_process_pid_update() :: :child_process_pid_update_event
 
+  @typedoc """
+  Event used when broadcasting local registry data to nodes that join the cluster.
+  """
+  @type event_node_join_sync() :: :node_join_sync_event
+
   defmacro __using__(_) do
     quote do
       @event_distribute_children :distribute_children_event
@@ -54,6 +59,7 @@ defmodule ProcessHub.Constant.Event do
       @event_sync_remote_children :sync_remote_children_event
       @event_migration_add :migration_add_event
       @event_child_process_pid_update :child_process_pid_update_event
+      @event_node_join_sync :node_join_sync_event
     end
   end
 end

@@ -41,4 +41,23 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   """
   @spec handle_synchronization(__MODULE__.t(), Hub.t(), term(), node()) :: :ok
   def handle_synchronization(strategy, hub, remote_data, remote_node)
+
+  @doc """
+  Broadcasts local registry data to target nodes when they join the cluster.
+  Called after nodes are added to the cluster state.
+  """
+  @spec broadcast_local_data(
+          __MODULE__.t(),
+          Hub.t(),
+          [{ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}],
+          [node()]
+        ) :: :ok
+  def broadcast_local_data(strategy, hub, local_data, target_nodes)
+
+  @doc """
+  Handles received node join data and stores it in the local registry.
+  Called when another node broadcasts its registry data to us.
+  """
+  @spec handle_node_join_data(__MODULE__.t(), Hub.t(), term(), node()) :: :ok
+  def handle_node_join_data(strategy, hub, remote_data, remote_node)
 end

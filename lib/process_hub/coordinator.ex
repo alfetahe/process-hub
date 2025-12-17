@@ -603,6 +603,14 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_info({@event_node_join_sync, {sync_data, remote_node}}, state) do
+    sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
+    SynchronizationStrategy.handle_node_join_data(sync_strategy, state, sync_data, remote_node)
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info({@event_migration_add, {children, start_opts}}, state) do
     if length(children) > 0 do
       State.lock_event_handler(state)
@@ -908,6 +916,9 @@ defmodule ProcessHub.Coordinator do
         Cluster.add_hub_node(state.storage.misc, node)
       end)
 
+      # Broadcast local registry data to joining nodes
+      broadcast_local_registry(state, new_nodes)
+
       # Dispatch pre hooks for all nodes
       Enum.each(new_nodes, fn node ->
         HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
@@ -941,6 +952,20 @@ defmodule ProcessHub.Coordinator do
     end
 
     state
+  end
+
+  # Broadcasts local registry data to the specified target nodes.
+  # Called when new nodes join the cluster.
+  defp broadcast_local_registry(state, target_nodes) do
+    sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
+    local_data = Synchronizer.local_sync_data(state)
+
+    SynchronizationStrategy.broadcast_local_data(
+      sync_strategy,
+      state,
+      local_data,
+      target_nodes
+    )
   end
 
   # Handle a single node going down (from explicit @event_cluster_leave).
@@ -1097,6 +1122,7 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_children_unregistration)
     Blockade.add_handler(eq, @event_migration_add)
     Blockade.add_handler(eq, @event_child_process_pid_update)
+    Blockade.add_handler(eq, @event_node_join_sync)
   end
 
   defp register_handlers(hook_storage, hooks) when is_map(hooks) do

@@ -164,6 +164,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.Gossip do
     alias ProcessHub.Strategy.Synchronization.Gossip
 
+    use Event
+
     @impl true
     def init(strategy, _hub), do: strategy
 
@@ -236,6 +238,43 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
         {sync_data, sync_acks} ->
           handle_sync_data(strategy, hub, ref, sync_data, sync_acks)
+      end
+
+      :ok
+    end
+
+    @impl true
+    def broadcast_local_data(strategy, hub, local_data, target_nodes) do
+      ref = make_ref()
+      timestamp = Bag.timestamp(:microsecond)
+
+      # Initialize with local node's data
+      nodes_data = %{node() => {local_data, timestamp}}
+
+      Storage.insert(hub.storage.misc, ref, {nodes_data, []}, ttl: strategy.sync_interval)
+
+      # Start gossip to target nodes
+      target_nodes
+      |> Gossip.recipients_select(strategy)
+      |> forward_join_data(strategy, hub, %{
+        ref: ref,
+        nodes_data: nodes_data,
+        sync_acks: []
+      })
+
+      :ok
+    end
+
+    @impl true
+    def handle_node_join_data(strategy, hub, sync_data, _remote_node) do
+      %{ref: ref, nodes_data: nodes_data, sync_acks: sync_acks} = sync_data
+
+      case merge_join_data(hub.storage.misc, hub, ref, nodes_data, sync_acks) do
+        :invalidated ->
+          :ok
+
+        {merged_data, merged_acks} ->
+          handle_join_sync_data(strategy, hub, ref, merged_data, merged_acks)
       end
 
       :ok
@@ -408,6 +447,116 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           )
         end)
       end)
+    end
+
+    # Node join specific helper functions
+
+    defp forward_join_data(recipients, _strategy, hub, sync_data) do
+      local_node = node()
+
+      Enum.each(recipients, fn recipient ->
+        send({hub.hub_id, recipient}, {@event_node_join_sync, {sync_data, local_node}})
+      end)
+    end
+
+    defp merge_join_data(misc_storage, hub, ref, nodes_data, sync_acks) do
+      local_timestamp = Bag.timestamp(:microsecond)
+      local_data = Synchronizer.local_sync_data(hub)
+      nodes_data = Map.put(nodes_data, node(), {local_data, local_timestamp})
+
+      case Storage.get(misc_storage, ref) do
+        nil ->
+          {nodes_data, []}
+
+        :invalidated ->
+          :invalidated
+
+        {cached_data, cached_acks} ->
+          merged_data =
+            Map.merge(nodes_data, cached_data, fn _node_key, {ld, lt}, {rd, rt} ->
+              cond do
+                lt > rt -> {ld, lt}
+                true -> {rd, rt}
+              end
+            end)
+
+          {merged_data, Enum.uniq(cached_acks ++ sync_acks)}
+      end
+    end
+
+    defp handle_join_sync_data(strategy, %Hub{} = hub, ref, sync_data, sync_acks) do
+      Storage.insert(hub.storage.misc, ref, {sync_data, sync_acks}, ttl: strategy.sync_interval)
+
+      missing_nodes = missing_nodes(sync_data, hub.storage.misc)
+
+      cond do
+        length(missing_nodes) === 0 ->
+          unacked_nodes = Gossip.unacked_nodes(sync_acks, hub.storage.misc)
+
+          sync_acks = sync_join_acks(hub, unacked_nodes, sync_acks, sync_data)
+
+          if length(unacked_nodes) === 0 do
+            Gossip.invalidate_ref(strategy, hub.storage.misc, ref)
+          else
+            forward_join_data(unacked_nodes, strategy, hub, %{
+              ref: ref,
+              nodes_data: sync_data,
+              sync_acks: sync_acks
+            })
+          end
+
+        length(missing_nodes) > 0 ->
+          forward_join_data(missing_nodes, strategy, hub, %{
+            ref: ref,
+            nodes_data: sync_data,
+            sync_acks: sync_acks
+          })
+
+        true ->
+          throw("Invalid state")
+      end
+    end
+
+    defp sync_join_acks(hub, unacked_nodes, sync_acks, sync_data) do
+      if Enum.member?(unacked_nodes, node()) do
+        sync_join_locally(hub.storage.misc, hub, sync_data)
+
+        [node() | sync_acks]
+      else
+        sync_acks
+      end
+    end
+
+    defp sync_join_locally(misc_storage, hub, nodes_data) do
+      node_timestamps =
+        case Storage.get(misc_storage, StorageKey.gct()) do
+          nil -> %{}
+          node_timestamps -> node_timestamps
+        end
+
+      Map.delete(nodes_data, node())
+      |> Enum.each(fn {node, {data, timestamp}} ->
+        # Make sure that we don't process data that is older than what we already have.
+        node_timestamp = Map.get(node_timestamps, node, nil)
+
+        cond do
+          node_timestamp === nil ->
+            sync_join_locally_node(misc_storage, hub, node, data, timestamp)
+
+          node_timestamp < timestamp ->
+            sync_join_locally_node(misc_storage, hub, node, data, timestamp)
+
+          true ->
+            :ok
+        end
+      end)
+    end
+
+    defp sync_join_locally_node(misc_storage, hub, node, data, timestamp) do
+      # For node join, we only append data (don't detach since this is fresh data)
+      Synchronizer.append_data(hub, %{node => data})
+
+      update_node_timestamps(misc_storage, node, timestamp)
     end
   end
 end
