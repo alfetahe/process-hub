@@ -504,14 +504,27 @@ defmodule ProcessHub.Coordinator do
   def handle_info({:process_batch, :nodedown}, state) do
     {state, nodes} = take_batch(state, :nodedown)
 
-    if length(nodes) > 0 do
-      # Dispatch a single batch event with all down nodes.
+    # Validate: only process nodes that are actually disconnected
+    current_connected = Node.list()
+
+    valid_down_nodes =
+      Enum.filter(nodes, fn node ->
+        not Enum.member?(current_connected, node)
+      end)
+
+    if length(valid_down_nodes) > 0 do
+      # Dispatch a single batch event with all validated down nodes.
       # This ensures we calculate redistribution once based on final cluster state.
-      Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave_batch, nodes, %{
-        members: :local,
-        atomic_priority_set: PriorityLevel.locked(),
-        local_priority_set: true
-      })
+      Dispatcher.propagate_event(
+        state.procs.event_queue,
+        @event_cluster_leave_batch,
+        valid_down_nodes,
+        %{
+          members: :local,
+          atomic_priority_set: PriorityLevel.locked(),
+          local_priority_set: true
+        }
+      )
     end
 
     {:noreply, state}
@@ -554,9 +567,17 @@ defmodule ProcessHub.Coordinator do
   def handle_info({:process_batch, :cluster_join}, state) do
     {state, nodes} = take_batch(state, :cluster_join)
 
-    if length(nodes) > 0 do
-      # Process all joining nodes together
-      state = handle_hub_join_batch(state, nodes)
+    # Validate: only process nodes that are still connected
+    current_connected = Node.list()
+
+    valid_join_nodes =
+      Enum.filter(nodes, fn node ->
+        Enum.member?(current_connected, node)
+      end)
+
+    if length(valid_join_nodes) > 0 do
+      # Process all validated joining nodes together
+      state = handle_hub_join_batch(state, valid_join_nodes)
       {:noreply, state}
     else
       {:noreply, state}
@@ -791,20 +812,25 @@ defmodule ProcessHub.Coordinator do
   @spec batch_event(Hub.t(), atom(), node()) :: Hub.t()
   defp batch_event(state, event_type, node) do
     batch = get_in(state.event_batches, [event_type]) || Hub.default_batch_state()
-    batch_window = get_batch_window(state)
+    debounce_delay = get_debounce_delay(state)
 
-    new_batch =
-      case batch.timer_ref do
-        nil ->
-          # First event in batch - start timer
-          timer_ref = Process.send_after(self(), {:process_batch, event_type}, batch_window)
-          %{nodes: [node], timer_ref: timer_ref}
+    # Cancel existing timer if present (true debounce - reset on each event)
+    if batch.timer_ref do
+      Process.cancel_timer(batch.timer_ref)
+    end
 
-        _ref ->
-          # Add to existing batch
-          %{batch | nodes: [node | batch.nodes]}
+    # Always start a new timer (resets the debounce window)
+    timer_ref = Process.send_after(self(), {:process_batch, event_type}, debounce_delay)
+
+    # Deduplicate nodes in batch
+    nodes =
+      if Enum.member?(batch.nodes, node) do
+        batch.nodes
+      else
+        [node | batch.nodes]
       end
 
+    new_batch = %{nodes: nodes, timer_ref: timer_ref}
     put_in(state.event_batches[event_type], new_batch)
   end
 
@@ -818,9 +844,9 @@ defmodule ProcessHub.Coordinator do
     {state, nodes}
   end
 
-  # Returns the configured batch window in milliseconds from storage.
-  defp get_batch_window(state) do
-    Storage.get(state.storage.misc, StorageKey.ebd()) || 500
+  # Returns the configured debounce delay in milliseconds from storage.
+  defp get_debounce_delay(state) do
+    Storage.get(state.storage.misc, StorageKey.ced()) || 200
   end
 
   defp join_handlers(handlers, state) do
@@ -870,7 +896,7 @@ defmodule ProcessHub.Coordinator do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
     local_node = node()
 
-    # Filter to only new nodes (not ourselves and not already in cluster)
+    # Filter to only new nodes.
     new_nodes =
       Enum.filter(nodes, fn node ->
         Cluster.new_node?(hub_nodes, node) and node !== local_node
@@ -1058,7 +1084,7 @@ defmodule ProcessHub.Coordinator do
     Storage.insert(storage.misc, StorageKey.hdi(), settings.hubs_discover_interval)
     Storage.insert(storage.misc, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
     Storage.insert(storage.misc, StorageKey.mbt(), settings.migr_base_timeout)
-    Storage.insert(storage.misc, StorageKey.ebd(), settings.event_batch_delay)
+    Storage.insert(storage.misc, StorageKey.ced(), settings.cluster_event_debounce)
   end
 
   defp register_handlers(%{event_queue: eq}) do

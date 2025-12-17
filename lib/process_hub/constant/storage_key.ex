@@ -32,6 +32,6 @@ defmodule ProcessHub.Constant.StorageKey do
   def hodw, do: :handover_data_wait
   @spec mbt() :: :migration_base_timeout
   def mbt, do: :migration_base_timeout
-  @spec ebd() :: :event_batch_delay
-  def ebd, do: :event_batch_delay
+  @spec ced() :: :cluster_event_debounce
+  def ced, do: :cluster_event_debounce
 end
