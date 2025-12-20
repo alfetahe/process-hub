@@ -58,7 +58,7 @@ defmodule ProcessHub.Service.Dispatcher do
         {children_data, opts},
         %{
           members: [child_node],
-          priority: PriorityLevel.locked()
+          priority: PriorityLevel.high()
         }
       )
     end)

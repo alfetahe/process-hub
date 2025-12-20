@@ -17,7 +17,7 @@ defmodule ProcessHub.Service.State do
   def is_locked?(hub) do
     {:ok, prio_level} = Blockade.get_priority(hub.procs.event_queue)
 
-    prio_level === PriorityLevel.locked()
+    prio_level === PriorityLevel.high()
   end
 
   @doc "Returns a boolean indicating whether the hub cluster is partitioned."
@@ -39,7 +39,7 @@ defmodule ProcessHub.Service.State do
 
     Blockade.set_priority(
       hub.procs.event_queue,
-      PriorityLevel.locked(),
+      PriorityLevel.high(),
       options
     )
 
@@ -55,7 +55,7 @@ defmodule ProcessHub.Service.State do
   def unlock_event_handler(hub) do
     Blockade.set_priority(
       hub.procs.event_queue,
-      PriorityLevel.unlocked(),
+      PriorityLevel.low(),
       %{local_priority_set: true}
     )
 
@@ -102,7 +102,7 @@ defmodule ProcessHub.Service.State do
     HookManager.dispatch_hook(
       hook_storage,
       Hook.priority_state_updated(),
-      {PriorityLevel.locked(), options}
+      {PriorityLevel.high(), options}
     )
   end
 
@@ -110,7 +110,7 @@ defmodule ProcessHub.Service.State do
     HookManager.dispatch_hook(
       hook_storage,
       Hook.priority_state_updated(),
-      {PriorityLevel.unlocked(), options}
+      {PriorityLevel.low(), options}
     )
   end
 

@@ -123,7 +123,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         hub.procs.event_queue,
         @event_sync_remote_children,
         {local_processes, local_node},
-        %{members: nodes, priority: PriorityLevel.locked()}
+        %{members: nodes, priority: PriorityLevel.high()}
       )
     end
 

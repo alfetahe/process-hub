@@ -18,9 +18,9 @@ defmodule Test.Service.StateTest do
 
   test "is locked?", %{hub: hub} = _context do
     assert State.is_locked?(hub) === false
-    :blockade.set_priority(hub.procs.event_queue, PriorityLevel.unlocked())
+    :blockade.set_priority(hub.procs.event_queue, PriorityLevel.low())
     assert State.is_locked?(hub) === false
-    :blockade.set_priority(hub.procs.event_queue, PriorityLevel.locked())
+    :blockade.set_priority(hub.procs.event_queue, PriorityLevel.high())
     assert State.is_locked?(hub) === true
   end
 

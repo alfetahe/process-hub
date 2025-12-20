@@ -147,7 +147,7 @@ defmodule ProcessHub.Coordinator do
     # Notify all the nodes in the cluster that this node is leaving the hub.
     Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave, node(), %{
       members: :external,
-      priority: PriorityLevel.locked()
+      priority: PriorityLevel.high()
     })
 
     # Terminate all the running tasks before shutting down the coordinator.
@@ -521,7 +521,7 @@ defmodule ProcessHub.Coordinator do
         valid_down_nodes,
         %{
           members: :local,
-          atomic_priority_set: PriorityLevel.locked(),
+          atomic_priority_set: PriorityLevel.high(),
           local_priority_set: true
         }
       )
@@ -732,7 +732,7 @@ defmodule ProcessHub.Coordinator do
 
     Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_join, node(), %{
       members: :external,
-      priority: PriorityLevel.locked()
+      priority: PriorityLevel.high()
     })
 
     {:noreply, state}

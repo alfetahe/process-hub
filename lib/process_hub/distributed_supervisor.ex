@@ -179,7 +179,7 @@ defmodule ProcessHub.DistributedSupervisor do
       {[{child_id, :self_exit, node}], node, []},
       %{
         members: :global,
-        priority: PriorityLevel.locked()
+        priority: PriorityLevel.high()
       }
     )
 
@@ -195,7 +195,7 @@ defmodule ProcessHub.DistributedSupervisor do
       {child_id, {node(), new_pid}},
       %{
         members: :global,
-        priority: PriorityLevel.locked()
+        priority: PriorityLevel.high()
       }
     )
   end

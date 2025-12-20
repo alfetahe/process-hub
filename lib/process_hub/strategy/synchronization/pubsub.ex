@@ -38,7 +38,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
         @event_children_registration,
         {children, node, opts},
         %{
-          priority: PriorityLevel.locked(),
+          priority: PriorityLevel.high(),
           members: Keyword.get(opts, :members, :global)
         }
       )
@@ -52,7 +52,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
         @event_children_unregistration,
         {children, node, opts},
         %{
-          priority: PriorityLevel.locked(),
+          priority: PriorityLevel.high(),
           members: Keyword.get(opts, :members, :global)
         }
       )
