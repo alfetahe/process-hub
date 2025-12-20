@@ -575,12 +575,13 @@ defmodule ProcessHub.Coordinator do
         Enum.member?(current_connected, node)
       end)
 
-    state = if length(valid_join_nodes) > 0 do
-      # Process all validated joining nodes together
-      handle_hub_join(state, valid_join_nodes)
-    else
-      state
-    end
+    state =
+      if length(valid_join_nodes) > 0 do
+        # Process all validated joining nodes together
+        handle_hub_join(state, valid_join_nodes)
+      else
+        state
+      end
 
     {:noreply, state}
   end
@@ -916,7 +917,8 @@ defmodule ProcessHub.Coordinator do
         @event_distribute_children,
         new_nodes,
         %{
-          members: :local
+          members: :local,
+          priority: PriorityLevel.low()
         }
       )
 
