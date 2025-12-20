@@ -3,7 +3,7 @@ defmodule ProcessHub.Constant.PriorityLevel do
   Priority levels for the local event queue.
   """
 
-  @type priority_level :: -100 | 0 | 100
+  @type priority_level :: 0 | 50 | 100
 
   @doc """
   The priority level for high priority events in the local event queue.
@@ -22,5 +22,5 @@ defmodule ProcessHub.Constant.PriorityLevel do
   Priority level for low priority events in the local event queue.
   """
   @spec low() :: priority_level()
-  def low(), do: -100
+  def low(), do: 0
 end

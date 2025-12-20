@@ -10,6 +10,6 @@ defmodule Test.Constant.PriorityLevelTest do
   end
 
   test "low" do
-    assert ProcessHub.Constant.PriorityLevel.low() === -100
+    assert ProcessHub.Constant.PriorityLevel.low() === 0
   end
 end
