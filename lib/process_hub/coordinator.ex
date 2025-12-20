@@ -541,14 +541,14 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_distribute_children, node}, state) do
+  def handle_info({@event_distribute_children, nodes}, state) do
     Task.Supervisor.start_child(
       state.procs.task_sup,
       ClusterUpdate.NodeUp,
       :handle,
       [
         %ClusterUpdate.NodeUp{
-          node: node,
+          nodes: nodes,
           hub: state
         }
       ]
@@ -890,7 +890,7 @@ defmodule ProcessHub.Coordinator do
 
       # Atomic dispatch with locking.
       # TODO: why not use the dispatch_lock function?
-      Dispatcher.propagate_event(state.procs.event_queue, @event_distribute_children, node, %{
+      Dispatcher.propagate_event(state.procs.event_queue, @event_distribute_children, [node], %{
         members: :local
       })
 
@@ -936,12 +936,15 @@ defmodule ProcessHub.Coordinator do
         State.toggle_quorum_success(state)
       end
 
-      # Dispatch distribute_children for each new node
-      Enum.each(new_nodes, fn node ->
-        Dispatcher.propagate_event(state.procs.event_queue, @event_distribute_children, node, %{
+      # Dispatch distribute_children with all new nodes
+      Dispatcher.propagate_event(
+        state.procs.event_queue,
+        @event_distribute_children,
+        new_nodes,
+        %{
           members: :local
-        })
-      end)
+        }
+      )
 
       State.lock_event_handler(state)
 

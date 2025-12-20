@@ -32,7 +32,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             migr_strat: MigrationStrategy.t(),
             partition_strat: PartitionToleranceStrategy.t(),
             dist_strat: DistributionStrategy.t(),
-            node: node(),
+            nodes: [node()],
             hub: Hub.t(),
             repl_fact: pos_integer(),
             local_children: list(),
@@ -43,7 +43,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           }
 
     @enforce_keys [
-      :node,
+      :nodes,
       :hub
     ]
     defstruct @enforce_keys ++
@@ -62,14 +62,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                 ]
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{hub: hub, node: node} = arg) do
+    def handle(%__MODULE__{hub: hub, nodes: nodes} = arg) do
       arg = attach_data(arg)
 
       # Dispatch the nodes pre redistribution event.
       HookManager.dispatch_hook(
         hub.storage.hook,
         Hook.pre_nodes_redistribution(),
-        {:nodeup, node}
+        {:nodeup, nodes}
       )
 
       # Handle the redistribution of processes.
@@ -77,14 +77,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         distribute_processes(arg)
       end
 
-      # Propagate the local children to the new node.
-      propagate_local_children(hub, node)
+      # Propagate the local children to the new nodes.
+      propagate_local_children(hub, nodes)
 
       # Dispatch the nodes post redistribution event.
       HookManager.dispatch_hook(
         hub.storage.hook,
         Hook.post_nodes_redistribution(),
-        {:nodeup, node}
+        {:nodeup, nodes}
       )
 
       # Unlock the event handler.
@@ -115,7 +115,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       }
     end
 
-    defp propagate_local_children(hub, node) do
+    defp propagate_local_children(hub, nodes) do
       local_processes = Synchronizer.local_sync_data(hub)
       local_node = node()
 
@@ -123,7 +123,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         hub.procs.event_queue,
         @event_sync_remote_children,
         {local_processes, local_node},
-        %{members: [node], priority: PriorityLevel.locked()}
+        %{members: nodes, priority: PriorityLevel.locked()}
       )
     end
 
@@ -147,18 +147,31 @@ defmodule ProcessHub.Handler.ClusterUpdate do
              async_tasks: async_tasks,
              migr_strat: migr_strat,
              sync_strat: sync_strat,
-             node: node
+             nodes: _nodes
            } = arg
          ) do
       task =
         Task.async(fn ->
           child_data =
-            Enum.map(data, fn %{child_spec: cs, metadata: m} ->
-              {cs, m}
+            Enum.map(data, fn %{child_spec: cs, metadata: m, target_node: target_node} ->
+              {cs, m, target_node}
             end)
 
           if !Enum.empty?(child_data) do
-            MigrationStrategy.handle_migration(migr_strat, arg.hub, child_data, node, sync_strat)
+            # Group by target node and migrate
+            child_data
+            |> Enum.group_by(fn {_cs, _m, target_node} -> target_node end)
+            |> Enum.each(fn {target_node, items} ->
+              items_without_node = Enum.map(items, fn {cs, m, _} -> {cs, m} end)
+
+              MigrationStrategy.handle_migration(
+                migr_strat,
+                arg.hub,
+                items_without_node,
+                target_node,
+                sync_strat
+              )
+            end)
           end
         end)
 
@@ -170,24 +183,31 @@ defmodule ProcessHub.Handler.ClusterUpdate do
              hub: hub,
              keep: keep,
              async_tasks: async_tasks,
-             node: node
+             nodes: nodes
            } = arg
          ) do
       task =
         Task.async(fn ->
           if !Enum.empty?(keep) do
-            handle_redundancy(hub, node, keep)
-            handle_redistribution(hub, node, keep)
+            handle_redundancy(hub, nodes, keep)
+            handle_redistribution(hub, nodes, keep)
           end
         end)
 
       %__MODULE__{arg | async_tasks: [task | async_tasks]}
     end
 
-    defp handle_redistribution(hub, node, children) do
-      redist_children =
-        Enum.map(children, fn %{child_spec: cs, child_nodes: cn, metadata: m} ->
-          %{
+    defp handle_redistribution(hub, _nodes, children) do
+      # Group children by their target nodes
+      node_children_map =
+        Enum.reduce(children, %{}, fn %{
+                                        child_spec: cs,
+                                        child_nodes: cn,
+                                        metadata: m,
+                                        target_nodes: target_nodes
+                                      },
+                                      acc ->
+          child_data = %{
             hub_id: hub.hub_id,
             nodes: cn,
             child_id: cs.id,
@@ -195,14 +215,20 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             metadata: m,
             migration_add: true
           }
+
+          # Add to each target node
+          Enum.reduce(target_nodes, acc, fn target_node, inner_acc ->
+            Map.update(inner_acc, target_node, [child_data], &[child_data | &1])
+          end)
         end)
 
-      Dispatcher.children_migrate(hub.procs.event_queue, [{node, redist_children}],
-        migration_add: true
-      )
+      node_children_list =
+        Enum.map(node_children_map, fn {node, children} -> {node, children} end)
+
+      Dispatcher.children_migrate(hub.procs.event_queue, node_children_list, migration_add: true)
     end
 
-    defp handle_redundancy(hub, node, children) do
+    defp handle_redundancy(hub, nodes, children) do
       children_pids = ProcessRegistry.local_data(hub.hub_id)
 
       redun_data =
@@ -215,7 +241,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       HookManager.dispatch_hook(
         hub.storage.hook,
         Hook.pre_children_redistribution(),
-        {redun_data, {:up, node}}
+        {redun_data, {:up, nodes}}
       )
     end
 
@@ -236,7 +262,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
              local_children: lc,
              dist_strat: dist_strat,
              repl_fact: rp,
-             node: node
+             nodes: nodes
            } = arg
          ) do
       local_node = node()
@@ -253,20 +279,51 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         Enum.reduce(lc, {[], []}, fn {child_id, {cs, ecn, m}}, {keep, migrate} = _acc ->
           cn = Bag.get_by_key(cid_node_pairs, child_id, [])
           nodes_old = Keyword.keys(ecn)
-          item = %{child_spec: cs, child_nodes: cn, child_nodes_old: nodes_old, metadata: m}
 
-          case Enum.member?(cn, node) do
+          # Find which of the new nodes should have this child
+          target_nodes = Enum.filter(nodes, fn n -> Enum.member?(cn, n) end)
+
+          case length(target_nodes) > 0 do
             true ->
               case Enum.member?(cn, local_node) do
                 true ->
+                  # Keep locally, but track target nodes for redundancy updates
+                  item = %{
+                    child_spec: cs,
+                    child_nodes: cn,
+                    child_nodes_old: nodes_old,
+                    metadata: m,
+                    target_nodes: target_nodes
+                  }
+
                   {[item | keep], migrate}
 
                 false ->
-                  {keep, [item | migrate]}
+                  # Need to migrate to target nodes
+                  migrate_items =
+                    Enum.map(target_nodes, fn target_node ->
+                      %{
+                        child_spec: cs,
+                        child_nodes: cn,
+                        child_nodes_old: nodes_old,
+                        metadata: m,
+                        target_node: target_node
+                      }
+                    end)
+
+                  {keep, migrate_items ++ migrate}
               end
 
             false ->
-              # We still may need to update local children info for redundancy.
+              # None of the new nodes need this child, but we may need to update local children info for redundancy.
+              item = %{
+                child_spec: cs,
+                child_nodes: cn,
+                child_nodes_old: nodes_old,
+                metadata: m,
+                target_nodes: []
+              }
+
               {[item | keep], migrate}
           end
         end)
