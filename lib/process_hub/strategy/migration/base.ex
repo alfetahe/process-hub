@@ -31,4 +31,30 @@ defprotocol ProcessHub.Strategy.Migration.Base do
           ProcessHub.Strategy.Synchronization.Base.t()
         ) :: :ok
   def handle_migration(struct, hub, children_data, added_node, sync_strategy)
+
+  @doc """
+  Handles migration when nodes join the cluster.
+
+  The strategy receives the full registry data and decides internally
+  what actions to take (terminate, start, migrate to remote, etc).
+  Each strategy implementation handles its own logic without the caller
+  needing to know implementation details.
+
+  ## Parameters
+  - `struct` - the strategy struct
+  - `hub` - the hub state
+  - `registry_data` - full dump from ProcessRegistry.dump()
+  - `nodes` - list of nodes that triggered redistribution
+  - `replication_factor` - from redundancy strategy
+  - `sync_strategy` - synchronization strategy for propagating changes
+  """
+  @spec handle_migrate(
+          __MODULE__.t(),
+          Hub.t(),
+          registry_data :: list(),
+          nodes :: [node()],
+          replication_factor :: pos_integer(),
+          ProcessHub.Strategy.Synchronization.Base.t()
+        ) :: :ok
+  def handle_migrate(struct, hub, registry_data, nodes, replication_factor, sync_strategy)
 end

@@ -30,16 +30,9 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             redun_strat: RedundancyStrategy.t(),
             sync_strat: SynchronizationStrategy.t(),
             migr_strat: MigrationStrategy.t(),
-            partition_strat: PartitionToleranceStrategy.t(),
-            dist_strat: DistributionStrategy.t(),
+            dist_strat: map(),
             nodes: [node()],
-            hub: Hub.t(),
-            repl_fact: pos_integer(),
-            local_children: list(),
-            keep: list(),
-            migrate: list(),
-            migr_base_timeout: pos_integer(),
-            async_tasks: list()
+            hub: Hub.t()
           }
 
     @enforce_keys [
@@ -48,17 +41,10 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     ]
     defstruct @enforce_keys ++
                 [
-                  :repl_fact,
-                  :local_children,
-                  :keep,
-                  :migrate,
                   :redun_strat,
                   :migr_strat,
                   :sync_strat,
-                  :partition_strat,
-                  :dist_strat,
-                  :migr_base_timeout,
-                  async_tasks: []
+                  :dist_strat
                 ]
 
     @spec handle(t()) :: :ok
@@ -94,13 +80,29 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp distribute_processes(arg) do
-      arg
-      |> Map.put(:repl_fact, RedundancyStrategy.replication_factor(arg.redun_strat))
-      |> local_children()
-      |> group_children()
-      |> handle_migrate()
-      |> handle_keep()
-      |> wait_for_tasks()
+      # Get registry data once
+      registry_data = ProcessRegistry.dump(arg.hub.hub_id)
+      replication_factor = RedundancyStrategy.replication_factor(arg.redun_strat)
+
+      # Migration strategy handles migration (strategy decides how internally)
+      MigrationStrategy.handle_migrate(
+        arg.migr_strat,
+        arg.hub,
+        registry_data,
+        arg.nodes,
+        replication_factor,
+        arg.sync_strat
+      )
+
+      # Redundancy strategy handles replication separately
+      RedundancyStrategy.handle_redundancy(
+        arg.redun_strat,
+        arg.hub,
+        registry_data,
+        arg.nodes
+      )
+
+      :ok
     end
 
     defp attach_data(%__MODULE__{} = arg) do
@@ -109,9 +111,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         | sync_strat: Storage.get(arg.hub.storage.misc, StorageKey.strsyn()),
           redun_strat: Storage.get(arg.hub.storage.misc, StorageKey.strred()),
           dist_strat: Storage.get(arg.hub.storage.misc, StorageKey.strdist()),
-          migr_strat: Storage.get(arg.hub.storage.misc, StorageKey.strmigr()),
-          partition_strat: Storage.get(arg.hub.storage.misc, StorageKey.strpart()),
-          migr_base_timeout: Storage.get(arg.hub.storage.misc, StorageKey.mbt())
+          migr_strat: Storage.get(arg.hub.storage.misc, StorageKey.strmigr())
       }
     end
 
@@ -125,221 +125,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         {local_processes, local_node},
         %{members: nodes, priority: PriorityLevel.high()}
       )
-    end
-
-    defp wait_for_tasks(
-           %__MODULE__{
-             async_tasks: async_tasks,
-             migr_strat: migr_strat,
-             migr_base_timeout: migr_base_timeout
-           } = _arg
-         ) do
-      Task.await_many(async_tasks, migration_timeout(migr_strat, migr_base_timeout))
-
-      #  %__MODULE__{arg | async_tasks: []}
-
-      :ok
-    end
-
-    defp handle_migrate(
-           %__MODULE__{
-             migrate: data,
-             async_tasks: async_tasks,
-             migr_strat: migr_strat,
-             sync_strat: sync_strat,
-             nodes: _nodes
-           } = arg
-         ) do
-      task =
-        Task.async(fn ->
-          child_data =
-            Enum.map(data, fn %{child_spec: cs, metadata: m, target_node: target_node} ->
-              {cs, m, target_node}
-            end)
-
-          if !Enum.empty?(child_data) do
-            # Group by target node and migrate
-            child_data
-            |> Enum.group_by(fn {_cs, _m, target_node} -> target_node end)
-            |> Enum.each(fn {target_node, items} ->
-              items_without_node = Enum.map(items, fn {cs, m, _} -> {cs, m} end)
-
-              MigrationStrategy.handle_migration(
-                migr_strat,
-                arg.hub,
-                items_without_node,
-                target_node,
-                sync_strat
-              )
-            end)
-          end
-        end)
-
-      %__MODULE__{arg | async_tasks: [task | async_tasks]}
-    end
-
-    defp handle_keep(
-           %__MODULE__{
-             hub: hub,
-             keep: keep,
-             async_tasks: async_tasks,
-             nodes: nodes
-           } = arg
-         ) do
-      task =
-        Task.async(fn ->
-          if !Enum.empty?(keep) do
-            handle_redundancy(hub, nodes, keep)
-            handle_redistribution(hub, nodes, keep)
-          end
-        end)
-
-      %__MODULE__{arg | async_tasks: [task | async_tasks]}
-    end
-
-    defp handle_redistribution(hub, _nodes, children) do
-      # Group children by their target nodes
-      node_children_map =
-        Enum.reduce(children, %{}, fn %{
-                                        child_spec: cs,
-                                        child_nodes: cn,
-                                        metadata: m,
-                                        target_nodes: target_nodes
-                                      },
-                                      acc ->
-          child_data = %{
-            hub_id: hub.hub_id,
-            nodes: cn,
-            child_id: cs.id,
-            child_spec: cs,
-            metadata: m,
-            migration_add: true
-          }
-
-          # Add to each target node
-          Enum.reduce(target_nodes, acc, fn target_node, inner_acc ->
-            Map.update(inner_acc, target_node, [child_data], &[child_data | &1])
-          end)
-        end)
-
-      node_children_list =
-        Enum.map(node_children_map, fn {node, children} -> {node, children} end)
-
-      Dispatcher.children_migrate(hub.procs.event_queue, node_children_list, migration_add: true)
-    end
-
-    defp handle_redundancy(hub, nodes, children) do
-      children_pids = ProcessRegistry.local_data(hub.hub_id)
-
-      redun_data =
-        Enum.map(children, fn %{child_spec: cs, child_nodes_old: cno, child_nodes: cn} ->
-          x = (Enum.find(children_pids, fn {k, _v} -> k === cs.id end) || {nil, nil}) |> elem(1)
-
-          {cs.id, cn, cno, [pid: x]}
-        end)
-
-      HookManager.dispatch_hook(
-        hub.storage.hook,
-        Hook.pre_children_redistribution(),
-        {redun_data, {:up, nodes}}
-      )
-    end
-
-    defp local_children(%__MODULE__{hub: hub} = arg) do
-      local_node = node()
-
-      local_children =
-        ProcessRegistry.dump(hub.hub_id)
-        |> Enum.filter(fn {_child_id, {_child_spec, child_nodes, _metadata}} ->
-          Enum.member?(Keyword.keys(child_nodes), local_node)
-        end)
-
-      %__MODULE__{arg | local_children: local_children}
-    end
-
-    defp group_children(
-           %__MODULE__{
-             local_children: lc,
-             dist_strat: dist_strat,
-             repl_fact: rp,
-             nodes: nodes
-           } = arg
-         ) do
-      local_node = node()
-      cids = Enum.map(lc, fn {child_id, _} -> child_id end)
-
-      cid_node_pairs =
-        if length(cids) > 0 do
-          DistributionStrategy.belongs_to(dist_strat, arg.hub, cids, rp)
-        else
-          []
-        end
-
-      {keep, migrate} =
-        Enum.reduce(lc, {[], []}, fn {child_id, {cs, ecn, m}}, {keep, migrate} = _acc ->
-          cn = Bag.get_by_key(cid_node_pairs, child_id, [])
-          nodes_old = Keyword.keys(ecn)
-
-          # Find which of the new nodes should have this child
-          target_nodes = Enum.filter(nodes, fn n -> Enum.member?(cn, n) end)
-
-          case length(target_nodes) > 0 do
-            true ->
-              case Enum.member?(cn, local_node) do
-                true ->
-                  # Keep locally, but track target nodes for redundancy updates
-                  item = %{
-                    child_spec: cs,
-                    child_nodes: cn,
-                    child_nodes_old: nodes_old,
-                    metadata: m,
-                    target_nodes: target_nodes
-                  }
-
-                  {[item | keep], migrate}
-
-                false ->
-                  # Need to migrate to target nodes
-                  migrate_items =
-                    Enum.map(target_nodes, fn target_node ->
-                      %{
-                        child_spec: cs,
-                        child_nodes: cn,
-                        child_nodes_old: nodes_old,
-                        metadata: m,
-                        target_node: target_node
-                      }
-                    end)
-
-                  {keep, migrate_items ++ migrate}
-              end
-
-            false ->
-              # None of the new nodes need this child, but we may need to update local children info for redundancy.
-              item = %{
-                child_spec: cs,
-                child_nodes: cn,
-                child_nodes_old: nodes_old,
-                metadata: m,
-                target_nodes: []
-              }
-
-              {[item | keep], migrate}
-          end
-        end)
-
-      %__MODULE__{arg | keep: keep, migrate: migrate}
-    end
-
-    defp migration_timeout(migr_strategy, migr_base_timeout) do
-      if Map.has_key?(migr_strategy, :retention) do
-        case Map.get(migr_strategy, :retention, :none) do
-          :none -> migr_base_timeout
-          timeout -> timeout + migr_base_timeout
-        end
-      else
-        migr_base_timeout
-      end
     end
   end
 

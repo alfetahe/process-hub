@@ -161,6 +161,59 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       :ok
     end
 
+    @impl true
+    def handle_migrate(
+          struct,
+          hub,
+          registry_data,
+          nodes,
+          replication_factor,
+          sync_strategy
+        ) do
+      # HotSwap uses cross-node migration with state handover.
+      # Internally categorizes and calls handle_migration per target node.
+      local_node = node()
+      dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+
+      # Get local children
+      local_pids = DistributedSupervisor.local_children(hub.procs.dist_sup)
+      local_child_ids = Map.keys(local_pids)
+
+      # Calculate new distribution for all children
+      cids = Enum.map(registry_data, fn {cid, _} -> cid end)
+
+      cid_node_pairs =
+        if length(cids) > 0 do
+          DistributionStrategy.belongs_to(dist_strat, hub, cids, replication_factor)
+        else
+          []
+        end
+
+      # Find children that need to migrate FROM this node TO one of the new nodes
+      migrations_by_node =
+        Enum.reduce(registry_data, %{}, fn {child_id, {cs, _node_pids, m}}, acc ->
+          nodes_new = Bag.get_by_key(cid_node_pairs, child_id, [])
+          running_locally = Enum.member?(local_child_ids, child_id)
+
+          # Find if any of the new nodes should have this child and we have it locally
+          target_node = Enum.find(nodes, fn n -> Enum.member?(nodes_new, n) end)
+
+          if running_locally and target_node != nil and not Enum.member?(nodes_new, local_node) do
+            # This child should migrate from local to target_node
+            Map.update(acc, target_node, [{cs, m}], fn list -> [{cs, m} | list] end)
+          else
+            acc
+          end
+        end)
+
+      # Call handle_migration for each target node
+      Enum.each(migrations_by_node, fn {target_node, children_data} ->
+        handle_migration(struct, hub, children_data, target_node, sync_strategy)
+      end)
+
+      :ok
+    end
+
     defp handle_retentions(hub, strategy, sync_strategy, migration_cids) do
       Enum.reduce(migration_cids, :continue, fn
         child_id, :continue ->

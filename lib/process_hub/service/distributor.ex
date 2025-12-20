@@ -30,6 +30,7 @@ defmodule ProcessHub.Service.Distributor do
         ) ::
           {:ok, :redistribution_initiated} | {:ok, :no_children_to_redistribute}
   def children_redist_init(hub, node, children_data, opts \\ []) do
+    # TODO:
     # Migration expects the `:migration_add` true flag otherwise the
     # remote node wont release the lock.
     opts = Keyword.put(opts, :migration_add, true)

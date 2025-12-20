@@ -26,5 +26,11 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     def master_node(_strategy, _hub, _child_id, child_nodes) do
       List.first(child_nodes)
     end
+
+    @impl true
+    def handle_redundancy(_strategy, _hub, _registry_data, _nodes) do
+      # Singularity has no replication, so no redundancy handling needed
+      :ok
+    end
   end
 end

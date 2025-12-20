@@ -129,6 +129,17 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
       Enum.at(child_nodes, index)
     end
+
+    @impl true
+    def handle_redundancy(strategy, hub, registry_data, nodes) do
+      # Handle replication redundancy when nodes join.
+      # This includes:
+      # 1. Starting replicas locally if this node should now have a replica
+      # 2. Stopping replicas locally if this node should no longer have a replica
+      # 3. Sending mode signals for active/passive transitions
+
+      Replication.do_handle_redundancy(strategy, hub, registry_data, nodes)
+    end
   end
 
   @spec handle_post_start(struct(), Hub.t(), [
@@ -360,4 +371,67 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   end
 
   defp send_redundancy_signal(_pid, _mode), do: nil
+
+  @doc false
+  def do_handle_redundancy(strategy, hub, registry_data, nodes) do
+    local_node = node()
+    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+    repl_fact = RedundancyStrategy.replication_factor(strategy)
+
+    # Calculate new distribution for all children
+    cids = Enum.map(registry_data, fn {cid, _} -> cid end)
+
+    cid_node_pairs =
+      if length(cids) > 0 do
+        DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
+      else
+        []
+      end
+
+    # Get currently running local children
+    local_pids = DistributedSupervisor.local_children(hub.procs.dist_sup)
+    local_child_ids = Map.keys(local_pids)
+
+    # Process each child for redundancy updates
+    Enum.each(registry_data, fn {child_id, {_cs, node_pids, _m}} ->
+      _nodes_old = Keyword.keys(node_pids)
+
+      nodes_new =
+        case Enum.find(cid_node_pairs, fn {cid, _} -> cid == child_id end) do
+          {_, n} -> n
+          nil -> []
+        end
+
+      running_locally = Enum.member?(local_child_ids, child_id)
+      should_be_local = Enum.member?(nodes_new, local_node)
+
+      # Only send mode signals for processes that are running locally and staying local
+      if running_locally and should_be_local do
+        # Check if any of the joining nodes affects this child's distribution
+        relevant_to_new_nodes = Enum.any?(nodes, fn n -> Enum.member?(nodes_new, n) end)
+
+        if relevant_to_new_nodes do
+          # Send mode signal based on current master calculation
+          local_pid = Map.get(local_pids, child_id)
+
+          if is_pid(local_pid) do
+            mode = process_mode(strategy, hub, child_id, nodes_new)
+
+            cond do
+              strategy.redundancy_signal === :all ->
+                send_redundancy_signal(local_pid, mode)
+
+              mode === strategy.redundancy_signal ->
+                send_redundancy_signal(local_pid, mode)
+
+              true ->
+                :ok
+            end
+          end
+        end
+      end
+    end)
+
+    :ok
+  end
 end

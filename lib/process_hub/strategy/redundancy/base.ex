@@ -28,4 +28,23 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   """
   @spec master_node(struct(), Hub.t(), ProcessHub.child_id(), [node()]) :: node()
   def master_node(strategy, hub, child_id, child_nodes)
+
+  @doc """
+  Handles redundancy when nodes join the cluster.
+
+  The strategy receives the full registry data and nodes that joined,
+  and decides internally what replication actions to take:
+  - Start replicas locally if needed
+  - Stop replicas locally if needed
+  - Send mode signals (active/passive transitions) for replication strategy
+
+  ## Parameters
+  - `strategy` - the redundancy strategy struct
+  - `hub` - the hub state
+  - `registry_data` - full dump from ProcessRegistry.dump()
+  - `nodes` - list of nodes that triggered redistribution
+  """
+  @spec handle_redundancy(struct(), Hub.t(), registry_data :: list(), nodes :: [node()]) ::
+          :ok
+  def handle_redundancy(strategy, hub, registry_data, nodes)
 end
