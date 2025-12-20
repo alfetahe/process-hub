@@ -575,13 +575,14 @@ defmodule ProcessHub.Coordinator do
         Enum.member?(current_connected, node)
       end)
 
-    if length(valid_join_nodes) > 0 do
+    state = if length(valid_join_nodes) > 0 do
       # Process all validated joining nodes together
-      state = handle_hub_join(state, valid_join_nodes)
-      {:noreply, state}
+      handle_hub_join(state, valid_join_nodes)
     else
-      {:noreply, state}
+      state
     end
+
+    {:noreply, state}
   end
 
   @impl true
