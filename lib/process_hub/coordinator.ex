@@ -577,7 +577,7 @@ defmodule ProcessHub.Coordinator do
 
     if length(valid_join_nodes) > 0 do
       # Process all validated joining nodes together
-      state = handle_hub_join_batch(state, valid_join_nodes)
+      state = handle_hub_join(state, valid_join_nodes)
       {:noreply, state}
     else
       {:noreply, state}
@@ -860,47 +860,20 @@ defmodule ProcessHub.Coordinator do
   defp join_handlers(handlers, state) do
     node_list = Node.list()
 
-    Enum.each(handlers, fn handler_pid ->
-      node = node(handler_pid)
+    # Collect all valid nodes from handlers
+    nodes =
+      handlers
+      |> Enum.map(fn handler_pid -> node(handler_pid) end)
+      |> Enum.filter(fn n -> Enum.member?(node_list, n) end)
+      |> Enum.uniq()
 
-      if Enum.member?(node_list, node) do
-        handle_hub_join(state, node)
-      end
-    end)
-  end
-
-  defp handle_hub_join(state, node) do
-    hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
-
-    if Cluster.new_node?(hub_nodes, node) and node() !== node do
-      Cluster.add_hub_node(state.storage.misc, node)
-
-      HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
-
-      unlock_status =
-        PartitionToleranceStrategy.toggle_unlock?(
-          Storage.get(state.storage.misc, StorageKey.strpart()),
-          state,
-          node
-        )
-
-      if unlock_status do
-        State.toggle_quorum_success(state)
-      end
-
-      # Atomic dispatch with locking.
-      # TODO: why not use the dispatch_lock function?
-      Dispatcher.propagate_event(state.procs.event_queue, @event_distribute_children, [node], %{
-        members: :local
-      })
-
-      State.lock_event_handler(state)
-      HookManager.dispatch_hook(state.storage.hook, Hook.post_cluster_join(), node)
+    if length(nodes) > 0 do
+      handle_hub_join(state, nodes)
     end
   end
 
   # Handle multiple nodes joining together (batched).
-  defp handle_hub_join_batch(state, nodes) do
+  defp handle_hub_join(state, nodes) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
     local_node = node()
 
