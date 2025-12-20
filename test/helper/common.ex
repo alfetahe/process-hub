@@ -303,7 +303,7 @@ defmodule Test.Helper.Common do
 
   def await_registry_stable(context, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 15000)
-    poll_interval = Keyword.get(opts, :poll_interval, 200)
+    poll_interval = Keyword.get(opts, :poll_interval, 300)
     stable_period = Keyword.get(opts, :stable_period, 500)
     deadline = System.monotonic_time(:millisecond) + timeout
 

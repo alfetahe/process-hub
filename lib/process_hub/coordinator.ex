@@ -856,7 +856,7 @@ defmodule ProcessHub.Coordinator do
 
   # Returns the configured debounce delay in milliseconds from storage.
   defp get_debounce_delay(state) do
-    Storage.get(state.storage.misc, StorageKey.ced()) || 200
+    Storage.get(state.storage.misc, StorageKey.ced()) || 500
   end
 
   defp join_handlers(handlers, state) do

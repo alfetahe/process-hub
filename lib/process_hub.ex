@@ -170,7 +170,7 @@ defmodule ProcessHub do
   - `:cluster_event_debounce` is optional and defines the debounce delay in milliseconds
   for cluster events (nodedown, cluster_join). Each new event resets the timer, and events
   are processed only after no new events arrive for this duration. Events are validated
-  against `Node.list()` before processing to filter stale events. The default is `200` (0.2 seconds).
+  against `Node.list()` before processing to filter stale events. The default is `500` (0.5 seconds).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -220,7 +220,7 @@ defmodule ProcessHub do
     dsup_max_restarts: 100,
     dsup_max_seconds: 4,
     dsup_shutdown_timeout: 60000,
-    cluster_event_debounce: 200
+    cluster_event_debounce: 500
   ]
 
   @doc """
