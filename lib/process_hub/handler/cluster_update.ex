@@ -49,34 +49,42 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{hub: hub, nodes: nodes} = arg) do
-      arg = attach_data(arg)
+      # Skip processing when partitioned - dist_sup is dead and accessing it would crash.
+      # This can happen due to race conditions when events are dispatched before
+      # partition mode is entered, but processed after.
+      if State.is_partitioned?(hub) do
+        State.unlock_event_handler(hub)
+        :ok
+      else
+        arg = attach_data(arg)
 
-      # Dispatch the nodes pre redistribution event.
-      HookManager.dispatch_hook(
-        hub.storage.hook,
-        Hook.pre_nodes_redistribution(),
-        {:nodeup, nodes}
-      )
+        # Dispatch the nodes pre redistribution event.
+        HookManager.dispatch_hook(
+          hub.storage.hook,
+          Hook.pre_nodes_redistribution(),
+          {:nodeup, nodes}
+        )
 
-      # Handle the redistribution of processes.
-      if Map.get(arg.dist_strat, :nodeup_redistribution, true) do
-        distribute_processes(arg)
+        # Handle the redistribution of processes.
+        if Map.get(arg.dist_strat, :nodeup_redistribution, true) do
+          distribute_processes(arg)
+        end
+
+        # Propagate the local children to the new nodes.
+        propagate_local_children(hub, nodes)
+
+        # Dispatch the nodes post redistribution event.
+        HookManager.dispatch_hook(
+          hub.storage.hook,
+          Hook.post_nodes_redistribution(),
+          {:nodeup, nodes}
+        )
+
+        # Unlock the event handler.
+        State.unlock_event_handler(hub)
+
+        :ok
       end
-
-      # Propagate the local children to the new nodes.
-      propagate_local_children(hub, nodes)
-
-      # Dispatch the nodes post redistribution event.
-      HookManager.dispatch_hook(
-        hub.storage.hook,
-        Hook.post_nodes_redistribution(),
-        {:nodeup, nodes}
-      )
-
-      # Unlock the event handler.
-      State.unlock_event_handler(hub)
-
-      :ok
     end
 
     defp distribute_processes(arg) do
