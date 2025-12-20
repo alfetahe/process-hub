@@ -107,13 +107,8 @@ defmodule ProcessHub.Coordinator do
     # Monitor cluster join events.
     Blockade.monitor_handlers(event_queue, @event_cluster_join)
 
-    # Emit cluster join event.
-    Dispatcher.propagate_event(event_queue, @event_cluster_join, node(), %{
-      members: :external
-    })
-
     # Make sure we register all joined hub nodes.
-    event_queue
+    state = event_queue
     |> Blockade.get_handlers(@event_cluster_join)
     |> elem(1)
     |> join_handlers(state)
@@ -575,6 +570,9 @@ defmodule ProcessHub.Coordinator do
         Enum.member?(current_connected, node)
       end)
 
+    dbg({"N1", node(), valid_join_nodes})
+
+
     state =
       if length(valid_join_nodes) > 0 do
         # Process all validated joining nodes together
@@ -716,9 +714,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
-    join_handlers(handlers, state)
-
-    {:noreply, state}
+    {:noreply, join_handlers(handlers, state)}
   end
 
   @impl true
@@ -870,7 +866,11 @@ defmodule ProcessHub.Coordinator do
       |> Enum.uniq()
 
     if length(nodes) > 0 do
-      handle_hub_join(state, nodes)
+      Enum.reduce(nodes, state, fn node, acc_state ->
+        batch_event(acc_state, :cluster_join, node)
+      end)
+    else
+      state
     end
   end
 
