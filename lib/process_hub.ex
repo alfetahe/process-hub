@@ -10,6 +10,7 @@ defmodule ProcessHub do
 
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.Distributor
   alias ProcessHub.Future
 
   @typedoc """
@@ -75,6 +76,10 @@ defmodule ProcessHub do
   - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
   After this time, the collector process will be terminated and attempts to collect the results using `ProcessHub.await/1` will fail.
   The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
+  - `:call_timeout` - is optional and is used to override the auto-calculated GenServer.call timeout
+  for the initial request to the coordinator. This timeout applies to bulk operations such as starting children,
+  stopping children, and migrations. By default, the timeout is calculated as `5000ms + (1ms × child_count)`,
+  e.g., 10k children = 15s, 30k children = 35s. Set to `:infinity` for no timeout, or a specific integer in milliseconds.
   """
   @type init_opts() :: [
           awaitable: boolean(),
@@ -85,7 +90,8 @@ defmodule ProcessHub do
           metadata: child_metadata(),
           child_metadata: child_metadata_map(),
           disable_logging: boolean(),
-          await_timeout: non_neg_integer()
+          await_timeout: non_neg_integer(),
+          call_timeout: timeout()
         ]
 
   @typedoc """
@@ -100,12 +106,17 @@ defmodule ProcessHub do
   - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
   After this time, the collector process will be terminated and attempts to collect the results using `ProcessHub.await/1` will fail.
   The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
+  - `:call_timeout` - is optional and is used to override the auto-calculated GenServer.call timeout
+  for the initial request to the coordinator. This timeout applies to bulk operations such as starting children,
+  stopping children, and migrations. By default, the timeout is calculated as `5000ms + (1ms × child_count)`,
+  e.g., 10k children = 15s, 30k children = 35s. Set to `:infinity` for no timeout, or a specific integer in milliseconds.
   """
   @type stop_opts() :: [
           awaitable: boolean(),
           async_wait: boolean(),
           timeout: non_neg_integer(),
-          await_timeout: non_neg_integer()
+          await_timeout: non_neg_integer(),
+          call_timeout: timeout()
         ]
 
   @typedoc """
@@ -383,7 +394,8 @@ defmodule ProcessHub do
              | {:error, :children_not_list}
              | {:already_started, [atom | binary, ...]}}
   def start_children(hub_id, child_specs, opts \\ []) when is_list(child_specs) do
-    GenServer.call(hub_id, {:init_children_start, child_specs, opts})
+    call_timeout = Distributor.calculate_call_timeout(length(child_specs), opts)
+    GenServer.call(hub_id, {:init_children_start, child_specs, opts}, call_timeout)
   end
 
   @doc """
@@ -449,7 +461,8 @@ defmodule ProcessHub do
           | {:ok, Future.t()}
           | {:error, list()}
   def stop_children(hub_id, child_ids, opts \\ []) do
-    GenServer.call(hub_id, {:init_children_stop, child_ids, opts})
+    call_timeout = Distributor.calculate_call_timeout(length(child_ids), opts)
+    GenServer.call(hub_id, {:init_children_stop, child_ids, opts}, call_timeout)
   end
 
   @doc """

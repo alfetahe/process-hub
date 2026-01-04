@@ -280,4 +280,38 @@ defmodule Test.Service.DistributorTest do
     # Original options should appear first in the result
     assert Keyword.take(result, [:awaitable, :timeout, :custom_option]) === input_opts
   end
+
+  describe "calculate_call_timeout/2" do
+    test "calculates timeout based on child count with default formula" do
+      # Formula: 5000ms + (1ms × child_count)
+      assert Distributor.calculate_call_timeout(0, []) === 5000
+      assert Distributor.calculate_call_timeout(100, []) === 5100
+      assert Distributor.calculate_call_timeout(1000, []) === 6000
+      assert Distributor.calculate_call_timeout(10_000, []) === 15_000
+      assert Distributor.calculate_call_timeout(30_000, []) === 35_000
+      assert Distributor.calculate_call_timeout(100_000, []) === 105_000
+    end
+
+    test "allows override with :call_timeout option" do
+      # Explicit timeout should override the calculation
+      assert Distributor.calculate_call_timeout(100, call_timeout: 60_000) === 60_000
+      assert Distributor.calculate_call_timeout(30_000, call_timeout: 10_000) === 10_000
+    end
+
+    test "supports :infinity timeout" do
+      assert Distributor.calculate_call_timeout(100, call_timeout: :infinity) === :infinity
+      assert Distributor.calculate_call_timeout(100_000, call_timeout: :infinity) === :infinity
+    end
+
+    test "ignores other options and only uses :call_timeout" do
+      opts = [awaitable: true, timeout: 5000, metadata: %{}, call_timeout: 20_000]
+      assert Distributor.calculate_call_timeout(100, opts) === 20_000
+    end
+
+    test "uses calculated timeout when :call_timeout is nil" do
+      opts = [awaitable: true, call_timeout: nil]
+      # nil is treated same as not provided, so formula applies
+      assert Distributor.calculate_call_timeout(1000, opts) === 6000
+    end
+  end
 end

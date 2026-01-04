@@ -21,6 +21,44 @@ defmodule ProcessHub.Service.Distributor do
   # 10 seconds
   @default_init_timeout 10000
 
+  # Default timeout values for GenServer.call in bulk operations
+  @base_call_timeout 5000
+  @timeout_per_child 1
+
+  @doc """
+  Calculates the GenServer.call timeout based on child count.
+
+  The timeout is calculated as `@base_call_timeout + (child_count * @timeout_per_child)`,
+  which equals `5000ms + (1ms × child_count)`.
+
+  Allows user override via `:call_timeout` option.
+
+  ## Examples
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(100, [])
+      5100
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(10000, [])
+      15000
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(30000, [])
+      35000
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(100, call_timeout: :infinity)
+      :infinity
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(100, call_timeout: 60000)
+      60000
+
+  """
+  @spec calculate_call_timeout(non_neg_integer(), keyword()) :: timeout()
+  def calculate_call_timeout(child_count, opts) do
+    case Keyword.get(opts, :call_timeout) do
+      nil -> @base_call_timeout + child_count * @timeout_per_child
+      timeout -> timeout
+    end
+  end
+
   @doc "Initiates process redistribution."
   @spec children_redist_init(
           Hub.t(),

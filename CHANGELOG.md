@@ -10,6 +10,7 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - Documentation and examples for per-child metadata usage in the main API module and ProcessRegistry guide.
 - New `deterministic?/1` protocol function in `ProcessHub.Strategy.Distribution.Base` that indicates whether a distribution strategy produces deterministic results based solely on node topology. This is used internally to optimize child validation during process startup.
 - New `topology_signature/1` function in `ProcessHub.Service.Cluster` that computes a hash of the current cluster topology for change detection.
+- Auto-calculated GenServer.call timeout for `start_children/3` and `stop_children/3` based on child count. The timeout is now calculated as `5000ms + (1ms × child_count)`, preventing timeout errors when starting or stopping large batches (30k+) of children. A new `:call_timeout` option allows overriding the auto-calculated value (e.g., `call_timeout: :infinity` for no timeout).
 
 ### Performance
 - Significantly improved child process startup performance when starting large batches (10k+) of children:

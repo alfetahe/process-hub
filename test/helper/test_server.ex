@@ -39,28 +39,34 @@ defmodule Test.Helper.TestServer do
   #   :ok
   # end
 
+  @impl GenServer
   def handle_call({:exec, func}, _from, state) do
     res = func.()
 
     {:reply, res, state}
   end
 
+  @impl GenServer
   def handle_call(:get_state, _from, state) do
     {:reply, state, state}
   end
 
+  @impl GenServer
   def handle_call({:get_value, key}, _from, state) do
     {:reply, Map.get(state, key, nil), state}
   end
 
+  @impl GenServer
   def handle_call({:set_value, key, value}, _from, state) do
     {:reply, :ok, Map.put(state, key, value)}
   end
 
+  @impl GenServer
   def handle_call({:stop, reason}, _from, state) do
     {:stop, reason, state}
   end
 
+  @impl GenServer
   def handle_call(:ping, _from, state) do
     {:reply, :pong, state}
   end
@@ -70,10 +76,12 @@ defmodule Test.Helper.TestServer do
     {:stop, reason, state}
   end
 
+  @impl GenServer
   def handle_cast(:throw, _state) do
     throw("intentional throw")
   end
 
+  @impl GenServer
   def handle_cast(:raise, _state) do
     raise("intentional raise")
   end
