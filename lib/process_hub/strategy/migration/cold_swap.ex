@@ -39,7 +39,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
           registry_data,
           nodes,
           replication_factor,
-          sync_strategy
+          _sync_strategy
         ) do
       local_node = node()
       dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
@@ -58,42 +58,59 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       local_pids = DistributedSupervisor.local_children(hub.procs.dist_sup)
       local_child_ids = Map.keys(local_pids)
 
-      # Categorize each child
-      {to_start, to_stop} =
-        Enum.reduce(registry_data, {[], []}, fn {child_id, {cs, _node_pids, m}}, {start, stop} ->
+      # Categorize each child based on whether it should migrate to new nodes
+      {to_stop_locally, to_send_to_nodes, migrated} =
+        Enum.reduce(registry_data, {[], %{}, []}, fn {child_id, {cs, node_pids, m}},
+                                                      {stop_acc, send_acc, migrated_acc} ->
           nodes_new = Bag.get_by_key(cid_node_pairs, child_id, [])
-
           running_locally = Enum.member?(local_child_ids, child_id)
-          should_be_local = Enum.member?(nodes_new, local_node)
+          is_orphaned = Keyword.keys(node_pids) == []
+
+          # Find which new node(s) this child should be assigned to
+          # (intersection of belongs_to result and newly joined nodes)
+          target_new_nodes = Enum.filter(nodes, fn n -> Enum.member?(nodes_new, n) end)
 
           cond do
-            # Running locally but shouldn't be anymore - stop it
-            running_locally and not should_be_local ->
-              {start, [{cs, m} | stop]}
+            # Case 1: Running locally, should move to new node, should NOT stay local
+            running_locally and length(target_new_nodes) > 0 and
+                not Enum.member?(nodes_new, local_node) ->
+              target_node = List.first(target_new_nodes)
 
-            # Should be local but not running - start it
-            should_be_local and not running_locally ->
-              {[{cs, m} | start], stop}
+              updated_send =
+                Map.update(send_acc, target_node, [{cs, m}], fn list -> [{cs, m} | list] end)
 
-            # No change needed
+              {[{cs, m} | stop_acc], updated_send, [{cs, m} | migrated_acc]}
+
+            # Case 2: Orphaned (not running anywhere) and should be on new node
+            is_orphaned and length(target_new_nodes) > 0 ->
+              target_node = List.first(target_new_nodes)
+
+              updated_send =
+                Map.update(send_acc, target_node, [{cs, m}], fn list -> [{cs, m} | list] end)
+
+              {stop_acc, updated_send, [{cs, m} | migrated_acc]}
+
+            # Case 3: No action needed
             true ->
-              {start, stop}
+              {stop_acc, send_acc, migrated_acc}
           end
         end)
 
-      # Execute locally - no cross-node calls
-      if length(to_stop) > 0 do
-        child_ids = Enum.map(to_stop, fn {cs, _m} -> cs.id end)
-        Distributor.children_terminate(hub, child_ids, sync_strategy)
+      # Execute: Stop children locally (fire and forget)
+      if length(to_stop_locally) > 0 do
+        Enum.each(to_stop_locally, fn {cs, _m} ->
+          DistributedSupervisor.terminate_child(hub.procs.dist_sup, cs.id)
+        end)
       end
 
-      if length(to_start) > 0 do
-        Distributor.children_redist_init(hub, local_node, to_start)
-      end
+      # Execute: Send start requests to new nodes (fire and forget)
+      Enum.each(to_send_to_nodes, fn {target_node, children_data} ->
+        if length(children_data) > 0 do
+          Distributor.children_redist_init(hub, target_node, children_data)
+        end
+      end)
 
       # Dispatch migration hook
-      migrated = to_stop ++ to_start
-
       if length(migrated) > 0 do
         HookManager.dispatch_hook(
           hub.storage.hook,
