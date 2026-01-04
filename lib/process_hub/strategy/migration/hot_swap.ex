@@ -74,6 +74,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             state_ttl: 30000,
             state_query_timeout: 5000
 
+  # TTL for graceful shutdown state storage (longer than regular migration)
+  @graceful_shutdown_ttl :timer.seconds(60)
+
   @doc """
   Handles registry_pid_inserted hook to deliver stored state to new processes
   and terminate the old local process.
@@ -194,12 +197,15 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   @doc false
   def handle_storage_update(hub, data) do
-    Storage.update(hub.storage.misc, StorageKey.msk(), fn old_value ->
+    old_value = Storage.get(hub.storage.misc, StorageKey.msk())
+
+    new_value =
       case old_value do
         nil -> data
         _ -> data ++ old_value
       end
-    end)
+
+    Storage.insert(hub.storage.misc, StorageKey.msk(), new_value, ttl: @graceful_shutdown_ttl)
   end
 
   # Private helpers for graceful shutdown
@@ -283,10 +289,19 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   end
 
   defp rem_states(cids, misc_storage) do
-    Storage.update(misc_storage, StorageKey.msk(), fn
-      nil -> nil
-      states -> Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
-    end)
+    case Storage.get(misc_storage, StorageKey.msk()) do
+      nil ->
+        :ok
+
+      states ->
+        new_states = Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
+
+        if new_states == [] do
+          Storage.remove(misc_storage, StorageKey.msk())
+        else
+          Storage.insert(misc_storage, StorageKey.msk(), new_states, ttl: @graceful_shutdown_ttl)
+        end
+    end
   end
 
   # Protocol implementation
