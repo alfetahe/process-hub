@@ -125,4 +125,10 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec coldswap_handover_delivered() :: :coldswap_handover_delivered_hook
   def coldswap_handover_delivered(), do: :coldswap_handover_delivered_hook
+
+  @doc """
+  Hook triggered after HotSwap migration has delivered state to a new process.
+  """
+  @spec hotswap_handover_delivered() :: :hotswap_handover_delivered_hook
+  def hotswap_handover_delivered(), do: :hotswap_handover_delivered_hook
 end

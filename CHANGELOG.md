@@ -11,6 +11,7 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - New `deterministic?/1` protocol function in `ProcessHub.Strategy.Distribution.Base` that indicates whether a distribution strategy produces deterministic results based solely on node topology. This is used internally to optimize child validation during process startup.
 - New `topology_signature/1` function in `ProcessHub.Service.Cluster` that computes a hash of the current cluster topology for change detection.
 - Auto-calculated GenServer.call timeout for `start_children/3` and `stop_children/3` based on child count. The timeout is now calculated as `5000ms + (1ms × child_count)`, preventing timeout errors when starting or stopping large batches (30k+) of children. A new `:call_timeout` option allows overriding the auto-calculated value (e.g., `call_timeout: :infinity` for no timeout).
+- New `hotswap_handover_delivered` hook that fires after HotSwap migration completes (after state delivery to new process and termination of old process). This hook provides a reliable signal for migration completion, unlike `children_migrated` which fires at the start of migration.
 
 ### Performance
 - Significantly improved child process startup performance when starting large batches (10k+) of children:
@@ -20,6 +21,12 @@ This release introduces per-child metadata support for `start_children/3`, allow
 
 ### Breaking changes
 - Configuration validation in `ProcessHub.Initializer` now detects incompatible strategy combinations at startup. Using state handover (`:handover` option in `ColdSwap` or `HotSwap` migration strategies) with the `Replication` redundancy strategy is no longer allowed, as this combination has undefined semantics. Attempting to start a hub with this configuration will return `{:error, {:invalid_config, :handover_with_replication_not_supported}}` instead of silently proceeding with undefined behavior.
+- **HotSwap migration strategy reimplemented** with simplified configuration matching ColdSwap's pattern:
+  - Removed options: `:retention`, `:confirm_handover`, `:handover_data_wait`, `:child_migration_timeout`
+  - New options: `:state_ttl` (default: 30000ms), `:state_query_timeout` (default: 5000ms)
+  - Migration now uses ETS-based state storage with `registry_pid_inserted` hook for delivery (same pattern as ColdSwap)
+  - Old process is terminated immediately after state delivery (no retention period)
+  - New `hotswap_handover_delivered` hook fires after migration completes (state delivered + old process terminated)
 
 ### Fixed
 - Optimized interval synchronization to avoid unnecessary process registry updates when the local PID already matches the remote PID. Previously, the synchronizer would always write to the registry during sync even when data was unchanged, causing redundant operations.
