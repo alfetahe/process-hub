@@ -1,6 +1,7 @@
 defmodule Test.Helper.TestServer do
   use GenServer
   use ProcessHub.Strategy.Migration.HotSwap
+  use ProcessHub.Strategy.Migration.ColdSwap
 
   def test() do
     :test_ok

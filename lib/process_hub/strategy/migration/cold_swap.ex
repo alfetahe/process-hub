@@ -8,6 +8,26 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   running on multiple nodes at the same time.
 
   This is the default strategy for process migration.
+
+  ## State Handover
+
+  When `handover: true` is set, ColdSwap will:
+  1. Query state from local processes before termination
+  2. Store states in ETS with TTL
+  3. Terminate local processes
+  4. Send start requests to new nodes
+  5. When new processes are registered, deliver stored state via hook
+
+  To use state handover, your GenServer must `use ProcessHub.Strategy.Migration.ColdSwap`:
+
+      defmodule MyServer do
+        use GenServer
+        use ProcessHub.Strategy.Migration.ColdSwap
+
+        # Optionally override these callbacks:
+        # def prepare_handover_state(state), do: state
+        # def alter_handover_state(_current, handover), do: handover
+      end
   """
 
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -23,18 +43,99 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   @typedoc """
   The cold swap migration struct.
 
-  This struct does not contain any configuration options.
+  Options:
+  - `:handover` - Enable state handover before termination (default: false)
+  - `:state_ttl` - TTL for stored states in milliseconds (default: 30000)
+  - `:state_query_timeout` - Timeout for querying state from dying process (default: 5000)
   """
-  @type t() :: %__MODULE__{}
-  defstruct []
+  @type t() :: %__MODULE__{
+          handover: boolean(),
+          state_ttl: pos_integer(),
+          state_query_timeout: pos_integer()
+        }
+
+  defstruct handover: false,
+            state_ttl: 30000,
+            state_query_timeout: 5000
+
+  @doc """
+  Handles registry_pid_inserted hook to deliver stored state to new processes.
+  """
+  def handle_registry_insert(_strategy, hub, {child_id, node_pids}) do
+    case Storage.get(hub.storage.misc, {:coldswap_state, child_id}) do
+      nil ->
+        :ok
+
+      state ->
+        # Send state to new process(es)
+        Enum.each(node_pids, fn {_node, pid} ->
+          if is_pid(pid) do
+            send(pid, {:process_hub, :coldswap_handover, child_id, state})
+          end
+        end)
+
+        # Cleanup stored state
+        Storage.remove(hub.storage.misc, {:coldswap_state, child_id})
+    end
+
+    :ok
+  end
+
+  @doc false
+  defmacro __using__(_opts) do
+    quote do
+      @behaviour ProcessHub.Strategy.Migration.ColdSwapBehaviour
+
+      @doc false
+      def handle_info({:process_hub, :query_handover_state, receiver, child_id}, state) do
+        prepared_state = prepare_handover_state(state)
+        send(receiver, {:process_hub, :coldswap_state, child_id, prepared_state})
+        {:noreply, state}
+      end
+
+      @doc false
+      def handle_info({:process_hub, :coldswap_handover, _child_id, handover_state}, state) do
+        {:noreply, alter_handover_state(state, handover_state)}
+      end
+
+      @impl ProcessHub.Strategy.Migration.ColdSwapBehaviour
+      def prepare_handover_state(state), do: state
+
+      @impl ProcessHub.Strategy.Migration.ColdSwapBehaviour
+      def alter_handover_state(_current_state, handover_state), do: handover_state
+
+      defoverridable prepare_handover_state: 1, alter_handover_state: 2
+    end
+  end
 
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.ColdSwap do
+    alias ProcessHub.Strategy.Migration.ColdSwap
+
     @impl true
+    def init(%ColdSwap{handover: true} = strategy, hub) do
+      # Register for registry_pid_inserted hook to detect new processes
+      handler = %HookManager{
+        id: :mcs_registry_insert,
+        m: ColdSwap,
+        f: :handle_registry_insert,
+        a: [strategy, hub, :_],
+        p: 100
+      }
+
+      HookManager.register_handler(
+        hub.storage.hook,
+        Hook.registry_pid_inserted(),
+        handler
+      )
+
+      strategy
+    end
+
     def init(strategy, _hub), do: strategy
 
     @impl true
     def handle_migrate(
-          _struct,
+          %ColdSwap{handover: handover, state_ttl: ttl, state_query_timeout: timeout} = _struct,
           hub,
           registry_data,
           nodes,
@@ -96,6 +197,11 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
           end
         end)
 
+      # If handover enabled, query and store states before termination
+      if handover and length(to_stop_locally) > 0 do
+        query_and_store_states(hub, to_stop_locally, local_pids, ttl, timeout)
+      end
+
       # Execute: Stop children locally (fire and forget)
       if length(to_stop_locally) > 0 do
         Enum.each(to_stop_locally, fn {cs, _m} ->
@@ -121,5 +227,74 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
       :ok
     end
+
+    defp query_and_store_states(hub, children_to_stop, local_pids, ttl, timeout) do
+      self_pid = self()
+
+      # Send query messages to all processes and collect child_ids
+      child_ids =
+        Enum.reduce(children_to_stop, [], fn {cs, _m}, acc ->
+          pid = Map.get(local_pids, cs.id)
+
+          if is_pid(pid) do
+            send(pid, {:process_hub, :query_handover_state, self_pid, cs.id})
+            [cs.id | acc]
+          else
+            acc
+          end
+        end)
+
+      # Collect responses with timeout
+      states = collect_states(child_ids, timeout, [])
+
+      # Store collected states with TTL
+      Enum.each(states, fn {child_id, state} ->
+        Storage.insert(
+          hub.storage.misc,
+          {:coldswap_state, child_id},
+          state,
+          ttl: ttl
+        )
+      end)
+    end
+
+    defp collect_states([], _timeout, acc), do: acc
+
+    defp collect_states(remaining_cids, timeout, acc) do
+      start_time = System.monotonic_time(:millisecond)
+
+      receive do
+        {:process_hub, :coldswap_state, cid, state} ->
+          new_remaining = List.delete(remaining_cids, cid)
+          elapsed = System.monotonic_time(:millisecond) - start_time
+          new_timeout = max(0, timeout - elapsed)
+          collect_states(new_remaining, new_timeout, [{cid, state} | acc])
+      after
+        timeout ->
+          # Return what we have, some processes may not respond
+          acc
+      end
+    end
   end
+end
+
+defmodule ProcessHub.Strategy.Migration.ColdSwapBehaviour do
+  @moduledoc """
+  Behaviour for ColdSwap state handover callbacks.
+
+  Implement these callbacks to customize how state is prepared before
+  migration and how it's applied to the new process.
+  """
+
+  @doc """
+  Called on the dying process to prepare state before migration.
+  Return the state data to be transferred to the new process.
+  """
+  @callback prepare_handover_state(state :: term()) :: term()
+
+  @doc """
+  Called on the new process to apply the handover state.
+  Return the new state for the process.
+  """
+  @callback alter_handover_state(current_state :: term(), handover_state :: term()) :: term()
 end

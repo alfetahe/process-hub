@@ -570,9 +570,6 @@ defmodule ProcessHub.Coordinator do
         Enum.member?(current_connected, node)
       end)
 
-    dbg({"N1", node(), valid_join_nodes})
-
-
     state =
       if length(valid_join_nodes) > 0 do
         # Process all validated joining nodes together

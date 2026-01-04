@@ -21,6 +21,8 @@ defmodule ProcessHub.Constant.StorageKey do
   @spec gdc() :: :guided_distribution_cache
   def gdc, do: :guided_distribution_cache
   def msk, do: :migration_hotswap_state
+  @spec mcsk() :: :migration_coldswap_state
+  def mcsk, do: :migration_coldswap_state
   @spec dqdn() :: :dynamic_quorum_down_nodes
   def dqdn, do: :dynamic_quorum_down_nodes
   def mqms, do: :majority_quorum_max_seen

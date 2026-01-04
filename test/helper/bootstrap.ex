@@ -167,7 +167,11 @@ defmodule Test.Helper.Bootstrap do
         }
 
       :cold ->
-        %ProcessHub.Strategy.Migration.ColdSwap{}
+        %ProcessHub.Strategy.Migration.ColdSwap{
+          handover: context[:migr_handover] || @default_migr_handover,
+          state_ttl: context[:migr_state_ttl] || 30000,
+          state_query_timeout: context[:migr_state_query_timeout] || 5000
+        }
 
       _ ->
         %ProcessHub.Strategy.Migration.ColdSwap{}
