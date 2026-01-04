@@ -108,10 +108,11 @@ defmodule ProcessHub.Coordinator do
     Blockade.monitor_handlers(event_queue, @event_cluster_join)
 
     # Make sure we register all joined hub nodes.
-    state = event_queue
-    |> Blockade.get_handlers(@event_cluster_join)
-    |> elem(1)
-    |> join_handlers(state)
+    state =
+      event_queue
+      |> Blockade.get_handlers(@event_cluster_join)
+      |> elem(1)
+      |> join_handlers(state)
 
     {:ok, state, {:continue, :additional_setup}}
   end

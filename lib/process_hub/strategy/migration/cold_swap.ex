@@ -176,7 +176,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       # Categorize each child based on whether it should migrate to new nodes
       {to_stop_locally, to_send_to_nodes, migrated} =
         Enum.reduce(registry_data, {[], %{}, []}, fn {child_id, {cs, node_pids, m}},
-                                                      {stop_acc, send_acc, migrated_acc} ->
+                                                     {stop_acc, send_acc, migrated_acc} ->
           nodes_new = Bag.get_by_key(cid_node_pairs, child_id, [])
           running_locally = Enum.member?(local_child_ids, child_id)
           is_orphaned = Keyword.keys(node_pids) == []
