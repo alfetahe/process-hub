@@ -563,7 +563,7 @@ defmodule Test.IntegrationTest do
   test "coldswap migration with replication",
        %{hub_id: hub_id, replication_factor: rf, listed_hooks: lh, hub: hub} = context do
     nodes_count = @nr_of_peers
-    child_count = 10000
+    child_count = 20000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     dbg("------------------------- TEST STARTING -------------------------")

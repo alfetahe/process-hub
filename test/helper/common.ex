@@ -164,6 +164,8 @@ defmodule Test.Helper.Common do
   end
 
   def sync_type_exec(actions, hub_id, opts) do
+    dbg(opts)
+
     Enum.each(actions, fn {function_name, hook_key, timeout_msg, children} ->
       apply(ProcessHub, function_name, [hub_id, children, Keyword.get(opts, :start_opts, [])])
 

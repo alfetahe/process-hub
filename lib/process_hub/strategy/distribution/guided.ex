@@ -139,6 +139,9 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
         true -> {:ok, Keyword.get(opts, :child_mapping, %{})}
       end
     end
+
+    @impl true
+    def deterministic?(_strategy), do: true
   end
 
   @spec handle_children_start(Hub.t(), %{

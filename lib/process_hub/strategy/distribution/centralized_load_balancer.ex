@@ -295,6 +295,9 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
       |> Enum.zip(final_node_list)
       |> Enum.map(fn {child_id, node} -> {child_id, [node]} end)
     end
+
+    @impl true
+    def deterministic?(_strategy), do: false
   end
 
   def start_link(args) do

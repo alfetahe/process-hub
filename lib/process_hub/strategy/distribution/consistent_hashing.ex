@@ -110,6 +110,9 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
     @spec children_init(struct(), Hub.t(), [map()], keyword()) ::
             :ok | {:error, any()}
     def children_init(_strategy, _hub, _child_specs, _opts), do: :ok
+
+    @impl true
+    def deterministic?(_strategy), do: true
   end
 
   @doc """

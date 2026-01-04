@@ -33,4 +33,19 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   """
   @spec children_init(struct(), Hub.t(), [map()], keyword()) :: :ok | {:error, any()}
   def children_init(strategy, hub, child_specs, opts)
+
+  @doc """
+  Returns whether this distribution strategy produces deterministic results
+  based solely on the node topology.
+
+  Deterministic strategies (like ConsistentHashing) always produce the same
+  distribution for the same set of nodes. Non-deterministic strategies
+  (like CentralizedLoadBalancer) may produce different distributions based
+  on runtime factors like node load.
+
+  This is used to optimize child validation - deterministic strategies can
+  skip revalidation when topology signature matches.
+  """
+  @spec deterministic?(struct()) :: boolean()
+  def deterministic?(strategy)
 end

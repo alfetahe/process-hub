@@ -348,7 +348,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       local_node = node()
 
       # OPTIMIZATION: Check if topology changed using signature comparison.
-      # If topology is unchanged, skip expensive belongs_to() revalidation.
+      # If topology is unchanged AND strategy is deterministic, skip expensive
+      # belongs_to() revalidation. Non-deterministic strategies (like load-based)
+      # may produce different distributions even with same topology.
       request_sig =
         case List.first(children) do
           %{topology_signature: sig} -> sig
@@ -356,15 +358,16 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         end
 
       current_sig = Cluster.topology_signature(hub.storage.misc)
+      is_deterministic = DistributionStrategy.deterministic?(dist_strat)
 
-      if request_sig != nil and request_sig == current_sig do
-        # FAST PATH: Topology unchanged, use pre-computed node assignments.
-        # Each child already has `nodes` field from init_attach_nodes.
+      if request_sig != nil and request_sig == current_sig and is_deterministic do
+        # FAST PATH: Topology unchanged and strategy is deterministic.
+        # Use pre-computed node assignments from init_attach_nodes.
         Enum.filter(children, fn %{nodes: nodes} ->
           Enum.member?(nodes, local_node)
         end)
       else
-        # SLOW PATH: Topology changed or no signature, full revalidation required.
+        # SLOW PATH: Topology changed, no signature, or non-deterministic strategy.
         validate_children_full(hub, children, dist_strat, redun_strat, start_opts, local_node)
       end
     end
