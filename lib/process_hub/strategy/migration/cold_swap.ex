@@ -28,6 +28,13 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         # def prepare_handover_state(state), do: state
         # def alter_handover_state(_current, handover), do: handover
       end
+
+  > #### State Handover with Replication {: .warning}
+  >
+  > State handover is **not supported** when using the `ProcessHub.Strategy.Redundancy.Replication`
+  > strategy. With replication, multiple instances of a process run across the cluster, making
+  > state handover semantics undefined. If you attempt to use `handover: true` with replication,
+  > the hub will fail to start with `{:error, {:invalid_config, :handover_with_replication_not_supported}}`.
   """
 
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy

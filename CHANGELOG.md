@@ -9,6 +9,9 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - New type `ProcessHub.child_metadata_map()` to represent per-child metadata configuration.
 - Documentation and examples for per-child metadata usage in the main API module and ProcessRegistry guide.
 
+### Breaking changes
+- Configuration validation in `ProcessHub.Initializer` now detects incompatible strategy combinations at startup. Using state handover (`:handover` option in `ColdSwap` or `HotSwap` migration strategies) with the `Replication` redundancy strategy is no longer allowed, as this combination has undefined semantics. Attempting to start a hub with this configuration will return `{:error, {:invalid_config, :handover_with_replication_not_supported}}` instead of silently proceeding with undefined behavior.
+
 ### Fixed
 - Optimized interval synchronization to avoid unnecessary process registry updates when the local PID already matches the remote PID. Previously, the synchronizer would always write to the registry during sync even when data was unchanged, causing redundant operations.
 - Fixed under-replication during rapid node scale-down by implementing batched nodedown handling. When multiple nodes fail within a short window, their failures are now processed together, ensuring consistent redistribution calculations across all remaining nodes.

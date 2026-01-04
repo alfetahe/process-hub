@@ -33,6 +33,13 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         # Update the state with the new mode and do something differently.
         {:noreply, Map.put(state, :replication_mode, mode)}
       end
+
+  > #### State Handover Incompatibility {: .warning}
+  >
+  > State handover (`:handover` option in `ColdSwap` or `HotSwap` migration strategies) is
+  > **not supported** with the Replication strategy. With replication, multiple instances
+  > of a process run across the cluster, making state handover semantics undefined.
+  > Attempting to use `handover: true` with replication will cause the hub to fail at startup.
   """
 
   alias ProcessHub.DistributedSupervisor

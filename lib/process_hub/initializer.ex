@@ -12,10 +12,42 @@ defmodule ProcessHub.Initializer do
   @doc "Starts a `ProcessHub` instance with all its children."
   @spec start_link(ProcessHub.t()) :: {:ok, pid()} | {:error, term()}
   def start_link(%ProcessHub{} = hub_settings) do
-    Supervisor.start_link(__MODULE__, hub_settings)
+    case validate_config(hub_settings) do
+      :ok -> Supervisor.start_link(__MODULE__, hub_settings)
+      {:error, _} = err -> err
+    end
   end
 
   def start_link(_), do: {:error, :expected_hub_settings}
+
+  @doc false
+  @spec validate_config(ProcessHub.t()) :: :ok | {:error, {:invalid_config, atom()}}
+  defp validate_config(%ProcessHub{} = hub) do
+    with :ok <- validate_handover_replication(hub) do
+      :ok
+    end
+  end
+
+  defp validate_handover_replication(%ProcessHub{
+         migration_strategy: migration_strat,
+         redundancy_strategy: redun_strat
+       }) do
+    handover_enabled =
+      case migration_strat do
+        %ProcessHub.Strategy.Migration.ColdSwap{handover: true} -> true
+        %ProcessHub.Strategy.Migration.HotSwap{handover: true} -> true
+        _ -> false
+      end
+
+    replication_enabled =
+      match?(%ProcessHub.Strategy.Redundancy.Replication{}, redun_strat)
+
+    if handover_enabled and replication_enabled do
+      {:error, {:invalid_config, :handover_with_replication_not_supported}}
+    else
+      :ok
+    end
+  end
 
   @doc "Starts a `ProcessHub` instance with all its children."
   @spec stop(atom()) :: :ok | {:error, :not_alive}
