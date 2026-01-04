@@ -482,59 +482,68 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     {local_data, send_data}
   end
 
-  defmacro __using__(_) do
+  @doc """
+  Options:
+  - `:declare_behaviour` - When `true` (default), declares the `ProcessHub.Behaviour.Handover`
+    behaviour and provides default implementations. Set to `false` when using both HotSwap
+    and ColdSwap macros in the same module to avoid duplicate declarations.
+  """
+  defmacro __using__(opts) do
+    declare_behaviour = Keyword.get(opts, :declare_behaviour, true)
+
+    behaviour_ast =
+      if declare_behaviour do
+        quote do
+          @behaviour ProcessHub.Behaviour.Handover
+
+          @impl ProcessHub.Behaviour.Handover
+          def prepare_handover_state(state), do: state
+
+          @impl ProcessHub.Behaviour.Handover
+          def alter_handover_state(_current_state, handover_state), do: handover_state
+
+          defoverridable prepare_handover_state: 1, alter_handover_state: 2
+        end
+      else
+        quote do
+        end
+      end
+
+    handlers_ast =
+      quote do
+        def handle_info({:process_hub, :send_handover_state, receiver, cid, opts}, state) do
+          if is_pid(receiver) do
+            prepared_state = prepare_handover_state(state)
+            Process.send(receiver, {:process_hub, :handover, cid, {prepared_state, opts}}, [])
+          end
+
+          if is_pid(opts[:retention_receiver]) do
+            Process.send(opts[:retention_receiver], {:process_hub, :retention_handled, cid}, [])
+          end
+
+          {:noreply, state}
+        end
+
+        def handle_info({:process_hub, :handover, cid, {handover_state, opts}}, state) do
+          case Keyword.get(opts, :confirm_handover, false) do
+            true ->
+              Process.send(
+                opts[:confirmation_receiver],
+                {:process_hub, :handover_confirmed, cid},
+                []
+              )
+
+            false ->
+              nil
+          end
+
+          {:noreply, alter_handover_state(state, handover_state)}
+        end
+      end
+
     quote do
-      @behaviour ProcessHub.Strategy.Migration.HotSwapBehaviour
-
-      @impl true
-      def handle_info({:process_hub, :send_handover_state, receiver, cid, opts}, state) do
-        if is_pid(receiver) do
-          prepared_state = prepare_handover_state(state)
-          Process.send(receiver, {:process_hub, :handover, cid, {prepared_state, opts}}, [])
-        end
-
-        if is_pid(opts[:retention_receiver]) do
-          Process.send(opts[:retention_receiver], {:process_hub, :retention_handled, cid}, [])
-        end
-
-        {:noreply, state}
-      end
-
-      @impl true
-      def handle_info({:process_hub, :handover, cid, {handover_state, opts}}, state) do
-        case Keyword.get(opts, :confirm_handover, false) do
-          true ->
-            Process.send(
-              opts[:confirmation_receiver],
-              {:process_hub, :handover_confirmed, cid},
-              []
-            )
-
-          false ->
-            nil
-        end
-
-        {:noreply, alter_handover_state(state, handover_state)}
-      end
-
-      @impl true
-      def prepare_handover_state(state), do: state
-
-      @impl true
-      def alter_handover_state(_current_state, handover_state), do: handover_state
-
-      defoverridable prepare_handover_state: 1, alter_handover_state: 2
+      unquote(behaviour_ast)
+      unquote(handlers_ast)
     end
   end
-end
-
-defmodule ProcessHub.Strategy.Migration.HotSwapBehaviour do
-  @moduledoc """
-  This module defines the behaviour for the hot swap migration strategy.
-  It provides the necessary callbacks that must be implemented by the processes
-  that use this strategy.
-  """
-
-  @callback prepare_handover_state(state :: term()) :: term()
-  @callback alter_handover_state(current_state :: term(), handover_state :: term()) :: term()
 end

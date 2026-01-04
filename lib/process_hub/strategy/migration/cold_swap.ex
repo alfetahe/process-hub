@@ -95,30 +95,51 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     :ok
   end
 
-  @doc false
-  defmacro __using__(_opts) do
+  @doc """
+  Options:
+  - `:declare_behaviour` - When `true` (default), declares the `ProcessHub.Behaviour.Handover`
+    behaviour and provides default implementations. Set to `false` when using both HotSwap
+    and ColdSwap macros in the same module to avoid duplicate declarations.
+  """
+  defmacro __using__(opts) do
+    declare_behaviour = Keyword.get(opts, :declare_behaviour, true)
+
+    behaviour_ast =
+      if declare_behaviour do
+        quote do
+          @behaviour ProcessHub.Behaviour.Handover
+
+          @impl ProcessHub.Behaviour.Handover
+          def prepare_handover_state(state), do: state
+
+          @impl ProcessHub.Behaviour.Handover
+          def alter_handover_state(_current_state, handover_state), do: handover_state
+
+          defoverridable prepare_handover_state: 1, alter_handover_state: 2
+        end
+      else
+        quote do
+        end
+      end
+
+    handlers_ast =
+      quote do
+        @doc false
+        def handle_info({:process_hub, :query_handover_state, receiver, child_id}, state) do
+          prepared_state = prepare_handover_state(state)
+          send(receiver, {:process_hub, :coldswap_state, child_id, prepared_state})
+          {:noreply, state}
+        end
+
+        @doc false
+        def handle_info({:process_hub, :coldswap_handover, _child_id, handover_state}, state) do
+          {:noreply, alter_handover_state(state, handover_state)}
+        end
+      end
+
     quote do
-      @behaviour ProcessHub.Strategy.Migration.ColdSwapBehaviour
-
-      @doc false
-      def handle_info({:process_hub, :query_handover_state, receiver, child_id}, state) do
-        prepared_state = prepare_handover_state(state)
-        send(receiver, {:process_hub, :coldswap_state, child_id, prepared_state})
-        {:noreply, state}
-      end
-
-      @doc false
-      def handle_info({:process_hub, :coldswap_handover, _child_id, handover_state}, state) do
-        {:noreply, alter_handover_state(state, handover_state)}
-      end
-
-      @impl ProcessHub.Strategy.Migration.ColdSwapBehaviour
-      def prepare_handover_state(state), do: state
-
-      @impl ProcessHub.Strategy.Migration.ColdSwapBehaviour
-      def alter_handover_state(_current_state, handover_state), do: handover_state
-
-      defoverridable prepare_handover_state: 1, alter_handover_state: 2
+      unquote(behaviour_ast)
+      unquote(handlers_ast)
     end
   end
 
@@ -290,25 +311,4 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       end
     end
   end
-end
-
-defmodule ProcessHub.Strategy.Migration.ColdSwapBehaviour do
-  @moduledoc """
-  Behaviour for ColdSwap state handover callbacks.
-
-  Implement these callbacks to customize how state is prepared before
-  migration and how it's applied to the new process.
-  """
-
-  @doc """
-  Called on the dying process to prepare state before migration.
-  Return the state data to be transferred to the new process.
-  """
-  @callback prepare_handover_state(state :: term()) :: term()
-
-  @doc """
-  Called on the new process to apply the handover state.
-  Return the new state for the process.
-  """
-  @callback alter_handover_state(current_state :: term(), handover_state :: term()) :: term()
 end

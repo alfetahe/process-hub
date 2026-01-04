@@ -1,7 +1,10 @@
 defmodule Test.Helper.TestServer do
   use GenServer
+
+  # Use both HotSwap and ColdSwap macros for testing.
+  # The first one declares the behaviour, the second one skips it to avoid duplicates.
   use ProcessHub.Strategy.Migration.HotSwap
-  use ProcessHub.Strategy.Migration.ColdSwap
+  use ProcessHub.Strategy.Migration.ColdSwap, declare_behaviour: false
 
   def test() do
     :test_ok
@@ -25,6 +28,7 @@ defmodule Test.Helper.TestServer do
     {:error, :start_link_err}
   end
 
+  @impl GenServer
   def init(args) do
     # Process.flag(:trap_exit, true)
 
@@ -61,6 +65,7 @@ defmodule Test.Helper.TestServer do
     {:reply, :pong, state}
   end
 
+  @impl GenServer
   def handle_cast({:stop, reason}, state) do
     {:stop, reason, state}
   end
@@ -73,6 +78,8 @@ defmodule Test.Helper.TestServer do
     raise("intentional raise")
   end
 
+  # Redundancy signal handler
+  @impl GenServer
   def handle_info({:process_hub, :redundancy_signal, mode}, state) do
     # IO.puts("redundancy_signal: #{inspect(mode)} on node #{node()} for state #{inspect(state)}")
 
