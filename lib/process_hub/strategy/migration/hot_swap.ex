@@ -140,28 +140,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     @impl true
-    def handle_migration(struct, hub, children_data, added_node, sync_strategy) do
-      Distributor.children_redist_init(hub, added_node, children_data, reply_to: [self()])
-
-      if length(children_data) > 0 do
-        child_specs = Enum.map(children_data, fn {cspec, _m} -> cspec end)
-        migration_cids = migration_cids(hub, struct, child_specs, added_node)
-
-        handle_retentions(hub, struct, sync_strategy, migration_cids)
-
-        if length(migration_cids) > 0 do
-          HookManager.dispatch_hook(
-            hub.storage.hook,
-            Hook.children_migrated(),
-            {added_node, children_data}
-          )
-        end
-      end
-
-      :ok
-    end
-
-    @impl true
     def handle_migrate(
           struct,
           hub,
@@ -230,6 +208,27 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       if strategy.confirm_handover do
         Enum.each(migration_cids, fn cid -> confirm_handover(strategy, cid) end)
       end
+    end
+
+    defp handle_migration(struct, hub, children_data, added_node, sync_strategy) do
+      Distributor.children_redist_init(hub, added_node, children_data, reply_to: [self()])
+
+      if length(children_data) > 0 do
+        child_specs = Enum.map(children_data, fn {cspec, _m} -> cspec end)
+        migration_cids = migration_cids(hub, struct, child_specs, added_node)
+
+        handle_retentions(hub, struct, sync_strategy, migration_cids)
+
+        if length(migration_cids) > 0 do
+          HookManager.dispatch_hook(
+            hub.storage.hook,
+            Hook.children_migrated(),
+            {added_node, children_data}
+          )
+        end
+      end
+
+      :ok
     end
 
     defp migration_cids(hub, %HotSwap{} = strategy, child_specs, added_node) do

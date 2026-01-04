@@ -32,13 +32,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     @impl true
     def init(strategy, _hub), do: strategy
 
-    # TODO: refactor with below.
-    @impl true
-    def handle_migration(_struct, _hub, _children_data, _added_node, _sync_strategy) do
-      # ColdSwap uses handle_migrate instead - each node handles its own locally
-      :ok
-    end
-
     @impl true
     def handle_migrate(
           _struct,
