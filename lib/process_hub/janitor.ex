@@ -1,6 +1,8 @@
 defmodule ProcessHub.Janitor do
   alias ProcessHub.Service.Storage
 
+  require Logger
+
   use GenServer
 
   def start_link({hub_id, pname, misc_storage, purge_interval}) do
@@ -23,6 +25,7 @@ defmodule ProcessHub.Janitor do
   @impl true
   def handle_info(:ttl_cleanup, state) do
     purge_cache(state.misc_storage)
+    purge_pending_registry(state.hub_id)
     schedule_cleanup(state.purge_interval)
 
     {:noreply, state}
@@ -49,5 +52,50 @@ defmodule ProcessHub.Janitor do
           Storage.remove(misc_storage, cache_key)
         end
     end)
+  end
+
+  @doc """
+  Purges expired pending entries from the registry table.
+
+  This function scans the registry for entries with TTL (3-tuple format)
+  and removes any that have expired. A warning is logged for each expired entry.
+  """
+  @spec purge_pending_registry(ProcessHub.hub_id()) :: :ok
+  def purge_pending_registry(hub_id) do
+    # Match items with TTL in registry table (3-tuple format: {key, value, expire})
+    ttl_items = :ets.match(hub_id, {:"$1", :"$2", :"$3"})
+    curr_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+
+    Enum.each(ttl_items, fn
+      nil ->
+        nil
+
+      [] ->
+        []
+
+      [child_id, {child_spec, _nodes, metadata}, ttl_expire] ->
+        if curr_timestamp > ttl_expire do
+          log_pending_expiry(hub_id, child_id, child_spec, metadata)
+          Storage.remove(hub_id, child_id)
+        end
+
+      _ ->
+        nil
+    end)
+
+    :ok
+  end
+
+  defp log_pending_expiry(hub_id, child_id, child_spec, metadata) do
+    target_nodes = Map.get(metadata, :target_nodes, [])
+    forwarded_at = Map.get(metadata, :forwarded_at, 0)
+
+    Logger.warning(
+      "[ProcessHub:#{hub_id}] Pending child entry expired - " <>
+        "child_id: #{inspect(child_id)}, " <>
+        "module: #{inspect(child_spec.start |> elem(0))}, " <>
+        "target_nodes: #{inspect(target_nodes)}, " <>
+        "forwarded_at: #{forwarded_at}"
+    )
   end
 end

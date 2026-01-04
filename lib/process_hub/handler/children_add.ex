@@ -138,6 +138,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @moduledoc """
     Handler for starting child processes.
     """
+
+    # TTL for pending registry entries (10 minutes)
+    @pending_ttl_ms :timer.minutes(10)
+
     @type t :: %__MODULE__{
             children: [
               %{
@@ -405,12 +409,52 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         end)
 
       if length(forw) > 0 do
+        # Insert pending entries before forwarding to ensure children are tracked
+        insert_pending_entries(hub, forw)
+
         Dispatcher.children_start(hub.hub_id, forw, start_opts)
         HookManager.dispatch_hook(hub.storage.hook, Hook.forwarded_migration(), forw)
       end
 
       # Return the filtered list of valid children for this node.
       valid
+    end
+
+    # Inserts pending entries into registry before forwarding to other nodes.
+    # These entries have empty nodes list and TTL, ensuring children are tracked
+    # even if forwarding fails or times out.
+    defp insert_pending_entries(hub, forw_data) do
+      timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+
+      Enum.each(forw_data, fn {target_node, children_list} ->
+        Enum.each(children_list, fn child_data ->
+          child_spec = child_data.child_spec
+          metadata = Map.get(child_data, :metadata, %{})
+
+          # Only insert if not already in registry
+          case ProcessRegistry.lookup(hub.hub_id, child_spec.id) do
+            nil ->
+              pending_metadata =
+                Map.merge(metadata, %{
+                  pending: true,
+                  forwarded_at: timestamp,
+                  target_nodes: [target_node]
+                })
+
+              ProcessRegistry.insert(
+                hub.hub_id,
+                child_spec,
+                [],
+                metadata: pending_metadata,
+                ttl: @pending_ttl_ms
+              )
+
+            _existing ->
+              # Already exists, skip pending insertion
+              :ok
+          end
+        end)
+      end)
     end
 
     defp populate_forward(forw_data, nodes_valid, nodes_invalid, child_data) do

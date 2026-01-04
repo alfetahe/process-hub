@@ -49,6 +49,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
     |> Storage.export_all()
     |> Enum.map(fn
       {key, values} -> {key, values}
+      {key, values, _ttl} -> {key, values}
     end)
     |> Map.new()
   end
