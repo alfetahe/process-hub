@@ -160,6 +160,14 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     repl_fact = RedundancyStrategy.replication_factor(strategy)
     local_node = node()
 
+    # OPTIMIZATION: Batch belongs_to() call for all children upfront instead of
+    # calling it individually inside the loop. This reduces 10k hash ring lookups to 1.
+    all_child_ids = Enum.map(post_start_data, &elem(&1, 0))
+
+    canonical_nodes_map =
+      DistributionStrategy.belongs_to(dist_strat, hub, all_child_ids, repl_fact)
+      |> Map.new()
+
     Enum.each(post_start_data, fn {child_id, res, child_pid, _child_nodes} ->
       # Only process if:
       # 1. child_pid is a local pid
@@ -169,12 +177,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       is_new_start = res === :ok or (is_tuple(res) and elem(res, 0) === :ok)
 
       if is_new_start and is_pid(child_pid) and node(child_pid) === local_node do
-        # Get canonical nodes from distribution strategy instead of using migration message's nodes
-        canonical_nodes =
-          case DistributionStrategy.belongs_to(dist_strat, hub, [child_id], repl_fact) do
-            [{^child_id, nodes}] -> nodes
-            _ -> []
-          end
+        # Get canonical nodes from pre-computed map (O(1) lookup)
+        canonical_nodes = Map.get(canonical_nodes_map, child_id, [])
 
         mode = process_mode(strategy, hub, child_id, canonical_nodes)
 

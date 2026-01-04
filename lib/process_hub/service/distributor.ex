@@ -71,8 +71,6 @@ defmodule ProcessHub.Service.Distributor do
          {:ok, composed_data} <- init_compose_data(hub, mappings, opts),
          {:ok, start_request} <- init_start_request(hub, child_specs, composed_data, opts) do
       pre_start_children(hub, start_request)
-    else
-      err -> err
     end
   end
 
@@ -391,15 +389,21 @@ defmodule ProcessHub.Service.Distributor do
     }
   end
 
-  defp init_compose_data(%Hub{hub_id: hub_id}, children, opts) do
+  defp init_compose_data(%Hub{hub_id: hub_id, storage: %{misc: misc_storage}}, children, opts) do
     global_metadata = Keyword.get(opts, :metadata, %{})
     child_metadata_map = Keyword.get(opts, :child_metadata, %{})
+
+    # Compute topology signature once for all children
+    topology_sig = Cluster.topology_signature(misc_storage)
 
     {:ok,
      Enum.reduce(children, [], fn {child_spec, child_nodes}, acc ->
        # Use per-child metadata if available, otherwise fall back to global metadata
        metadata = Map.get(child_metadata_map, child_spec.id, global_metadata)
-       child_data = init_data(child_nodes, hub_id, child_spec, metadata)
+
+       child_data =
+         init_data(child_nodes, hub_id, child_spec, metadata)
+         |> Map.put(:topology_signature, topology_sig)
 
        append_items =
          Enum.map(child_nodes, fn child_node ->

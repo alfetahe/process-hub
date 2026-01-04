@@ -13,6 +13,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
@@ -278,9 +279,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       HookManager.dispatch_hook(hub.storage.hook, Hook.pre_children_start(), arg)
 
       local_node = node()
+      validated_children = validate_children(arg)
 
-      validate_children(arg)
-      |> Enum.map(fn child_data ->
+      Enum.map(validated_children, fn child_data ->
         child_data =
           HookManager.dispatch_alter_hook(hub.storage.hook, Hook.child_data_alter(), child_data)
 
@@ -344,8 +345,31 @@ defmodule ProcessHub.Handler.ChildrenAdd do
            redun_strategy: redun_strat,
            start_opts: start_opts
          }) do
-      # Check if the child belongs to this node.
       local_node = node()
+
+      # OPTIMIZATION: Check if topology changed using signature comparison.
+      # If topology is unchanged, skip expensive belongs_to() revalidation.
+      request_sig =
+        case List.first(children) do
+          %{topology_signature: sig} -> sig
+          _ -> nil
+        end
+
+      current_sig = Cluster.topology_signature(hub.storage.misc)
+
+      if request_sig != nil and request_sig == current_sig do
+        # FAST PATH: Topology unchanged, use pre-computed node assignments.
+        # Each child already has `nodes` field from init_attach_nodes.
+        Enum.filter(children, fn %{nodes: nodes} ->
+          Enum.member?(nodes, local_node)
+        end)
+      else
+        # SLOW PATH: Topology changed or no signature, full revalidation required.
+        validate_children_full(hub, children, dist_strat, redun_strat, start_opts, local_node)
+      end
+    end
+
+    defp validate_children_full(hub, children, dist_strat, redun_strat, start_opts, local_node) do
       cids = Enum.map(children, & &1.child_spec.id)
 
       cid_node_pairs =
