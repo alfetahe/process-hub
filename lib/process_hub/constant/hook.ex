@@ -119,4 +119,10 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec child_data_alter() :: :child_data_alter_hook
   def child_data_alter(), do: :child_data_alter_hook
+
+  @doc """
+  Hook triggered after ColdSwap migration has delivered state to a new process.
+  """
+  @spec coldswap_handover_delivered() :: :coldswap_handover_delivered_hook
+  def coldswap_handover_delivered(), do: :coldswap_handover_delivered_hook
 end

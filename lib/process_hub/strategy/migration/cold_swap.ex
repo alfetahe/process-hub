@@ -76,6 +76,13 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
         # Cleanup stored state
         Storage.remove(hub.storage.misc, {:coldswap_state, child_id})
+
+        # Dispatch hook to signal handover delivery complete
+        HookManager.dispatch_hook(
+          hub.storage.hook,
+          Hook.coldswap_handover_delivered(),
+          {child_id, node_pids}
+        )
     end
 
     :ok

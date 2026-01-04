@@ -622,7 +622,8 @@ defmodule Test.IntegrationTest do
          {Hook.post_cluster_join(), :global},
          {Hook.post_cluster_leave(), :global},
          {Hook.registry_pid_inserted(), :global},
-         {Hook.children_migrated(), :global}
+         {Hook.children_migrated(), :global},
+         {Hook.coldswap_handover_delivered(), :global}
        ]
   test "coldswap migration with state handover",
        %{hub_id: hub_id, listed_hooks: lh, hub: hub} = context do
@@ -670,10 +671,14 @@ defmodule Test.IntegrationTest do
         Hook.registry_pid_inserted(),
         error_msg: "Child migration timeout"
       )
-    end
 
-    # Give a moment for state handover messages to be delivered.
-    Process.sleep(1000)
+      # Wait for state handover to be delivered.
+      Bag.receive_multiple(
+        length(migrated_children),
+        Hook.coldswap_handover_delivered(),
+        error_msg: "Handover delivery timeout"
+      )
+    end
 
     # Validate that handover data was transferred to migrated children.
     # We check children that migrated to remote nodes by calling via :erpc
