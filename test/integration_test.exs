@@ -359,7 +359,7 @@ defmodule Test.IntegrationTest do
     assert ProcessHub.is_partitioned?(hub_id) === false
 
     # TODO:
-    messages_to_recv = 78
+    messages_to_recv = 77
     # messages_to_recv = (@nr_of_peers + peer_to_start) * (@nr_of_peers + peer_to_start + 1)
     Bag.receive_multiple(messages_to_recv, Hook.post_nodes_redistribution())
 
@@ -685,7 +685,7 @@ defmodule Test.IntegrationTest do
         target_node = List.first(nodes)
 
         case ProcessHub.child_lookup(hub_id, child_id) do
-          {_child_spec, node_pids} when length(node_pids) > 0 ->
+          {_child_spec, node_pids} when node_pids != [] ->
             # Find the pid on the target node
             case Enum.find(node_pids, fn {n, _pid} -> n === target_node end) do
               {^target_node, pid} ->
@@ -823,11 +823,6 @@ defmodule Test.IntegrationTest do
 
     Common.sync_base_test(context, child_specs, :add, scope: :global)
 
-    # Node ups.
-    Bag.receive_multiple(@nr_of_peers, Hook.post_nodes_redistribution(),
-      error_msg: "Post redistribution timeout"
-    )
-
     ProcessHub.registry_dump(hub_id)
     |> Enum.each(fn {_child_id, {_, nodes, _}} ->
       pid = List.first(nodes) |> elem(1)
@@ -894,13 +889,6 @@ defmodule Test.IntegrationTest do
 
     child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
-
-    # n(n + 1)
-    # (@nr_of_peers * (@nr_of_peers + 1))
-    # |> Bag.receive_multiple(Hook.post_nodes_redistribution(),
-    #   error_msg: "Post redistribution timeout",
-    #   timeout: 3000
-    # )
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)

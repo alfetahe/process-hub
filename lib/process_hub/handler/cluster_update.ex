@@ -31,12 +31,12 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             sync_strat: SynchronizationStrategy.t(),
             migr_strat: MigrationStrategy.t(),
             dist_strat: map(),
-            nodes: [node()],
+            joined_nodes: [node()],
             hub: Hub.t()
           }
 
     @enforce_keys [
-      :nodes,
+      :joined_nodes,
       :hub
     ]
     defstruct @enforce_keys ++
@@ -48,7 +48,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                 ]
 
     @spec handle(t()) :: :ok
-    def handle(%__MODULE__{hub: hub, nodes: nodes} = arg) do
+    def handle(%__MODULE__{hub: hub, joined_nodes: nodes} = arg) do
       # Skip processing when partitioned - dist_sup is dead and accessing it would crash.
       # This can happen due to race conditions when events are dispatched before
       # partition mode is entered, but processed after.
@@ -73,18 +73,31 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         # Propagate the local children to the new nodes.
         propagate_local_children(hub, nodes)
 
-        # Dispatch the nodes post redistribution event.
-        HookManager.dispatch_hook(
-          hub.storage.hook,
-          Hook.post_nodes_redistribution(),
-          {:nodeup, nodes}
-        )
-
         # Unlock the event handler.
         State.unlock_event_handler(hub)
 
+        # Dispatch the nodes post redistribution event.
+        dispatch_post_hooks(arg)
+
         :ok
       end
+    end
+
+    defp dispatch_post_hooks(%__MODULE__{
+           joined_nodes: nodes,
+           hub: %Hub{storage: %{hook: hook_storage}}
+         }) do
+      Enum.each(nodes, fn node ->
+        HookManager.dispatch_hook(
+          hook_storage,
+          Hook.post_nodes_redistribution(),
+          {:nodeup, node}
+        )
+
+        HookManager.dispatch_hook(hook_storage, Hook.post_cluster_join(), %{
+          joined_node: node
+        })
+      end)
     end
 
     defp distribute_processes(arg) do
@@ -97,7 +110,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         arg.migr_strat,
         arg.hub,
         registry_data,
-        arg.nodes,
+        arg.joined_nodes,
         replication_factor,
         arg.sync_strat
       )
@@ -107,7 +120,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         arg.redun_strat,
         arg.hub,
         registry_data,
-        arg.nodes
+        arg.joined_nodes
       )
 
       :ok
@@ -184,8 +197,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         )
 
         HookManager.dispatch_hook(hook_storage, Hook.post_cluster_leave(), %{
-          removed_node: node,
-          hub: arg.hub
+          removed_node: node
         })
       end)
     end

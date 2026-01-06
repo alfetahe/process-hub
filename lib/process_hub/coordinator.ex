@@ -544,7 +544,7 @@ defmodule ProcessHub.Coordinator do
       :handle,
       [
         %ClusterUpdate.NodeUp{
-          nodes: nodes,
+          joined_nodes: nodes,
           hub: state
         }
       ]
