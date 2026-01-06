@@ -168,34 +168,6 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  @doc "Initiates processes shutdown."
-  @deprecated "Use compose_stop_request/3 instead - the coordinator now handles stop requests."
-  @spec stop_children(Hub.t(), [ProcessHub.child_id()], keyword()) ::
-          (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
-  def stop_children(hub, child_ids, opts) do
-    Enum.reduce(child_ids, [], fn child_id, acc ->
-      registry_result = ProcessRegistry.lookup(hub.hub_id, child_id)
-
-      child_nodes =
-        case registry_result do
-          nil -> []
-          {_, node_pids} -> Keyword.keys(node_pids)
-        end
-
-      child_data = %{nodes: child_nodes, child_id: child_id}
-
-      append_items =
-        Enum.map(child_nodes, fn child_node ->
-          existing_children = acc[child_node] || []
-
-          {child_node, [child_data | existing_children]}
-        end)
-
-      Keyword.merge(acc, append_items)
-    end)
-    |> pre_stop_children_legacy(hub, opts)
-  end
-
   @doc """
   Terminates child processes locally and propagates all nodes in the cluster
   to remove the child processes from their registry.
@@ -212,7 +184,7 @@ defmodule ProcessHub.Service.Distributor do
     shutdown_results =
       Enum.map(child_ids, fn child_id ->
         result = DistributedSupervisor.terminate_child(dist_sup, child_id)
-        {child_id, result, node()}
+        {child_id, result, node()} |> dbg()
       end)
 
     SynchronizationStrategy.propagate(
@@ -315,94 +287,6 @@ defmodule ProcessHub.Service.Distributor do
       {:ok, updated_request} -> {:ok, updated_request}
       {:error, reason} -> {:error, reason}
     end
-  end
-
-  # Legacy pre_stop_children for backward compatibility
-  defp pre_stop_children_legacy(stop_children, hub, opts) do
-    # For backward compatibility we need to handle the old options.
-    case Keyword.get(opts, :async_wait, false) do
-      false ->
-        case Keyword.get(opts, :awaitable, false) do
-          true ->
-            {receiver_pid, _, await_promise} = spawn_collector(hub, :stop, opts)
-            opts = Keyword.put(opts, :reply_to, [receiver_pid])
-            Dispatcher.children_stop(hub.hub_id, stop_children, opts)
-            {:ok, await_promise}
-
-          false ->
-            Dispatcher.children_stop(hub.hub_id, stop_children, opts)
-            {:ok, :stop_initiated}
-        end
-
-      true ->
-        {receiver_pid, _, await_promise} = spawn_collector(hub, :stop, opts)
-        opts = Keyword.put(opts, :reply_to, [receiver_pid])
-        Dispatcher.children_stop(hub.hub_id, stop_children, opts)
-        {:ok, await_promise}
-    end
-  end
-
-  defp spawn_collector(hub, start_or_stop, opts) do
-    ref = make_ref()
-
-    pid =
-      spawn(fn ->
-        Process.send_after(
-          self(),
-          {:process_hub, :auto_shutdown},
-          Keyword.get(opts, :await_timeout, 60_000)
-        )
-
-        # TODO: backward compatibility for :async_wait
-        result_module =
-          case start_or_stop do
-            :start -> ProcessHub.StartResult
-            :stop -> ProcessHub.StopResult
-          end
-
-        results =
-          case start_or_stop do
-            :start -> Mailbox.collect_start_results(hub, opts)
-            :stop -> Mailbox.collect_stop_results(hub, opts)
-          end
-
-        # TODO: backward compatibility for :async_wait
-        results =
-          case Keyword.get(opts, :async_wait, false) do
-            true ->
-              formatted_res = apply(result_module, :format, [results])
-
-              case Keyword.get(opts, :return_first, false) do
-                false ->
-                  formatted_res
-
-                true ->
-                  case formatted_res do
-                    {:ok, formatted} -> {:ok, List.first(formatted)}
-                    {:error, {errs, succ}} -> {:error, {List.first(errs), succ}}
-                  end
-              end
-
-            false ->
-              results
-          end
-
-        receive do
-          {:process_hub, :auto_shutdown} ->
-            nil
-
-          {:process_hub, :collect_results, from, ^ref} ->
-            send(from, {:process_hub, :async_results, ref, results})
-        end
-      end)
-
-    await_promise = %ProcessHub.Future{
-      future_resolver: pid,
-      timeout: Keyword.get(opts, :timeout),
-      ref: ref
-    }
-
-    {pid, ref, await_promise}
   end
 
   defp init_distribution(hub, child_specs, opts, %{distribution: strategy}) do

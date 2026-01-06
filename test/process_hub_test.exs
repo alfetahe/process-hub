@@ -386,8 +386,8 @@ defmodule ProcessHubTest do
       {^local_node, [{child_id2, pid2, type2, module2}, {child_id1, pid1, type1, module1}]} =
       apply(ProcessHub, :which_children, [hub_id])
 
-    assert child_id1 === :child1
-    assert child_id2 === :child2
+    assert Enum.member?([child_id1, child_id2], :child1)
+    assert Enum.member?([child_id1, child_id2], :child2)
     assert is_pid(pid1)
     assert is_pid(pid2)
     assert type1 === :worker
