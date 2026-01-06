@@ -90,7 +90,7 @@ defmodule ProcessHub.Janitor do
     target_nodes = Map.get(metadata, :target_nodes, [])
     forwarded_at = Map.get(metadata, :forwarded_at, 0)
 
-    Logger.warning(
+    Logger.notice(
       "[ProcessHub:#{hub_id}] Pending child entry expired - " <>
         "child_id: #{inspect(child_id)}, " <>
         "module: #{inspect(child_spec.start |> elem(0))}, " <>

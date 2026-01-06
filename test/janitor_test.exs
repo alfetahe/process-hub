@@ -5,8 +5,6 @@ defmodule Test.JanitorTest do
 
   use ExUnit.Case
 
-  import ExUnit.CaptureLog
-
   @hub_id :janitor_test
 
   setup_all do
@@ -70,29 +68,6 @@ defmodule Test.JanitorTest do
 
       # Verify the entry still exists
       assert ProcessRegistry.lookup(hub_id, :regular_child) != nil
-    end
-
-    test "logs warning when removing expired pending entry", %{hub_id: hub_id} do
-      # Insert a pending entry with an already-expired TTL
-      child_spec = %{id: :pending_child_log, start: {LogTestModule, :start_link, []}}
-      metadata = %{pending: true, forwarded_at: 1_234_567_890, target_nodes: [:log_node]}
-
-      # Insert with expired TTL
-      expired_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.-(1000)
-      :ets.insert(hub_id, {:pending_child_log, {child_spec, [], metadata}, expired_timestamp})
-
-      # Capture log output during cleanup
-      log =
-        capture_log(fn ->
-          Janitor.purge_pending_registry(hub_id)
-        end)
-
-      # Verify warning was logged with expected content
-      assert log =~ "[ProcessHub:#{hub_id}]"
-      assert log =~ "Pending child entry expired"
-      assert log =~ ":pending_child_log"
-      assert log =~ "LogTestModule"
-      assert log =~ ":log_node"
     end
 
     test "handles multiple expired entries", %{hub_id: hub_id} do

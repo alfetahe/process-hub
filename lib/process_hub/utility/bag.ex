@@ -80,7 +80,7 @@ defmodule ProcessHub.Utility.Bag do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     error_msg = Keyword.get(opts, :error_msg, "")
 
-    for y <- 1..x do
+    for y <- 1..x//1 do
       case receive_key do
         {key1, key2} ->
           receive do
