@@ -381,7 +381,7 @@ defmodule ProcessHub.Coordinator do
   def handle_call({:await_start_result, transaction_id}, from, state) do
     case get_pending_request(state, transaction_id) do
       nil ->
-        {:reply, {:error, :not_found}, state}
+        {:reply, {:error, :pending_request_not_found}, state}
 
       request ->
         timeout = Keyword.get(request.options, :timeout, 5000)
@@ -413,7 +413,7 @@ defmodule ProcessHub.Coordinator do
   def handle_call({:await_stop_result, transaction_id}, from, state) do
     case get_pending_stop_request(state, transaction_id) do
       nil ->
-        {:reply, {:error, :not_found}, state}
+        {:reply, {:error, :pending_request_not_found}, state}
 
       request ->
         timeout = Keyword.get(request.options, :timeout, 5000)
