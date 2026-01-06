@@ -64,15 +64,8 @@ defmodule ProcessHub.Future do
           :exit, {:noproc, _} -> {:error, :noproc}
         end
 
-      # Legacy spawn_collector-based format (used by stop_children)
-      pid when is_pid(pid) ->
-        send(pid, {:process_hub, :collect_results, self(), ref})
-
-        receive do
-          {:process_hub, :async_results, ^ref, results} -> results
-        after
-          timeout -> {:error, :timeout}
-        end
+      _ ->
+        {:error, :invalid_argument}
     end
   end
 

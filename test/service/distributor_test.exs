@@ -88,15 +88,15 @@ defmodule Test.Service.DistributorTest do
       start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_add2}]}
     }
 
-    {:ok, request} =
-      Distributor.compose_start_request(hub, [cs1, cs2],
-        awaitable: true,
-        check_existing: true,
-        init_cids: [:dist_child_add, :dist_child_add2],
-        timeout: 5000
-      )
-
-    ProcessHub.Future.await(request.future)
+    # We need to call process hub start children directly
+    # to store the request in the coordinator.
+    ProcessHub.start_children(hub.hub_id, [cs1, cs2],
+      awaitable: true,
+      check_existing: true,
+      init_cids: [:dist_child_add, :dist_child_add2],
+      timeout: 5000
+    )
+    |> ProcessHub.Future.await()
 
     sync_strategy = ProcessHub.Service.Storage.get(misc_storage, :synchronization_strategy)
 

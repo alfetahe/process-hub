@@ -7,7 +7,6 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Service.Mailbox
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Handler.ChildrenRem.StopHandle
@@ -184,7 +183,7 @@ defmodule ProcessHub.Service.Distributor do
     shutdown_results =
       Enum.map(child_ids, fn child_id ->
         result = DistributedSupervisor.terminate_child(dist_sup, child_id)
-        {child_id, result, node()} |> dbg()
+        {child_id, result, node()}
       end)
 
     SynchronizationStrategy.propagate(
