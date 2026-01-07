@@ -52,11 +52,23 @@ defmodule Test.Helper.Bootstrap do
 
     hub = gen_hub(context)
 
-    start_hubs(hub, [node() | Node.list()], listed_hooks)
+    # Check if hub will start partitioned (quorum_startup_confirm with insufficient nodes)
+    # In this case, hooks won't fire so we skip await
+    will_start_partitioned =
+      context[:quorum_startup_confirm] == true and
+        context[:partition_strategy] == :static and
+        length(peer_nodes) + 1 < (context[:quorum_size] || @default_quorum_size_static)
+
+    bootstrap_opts = if will_start_partitioned, do: [skip_await: true], else: []
+
+    start_hubs(hub, [node() | Node.list()], listed_hooks, bootstrap_opts)
 
     on_exit(:kill_hubs, fn ->
       kill_hubs(peer_nodes, hub_id)
     end)
+
+    # Flush messages.
+    Bag.all_messages()
 
     context
     |> Map.put(:hub_conf, hub)
@@ -133,27 +145,63 @@ defmodule Test.Helper.Bootstrap do
       end)
     end)
 
-    # Make sure all nodes are up and running the ProcessHub supervisor.
-    nodes_count = length(Node.list())
+    # Wait for cluster to stabilize after starting hubs.
+    # Only await if post_cluster_join hook is registered
+    has_join_hook =
+      Enum.any?(listed_hooks, fn {hook, _s} ->
+        hook == Hook.post_cluster_join()
+      end)
 
-    msg_count =
+    skip_await = Keyword.get(opts, :skip_await, false)
+
+    if has_join_hook and not skip_await do
+      # Determine scope based on whether post_cluster_join is in listed_hooks as :global
+      scope =
+        if Enum.any?(listed_hooks, fn {hook, s} ->
+             hook == Hook.post_cluster_join() and s == :global
+           end) do
+          :global
+        else
+          :local
+        end
+
       case Keyword.get(opts, :new_nodes, false) do
-        false -> nodes_count * length(nodes)
-        true -> length(nodes)
-      end
+        true ->
+          # New nodes joining an existing cluster
+          # joining_count = length(nodes), cluster already has nodes_count + 1 (peers + local)
+          nodes_count = length(Node.list())
+          joining_count = length(nodes)
 
-    msg_count =
-      case Keyword.get(opts, :msg_count, nil) do
-        nil -> msg_count
-        v -> v
-      end
+          if joining_count > 0 do
+            cluster_size_before = nodes_count + 1
 
-    if nodes_count > 1 and msg_count > 0 do
-      Bag.receive_multiple(
-        msg_count,
-        Hook.post_cluster_join(),
-        error_msg: "Bootstrap timeout."
-      )
+            Bag.await_cluster_join(
+              joining_count,
+              scope: scope,
+              cluster_size: cluster_size_before,
+              timeout: 15_000
+            )
+          end
+
+        false ->
+          # Initial bootstrap - all nodes forming the cluster together
+          # Only the remote peers are "joining" the local node's cluster
+          # Each peer joins and triggers a hook on all cluster members
+          peer_count = length(Node.list())
+
+          if peer_count > 0 do
+            # For initial bootstrap with global hooks:
+            # Each peer discovers the local node and vice versa
+            # Total messages = peer_count * 2 (each peer fires, each local fires)
+            # This is simplified: peer_count nodes joining cluster of size 1
+            Bag.await_cluster_join(
+              peer_count,
+              scope: scope,
+              cluster_size: 1,
+              timeout: 15_000
+            )
+          end
+      end
     end
   end
 

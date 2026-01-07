@@ -921,11 +921,6 @@ defmodule ProcessHub.Coordinator do
       )
 
       State.lock_event_handler(state)
-
-      # Dispatch post hooks for all nodes
-      Enum.each(new_nodes, fn node ->
-        HookManager.dispatch_hook(state.storage.hook, Hook.post_cluster_join(), node)
-      end)
     end
 
     state

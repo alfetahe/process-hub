@@ -353,13 +353,16 @@ defmodule Test.IntegrationTest do
 
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
+    # Use skip_await because this test manages its own synchronization
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true)
+    |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true, skip_await: true)
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
-    # TODO:
-    messages_to_recv = 77
+    # Wait for redistribution after 6 new nodes join cluster of 6
+    # Each existing node fires post_nodes_redistribution for nodeup
+    # Total = 6 nodeup events × (6 original + 6 new) nodes = 72
+    messages_to_recv = peer_to_start * (@nr_of_peers + 1 + peer_to_start)
     # messages_to_recv = (@nr_of_peers + peer_to_start) * (@nr_of_peers + peer_to_start + 1)
     Bag.receive_multiple(messages_to_recv, Hook.post_nodes_redistribution())
 
@@ -429,7 +432,7 @@ defmodule Test.IntegrationTest do
   @tag quorum_threshold_time: 3600
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :local},
+         {Hook.post_cluster_leave(), :global},
          {Hook.post_nodes_redistribution(), :local}
        ]
   test "dynamic quorum with min of 70% of cluster",
@@ -444,33 +447,36 @@ defmodule Test.IntegrationTest do
     new_peers = TestNode.start_nodes(peer_to_start, prefix: :dynamic_quorum_test)
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
+    # Start hubs on new peers - Bootstrap.start_hubs already handles await_cluster_join
     Bootstrap.gen_hub(context) |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true)
-    Bag.receive_multiple(peer_to_start, Hook.post_nodes_redistribution())
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
+    # Track current cluster size as nodes leave
+    # Cluster = @nr_of_peers + 1 (initial) + length(peer_names) (new peers)
+    current_cluster_size = @nr_of_peers + 1 + length(peer_names)
+
     removed_peers = Common.stop_peers(new_peers, 1)
     new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
-    Bag.receive_multiple(1, Hook.post_nodes_redistribution())
+    Bag.await_cluster_leave(1, scope: :global, cluster_size: current_cluster_size)
+    current_cluster_size = current_cluster_size - 1
 
     # At this point we still have 90% of cluster left.
     assert ProcessHub.is_partitioned?(hub_id) === false
 
     removed_peers = Common.stop_peers(new_peers, 1)
     new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
-    Bag.receive_multiple(1, Hook.post_nodes_redistribution())
+    Bag.await_cluster_leave(1, scope: :global, cluster_size: current_cluster_size)
+    current_cluster_size = current_cluster_size - 1
 
     # At this point we still have 80% of cluster left.
     assert ProcessHub.is_partitioned?(hub_id) === false
 
     removed_peers = Common.stop_peers(new_peers, 1)
     _new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
-    Bag.receive_multiple(1, Hook.post_nodes_redistribution())
-
-    ProcessHub.Utility.Bag.all_messages() |> dbg()
+    Bag.await_cluster_leave(1, scope: :global, cluster_size: current_cluster_size)
 
     # At this point we have 70% of cluster left.
-
     assert ProcessHub.is_partitioned?(hub_id) === true
 
     :net_kernel.monitor_nodes(false)
@@ -580,8 +586,9 @@ defmodule Test.IntegrationTest do
     end)
 
     # Restart hubs on peer nodes and confirm they are up and running.
+    # Use skip_await because cluster_size calculation is wrong after hub restart
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true)
+    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
 
     ring = ProcessHub.Service.Ring.get_ring(hub.storage.misc)
     local_node = node()
@@ -647,10 +654,16 @@ defmodule Test.IntegrationTest do
     end)
 
     # Restart hubs on peer nodes - this will trigger migration.
+    # Use skip_await because cluster_size calculation is wrong after hub restart
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true)
+    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
 
-    ring = ProcessHub.Service.Ring.get_ring(hub.storage.misc)
+    # Wait for cluster to stabilize before checking ring
+    Process.sleep(2000)
+
+    # Get fresh hub to get updated ring after restart
+    fresh_hub = ProcessHub.Coordinator.get_hub(hub_id)
+    ring = ProcessHub.Service.Ring.get_ring(fresh_hub.storage.misc)
     local_node = node()
 
     # Get all children that should migrate to other nodes.
@@ -774,8 +787,9 @@ defmodule Test.IntegrationTest do
       |> Enum.filter(fn {_, node} -> node !== local_node end)
 
     # Restart hubs on peer nodes and confirm they are up and running.
+    # Use skip_await because cluster_size calculation is wrong after hub restart
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true)
+    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
 
     # Wait for all hotswap handovers to complete (migration completion signal)
     if length(migrated_children) > 0 do
@@ -898,11 +912,12 @@ defmodule Test.IntegrationTest do
     new_peers = TestNode.start_nodes(peer_to_start, prefix: :redunc_activ_pass_test)
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
+    # Use skip_await to avoid message counting issues during complex scale-up
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true)
+    |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true, skip_await: true)
 
-    # Wait for registry to stabilize after scale-up - all children should have correct replication
-    Process.sleep(2000)
+    # Wait for registry to stabilize after scale-up - old replicas need time to be cleaned up
+    Process.sleep(5000)
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)

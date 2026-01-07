@@ -88,16 +88,16 @@ defmodule ProcessHub.Handler.ClusterUpdate do
            hub: %Hub{storage: %{hook: hook_storage}}
          }) do
       Enum.each(nodes, fn node ->
-        HookManager.dispatch_hook(
-          hook_storage,
-          Hook.post_nodes_redistribution(),
-          {:nodeup, node}
-        )
-
         HookManager.dispatch_hook(hook_storage, Hook.post_cluster_join(), %{
           joined_node: node
         })
       end)
+
+      HookManager.dispatch_hook(
+        hook_storage,
+        Hook.post_nodes_redistribution(),
+        {:nodeup, nodes}
+      )
     end
 
     defp distribute_processes(arg) do
