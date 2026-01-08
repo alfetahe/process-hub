@@ -10,7 +10,6 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Handler.ChildrenRem.StopHandle
-  alias ProcessHub.Utility.Bag
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -342,12 +341,15 @@ defmodule ProcessHub.Service.Distributor do
     cids = Enum.map(child_specs, & &1.id)
     cid_node_pids = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
 
+    # Convert to map for O(1) lookups instead of O(n) linear search
+    cid_nodes_map = Map.new(cid_node_pids)
+
     {
       :ok,
       Enum.map(child_specs, fn child_spec ->
         {
           child_spec,
-          Bag.get_by_key(cid_node_pids, child_spec.id, [])
+          Map.get(cid_nodes_map, child_spec.id, [])
         }
       end)
     }

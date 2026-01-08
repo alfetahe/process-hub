@@ -17,7 +17,7 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - Significantly improved child process startup performance when starting large batches (10k+) of children:
   - Batched `belongs_to()` calls in `Replication.handle_post_start/3` - reduced from O(n) individual hash ring lookups to a single batch operation.
   - Added topology signature optimization to skip redundant `belongs_to()` revalidation when cluster topology hasn't changed between request creation and execution. This optimization only applies to deterministic distribution strategies (ConsistentHashing, Guided) and is automatically disabled for dynamic strategies (CentralizedLoadBalancer).
-  - Combined, these optimizations reduce child startup time by approximately 40% for large batches with stable cluster topology.
+  - Fixed O(n²) bottleneck in `Distributor.init_attach_nodes/3` by replacing linear list lookups with O(1) Map lookups.
 
 ### Breaking changes
 - Configuration validation in `ProcessHub.Initializer` now detects incompatible strategy combinations at startup. Using state handover (`:handover` option in `ColdSwap` or `HotSwap` migration strategies) with the `Replication` redundancy strategy is no longer allowed, as this combination has undefined semantics. Attempting to start a hub with this configuration will return `{:error, {:invalid_config, :handover_with_replication_not_supported}}` instead of silently proceeding with undefined behavior.
