@@ -120,6 +120,7 @@ defmodule ProcessHub.Constant.Hook do
   @spec child_data_alter() :: :child_data_alter_hook
   def child_data_alter(), do: :child_data_alter_hook
 
+  # TODO: need to be general hooks.
   @doc """
   Hook triggered after ColdSwap migration has delivered state to a new process.
   """

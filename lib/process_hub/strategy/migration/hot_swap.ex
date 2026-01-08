@@ -143,7 +143,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     handlers_ast =
       quote do
         @doc false
-        def handle_info({:process_hub, :query_handover_state, receiver, child_id}, state) do
+        def handle_info({:process_hub, :query_hot_handover_state, receiver, child_id}, state) do
           prepared_state = prepare_handover_state(state)
           send(receiver, {:process_hub, :hotswap_state, child_id, prepared_state})
           {:noreply, state}
@@ -219,7 +219,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       local_pid = Keyword.get(cn, local_node)
 
       if is_pid(local_pid) do
-        send(local_pid, {:process_hub, :query_handover_state, self_pid, child_id})
+        send(local_pid, {:process_hub, :query_hot_handover_state, self_pid, child_id})
       end
     end)
 
@@ -459,7 +459,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           pid = Map.get(local_pids, cs.id)
 
           if is_pid(pid) do
-            send(pid, {:process_hub, :query_handover_state, self_pid, cs.id})
+            send(pid, {:process_hub, :query_hot_handover_state, self_pid, cs.id})
             [{cs.id, pid} | acc]
           else
             acc

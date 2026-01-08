@@ -83,6 +83,8 @@ defmodule ProcessHub.DistributedSupervisor do
     |> elem(1)
   end
 
+  # TODO: All calls to `Supervisor.which_children/1` need to be either replaced or cached.
+  # This is very expensive call.
   @doc "Returns a list of processe pairs in the form of `{child_id, pid}`
   that are running on local node."
   def local_children(distributed_sup) do

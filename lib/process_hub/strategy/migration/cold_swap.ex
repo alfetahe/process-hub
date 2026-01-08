@@ -125,7 +125,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     handlers_ast =
       quote do
         @doc false
-        def handle_info({:process_hub, :query_handover_state, receiver, child_id}, state) do
+        def handle_info({:process_hub, :query_cold_handover_state, receiver, child_id}, state) do
           prepared_state = prepare_handover_state(state)
           send(receiver, {:process_hub, :coldswap_state, child_id, prepared_state})
           {:noreply, state}
@@ -268,12 +268,12 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
       # Send query messages to all processes and collect child_ids
       child_ids =
-        Enum.reduce(children_to_stop, [], fn {cs, _m}, acc ->
-          pid = Map.get(local_pids, cs.id)
+        Enum.reduce(children_to_stop, [], fn {%{id: cid}, _m}, acc ->
+          pid = Map.get(local_pids, cid)
 
-          if is_pid(pid) do
-            send(pid, {:process_hub, :query_handover_state, self_pid, cs.id})
-            [cs.id | acc]
+          if is_pid(pid) && Process.alive?(pid) do
+            send(pid, {:process_hub, :query_cold_handover_state, self_pid, cid})
+            [cid | acc]
           else
             acc
           end

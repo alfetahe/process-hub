@@ -628,112 +628,114 @@ defmodule Test.IntegrationTest do
     )
   end
 
-  # TODO: ColdSwap handover doesn't work across nodes - state is stored on source node
-  # but looked up on destination node's storage
-  # @tag migr_strategy: :cold
-  # @tag hub_id: :migration_coldswap_handover_test
-  # @tag migr_handover: true
-  # @tag listed_hooks: [
-  #        {Hook.post_cluster_join(), :global},
-  #        {Hook.post_cluster_leave(), :global},
-  #        {Hook.registry_pid_inserted(), :global},
-  #        {Hook.children_migrated(), :global},
-  #        {Hook.coldswap_handover_delivered(), :global}
-  #      ]
-  # test "coldswap migration with state handover",
-  #      %{hub_id: hub_id, listed_hooks: lh, hub: _hub} = context do
-  #   nodes_count = @nr_of_peers
-  #   child_count = 1000
-  #   child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+  @tag migr_strategy: :cold
+  @tag hub_id: :migration_coldswap_handover_test
+  @tag migr_handover: true
+  @tag listed_hooks: [
+         {Hook.post_cluster_join(), :global},
+         {Hook.post_cluster_leave(), :global},
+         {Hook.registry_pid_inserted(), :global},
+         {Hook.children_migrated(), :global},
+         {Hook.coldswap_handover_delivered(), :global}
+       ]
+  test "coldswap migration with state handover",
+       %{hub_id: hub_id, listed_hooks: lh, hub: _hub} = context do
+    nodes_count = @nr_of_peers
+    child_count = 1000
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
-  #   # Stop hubs on peer nodes before we start.
-  #   Enum.each(Node.list(), fn node ->
-  #     :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
-  #   end)
+    # Stop hubs on peer nodes before we start.
+    Enum.each(Node.list(), fn node ->
+      :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
+    end)
 
-  #   # Confirm that hubs are stopped.
-  #   Bag.receive_multiple(nodes_count, Hook.post_cluster_leave())
+    # Confirm that hubs are stopped.
+    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave())
 
-  #   # Start children on local node only.
-  #   Common.sync_base_test(context, child_specs, :add)
+    # Start children on local node only.
+    Common.sync_base_test(context, child_specs, :add)
 
-  #   # Add custom handover data to each child.
-  #   Enum.each(child_specs, fn child_spec ->
-  #     {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
-  #     GenServer.call(pid, {:set_value, :handover_data, child_spec.id})
-  #   end)
+    # Add custom handover data to each child.
+    Enum.each(child_specs, fn child_spec ->
+      {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
+      GenServer.call(pid, {:set_value, :handover_data, child_spec.id})
+    end)
 
-  #   # Restart hubs on peer nodes - this will trigger migration.
-  #   # Use skip_await because cluster_size calculation is wrong after hub restart
-  #   Bootstrap.gen_hub(context)
-  #   |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
+    # Restart hubs on peer nodes - this will trigger migration.
+    # Use skip_await because cluster_size calculation is wrong after hub restart
+    Bootstrap.gen_hub(context)
+    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
 
-  #   # Wait for cluster to stabilize before checking ring
-  #   Process.sleep(2000)
+    # Wait for all peer nodes to join the cluster
+    Bag.receive_multiple(
+      nodes_count,
+      Hook.post_cluster_join(),
+      error_msg: "Cluster join timeout"
+    )
 
-  #   # Get fresh hub to get updated ring after restart
-  #   fresh_hub = ProcessHub.Coordinator.get_hub(hub_id)
-  #   ring = ProcessHub.Service.Ring.get_ring(fresh_hub.storage.misc)
-  #   local_node = node()
+    # Get fresh hub to get updated ring after restart
+    fresh_hub = ProcessHub.Coordinator.get_hub(hub_id)
+    ring = ProcessHub.Service.Ring.get_ring(fresh_hub.storage.misc)
+    local_node = node()
 
-  #   # Get all children that should migrate to other nodes.
-  #   migrated_children =
-  #     Enum.map(child_specs, fn child_spec ->
-  #       {child_spec.id, ProcessHub.Service.Ring.key_to_nodes(ring, child_spec.id, 1)}
-  #     end)
-  #     |> Enum.filter(fn {_, nodes} ->
-  #       !Enum.member?(nodes, local_node)
-  #     end)
+    # Get all children that should migrate to other nodes.
+    migrated_children =
+      Enum.map(child_specs, fn child_spec ->
+        {child_spec.id, ProcessHub.Service.Ring.key_to_nodes(ring, child_spec.id, 1)}
+      end)
+      |> Enum.filter(fn {_, nodes} ->
+        !Enum.member?(nodes, local_node)
+      end)
 
-  #   # Wait for migrations to complete.
-  #   if length(migrated_children) > 0 do
-  #     Bag.receive_multiple(
-  #       length(migrated_children),
-  #       Hook.registry_pid_inserted(),
-  #       error_msg: "Child migration timeout"
-  #     )
+    # Wait for migrations to complete.
+    if length(migrated_children) > 0 do
+      Bag.receive_multiple(
+        length(migrated_children),
+        Hook.registry_pid_inserted(),
+        error_msg: "Child migration timeout"
+      )
 
-  #     # Wait for state handover to be delivered.
-  #     Bag.receive_multiple(
-  #       length(migrated_children),
-  #       Hook.coldswap_handover_delivered(),
-  #       error_msg: "Handover delivery timeout"
-  #     )
-  #   end
+      # Wait for state handover to be delivered.
+      Bag.receive_multiple(
+        length(migrated_children),
+        Hook.coldswap_handover_delivered(),
+        error_msg: "Handover delivery timeout"
+      )
+    end
 
-  #   # Validate that handover data was transferred to migrated children.
-  #   # We check children that migrated to remote nodes by calling via :erpc
-  #   validated_count =
-  #     Enum.reduce(migrated_children, 0, fn {child_id, nodes}, count ->
-  #       target_node = List.first(nodes)
+    # Validate that handover data was transferred to migrated children.
+    # We check children that migrated to remote nodes by calling via :erpc
+    validated_count =
+      Enum.reduce(migrated_children, 0, fn {child_id, nodes}, count ->
+        target_node = List.first(nodes)
 
-  #       case ProcessHub.child_lookup(hub_id, child_id) do
-  #         {_child_spec, node_pids} when node_pids != [] ->
-  #           # Find the pid on the target node
-  #           case Enum.find(node_pids, fn {n, _pid} -> n === target_node end) do
-  #             {^target_node, pid} ->
-  #               # Call the remote process via :erpc
-  #               handover_data =
-  #                 :erpc.call(target_node, GenServer, :call, [pid, {:get_value, :handover_data}])
+        case ProcessHub.child_lookup(hub_id, child_id) do
+          {_child_spec, node_pids} when node_pids != [] ->
+            # Find the pid on the target node
+            case Enum.find(node_pids, fn {n, _pid} -> n === target_node end) do
+              {^target_node, pid} ->
+                # Call the remote process via :erpc
+                handover_data =
+                  :erpc.call(target_node, GenServer, :call, [pid, {:get_value, :handover_data}])
 
-  #               assert handover_data === child_id,
-  #                      "Child #{child_id} invalid handover data: #{inspect(handover_data)}"
+                assert handover_data === child_id,
+                       "Child #{child_id} invalid handover data: #{inspect(handover_data)}"
 
-  #               count + 1
+                count + 1
 
-  #             nil ->
-  #               # Process not on expected node, skip
-  #               count
-  #           end
+              nil ->
+                # Process not on expected node, skip
+                count
+            end
 
-  #         _ ->
-  #           count
-  #       end
-  #     end)
+          _ ->
+            count
+        end
+      end)
 
-  #   # Ensure we validated at least some children
-  #   assert validated_count > 0, "No migrated children were validated"
-  # end
+    # Ensure we validated at least some children
+    assert validated_count > 0, "No migrated children were validated"
+  end
 
   @tag migr_strategy: :hot
   @tag dist_strategy: :consistent_hashing
