@@ -35,34 +35,49 @@ defmodule Test.TempTest do
     child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
-    # Stop hubs on peer nodes before we start.
-    Enum.each(Node.list(), fn node ->
-      :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
+    {stop_hubs_time, _} = :timer.tc(fn ->
+      # Stop hubs on peer nodes before we start.
+      Enum.each(Node.list(), fn node ->
+        :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
+      end)
+
+      # Confirm that hubs are stopped.
+      Bag.receive_multiple(nodes_count, Hook.post_cluster_leave())
     end)
+    dbg({:TEST_PHASE_MS, :stop_peer_hubs, div(stop_hubs_time, 1000)})
 
-    # Confirm that hubs are stopped.
-    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave())
-
-    # Start children on local node only.
-    Common.sync_base_test(context, child_specs, :add)
-
-    # Add custom handover data to each child.
-    Enum.each(child_specs, fn child_spec ->
-      {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
-      GenServer.call(pid, {:set_value, :handover_data, child_spec.id})
+    {start_children_time, _} = :timer.tc(fn ->
+      # Start children on local node only.
+      Common.sync_base_test(context, child_specs, :add)
     end)
+    dbg({:TEST_PHASE_MS, :start_children_locally, div(start_children_time, 1000), child_count})
 
-    # Restart hubs on peer nodes - this will trigger migration.
-    # Use skip_await because cluster_size calculation is wrong after hub restart
-    Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
+    {set_handover_time, _} = :timer.tc(fn ->
+      # Add custom handover data to each child.
+      Enum.each(child_specs, fn child_spec ->
+        {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
+        GenServer.call(pid, {:set_value, :handover_data, child_spec.id})
+      end)
+    end)
+    dbg({:TEST_PHASE_MS, :set_handover_data, div(set_handover_time, 1000)})
 
-    # Wait for all peer nodes to join the cluster
-    Bag.receive_multiple(
-      nodes_count,
-      Hook.post_cluster_join(),
-      error_msg: "Cluster join timeout"
-    )
+    {restart_hubs_time, _} = :timer.tc(fn ->
+      # Restart hubs on peer nodes - this will trigger migration.
+      # Use skip_await because cluster_size calculation is wrong after hub restart
+      Bootstrap.gen_hub(context)
+      |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
+    end)
+    dbg({:TEST_PHASE_MS, :restart_peer_hubs, div(restart_hubs_time, 1000)})
+
+    {wait_joins_time, _} = :timer.tc(fn ->
+      # Wait for all peer nodes to join the cluster
+      Bag.receive_multiple(
+        nodes_count,
+        Hook.post_cluster_join(),
+        error_msg: "Cluster join timeout"
+      )
+    end)
+    dbg({:TEST_PHASE_MS, :wait_cluster_joins, div(wait_joins_time, 1000)})
 
     # Get fresh hub to get updated ring after restart
     fresh_hub = ProcessHub.Coordinator.get_hub(hub_id)
@@ -78,25 +93,33 @@ defmodule Test.TempTest do
         !Enum.member?(nodes, local_node)
       end)
 
-    # Wait for migrations to complete.
-    if length(migrated_children) > 0 do
-      Bag.receive_multiple(
-        length(migrated_children),
-        Hook.registry_pid_inserted(),
-        error_msg: "Child migration timeout"
-      )
+    {wait_migrations_time, _} = :timer.tc(fn ->
+      # Wait for migrations to complete.
+      if length(migrated_children) > 0 do
+        Bag.receive_multiple(
+          length(migrated_children),
+          Hook.registry_pid_inserted(),
+          error_msg: "Child migration timeout"
+        )
+      end
+    end)
+    dbg({:TEST_PHASE_MS, :wait_migrations, div(wait_migrations_time, 1000), length(migrated_children)})
 
-      # Wait for state handover to be delivered.
-      Bag.receive_multiple(
-        length(migrated_children),
-        Hook.coldswap_handover_delivered(),
-        error_msg: "Handover delivery timeout"
-      )
-    end
+    {wait_handover_time, _} = :timer.tc(fn ->
+      if length(migrated_children) > 0 do
+        # Wait for state handover to be delivered.
+        Bag.receive_multiple(
+          length(migrated_children),
+          Hook.coldswap_handover_delivered(),
+          error_msg: "Handover delivery timeout"
+        )
+      end
+    end)
+    dbg({:TEST_PHASE_MS, :wait_handover_delivery, div(wait_handover_time, 1000)})
 
-    # Validate that handover data was transferred to migrated children.
-    # We check children that migrated to remote nodes by calling via :erpc
-    validated_count =
+    {validate_time, validated_count} = :timer.tc(fn ->
+      # Validate that handover data was transferred to migrated children.
+      # We check children that migrated to remote nodes by calling via :erpc
       Enum.reduce(migrated_children, 0, fn {child_id, nodes}, count ->
         target_node = List.first(nodes)
 
@@ -123,6 +146,8 @@ defmodule Test.TempTest do
             count
         end
       end)
+    end)
+    dbg({:TEST_PHASE_MS, :validate_handover, div(validate_time, 1000), validated_count})
 
     # Ensure we validated at least some children
     assert validated_count > 0, "No migrated children were validated"
