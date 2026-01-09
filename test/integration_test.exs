@@ -337,8 +337,9 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :divergence_test
   @tag partition_strategy: :div
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.post_nodes_redistribution(), :global}
+         {Hook.post_cluster_join(), :local},
+         {Hook.post_cluster_leave(), :local},
+         {Hook.post_nodes_redistribution(), :local}
        ]
   test "partition divergence test", %{hub_id: hub_id, listed_hooks: lh} = context do
     :net_kernel.monitor_nodes(true)
@@ -353,29 +354,17 @@ defmodule Test.IntegrationTest do
 
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
-    # Use skip_await because this test manages its own synchronization
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true, skip_await: true)
+    |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true)
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
-    # Wait for cluster to stabilize
-    Process.sleep(2000)
-
-    # Flush any pending redistribution messages from scale-up
-    # The exact count varies due to timing of simultaneous node joins
-    Bag.all_messages()
-
     Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
       removed_peers = Common.stop_peers(acc, 1)
-      Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
+      remaining = Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
+      Bag.await_cluster_leave(1, scope: :local)
+      remaining
     end)
-
-    # Wait for scale-down to complete
-    Process.sleep(3000)
-
-    # Flush any pending redistribution messages from scale-down
-    Bag.all_messages()
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
