@@ -549,7 +549,7 @@ defmodule Test.IntegrationTest do
   @tag redun_strategy: :replication
   @tag replication_factor: 4
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
+         {Hook.post_cluster_join(), :local},
          {Hook.post_cluster_leave(), :global},
          {Hook.registry_pid_inserted(), :global},
          {Hook.children_migrated(), :global}
@@ -578,12 +578,8 @@ defmodule Test.IntegrationTest do
     end)
 
     # Restart hubs on peer nodes and confirm they are up and running.
-    # Use skip_await because cluster_size calculation is wrong after hub restart
     Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
-
-    # Wait for cluster to stabilize before checking ring
-    Process.sleep(2000)
+    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true)
 
     # Get fresh hub to get updated ring after restart
     fresh_hub = ProcessHub.Coordinator.get_hub(hub_id)
