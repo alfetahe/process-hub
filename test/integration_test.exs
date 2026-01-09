@@ -556,7 +556,7 @@ defmodule Test.IntegrationTest do
   end
 
   @tag migr_strategy: :cold
-  @tag hub_id: :migration_coldswap_test
+  @tag hub_id: :migration_coldswap_repl_test
   @tag redun_strategy: :replication
   @tag replication_factor: 4
   @tag listed_hooks: [
