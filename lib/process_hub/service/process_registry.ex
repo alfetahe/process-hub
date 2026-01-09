@@ -139,6 +139,15 @@ defmodule ProcessHub.Service.ProcessRegistry do
     get_pids(hub_id, child_id) |> List.first()
   end
 
+  @doc "Returns the local pid for the given child_id, or nil if not found on local node."
+  @spec local_pid(ProcessHub.hub_id(), ProcessHub.child_id()) :: pid() | nil
+  def local_pid(hub_id, child_id) do
+    case lookup(hub_id, child_id) do
+      nil -> nil
+      {_child_spec, node_pids} -> Keyword.get(node_pids, node())
+    end
+  end
+
   @doc "Return the child_spec, nodes, and pids for the given child_id."
   @spec lookup(
           ProcessHub.hub_id(),
@@ -148,7 +157,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           {ProcessHub.child_spec(), [{node(), pid()}]}
           | {ProcessHub.child_spec(), [{node(), pid()}], ProcessHub.child_metadata()}
           | nil
-  def lookup(hub_id, child_id, opts) do
+  def lookup(hub_id, child_id, opts \\ []) do
     table = Keyword.get(opts, :table, hub_id)
     with_metadata = Keyword.get(opts, :with_metadata, false)
 
@@ -165,10 +174,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
             {child_spec, child_nodes}
         end
     end
-  end
-
-  def lookup(hub_id, child_id) do
-    lookup(hub_id, child_id, table: hub_id)
   end
 
   @doc """

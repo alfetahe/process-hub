@@ -69,20 +69,6 @@ defmodule ProcessHub.DistributedSupervisor do
     Supervisor.delete_child(distributed_sup, child_id)
   end
 
-  @doc "Returns `true` if the child process is running on local node."
-  def has_child?(distributed_sup, child_id) do
-    Supervisor.which_children(distributed_sup)
-    |> Enum.map(&elem(&1, 0))
-    |> Enum.member?(child_id)
-  end
-
-  @doc "Returns the child process pid if it is running on local node."
-  def local_pid(distributed_sup, child_id) do
-    Supervisor.which_children(distributed_sup)
-    |> Enum.find({nil, nil}, &(elem(&1, 0) === child_id))
-    |> elem(1)
-  end
-
   # TODO: All calls to `Supervisor.which_children/1` need to be either replaced or cached.
   # This is very expensive call.
   @doc "Returns a list of processe pairs in the form of `{child_id, pid}`

@@ -48,6 +48,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Hub
 
   @typedoc """
@@ -359,7 +360,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   defp child_pid(hub, child_id, opts) do
     case Keyword.get(opts, :pid) do
       nil ->
-        DistributedSupervisor.local_pid(hub.procs.dist_sup, child_id)
+        ProcessRegistry.local_pid(hub.hub_id, child_id)
 
       # Handle case where pid is a registry entry tuple {child_spec, node_pids, metadata}
       {_child_spec, node_pids, _metadata} when is_list(node_pids) ->
@@ -369,8 +370,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         pid
 
       _other ->
-        # Fallback to lookup if pid format is unexpected
-        DistributedSupervisor.local_pid(hub.procs.dist_sup, child_id)
+        nil
     end
   end
 
