@@ -628,115 +628,99 @@ defmodule Test.IntegrationTest do
     )
   end
 
+  # TODO: TEST this also with replication.
   @tag migr_strategy: :cold
-  @tag hub_id: :migration_coldswap_handover_test
+  @tag dist_strategy: :consistent_hashing
+  @tag hub_id: :migration_coldswap_test
   @tag migr_handover: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :global},
-         {Hook.registry_pid_inserted(), :global},
+         {Hook.post_cluster_leave(), :local},
+         {Hook.registry_pid_inserted(), :local},
+         {Hook.registry_pid_removed(), :local},
+         {Hook.post_nodes_redistribution(), :local},
          {Hook.children_migrated(), :global},
-         {Hook.coldswap_handover_delivered(), :global}
+         {Hook.forwarded_migration(), :global},
+         {Hook.coldswap_handover_delivered(), :local}
        ]
-  test "coldswap migration with state handover",
-       %{hub_id: hub_id, listed_hooks: lh, hub: _hub} = context do
+  test "coldswap migration with handoff",
+       %{hub_id: hub_id, listed_hooks: lh, hub_conf: hub_conf, hub: hub} = context do
     nodes_count = @nr_of_peers
-    child_count = 1000
-    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+    child_count = 20000
+
+    child_specs =
+      Bag.gen_child_specs(
+        child_count,
+        prefix: Atom.to_string(hub_id),
+        id_type: :string
+      )
 
     # Stop hubs on peer nodes before we start.
     Enum.each(Node.list(), fn node ->
       :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
     end)
 
-    # Confirm that hubs are stopped.
-    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave())
+    # Node downs
+    Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
+      error_msg: "Post redistribution timeout"
+    )
 
-    # Start children on local node only.
+    # Confirm that hubs are stopped.
+    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave(),
+      error_msg: "Cluster leave timeout"
+    )
+
+    # Starts children.
     Common.sync_base_test(context, child_specs, :add)
 
-    # Add custom handover data to each child.
+    # Add custom data to children.
     Enum.each(child_specs, fn child_spec ->
       {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
-      GenServer.call(pid, {:set_value, :handover_data, child_spec.id})
+      GenServer.call(pid, {:set_value, :handoff_data, child_spec.id})
     end)
 
-    # Restart hubs on peer nodes - this will trigger migration.
+    # Calculate which children will be migrated BEFORE restarting hubs
+    local_node = node()
+    dist_strat = hub_conf.distribution_strategy
+    child_ids = Enum.map(child_specs, & &1.id)
+
+    migrated_children =
+      dist_strat
+      |> ProcessHub.Strategy.Distribution.Base.belongs_to(hub, child_ids, 1)
+      |> Enum.map(fn {child_id, nodes} -> {child_id, List.first(nodes)} end)
+      |> Enum.filter(fn {_, node} -> node !== local_node end)
+
+    # Restart hubs on peer nodes and confirm they are up and running.
     # Use skip_await because cluster_size calculation is wrong after hub restart
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
 
-    # Wait for all peer nodes to join the cluster
-    Bag.receive_multiple(
-      nodes_count,
-      Hook.post_cluster_join(),
-      error_msg: "Cluster join timeout"
-    )
-
-    # Get fresh hub to get updated ring after restart
-    fresh_hub = ProcessHub.Coordinator.get_hub(hub_id)
-    ring = ProcessHub.Service.Ring.get_ring(fresh_hub.storage.misc)
-    local_node = node()
-
-    # Get all children that should migrate to other nodes.
-    migrated_children =
-      Enum.map(child_specs, fn child_spec ->
-        {child_spec.id, ProcessHub.Service.Ring.key_to_nodes(ring, child_spec.id, 1)}
-      end)
-      |> Enum.filter(fn {_, nodes} ->
-        !Enum.member?(nodes, local_node)
-      end)
-
-    # Wait for migrations to complete.
+    # Wait for all coldswap handovers to complete (migration completion signal)
     if length(migrated_children) > 0 do
       Bag.receive_multiple(
         length(migrated_children),
-        Hook.registry_pid_inserted(),
-        error_msg: "Child migration timeout"
-      )
-
-      # Wait for state handover to be delivered.
-      Bag.receive_multiple(
-        length(migrated_children),
         Hook.coldswap_handover_delivered(),
-        error_msg: "Handover delivery timeout"
+        error_msg: "Coldswap handover timeout",
+        timeout: 60_000
       )
     end
 
-    # Validate that handover data was transferred to migrated children.
-    # We check children that migrated to remote nodes by calling via :erpc
-    validated_count =
-      Enum.reduce(migrated_children, 0, fn {child_id, nodes}, count ->
-        target_node = List.first(nodes)
+    # Validate the data.
+    Enum.each(migrated_children, fn {child_id, node} ->
+      pid =
+        ProcessHub.child_lookup(hub_id, child_id)
+        |> elem(1)
+        |> Enum.find(fn {child_node, _pid} -> child_node === node end)
+        |> elem(1)
 
-        case ProcessHub.child_lookup(hub_id, child_id) do
-          {_child_spec, node_pids} when node_pids != [] ->
-            # Find the pid on the target node
-            case Enum.find(node_pids, fn {n, _pid} -> n === target_node end) do
-              {^target_node, pid} ->
-                # Call the remote process via :erpc
-                handover_data =
-                  :erpc.call(target_node, GenServer, :call, [pid, {:get_value, :handover_data}])
+      handover_data = GenServer.call(pid, {:get_value, :handoff_data})
 
-                assert handover_data === child_id,
-                       "Child #{child_id} invalid handover data: #{inspect(handover_data)}"
-
-                count + 1
-
-              nil ->
-                # Process not on expected node, skip
-                count
-            end
-
-          _ ->
-            count
-        end
-      end)
-
-    # Ensure we validated at least some children
-    assert validated_count > 0, "No migrated children were validated"
+      assert handover_data === child_id,
+             "Child #{child_id} invalid data: #{inspect(handover_data)} with pid #{inspect(pid)}"
+    end)
   end
 
+  # TODO: TEST this also with replication.
   @tag migr_strategy: :hot
   @tag dist_strategy: :consistent_hashing
   @tag hub_id: :migration_hotswap_test

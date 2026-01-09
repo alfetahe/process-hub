@@ -416,7 +416,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           :ok | {:error, String.t()}
   def update(hub_id, child_id, update_fn) do
     table = hub_id
-    opts = [table: table, with_metadata: true, skip_hooks: true]
+    opts = [table: table, with_metadata: true, hook_storage: nil]
 
     case lookup(hub_id, child_id, opts) do
       nil ->
