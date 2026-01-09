@@ -148,6 +148,38 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end
   end
 
+  @doc """
+  Returns all children that are running on the local node.
+
+  This is more performant than `local_data/1` as it uses ETS fold
+  instead of copying the entire table first.
+
+  Returns a map of child_id to {child_spec, node_pids, metadata} tuples
+  for all children where the local node has a running process.
+  """
+  @spec local_children(ProcessHub.hub_id()) :: %{
+          ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}], metadata()}
+        }
+  def local_children(hub_id) do
+    local_node = node()
+
+    Storage.foldl(hub_id, %{}, fn
+      {child_id, {child_spec, node_pids, metadata}}, acc ->
+        if Keyword.has_key?(node_pids, local_node) do
+          Map.put(acc, child_id, {child_spec, node_pids, metadata})
+        else
+          acc
+        end
+
+      {child_id, {child_spec, node_pids, metadata}, _ttl}, acc ->
+        if Keyword.has_key?(node_pids, local_node) do
+          Map.put(acc, child_id, {child_spec, node_pids, metadata})
+        else
+          acc
+        end
+    end)
+  end
+
   @doc "Return the child_spec, nodes, and pids for the given child_id."
   @spec lookup(
           ProcessHub.hub_id(),

@@ -69,23 +69,6 @@ defmodule ProcessHub.DistributedSupervisor do
     Supervisor.delete_child(distributed_sup, child_id)
   end
 
-  # TODO: All calls to `Supervisor.which_children/1` need to be either replaced or cached.
-  # This is very expensive call.
-  @doc "Returns a list of processe pairs in the form of `{child_id, pid}`
-  that are running on local node."
-  def local_children(distributed_sup) do
-    Supervisor.which_children(distributed_sup)
-    |> Enum.map(fn {child_id, pid, _, _} -> {child_id, pid} end)
-    |> Map.new()
-  end
-
-  @spec local_child_ids(atom() | pid() | {atom(), any()} | {:via, atom(), any()}) :: list()
-  @doc "Returns the child process ids that are running on local node."
-  def local_child_ids(distributed_sup) do
-    Supervisor.which_children(distributed_sup)
-    |> Enum.map(fn {child_id, _, _, _} -> child_id end)
-  end
-
   defp children(hub_id) do
     ProcessRegistry.local_child_specs(hub_id)
   end

@@ -44,7 +44,9 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Bag
+  alias ProcessHub.Utility.Extractor
   alias ProcessHub.DistributedSupervisor
 
   @typedoc """
@@ -191,7 +193,11 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         end
 
       # Get currently running local children
-      local_pids = DistributedSupervisor.local_children(hub.procs.dist_sup)
+      local_pids =
+        hub.hub_id
+        |> ProcessRegistry.local_children()
+        |> Extractor.local_cid_pid_pairs()
+
       local_child_ids = Map.keys(local_pids)
 
       # Categorize each child based on whether it should migrate to new nodes

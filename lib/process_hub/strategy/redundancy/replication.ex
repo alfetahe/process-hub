@@ -42,13 +42,13 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   > Attempting to use `handover: true` with replication will cause the hub to fail at startup.
   """
 
-  alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Utility.Extractor
   alias ProcessHub.Hub
 
   @typedoc """
@@ -400,7 +400,11 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       end
 
     # Get currently running local children
-    local_pids = DistributedSupervisor.local_children(hub.procs.dist_sup)
+    local_pids =
+      hub.hub_id
+      |> ProcessRegistry.local_children()
+      |> Extractor.local_cid_pid_pairs()
+
     local_child_ids = Map.keys(local_pids)
 
     # Process each child for redundancy updates
