@@ -304,6 +304,7 @@ defmodule Test.Helper.Common do
     |> ProcessHub.Future.await()
   end
 
+  # TODO: remove later.
   def await_registry_stable(context, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 15000)
     poll_interval = Keyword.get(opts, :poll_interval, 300)

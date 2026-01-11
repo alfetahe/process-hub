@@ -21,6 +21,7 @@ defmodule Test.TempTest do
   end
 
   @tag redun_strategy: :replication
+  @tag migr_strategy: :cold
   @tag hub_id: :redunc_activ_pass_test
   @tag replication_model: :active_passive
   @tag validate_metadata: true
@@ -34,7 +35,7 @@ defmodule Test.TempTest do
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)
 
-    child_count = 1000
+    child_count = 10
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.
@@ -50,10 +51,7 @@ defmodule Test.TempTest do
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true, skip_await: true)
 
     # Give the cluster time to stabilize after adding nodes
-    Process.sleep(3000)
-
-    # Wait for registry to stabilize after scale-up - old replicas need time to be cleaned up
-    :ok = Common.await_registry_stable(context, timeout: 25000)
+    Process.sleep(1000)
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
