@@ -102,6 +102,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
 
     defp distribute_processes(arg) do
       # Get registry data once
+      # TODO: remove and check hotswap.
       registry_data = ProcessRegistry.dump(arg.hub.hub_id)
       replication_factor = RedundancyStrategy.replication_factor(arg.redun_strat)
 
