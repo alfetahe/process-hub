@@ -32,6 +32,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             migr_strat: MigrationStrategy.t(),
             dist_strat: map(),
             joined_nodes: [node()],
+            calculated_cids: %{ProcessHub.child_id() => [node()]},
             hub: Hub.t()
           }
 
@@ -44,7 +45,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
                   :redun_strat,
                   :migr_strat,
                   :sync_strat,
-                  :dist_strat
+                  :dist_strat,
+                  calculated_cids: %{}
                 ]
 
     @spec handle(t()) :: :ok
@@ -104,19 +106,19 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       # Get registry data once
       # TODO: remove and check hotswap.
       registry_data = ProcessRegistry.dump(arg.hub.hub_id)
-      replication_factor = RedundancyStrategy.replication_factor(arg.redun_strat)
 
-      # Migration strategy handles migration (strategy decides how internally)
-      MigrationStrategy.handle_migrate(
-        arg.migr_strat,
-        arg.hub,
-        registry_data,
-        arg.joined_nodes,
-        replication_factor,
-        arg.sync_strat
-      )
+      # Migration strategy handles process migration.
+      arg =
+        MigrationStrategy.handle_topology_expansion(
+          arg.migr_strat,
+          arg.hub,
+          arg.joined_nodes,
+          arg
+        )
 
-      # Redundancy strategy handles replication separately
+      # TODO: update, remove the registry dump parameter if not needed anymore and use the
+      # calculated cids from arg.
+      # Redundancy strategy handles redundancy adjustments.
       RedundancyStrategy.handle_redundancy(
         arg.redun_strat,
         arg.hub,

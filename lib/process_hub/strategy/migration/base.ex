@@ -38,4 +38,12 @@ defprotocol ProcessHub.Strategy.Migration.Base do
           ProcessHub.Strategy.Synchronization.Base.t()
         ) :: :ok
   def handle_migrate(struct, hub, registry_data, nodes, replication_factor, sync_strategy)
+
+  @spec handle_topology_expansion(
+          struct :: __MODULE__.t(),
+          hub :: Hub.t(),
+          nodes :: [node()],
+          handler :: ProcessHub.Handler.ClusterUpdate.t()
+        ) :: ProcessHub.Handler.ClusterUpdate.t()
+  def handle_topology_expansion(struct, hub, nodes, handler)
 end

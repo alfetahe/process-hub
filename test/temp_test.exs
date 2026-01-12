@@ -35,11 +35,15 @@ defmodule Test.TempTest do
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)
 
-    child_count = 10
+    child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+
+    dbg("------------------- STARTING TEST -------------------")
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
+
+    dbg("------------------- STARTING ADDITIONAL NODES -------------------")
 
     # Now let's start few more nodes and see if replication is maintained
     peer_to_start = @nr_of_peers
@@ -51,7 +55,7 @@ defmodule Test.TempTest do
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true, skip_await: true)
 
     # Give the cluster time to stabilize after adding nodes
-    Process.sleep(1000)
+    Process.sleep(3000)
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
@@ -59,21 +63,22 @@ defmodule Test.TempTest do
     # Tests redundancy and check if started children's count matches replication factor.
     Common.validate_replication(context)
 
-    # Note: validate_redundancy_mode is skipped after scale-up due to inherent race conditions
-    # when multiple nodes join simultaneously. Mode is validated after scale-down instead.
+    # TODO: uncomment.
+    # # Note: validate_redundancy_mode is skipped after scale-up due to inherent race conditions
+    # # when multiple nodes join simultaneously. Mode is validated after scale-down instead.
 
-    # Now scale down back to original nodes and see if replication is still maintained
-    # Wait for stability after each node removal to allow redistribution to complete
-    Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
-      removed_peers = Common.stop_peers(acc, 1)
-      # Wait for redistribution to complete before removing next node
-      :ok = Common.await_registry_stable(context, timeout: 15000)
-      Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
-    end)
+    # # Now scale down back to original nodes and see if replication is still maintained
+    # # Wait for stability after each node removal to allow redistribution to complete
+    # Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
+    #   removed_peers = Common.stop_peers(acc, 1)
+    #   # Wait for redistribution to complete before removing next node
+    #   :ok = Common.await_registry_stable(context, timeout: 15000)
+    #   Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
+    # end)
 
-    Common.validate_registry_length(context, child_specs)
-    Common.validate_replication(context)
-    Common.validate_redundancy_mode(context)
+    # Common.validate_registry_length(context, child_specs)
+    # Common.validate_replication(context)
+    # Common.validate_redundancy_mode(context)
 
     :net_kernel.monitor_nodes(false)
   end

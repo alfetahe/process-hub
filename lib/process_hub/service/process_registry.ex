@@ -148,6 +148,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end
   end
 
+  # TODO: replace all dump calls with foldl calls unless  not needed.
+
   @doc """
   Returns all children that are running on the local node.
 
@@ -163,20 +165,20 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def local_children(hub_id) do
     local_node = node()
 
+    fold_handler = fn acc, child_id, child_spec, node_pids, metadata, local_node ->
+      if Keyword.has_key?(node_pids, local_node) do
+        Map.put(acc, child_id, {child_spec, node_pids, metadata})
+      else
+        acc
+      end
+    end
+
     Storage.foldl(hub_id, %{}, fn
       {child_id, {child_spec, node_pids, metadata}}, acc ->
-        if Keyword.has_key?(node_pids, local_node) do
-          Map.put(acc, child_id, {child_spec, node_pids, metadata})
-        else
-          acc
-        end
+        fold_handler.(acc, child_id, child_spec, node_pids, metadata, local_node)
 
       {child_id, {child_spec, node_pids, metadata}, _ttl}, acc ->
-        if Keyword.has_key?(node_pids, local_node) do
-          Map.put(acc, child_id, {child_spec, node_pids, metadata})
-        else
-          acc
-        end
+        fold_handler.(acc, child_id, child_spec, node_pids, metadata, local_node)
     end)
   end
 
