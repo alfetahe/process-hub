@@ -34,39 +34,6 @@ defmodule ProcessHub.Service.Dispatcher do
   end
 
   @doc """
-  Legacy: Sends coordinator processes messages to start child processes.
-
-  @deprecated Use children_start/2 with NodeStartRequest list instead.
-  @TODO: should use the underlying PubSub or Gossip.
-  """
-  @spec children_start(ProcessHub.hub_id(), [{node(), [map()]}], keyword()) :: :ok
-  def children_start(hub_id, children_nodes, opts) do
-    Enum.each(children_nodes, fn {child_node, children_data} ->
-      GenServer.cast({hub_id, child_node}, {:start_children, children_data, opts})
-    end)
-  end
-
-  @doc """
-  Sends the coordinator process a message to start the child processes passed in.
-  """
-  @spec children_migrate(reference(), [{node(), [map()]}], keyword()) :: :ok
-  def children_migrate(event_queue, children_nodes, opts) do
-    Enum.each(children_nodes, fn {child_node, children_data} ->
-      Blockade.dispatch_sync(
-        event_queue,
-        @event_migration_add,
-        {children_data, opts},
-        %{
-          members: [child_node],
-          priority: PriorityLevel.high()
-        }
-      )
-    end)
-
-    :ok
-  end
-
-  @doc """
   Sends NodeStopRequest structs to their target coordinator processes.
 
   Each NodeStopRequest contains all routing information needed by the

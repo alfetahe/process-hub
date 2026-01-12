@@ -54,35 +54,6 @@ defmodule Test.Service.DispatcherTest do
                    @default_receive_timeout
   end
 
-  test "propagate migrate", %{hub_id: hub_id, hub: hub} = _context do
-    local_node = node()
-
-    event_data = [
-      {local_node,
-       [
-         %{
-           hub_id: hub_id,
-           nodes: [local_node],
-           child_id: :propagate_migrate_test,
-           child_spec: %{
-             id: :propagate_migrate_test,
-             start: {Test.Helper.TestServer, :start_link, [%{name: :propagate_migrate_test}]}
-           },
-           metadata: %{}
-         }
-       ]}
-    ]
-
-    Dispatcher.children_migrate(hub.procs.event_queue, event_data, reply_to: [self()])
-
-    # Reset priority.
-    GenServer.call(hub_id, :ping)
-    :blockade.set_priority(hub.procs.event_queue, 0)
-
-    assert_receive {:collect_start_results, [propagate_migrate_test: {:ok, _}], _node},
-                   @default_receive_timeout
-  end
-
   test "propagate stop", %{hub_id: hub_id} = _context do
     local_node = node()
 

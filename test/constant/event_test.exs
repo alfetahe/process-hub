@@ -26,10 +26,6 @@ defmodule Test.Constant.EventTest do
     assert @event_distribute_children === :distribute_children_event
   end
 
-  test "event migration add" do
-    assert @event_migration_add === :migration_add_event
-  end
-
   test "event child failure restart" do
     assert @event_child_process_pid_update === :child_process_pid_update_event
   end

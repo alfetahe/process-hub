@@ -69,6 +69,16 @@ defmodule ProcessHub.DistributedSupervisor do
     Supervisor.delete_child(distributed_sup, child_id)
   end
 
+  # TODO: remove
+  # @doc """
+  # Returns only the child IDs that are currently running (have a valid PID).
+  # This filters out children that are :undefined or {:restarting, _}.
+  # """
+  # @spec running_child_ids(supervisor :: GenServer.server()) :: [term()]
+  # def running_child_ids(supervisor) do
+  #   GenServer.call(supervisor, :running_child_ids)
+  # end
+
   defp children(hub_id) do
     ProcessRegistry.local_child_specs(hub_id)
   end
@@ -106,6 +116,26 @@ defmodule ProcessHub.DistributedSupervisor do
         {:noreply, new_state}
     end
   end
+
+  # TODO: remove
+  @doc false
+  # def handle_call(:running_child_ids, _from, state) do
+  #   children_map = state |> elem(3) |> elem(1)
+
+  #   running_ids =
+  #     :maps.fold(
+  #       fn cid, child_rec, acc ->
+  #         case elem(child_rec, 1) do
+  #           pid when is_pid(pid) -> [cid | acc]
+  #           _ -> acc
+  #         end
+  #       end,
+  #       [],
+  #       children_map
+  #     )
+
+  #   {:reply, running_ids, state}
+  # end
 
   defp handle_child_exit(old_state, new_state, pid) do
     hub_id = Process.get(:hub_id)

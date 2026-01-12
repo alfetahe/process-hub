@@ -41,7 +41,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Constant.Hook
-  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
@@ -50,6 +49,9 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Utility.Extractor
   alias ProcessHub.DistributedSupervisor
+  alias ProcessHub.StartChildrenRequest.NodeStartRequest
+  alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.Cluster
 
   # TODO: refactor the new protocol functions.
 
@@ -280,11 +282,11 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         end)
 
       # Execute: Send start requests to new nodes (fire and forget)
-      Enum.each(to_send_to_nodes, fn {target_node, children_data} ->
-        if length(children_data) > 0 do
-          Distributor.children_redist_init(hub, target_node, children_data)
-        end
-      end)
+      node_start_requests = create_migration_requests(hub, to_send_to_nodes)
+
+      if length(node_start_requests) > 0 do
+        Dispatcher.children_start(hub.hub_id, node_start_requests)
+      end
 
       # Dispatch migration hook
       if length(migrated) > 0 do
@@ -328,106 +330,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         true ->
           false
       end
-    end
-
-    # TODO: and replace with the node down scenario.
-    @impl true
-    def handle_migrate(
-          %ColdSwap{handover: handover, state_ttl: ttl, state_query_timeout: timeout} = _struct,
-          hub,
-          registry_data,
-          nodes,
-          replication_factor,
-          _sync_strategy
-        ) do
-      local_node = node()
-      dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
-
-      # Calculate new distribution for all children
-      cids = Enum.map(registry_data, fn {cid, _} -> cid end)
-
-      cid_node_pairs =
-        if length(cids) > 0 do
-          DistributionStrategy.belongs_to(dist_strat, hub, cids, replication_factor)
-        else
-          []
-        end
-
-      # Get currently running local children
-      local_pids =
-        hub.hub_id
-        |> ProcessRegistry.local_children()
-        |> Extractor.local_cid_pid_pairs()
-
-      local_child_ids = Map.keys(local_pids)
-
-      # Categorize each child based on whether it should migrate to new nodes
-      {to_stop_locally, to_send_to_nodes, migrated} =
-        Enum.reduce(registry_data, {[], %{}, []}, fn {child_id, {cs, node_pids, m}},
-                                                     {stop_acc, send_acc, migrated_acc} ->
-          nodes_new = Bag.get_by_key(cid_node_pairs, child_id, [])
-          running_locally = Enum.member?(local_child_ids, child_id)
-          is_orphaned = Keyword.keys(node_pids) == []
-
-          # Find which new node(s) this child should be assigned to
-          # (intersection of belongs_to result and newly joined nodes)
-          target_new_nodes = Enum.filter(nodes, fn n -> Enum.member?(nodes_new, n) end)
-
-          cond do
-            # Case 1: Running locally, should move to new node, should NOT stay local
-            running_locally and length(target_new_nodes) > 0 and
-                not Enum.member?(nodes_new, local_node) ->
-              target_node = List.first(target_new_nodes)
-
-              updated_send =
-                Map.update(send_acc, target_node, [{cs, m}], fn list -> [{cs, m} | list] end)
-
-              {[{cs, m} | stop_acc], updated_send, [{cs, m} | migrated_acc]}
-
-            # Case 2: Orphaned (not running anywhere) and should be on new node
-            is_orphaned and length(target_new_nodes) > 0 ->
-              target_node = List.first(target_new_nodes)
-
-              updated_send =
-                Map.update(send_acc, target_node, [{cs, m}], fn list -> [{cs, m} | list] end)
-
-              {stop_acc, updated_send, [{cs, m} | migrated_acc]}
-
-            # Case 3: No action needed
-            true ->
-              {stop_acc, send_acc, migrated_acc}
-          end
-        end)
-
-      # If handover enabled, query and store states before termination
-      if handover and length(to_stop_locally) > 0 do
-        query_and_store_states(hub, to_stop_locally, local_pids, ttl, timeout)
-      end
-
-      # Execute: Stop children locally (fire and forget)
-      if length(to_stop_locally) > 0 do
-        Enum.each(to_stop_locally, fn {cs, _m} ->
-          DistributedSupervisor.terminate_child(hub.procs.dist_sup, cs.id)
-        end)
-      end
-
-      # Execute: Send start requests to new nodes (fire and forget)
-      Enum.each(to_send_to_nodes, fn {target_node, children_data} ->
-        if length(children_data) > 0 do
-          Distributor.children_redist_init(hub, target_node, children_data)
-        end
-      end)
-
-      # Dispatch migration hook
-      if length(migrated) > 0 do
-        HookManager.dispatch_hook(
-          hub.storage.hook,
-          Hook.children_migrated(),
-          {nodes, migrated}
-        )
-      end
-
-      :ok
     end
 
     defp query_and_store_states(hub, children_to_stop, local_pids, ttl, timeout) do
@@ -476,6 +378,46 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
           # Return what we have, some processes may not respond
           acc
       end
+    end
+
+    defp create_migration_requests(hub, to_send_to_nodes) do
+      transaction_id = make_ref()
+      request_signature = Cluster.topology_signature(hub.storage.misc)
+      originating_node = node()
+
+      # migration_add flag is critical for lock release on remote nodes
+      passthrough_opts = [migration_add: true]
+
+      Enum.flat_map(to_send_to_nodes, fn {target_node, children_data} ->
+        if length(children_data) > 0 do
+          children =
+            Enum.map(children_data, fn {child_spec, metadata} ->
+              %{
+                child_id: child_spec.id,
+                child_spec: child_spec,
+                metadata: metadata,
+                nodes: [target_node],
+                migration: true
+              }
+            end)
+
+          [
+            %NodeStartRequest{
+              transaction_id: transaction_id,
+              request_signature: request_signature,
+              hub_id: hub.hub_id,
+              originating_node: originating_node,
+              reply_to: nil,
+              node: target_node,
+              children: children,
+              options: passthrough_opts,
+              status: :dispatched
+            }
+          ]
+        else
+          []
+        end
+      end)
     end
   end
 end

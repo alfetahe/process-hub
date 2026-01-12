@@ -62,7 +62,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @type t :: %__MODULE__{
             hub: Hub.t(),
             post_start_results: [%PostStartData{}],
-            node_start_request: NodeStartRequest.t() | nil,
+            node_start_request: NodeStartRequest.t(),
             start_opts: keyword() | nil
           }
 
@@ -143,14 +143,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     @pending_ttl_ms :timer.minutes(10)
 
     @type t :: %__MODULE__{
-            children: [
-              %{
-                child_spec: ProcessHub.child_spec(),
-                metadata: ProcessHub.child_metadata()
-              }
-            ],
             hub: Hub.t(),
-            node_start_request: NodeStartRequest.t() | nil,
+            node_start_request: NodeStartRequest.t(),
             sync_strategy: SynchronizationStrategy.t(),
             redun_strategy: RedundancyStrategy.t(),
             dist_strategy: DistributionStrategy.t(),
@@ -160,12 +154,11 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           }
 
     @enforce_keys [
-      :children,
+      :node_start_request,
       :hub
     ]
     defstruct @enforce_keys ++
                 [
-                  :node_start_request,
                   :start_opts,
                   :sync_strategy,
                   :redun_strategy,
@@ -344,7 +337,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     defp validate_children(%__MODULE__{
            hub: hub,
-           children: children,
+           node_start_request: nsr,
            dist_strategy: dist_strat,
            redun_strategy: redun_strat,
            start_opts: start_opts
@@ -355,28 +348,24 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       # If topology is unchanged AND strategy is deterministic, skip expensive
       # belongs_to() revalidation. Non-deterministic strategies (like load-based)
       # may produce different distributions even with same topology.
-      request_sig =
-        case List.first(children) do
-          %{topology_signature: sig} -> sig
-          _ -> nil
-        end
-
+      request_sig = nsr.request_signature
       current_sig = Cluster.topology_signature(hub.storage.misc)
       is_deterministic = DistributionStrategy.deterministic?(dist_strat)
 
       if request_sig != nil and request_sig == current_sig and is_deterministic do
         # FAST PATH: Topology unchanged and strategy is deterministic.
         # Use pre-computed node assignments from init_attach_nodes.
-        Enum.filter(children, fn %{nodes: nodes} ->
+        Enum.filter(nsr.children, fn %{nodes: nodes} ->
           Enum.member?(nodes, local_node)
         end)
       else
         # SLOW PATH: Topology changed, no signature, or non-deterministic strategy.
-        validate_children_full(hub, children, dist_strat, redun_strat, start_opts, local_node)
+        validate_children_full(hub, nsr.children, dist_strat, redun_strat, start_opts)
       end
     end
 
-    defp validate_children_full(hub, children, dist_strat, redun_strat, start_opts, local_node) do
+    defp validate_children_full(hub, children, dist_strat, redun_strat, start_opts) do
+      local_node = node()
       cids = Enum.map(children, & &1.child_spec.id)
 
       cid_node_pairs =
@@ -412,7 +401,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         # Insert pending entries before forwarding to ensure children are tracked
         insert_pending_entries(hub, forw)
 
-        Dispatcher.children_start(hub.hub_id, forw, start_opts)
+        node_start_requests = create_forward_requests(hub, forw, start_opts)
+        Dispatcher.children_start(hub.hub_id, node_start_requests)
+
         HookManager.dispatch_hook(hub.storage.hook, Hook.forwarded_migration(), forw)
       end
 
@@ -466,6 +457,31 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         end)
 
       Keyword.merge(forw_data, updated_forw)
+    end
+
+    defp create_forward_requests(hub, forw, start_opts) do
+      transaction_id = make_ref()
+      request_signature = Cluster.topology_signature(hub.storage.misc)
+      originating_node = node()
+      reply_to = Keyword.get(start_opts, :reply_to)
+
+      # Filter out routing options that are set explicitly on the request
+      passthrough_opts =
+        Keyword.drop(start_opts, [:reply_to, :transaction_id, :hub_id, :originating_node])
+
+      Enum.map(forw, fn {target_node, children} ->
+        %NodeStartRequest{
+          transaction_id: transaction_id,
+          request_signature: request_signature,
+          hub_id: hub.hub_id,
+          originating_node: originating_node,
+          reply_to: reply_to,
+          node: target_node,
+          children: children,
+          options: passthrough_opts,
+          status: :dispatched
+        }
+      end)
     end
   end
 end

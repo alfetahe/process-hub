@@ -154,18 +154,6 @@ defmodule Test.Service.DistributorTest do
     assert ProcessRegistry.dump(hub.hub_id) === %{}
   end
 
-  test "children redist init", %{hub: hub} = _context do
-    child_spec = %{
-      id: :dist_child_stop,
-      start: {Test.Helper.TestServer, :start_link, [%{name: :dist_child_stop}]}
-    }
-
-    metadata = %{tag: "test_tag"}
-
-    assert Distributor.children_redist_init(hub, node(), [{child_spec, metadata}]) ===
-             {:ok, :redistribution_initiated}
-  end
-
   test "default_init_opts with empty options" do
     result = Distributor.default_init_opts([])
 

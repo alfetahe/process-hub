@@ -155,40 +155,16 @@ defmodule ProcessHub.Coordinator do
     end)
   end
 
-  # New pattern - receives NodeStartRequest struct directly
   @impl true
-  def handle_cast({:start_children, %NodeStartRequest{children: children} = request}, state) do
-    if length(children) > 0 do
+  def handle_cast({:start_children, %NodeStartRequest{} = request}, state) do
+    if length(request.children) > 0 do
       Task.Supervisor.start_child(
         state.procs.task_sup,
         ChildrenAdd.StartHandle,
         :handle,
         [
           %ChildrenAdd.StartHandle{
-            children: children,
             node_start_request: request,
-            hub: state
-          }
-        ]
-      )
-    end
-
-    {:noreply, state}
-  end
-
-  # TODO: remove in future versions
-  # Legacy pattern - receives children list and start_opts separately
-  @impl true
-  def handle_cast({:start_children, children, start_opts}, state) when is_list(children) do
-    if length(children) > 0 do
-      Task.Supervisor.start_child(
-        state.procs.task_sup,
-        ChildrenAdd.StartHandle,
-        :handle,
-        [
-          %ChildrenAdd.StartHandle{
-            children: children,
-            start_opts: start_opts,
             hub: state
           }
         ]
@@ -604,28 +580,6 @@ defmodule ProcessHub.Coordinator do
   def handle_info({@event_node_join_sync, {sync_data, remote_node}}, state) do
     sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
     SynchronizationStrategy.handle_node_join_data(sync_strategy, state, sync_data, remote_node)
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({@event_migration_add, {children, start_opts}}, state) do
-    if length(children) > 0 do
-      State.lock_event_handler(state)
-
-      Task.Supervisor.start_child(
-        state.procs.task_sup,
-        ChildrenAdd.StartHandle,
-        :handle,
-        [
-          %ChildrenAdd.StartHandle{
-            children: children,
-            start_opts: start_opts,
-            hub: state
-          }
-        ]
-      )
-    end
 
     {:noreply, state}
   end
@@ -1092,7 +1046,6 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_sync_remote_children)
     Blockade.add_handler(eq, @event_children_registration)
     Blockade.add_handler(eq, @event_children_unregistration)
-    Blockade.add_handler(eq, @event_migration_add)
     Blockade.add_handler(eq, @event_child_process_pid_update)
     Blockade.add_handler(eq, @event_node_join_sync)
   end

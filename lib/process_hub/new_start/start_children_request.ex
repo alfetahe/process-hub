@@ -10,6 +10,7 @@ defmodule ProcessHub.StartChildrenRequest do
   """
 
   alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.Cluster
 
   @default_request_timeout :timer.minutes(10)
 
@@ -22,6 +23,7 @@ defmodule ProcessHub.StartChildrenRequest do
 
   @type t() :: %__MODULE__{
           transaction_id: reference(),
+          request_signature: non_neg_integer() | nil,
           hub_id: ProcessHub.hub_id(),
           nodes_data: [{node(), [map()]}],
           child_specs: [ProcessHub.child_spec()],
@@ -35,6 +37,7 @@ defmodule ProcessHub.StartChildrenRequest do
 
   defstruct [
     :transaction_id,
+    :request_signature,
     :hub_id,
     :expires_at,
     :awaiter,
@@ -55,12 +58,18 @@ defmodule ProcessHub.StartChildrenRequest do
     @type t() :: %__MODULE__{
             # Routing fields
             transaction_id: reference() | nil,
+            request_signature: non_neg_integer() | nil,
             hub_id: ProcessHub.hub_id() | nil,
             originating_node: node() | nil,
             reply_to: [pid()] | nil,
             # Child data
             node: node(),
-            children: [map()],
+            children: [
+              %{
+                child_spec: ProcessHub.child_spec(),
+                metadata: ProcessHub.child_metadata()
+              }
+            ],
             # Additional options (disable_logging, etc.)
             options: keyword(),
             # Response tracking
@@ -71,6 +80,7 @@ defmodule ProcessHub.StartChildrenRequest do
 
     defstruct [
       :transaction_id,
+      :request_signature,
       :hub_id,
       :originating_node,
       :reply_to,
@@ -118,6 +128,7 @@ defmodule ProcessHub.StartChildrenRequest do
 
     %__MODULE__{
       transaction_id: transaction_id,
+      request_signature: Cluster.topology_signature(hub.storage.misc),
       hub_id: hub.hub_id,
       expires_at: expires_at,
       child_specs: child_specs,
@@ -158,6 +169,7 @@ defmodule ProcessHub.StartChildrenRequest do
     originating = node()
     reply_to = Keyword.get(opts, :reply_to)
 
+    # TODO: check this code.
     # Pass through options that are needed on remote nodes (like disable_logging)
     # Filter out routing options that are already explicitly set
     passthrough_opts =
@@ -167,6 +179,7 @@ defmodule ProcessHub.StartChildrenRequest do
       Enum.map(mappings, fn {target_node, children} ->
         %NodeStartRequest{
           transaction_id: tid,
+          request_signature: request.request_signature,
           hub_id: hub_id,
           originating_node: originating,
           reply_to: reply_to,

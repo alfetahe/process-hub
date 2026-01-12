@@ -294,7 +294,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp handle_redistribution(hub, children_data) do
-      Distributor.children_redist_init(hub, node(), children_data)
+      # TODO: add new implementation.
+      # Distributor.children_redist_init(hub, node(), children_data)
     end
 
     defp handle_redundancy(arg, children) do

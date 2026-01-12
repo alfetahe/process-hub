@@ -439,7 +439,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       # Send start requests to new nodes (fire and forget)
       Enum.each(to_send_to_nodes, fn {target_node, children_data} ->
         if length(children_data) > 0 do
-          Distributor.children_redist_init(hub, target_node, children_data)
+          # TODO: add the new implementation.
+          #  Distributor.children_redist_init(hub, target_node, children_data)
         end
       end)
 

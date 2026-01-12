@@ -13,6 +13,7 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.StartChildrenRequest
   alias ProcessHub.StopChildrenRequest
   alias ProcessHub.Hub
 
@@ -57,37 +58,6 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  @doc "Initiates process redistribution."
-  @spec children_redist_init(
-          Hub.t(),
-          node(),
-          [{ProcessHub.child_spec(), ProcessHub.child_metadata()}],
-          keyword() | nil
-        ) ::
-          {:ok, :redistribution_initiated} | {:ok, :no_children_to_redistribute}
-  def children_redist_init(hub, node, children_data, opts \\ []) do
-    # TODO:
-    # Migration expects the `:migration_add` true flag otherwise the
-    # remote node wont release the lock.
-    opts = Keyword.put(opts, :migration_add, true)
-
-    redist_children =
-      Enum.map(children_data, fn {child_spec, metadata} ->
-        init_data([node], hub.hub_id, child_spec, metadata)
-        |> Map.merge(Map.new(opts))
-      end)
-
-    case length(redist_children) > 0 do
-      true ->
-        Dispatcher.children_migrate(hub.procs.event_queue, [{node, redist_children}], opts)
-
-        {:ok, :redistribution_initiated}
-
-      false ->
-        {:ok, :no_children_to_redistribute}
-    end
-  end
-
   @doc "Initiates processes startup."
   @spec compose_start_request(ProcessHub.Hub.t(), [ProcessHub.child_spec()], keyword()) ::
           {:ok, :start_initiated}
@@ -111,7 +81,7 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   defp init_start_request(hub, child_specs, mappings, opts) do
-    start_request = ProcessHub.StartChildrenRequest.new(hub, child_specs, mappings, opts)
+    start_request = StartChildrenRequest.new(hub, child_specs, mappings, opts)
 
     {:ok, start_request}
   end
@@ -268,9 +238,7 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:init_cids, [])
   end
 
-  defp pre_start_children(_hub, %ProcessHub.StartChildrenRequest{} = start_request) do
-    alias ProcessHub.StartChildrenRequest
-
+  defp pre_start_children(_hub, %StartChildrenRequest{} = start_request) do
     # Both :continue and :rollback go through the same initial flow
     # Rollback handling happens in coordinator after all nodes respond
     case StartChildrenRequest.compose_sub_requests(start_request) do
