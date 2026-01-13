@@ -57,7 +57,6 @@ defmodule ProcessHub.Constant.Event do
       @event_children_registration :children_registration_event
       @event_children_unregistration :children_unregistration_event
       @event_sync_remote_children :sync_remote_children_event
-      @event_migration_add :migration_add_event
       @event_child_process_pid_update :child_process_pid_update_event
       @event_node_join_sync :node_join_sync_event
     end

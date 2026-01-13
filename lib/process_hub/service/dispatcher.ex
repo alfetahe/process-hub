@@ -3,7 +3,6 @@ defmodule ProcessHub.Service.Dispatcher do
   The dispatcher service provides API functions for dispatching events.
   """
 
-  alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.StartChildrenRequest.NodeStartRequest
   alias ProcessHub.StopChildrenRequest.NodeStopRequest
   alias :blockade, as: Blockade
