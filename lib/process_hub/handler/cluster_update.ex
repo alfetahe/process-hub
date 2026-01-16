@@ -72,9 +72,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           distribute_processes(arg)
         end
 
-        # Propagate the local children to the new nodes.
-        propagate_local_children(hub, nodes)
-
         # Unlock the event handler.
         State.unlock_event_handler(hub)
 
@@ -125,7 +122,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         registry_data,
         arg.joined_nodes
       )
-
       :ok
     end
 
@@ -137,18 +133,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           dist_strat: Storage.get(arg.hub.storage.misc, StorageKey.strdist()),
           migr_strat: Storage.get(arg.hub.storage.misc, StorageKey.strmigr())
       }
-    end
-
-    defp propagate_local_children(hub, nodes) do
-      local_processes = Synchronizer.local_sync_data(hub)
-      local_node = node()
-
-      Dispatcher.propagate_event(
-        hub.procs.event_queue,
-        @event_sync_remote_children,
-        {local_processes, local_node},
-        %{members: nodes, priority: PriorityLevel.high()}
-      )
     end
   end
 

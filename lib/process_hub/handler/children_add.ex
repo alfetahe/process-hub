@@ -470,6 +470,14 @@ defmodule ProcessHub.Handler.ChildrenAdd do
         Keyword.drop(start_opts, [:reply_to, :transaction_id, :hub_id, :originating_node])
 
       Enum.map(forw, fn {target_node, children} ->
+        # Update children.nodes to include the forward target node.
+        # This ensures the FAST PATH validation on the receiving node will
+        # correctly identify this node as the target.
+        updated_children =
+          Enum.map(children, fn child ->
+            %{child | nodes: [target_node]}
+          end)
+
         %NodeStartRequest{
           transaction_id: transaction_id,
           request_signature: request_signature,
@@ -477,7 +485,7 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           originating_node: originating_node,
           reply_to: reply_to,
           node: target_node,
-          children: children,
+          children: updated_children,
           options: passthrough_opts,
           status: :dispatched
         }

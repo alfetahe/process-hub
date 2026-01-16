@@ -395,8 +395,9 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     cid_node_pairs =
       if length(cids) > 0 do
         DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
+        |> Map.new()
       else
-        []
+        %{}
       end
 
     # Get currently running local children
@@ -411,11 +412,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     Enum.each(registry_data, fn {child_id, {_cs, node_pids, _m}} ->
       _nodes_old = Keyword.keys(node_pids)
 
-      nodes_new =
-        case Enum.find(cid_node_pairs, fn {cid, _} -> cid == child_id end) do
-          {_, n} -> n
-          nil -> []
-        end
+      nodes_new = Map.get(cid_node_pairs, child_id, [])
 
       running_locally = Enum.member?(local_child_ids, child_id)
       should_be_local = Enum.member?(nodes_new, local_node)

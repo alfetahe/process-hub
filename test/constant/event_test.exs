@@ -10,10 +10,6 @@ defmodule Test.Constant.EventTest do
     assert @event_children_unregistration === :children_unregistration_event
   end
 
-  test "event sync remote children" do
-    assert @event_sync_remote_children === :sync_remote_children_event
-  end
-
   test "event cluster join" do
     assert @event_cluster_join === :cluster_join_event
   end

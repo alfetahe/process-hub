@@ -149,6 +149,7 @@ defmodule ProcessHub.Coordinator do
     # Terminate all the running tasks before shutting down the coordinator.
     task_sup = state.procs.task_sup
 
+    # TODO: recheck the code.
     Task.Supervisor.children(task_sup)
     |> Enum.each(fn pid ->
       Task.Supervisor.terminate_child(task_sup, pid)
@@ -178,7 +179,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_cast({:stop_children, %NodeStopRequest{children: children} = request}, state) do
     if length(children) > 0 do
-      Task.Supervisor.start_child(
+      Task.Supervisor.async(
         state.procs.task_sup,
         ChildrenRem.StopHandle,
         :handle,
@@ -189,7 +190,7 @@ defmodule ProcessHub.Coordinator do
             hub: state
           }
         ]
-      )
+      ) |> Task.await()
     end
 
     {:noreply, state}
@@ -200,7 +201,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_cast({:stop_children, children, stop_opts}, state) when is_list(children) do
     if length(children) > 0 do
-      Task.Supervisor.start_child(
+      Task.Supervisor.async(
         state.procs.task_sup,
         ChildrenRem.StopHandle,
         :handle,
@@ -211,7 +212,7 @@ defmodule ProcessHub.Coordinator do
             hub: state
           }
         ]
-      )
+      ) |> Task.await()
     end
 
     {:noreply, state}
@@ -514,7 +515,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_distribute_children, nodes}, state) do
-    Task.Supervisor.start_child(
+    Task.Supervisor.async(
       state.procs.task_sup,
       ClusterUpdate.NodeUp,
       :handle,
@@ -524,7 +525,7 @@ defmodule ProcessHub.Coordinator do
           hub: state
         }
       ]
-    )
+    ) |> Task.await(10000)
 
     {:noreply, state}
   end
@@ -554,24 +555,6 @@ defmodule ProcessHub.Coordinator do
       else
         state
       end
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({@event_sync_remote_children, {children_data, node}}, state) do
-    Task.Supervisor.start_child(
-      state.procs.task_sup,
-      Synchronization.ProcessEmitHandle,
-      :handle,
-      [
-        %Synchronization.ProcessEmitHandle{
-          hub: state,
-          remote_node: node,
-          remote_children: children_data
-        }
-      ]
-    )
 
     {:noreply, state}
   end
@@ -880,6 +863,7 @@ defmodule ProcessHub.Coordinator do
     state
   end
 
+  # TODO: refactor and move to separate services.
   # Broadcasts local registry data to the specified target nodes.
   # Called when new nodes join the cluster.
   defp broadcast_local_registry(state, target_nodes) do
@@ -1043,7 +1027,6 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_cluster_join)
     Blockade.add_handler(eq, @event_cluster_leave)
     Blockade.add_handler(eq, @event_cluster_leave_batch)
-    Blockade.add_handler(eq, @event_sync_remote_children)
     Blockade.add_handler(eq, @event_children_registration)
     Blockade.add_handler(eq, @event_children_unregistration)
     Blockade.add_handler(eq, @event_child_process_pid_update)
@@ -1067,7 +1050,8 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp schedule_sync(sync_strat) do
-    Process.send_after(self(), :sync_processes, sync_strat.sync_interval)
+    # TODO: reenabme
+    # Process.send_after(self(), :sync_processes, sync_strat.sync_interval)
   end
 
   defp schedule_hub_discovery(interval) do

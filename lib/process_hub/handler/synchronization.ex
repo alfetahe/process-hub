@@ -127,6 +127,7 @@ defmodule ProcessHub.Handler.Synchronization do
 
       if local_nodes !== remote_nodes do
         combined_nodes = (local_nodes ++ remote_nodes) |> Enum.uniq()
+
         [{child_id, {child_spec, combined_nodes, metadata}} | data_list]
       else
         data_list

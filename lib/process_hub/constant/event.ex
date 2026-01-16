@@ -34,11 +34,6 @@ defmodule ProcessHub.Constant.Event do
   @type migration_add_event() :: :migration_add_event
 
   @typedoc """
-  Event indicating that a remote node is trying to sync its processes.
-  """
-  @type event_sync_remote_children() :: :sync_remote_children_event
-
-  @typedoc """
   Child process is restarted by the local supervisor.
   """
   @type event_child_process_pid_update() :: :child_process_pid_update_event
@@ -56,7 +51,6 @@ defmodule ProcessHub.Constant.Event do
       @event_cluster_leave_batch :cluster_leave_batch_event
       @event_children_registration :children_registration_event
       @event_children_unregistration :children_unregistration_event
-      @event_sync_remote_children :sync_remote_children_event
       @event_child_process_pid_update :child_process_pid_update_event
       @event_node_join_sync :node_join_sync_event
     end

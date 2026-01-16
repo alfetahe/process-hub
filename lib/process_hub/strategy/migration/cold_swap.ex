@@ -320,10 +320,16 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         length(calculated_nodes) === 1 ->
           true
 
-        # Local node is the first among the existing nodes, so it takes the responsibility
-        # to send the start request to the new nodes.
+        # Local node is the first among the existing nodes that are still targets,
+        # so it takes the responsibility to send the start request to the new nodes.
         find_existing_nodes(registry_nodes, calculated_nodes)
         |> List.first() == local_node ->
+          true
+
+        # No overlap between old and new nodes - first OLD node takes responsibility.
+        # This happens when all target nodes are different from current nodes.
+        find_existing_nodes(registry_nodes, calculated_nodes) == [] and
+            List.first(Enum.sort(registry_nodes)) == local_node ->
           true
 
         # Otherwise, do not send.

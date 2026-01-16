@@ -23,7 +23,8 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   @type t :: %__MODULE__{
           sync_interval: pos_integer()
         }
-  defstruct sync_interval: 15000
+        # TODO: change back to 15000
+  defstruct sync_interval: 5000000
 
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.PubSub do
     use Event
