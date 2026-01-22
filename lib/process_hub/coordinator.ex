@@ -190,7 +190,8 @@ defmodule ProcessHub.Coordinator do
             hub: state
           }
         ]
-      ) |> Task.await()
+      )
+      |> Task.await()
     end
 
     {:noreply, state}
@@ -212,7 +213,8 @@ defmodule ProcessHub.Coordinator do
             hub: state
           }
         ]
-      ) |> Task.await()
+      )
+      |> Task.await()
     end
 
     {:noreply, state}
@@ -525,7 +527,8 @@ defmodule ProcessHub.Coordinator do
           hub: state
         }
       ]
-    ) |> Task.await(10000)
+    )
+    |> Task.await(10000)
 
     {:noreply, state}
   end

@@ -68,13 +68,43 @@ defmodule Test.Helper.Common do
       ring = Ring.get_ring(hub.storage.misc)
       ring_nodes = Ring.key_to_nodes(ring, child_id, replication_factor)
 
-      assert length(nodes) === replication_factor,
-             "The child #{child_id} is started on #{length(nodes)} nodes but #{replication_factor} is expected."
+      if length(nodes) !== replication_factor do
+        # Debug: Check if PIDs are actually alive
+        alive_status =
+          Enum.map(nodes, fn {node_name, pid} ->
+            is_alive =
+              try do
+                :erpc.call(node_name, Process, :alive?, [pid], 5000)
+              catch
+                _, _ -> {:error, :call_failed}
+              end
+
+            {node_name, pid, is_alive}
+          end)
+
+        IO.puts("\n=== DEBUG: Replication Mismatch ===")
+        IO.puts("Child ID: #{child_id}")
+        IO.puts("Expected RF: #{replication_factor}, Actual nodes: #{length(nodes)}")
+        IO.puts("Ring nodes: #{inspect(ring_nodes)}")
+        IO.puts("Registry nodes with alive status:")
+
+        Enum.each(alive_status, fn {node_name, pid, is_alive} ->
+          IO.puts("  #{node_name}: #{inspect(pid)} - alive: #{inspect(is_alive)}")
+        end)
+
+        IO.puts("=================================\n")
+
+        flunk(
+          "The child #{child_id} is started on #{length(nodes)} nodes but #{replication_factor} is expected."
+        )
+      end
 
       assert length(ring_nodes) === replication_factor,
              "The length of ring nodes does not match replication factor"
 
-      assert Enum.all?(Keyword.keys(nodes), &Enum.member?(ring_nodes, &1)),
+      registry_node_keys = Keyword.keys(nodes)
+
+      assert Enum.all?(registry_node_keys, &Enum.member?(ring_nodes, &1)),
              "The child #{child_id} nodes do not match ring nodes"
 
       assert Enum.all?(ring_nodes, &Enum.member?(Keyword.keys(nodes), &1)),
@@ -82,11 +112,40 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def validate_registry_length(%{hub_id: hub_id} = _context, child_specs) do
+  def validate_registry_length(%{hub_id: hub_id, hub: hub} = context, child_specs) do
     registry = ProcessHub.registry_dump(hub_id) |> Map.to_list()
 
     child_spec_len = length(child_specs)
     registry_len = length(registry)
+
+    if registry_len !== child_spec_len do
+      # Find missing children
+      registry_ids = Enum.map(registry, fn {id, _} -> id end) |> MapSet.new()
+      expected_ids = Enum.map(child_specs, & &1.id) |> MapSet.new()
+
+      missing = MapSet.difference(expected_ids, registry_ids) |> MapSet.to_list()
+      extra = MapSet.difference(registry_ids, expected_ids) |> MapSet.to_list()
+
+      IO.puts("\n=== DEBUG: Registry Length Mismatch ===")
+      IO.puts("Expected: #{child_spec_len}, Actual: #{registry_len}")
+      IO.puts("Missing count: #{length(missing)}")
+      IO.puts("Extra count: #{length(extra)}")
+
+      if length(missing) > 0 do
+        IO.puts("\nFirst 10 missing child_ids:")
+        Enum.take(missing, 10) |> Enum.each(&IO.inspect/1)
+
+        # Debug: Check all nodes for missing children
+        debug_missing_children(context, missing, 5)
+      end
+
+      if length(extra) > 0 do
+        IO.puts("\nFirst 10 extra child_ids:")
+        Enum.take(extra, 10) |> Enum.each(&IO.inspect/1)
+      end
+
+      IO.puts("=======================================\n")
+    end
 
     assert registry_len === child_spec_len,
            "The length of registry(#{registry_len}) does not match length of child specs(#{child_spec_len})"
@@ -404,5 +463,115 @@ defmodule Test.Helper.Common do
         {:error, errors}
       end
     end
+  end
+
+  def debug_missing_children(
+        %{hub_id: hub_id, hub: hub, hub_conf: hub_conf} = _context,
+        missing_cids,
+        sample_size \\ 3
+      ) do
+    all_nodes = [node() | Node.list()]
+    dist_sup = hub.procs.dist_sup
+    dist_strat = hub_conf.distribution_strategy
+    rf = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
+    sample = Enum.take(missing_cids, sample_size)
+
+    IO.puts("\n=== DEBUG: Analyzing #{length(sample)} missing children ===")
+    IO.puts("Cluster nodes: #{inspect(all_nodes)}")
+    IO.puts("Replication factor: #{rf}\n")
+
+    # Check distribution signature consistency
+    IO.puts("--- Distribution Signatures ---")
+    local_sig = DistributionStrategy.distribution_signature(dist_strat, hub)
+    IO.puts("  #{node()}: #{local_sig}")
+
+    Enum.each(Node.list(), fn n ->
+      remote_sig =
+        :erpc.call(
+          n,
+          fn ->
+            # Get hub fresh on remote node
+            remote_hub = ProcessHub.Coordinator.get_hub(hub_id)
+
+            remote_dist_strat =
+              ProcessHub.Service.Storage.get(
+                remote_hub.storage.misc,
+                ProcessHub.Constant.StorageKey.strdist()
+              )
+
+            DistributionStrategy.distribution_signature(remote_dist_strat, remote_hub)
+          end,
+          5000
+        )
+
+      match = if remote_sig == local_sig, do: "OK", else: "MISMATCH!"
+      IO.puts("  #{n}: #{remote_sig} #{match}")
+    end)
+
+    IO.puts("")
+
+    Enum.each(sample, fn cid ->
+      IO.puts("--- Child: #{cid} ---")
+
+      # Where should it be according to local node?
+      local_targets =
+        DistributionStrategy.belongs_to(dist_strat, hub, [cid], rf)
+        |> Enum.find(fn {id, _} -> id == cid end)
+        |> elem(1)
+
+      IO.puts("  Local belongs_to: #{inspect(local_targets)}")
+
+      # Check each target node - is child there?
+      Enum.each(local_targets, fn target ->
+        {in_sup, in_reg} =
+          if target == node() do
+            sup_children = Supervisor.which_children(dist_sup)
+            in_supervisor = Enum.any?(sup_children, fn {id, _, _, _} -> id == cid end)
+            in_registry = ProcessHub.Service.ProcessRegistry.lookup(hub_id, cid) != nil
+            {in_supervisor, in_registry}
+          else
+            :erpc.call(
+              target,
+              fn ->
+                # Get hub fresh on remote node
+                remote_hub = ProcessHub.Coordinator.get_hub(hub_id)
+                sup_children = Supervisor.which_children(remote_hub.procs.dist_sup)
+                in_supervisor = Enum.any?(sup_children, fn {id, _, _, _} -> id == cid end)
+                in_registry = ProcessHub.Service.ProcessRegistry.lookup(hub_id, cid) != nil
+                {in_supervisor, in_registry}
+              end,
+              5000
+            )
+          end
+
+        IO.puts("    #{target}: sup=#{in_sup}, reg=#{in_reg}")
+      end)
+
+      # Check what OTHER nodes think belongs_to returns
+      IO.puts("  Remote belongs_to calculations:")
+
+      Enum.each(Node.list() |> Enum.take(3), fn n ->
+        remote_targets =
+          :erpc.call(
+            n,
+            fn ->
+              # Get hub fresh on remote node
+              remote_hub = ProcessHub.Coordinator.get_hub(hub_id)
+
+              DistributionStrategy.belongs_to(dist_strat, remote_hub, [cid], rf)
+              |> Enum.find(fn {id, _} -> id == cid end)
+              |> elem(1)
+            end,
+            5000
+          )
+
+        match = if remote_targets == local_targets, do: "OK", else: "DIFFERENT!"
+        IO.puts("    #{n}: #{inspect(remote_targets)} #{match}")
+      end)
+
+      IO.puts("")
+    end)
+
+    IO.puts("=== END DEBUG ===\n")
   end
 end

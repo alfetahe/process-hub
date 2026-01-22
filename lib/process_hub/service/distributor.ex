@@ -277,12 +277,17 @@ defmodule ProcessHub.Service.Distributor do
     }
   end
 
-  defp init_compose_data(%Hub{hub_id: hub_id, storage: %{misc: misc_storage}}, children, opts) do
+  defp init_compose_data(
+         %Hub{hub_id: hub_id, storage: %{misc: misc_storage}} = hub,
+         children,
+         opts
+       ) do
     global_metadata = Keyword.get(opts, :metadata, %{})
     child_metadata_map = Keyword.get(opts, :child_metadata, %{})
 
-    # Compute topology signature once for all children
-    topology_sig = Cluster.topology_signature(misc_storage)
+    # Compute distribution signature once for all children
+    dist_strat = Storage.get(misc_storage, StorageKey.strdist())
+    topology_sig = DistributionStrategy.distribution_signature(dist_strat, hub)
 
     {:ok,
      Enum.reduce(children, [], fn {child_spec, child_nodes}, acc ->

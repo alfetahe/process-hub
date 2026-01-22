@@ -13,7 +13,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Service.Cluster
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
@@ -344,12 +343,12 @@ defmodule ProcessHub.Handler.ChildrenAdd do
          }) do
       local_node = node()
 
-      # OPTIMIZATION: Check if topology changed using signature comparison.
-      # If topology is unchanged AND strategy is deterministic, skip expensive
+      # OPTIMIZATION: Check if distribution state changed using signature comparison.
+      # If state is unchanged AND strategy is deterministic, skip expensive
       # belongs_to() revalidation. Non-deterministic strategies (like load-based)
       # may produce different distributions even with same topology.
       request_sig = nsr.request_signature
-      current_sig = Cluster.topology_signature(hub.storage.misc)
+      current_sig = DistributionStrategy.distribution_signature(dist_strat, hub)
       is_deterministic = DistributionStrategy.deterministic?(dist_strat)
 
       if request_sig != nil and request_sig == current_sig and is_deterministic do
@@ -461,7 +460,8 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     defp create_forward_requests(hub, forw, start_opts) do
       transaction_id = make_ref()
-      request_signature = Cluster.topology_signature(hub.storage.misc)
+      dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+      request_signature = DistributionStrategy.distribution_signature(dist_strat, hub)
       originating_node = node()
       reply_to = Keyword.get(start_opts, :reply_to)
 

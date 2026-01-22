@@ -10,7 +10,9 @@ defmodule ProcessHub.StartChildrenRequest do
   """
 
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Service.Cluster
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.Constant.StorageKey
 
   @default_request_timeout :timer.minutes(10)
 
@@ -119,6 +121,7 @@ defmodule ProcessHub.StartChildrenRequest do
     transaction_id = make_ref()
     timeout = Keyword.get(opts, :request_timeout, @default_request_timeout)
     expires_at = System.monotonic_time(:millisecond) + timeout
+    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
 
     future = %ProcessHub.Future{
       future_resolver: {hub.hub_id, node()},
@@ -128,7 +131,7 @@ defmodule ProcessHub.StartChildrenRequest do
 
     %__MODULE__{
       transaction_id: transaction_id,
-      request_signature: Cluster.topology_signature(hub.storage.misc),
+      request_signature: DistributionStrategy.distribution_signature(dist_strat, hub),
       hub_id: hub.hub_id,
       expires_at: expires_at,
       child_specs: child_specs,

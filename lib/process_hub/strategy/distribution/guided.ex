@@ -142,6 +142,13 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
 
     @impl true
     def deterministic?(_strategy), do: true
+
+    @impl true
+    def distribution_signature(_strategy, hub) do
+      ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
+      |> Enum.sort()
+      |> :erlang.phash2()
+    end
   end
 
   @spec handle_children_start(Hub.t(), %{

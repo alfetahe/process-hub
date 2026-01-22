@@ -48,4 +48,19 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   """
   @spec deterministic?(struct()) :: boolean()
   def deterministic?(strategy)
+
+  @doc """
+  Computes a distribution signature based on the current state that affects distribution.
+
+  For deterministic strategies (like ConsistentHashing), this is typically based on
+  the sorted list of cluster nodes. For non-deterministic strategies (like
+  CentralizedLoadBalancer), this may include additional state like load scores.
+
+  Used to detect if distribution-relevant state has changed between request creation
+  and execution.
+
+  Returns an integer hash that uniquely identifies the current distribution state.
+  """
+  @spec distribution_signature(struct(), Hub.t()) :: non_neg_integer()
+  def distribution_signature(strategy, hub)
 end

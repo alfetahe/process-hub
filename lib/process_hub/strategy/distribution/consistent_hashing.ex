@@ -113,6 +113,13 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
 
     @impl true
     def deterministic?(_strategy), do: true
+
+    @impl true
+    def distribution_signature(_strategy, hub) do
+      ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
+      |> Enum.sort()
+      |> :erlang.phash2()
+    end
   end
 
   @doc """

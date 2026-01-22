@@ -41,6 +41,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
@@ -51,7 +52,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.StartChildrenRequest.NodeStartRequest
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Service.Cluster
 
   # TODO: refactor the new protocol functions.
 
@@ -388,7 +388,8 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
     defp create_migration_requests(hub, to_send_to_nodes) do
       transaction_id = make_ref()
-      request_signature = Cluster.topology_signature(hub.storage.misc)
+      dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+      request_signature = DistributionStrategy.distribution_signature(dist_strat, hub)
       originating_node = node()
 
       # migration_add flag is critical for lock release on remote nodes

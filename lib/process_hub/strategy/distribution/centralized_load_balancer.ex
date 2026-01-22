@@ -298,6 +298,20 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
     @impl true
     def deterministic?(_strategy), do: false
+
+    @impl true
+    def distribution_signature(strategy, hub) do
+      nodes =
+        ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
+        |> Enum.sort()
+
+      scoreboard_data =
+        strategy.scoreboard
+        |> Enum.map(fn {node, score_data} -> {node, score_data.current_score} end)
+        |> Enum.sort_by(fn {node, _} -> node end)
+
+      :erlang.phash2({nodes, scoreboard_data})
+    end
   end
 
   def start_link(args) do

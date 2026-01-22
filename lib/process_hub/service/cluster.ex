@@ -58,20 +58,6 @@ defmodule ProcessHub.Service.Cluster do
     end
   end
 
-  # TODO: add tests.
-  @doc """
-  Computes a topology signature based on the current hub nodes.
-  Used to detect if cluster topology has changed between request creation and execution.
-
-  Returns an integer hash that uniquely identifies the current node topology.
-  """
-  @spec topology_signature(:ets.tid()) :: non_neg_integer()
-  def topology_signature(misc_storage) do
-    nodes(misc_storage, [:include_local])
-    |> Enum.sort()
-    |> :erlang.phash2()
-  end
-
   @doc "Promotes the current node to a cluster node."
   @spec promote_to_node(Hub.t(), node()) :: :ok | {:error, :not_alive}
   def promote_to_node(hub, node_name) do

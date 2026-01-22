@@ -122,6 +122,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         registry_data,
         arg.joined_nodes
       )
+
       :ok
     end
 
