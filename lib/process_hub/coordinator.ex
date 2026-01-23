@@ -29,7 +29,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Handler.ChildrenRem
   alias ProcessHub.Handler.ClusterUpdate
-  alias ProcessHub.Handler.Synchronization
   alias ProcessHub.Handler.ChildrenAdd
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.State
@@ -44,6 +43,8 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.StartChildrenRequest.NodeStartRequest
   alias ProcessHub.StopChildrenRequest
   alias ProcessHub.StopChildrenRequest.NodeStopRequest
+  alias ProcessHub.Request.NodeRequest
+  alias ProcessHub.Request.RequestHandler
   alias ProcessHub.Hub
 
   # TODO: make configurable.
@@ -461,6 +462,16 @@ defmodule ProcessHub.Coordinator do
     {:reply, :bong, state}
   end
 
+  # TODO: remove all legacy code that is now  handled inside request handlers.
+  @impl true
+  def handle_info({@event_request_handle, %NodeRequest{request_handler: request_handler}}, state) do
+    request_handler
+    |> RequestHandler.preprocess(state)
+    |> RequestHandler.handle(state)
+
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info({@event_cluster_leave, node}, state) do
     {:noreply, handle_node_down(state, node)}
@@ -570,6 +581,8 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  # TODO: check the code and move inside the new request handler instead.
+  # Also remove any legacy code.
   @impl true
   def handle_info({@event_children_registration, {post_start_results, _node, start_opts}}, state) do
     Task.Supervisor.async(
@@ -1034,6 +1047,7 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_children_unregistration)
     Blockade.add_handler(eq, @event_child_process_pid_update)
     Blockade.add_handler(eq, @event_node_join_sync)
+    Blockade.add_handler(eq, @event_request_handle)
   end
 
   defp register_handlers(hook_storage, hooks) when is_map(hooks) do

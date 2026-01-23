@@ -32,12 +32,13 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     @impl true
     def init(strategy, _hub_id), do: strategy
 
+    # TODO: do we even need :add and :rem separate? also the opts and the _node.
     @impl SynchronizationStrategy
-    def propagate(_strategy, %Hub{} = hub, children, node, :add, opts) do
+    def propagate(_strategy, %Hub{} = hub, request, _node, :add, opts) do
       Blockade.dispatch_sync(
         hub.procs.event_queue,
-        @event_children_registration,
-        {children, node, opts},
+        @event_request_handle,
+        request,
         %{
           priority: PriorityLevel.high(),
           members: Keyword.get(opts, :members, :global)

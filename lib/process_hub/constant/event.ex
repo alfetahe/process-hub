@@ -43,6 +43,11 @@ defmodule ProcessHub.Constant.Event do
   """
   @type event_node_join_sync() :: :node_join_sync_event
 
+  @typedoc """
+  Event used when handling node request.
+  """
+  @type event_request_handle() :: :request_handle_event
+
   defmacro __using__(_) do
     quote do
       @event_distribute_children :distribute_children_event
@@ -53,6 +58,7 @@ defmodule ProcessHub.Constant.Event do
       @event_children_unregistration :children_unregistration_event
       @event_child_process_pid_update :child_process_pid_update_event
       @event_node_join_sync :node_join_sync_event
+      @event_request_handle :request_handle_event
     end
   end
 end

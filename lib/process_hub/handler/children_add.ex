@@ -53,6 +53,16 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     ]
   end
 
+  # TODO: refactor.
+  def store_format(post_start_results) do
+    post_start_results
+    |> Enum.filter(fn %PostStartData{has_errors: has_err} -> has_err === false end)
+    |> Enum.map(fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn, metadata: m} ->
+      {cid, {cs, cn, m}}
+    end)
+    |> Map.new()
+  end
+
   defmodule SyncHandle do
     @moduledoc """
     Handler for synchronizing added child processes.
@@ -73,7 +83,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{hub: hub, post_start_results: psr} = arg) do
-      ProcessRegistry.bulk_insert(hub.hub_id, store_format(psr), hook_storage: hub.storage.hook)
+      ProcessRegistry.bulk_insert(hub.hub_id, ProcessHub.Handler.ChildrenAdd.store_format(psr),
+        hook_storage: hub.storage.hook
+      )
 
       # Use StartChildrenRequest for response handling
       results = StartChildrenRequest.build_node_response(psr)
@@ -82,12 +94,9 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       case arg do
         %{node_start_request: %NodeStartRequest{} = req} ->
           send_response_via_request(req, results)
-          send_legacy_results(results, req.reply_to)
 
-        # TODO: remove the legacy support later.
         %{start_opts: opts} when is_list(opts) ->
           StartChildrenRequest.send_response_to_coordinator(opts, results)
-          send_legacy_results(results, Keyword.get(opts, :reply_to))
 
         _ ->
           :ok
@@ -112,25 +121,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
     end
 
     defp send_response_via_request(_, _), do: :skip
-
-    defp send_legacy_results(_results, nil), do: :ok
-
-    defp send_legacy_results(results, reply_to) when is_list(reply_to) do
-      local_node = node()
-
-      Enum.each(reply_to, fn respondent ->
-        send(respondent, {:collect_start_results, results, local_node})
-      end)
-    end
-
-    defp store_format(post_start_results) do
-      post_start_results
-      |> Enum.filter(fn %PostStartData{has_errors: has_err} -> has_err === false end)
-      |> Enum.map(fn %PostStartData{cid: cid, child_spec: cs, child_nodes: cn, metadata: m} ->
-        {cid, {cs, cn, m}}
-      end)
-      |> Map.new()
-    end
   end
 
   defmodule StartHandle do
@@ -201,19 +191,25 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           |> post_start_hook()
           |> update_registry()
           |> dispatch_process_startups()
-          |> handle_sync_callback()
+          |> sync_propagate()
           |> release_lock()
 
           :ok
       end
     end
 
-    defp handle_sync_callback(%__MODULE__{sync_strategy: ss, process_data: pd, hub: hub} = arg) do
-      if !Enum.empty?(pd) do
+    defp sync_propagate(%__MODULE__{} = arg) do
+      if !Enum.empty?(arg.process_data) do
+        request_handler =
+          ProcessHub.Request.Handler.PidsRegisterHandler.new(
+            ProcessHub.Handler.ChildrenAdd.store_format(arg.process_data)
+          )
+
+        # TODO: the sync strategy callback should now accept the node request directly.
         SynchronizationStrategy.propagate(
-          ss,
-          hub,
-          pd,
+          arg.sync_strategy,
+          arg.hub,
+          ProcessHub.Request.NodeRequest.new(arg.hub, request_handler),
           node(),
           :add,
           members: :external
