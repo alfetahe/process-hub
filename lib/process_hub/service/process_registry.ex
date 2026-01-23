@@ -508,7 +508,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
       Enum.sort(nodes_new) !== Enum.sort(nodes_existing) ->
         merged_data = Keyword.merge(nodes_existing, nodes_new)
 
-        insert(
+        handle_insert(
           hub_id,
           child_spec,
           merged_data,
