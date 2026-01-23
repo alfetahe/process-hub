@@ -3,7 +3,6 @@ defmodule Test.Service.ProcessRegistryTest do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
-  alias ProcessHub.Service.Storage
 
   use ExUnit.Case
 
@@ -41,7 +40,7 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "bulk insert", %{hub_id: hub_id, hub: hub} = _context do
-    Storage.clear_all(hub_id)
+    ProcessRegistry.clear_all(hub_id)
 
     hook = %HookManager{
       id: :process_registry_test_bulk_insert,

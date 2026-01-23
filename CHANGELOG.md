@@ -29,6 +29,7 @@ This release introduces per-child metadata support for `start_children/3`, allow
   - New `hotswap_handover_delivered` hook fires after migration completes (state delivered + old process terminated)
 
 ### Fixed
+- **Process registry write operations are now synchronous**: All write/delete operations (`insert`, `delete`, `bulk_insert`, `bulk_delete`, `update`, `clear_all`) in `ProcessRegistry` are now routed through the GenServer process. This fixes a race condition where concurrent write operations from different processes could interleave and cause inconsistent registry state. The public API remains unchanged.
 - Optimized interval synchronization to avoid unnecessary process registry updates when the local PID already matches the remote PID. Previously, the synchronizer would always write to the registry during sync even when data was unchanged, causing redundant operations.
 - Fixed under-replication during rapid node scale-down by implementing batched nodedown handling. When multiple nodes fail within a short window, their failures are now processed together, ensuring consistent redistribution calculations across all remaining nodes.
 - Added `NodeDownBatch` handler that processes multiple node failures in a single pass to prevent duplicate redistributions.

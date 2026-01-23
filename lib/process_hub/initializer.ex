@@ -68,6 +68,7 @@ defmodule ProcessHub.Initializer do
     children =
       [
         {Registry, keys: :unique, name: procs.system_registry},
+        {ProcessHub.Service.ProcessRegistry, {hub_id, procs.process_registry}},
         {Blockade, %{name: procs.event_queue, priority_sync: false}},
         dist_sup(hub_conf, procs),
         {Task.Supervisor, name: procs.task_sup},
@@ -103,8 +104,6 @@ defmodule ProcessHub.Initializer do
   end
 
   defp setup_storage(hub_id) do
-    :ets.new(hub_id, [:set, :public, :named_table])
-
     hook_registry = :ets.new(hub_id, [:set, :public])
     misc_storage = :ets.new(hub_id, [:set, :public])
 
@@ -121,6 +120,7 @@ defmodule ProcessHub.Initializer do
       initializer: self(),
       system_registry: system_registry,
       event_queue: :"hub.#{hub_id}.event_queue",
+      process_registry: {:via, Registry, {system_registry, "process_registry"}},
       dist_sup: {:via, Registry, {system_registry, "dist_sup"}},
       task_sup: {:via, Registry, {system_registry, "task_sup"}},
       worker_queue: {:via, Registry, {system_registry, "worker_queue"}},
