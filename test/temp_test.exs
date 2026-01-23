@@ -56,7 +56,7 @@ defmodule Test.TempTest do
 
     # Give the cluster time to stabilize after adding nodes
     # TODO:
-    Process.sleep(5000)
+    Process.sleep(1000)
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)

@@ -9,27 +9,6 @@ defmodule ProcessHub.Service.Mailbox do
   """
 
   @doc """
-  Waits for multiple child process startup results.
-  """
-  @spec collect_start_results(Hub.t(), keyword()) :: StartResult.t()
-  def collect_start_results(hub, opts) do
-    result_handler =
-      Keyword.get(opts, :result_handler, fn _cid, _node, result ->
-        case result do
-          {:ok, pid} -> {:ok, pid}
-          err -> err
-        end
-      end)
-
-    opts =
-      opts
-      |> Keyword.put(:action, :start)
-      |> Keyword.put(:receive_key, :collect_start_results)
-
-    collect_transition_results(hub, result_handler, opts)
-  end
-
-  @doc """
   Waits for multiple child process termination results.
   """
   @spec collect_stop_results(Hub.t(), keyword()) :: StopResult.t()
