@@ -136,6 +136,7 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
+  # TODO: Perhaps move this function to another service module?
   @doc """
   Terminates child processes locally and propagates all nodes in the cluster
   to remove the child processes from their registry.
@@ -143,28 +144,42 @@ defmodule ProcessHub.Service.Distributor do
   @spec children_terminate(
           Hub.t(),
           [ProcessHub.child_id()],
-          ProcessHub.Strategy.Synchronization.Base,
-          keyword()
+          ProcessHub.Strategy.Synchronization.Base
         ) :: [StopHandle.t()]
-  def children_terminate(hub, child_ids, sync_strategy, stop_opts \\ []) do
+  def children_terminate(hub, child_ids, sync_strategy) do
     dist_sup = hub.procs.dist_sup
 
-    shutdown_results =
+    stop_results =
       Enum.map(child_ids, fn child_id ->
         result = DistributedSupervisor.terminate_child(dist_sup, child_id)
         {child_id, result, node()}
       end)
 
+    filtered_stop_results =
+      stop_results
+      |> Enum.filter(fn {_child_id, result, _node} -> result == :ok end)
+      |> Enum.map(fn {child_id, _result, node} ->
+        {child_id, [node]}
+      end)
+
+    request_handler = ProcessHub.Request.Handler.PidsUnregisterHandler.new(filtered_stop_results)
+
+    # Locally clear registry entries.
+    if !Enum.empty?(filtered_stop_results) do
+      ProcessRegistry.bulk_delete(hub.hub_id, filtered_stop_results,
+        hook_storage: hub.storage.hook
+      )
+    end
+
+    # Propagate unregister to all external nodes.
     SynchronizationStrategy.propagate(
       sync_strategy,
       hub,
-      shutdown_results,
-      node(),
-      :rem,
-      stop_opts
+      ProcessHub.Request.NodeRequest.new(hub, request_handler),
+      members: :external
     )
 
-    shutdown_results
+    stop_results
   end
 
   @doc """

@@ -583,6 +583,7 @@ defmodule ProcessHub.Coordinator do
 
   # TODO: check the code and move inside the new request handler instead.
   # Also remove any legacy code.
+  # TODO: remove this and replace usage with request handler.
   @impl true
   def handle_info({@event_children_registration, {post_start_results, _node, start_opts}}, state) do
     Task.Supervisor.async(
@@ -594,26 +595,6 @@ defmodule ProcessHub.Coordinator do
           hub: state,
           post_start_results: post_start_results,
           start_opts: start_opts
-        }
-      ]
-    )
-    |> Task.await()
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({@event_children_unregistration, {children, node, stop_opts}}, state) do
-    Task.Supervisor.async(
-      state.procs.task_sup,
-      ChildrenRem.SyncHandle,
-      :handle,
-      [
-        %ChildrenRem.SyncHandle{
-          hub: state,
-          children: children,
-          node: node,
-          stop_opts: stop_opts
         }
       ]
     )
@@ -1043,8 +1024,8 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_cluster_join)
     Blockade.add_handler(eq, @event_cluster_leave)
     Blockade.add_handler(eq, @event_cluster_leave_batch)
+    # TODO: remove.
     Blockade.add_handler(eq, @event_children_registration)
-    Blockade.add_handler(eq, @event_children_unregistration)
     Blockade.add_handler(eq, @event_child_process_pid_update)
     Blockade.add_handler(eq, @event_node_join_sync)
     Blockade.add_handler(eq, @event_request_handle)

@@ -11,6 +11,9 @@ defmodule ProcessHub.DistributedSupervisor do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Coordinator
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
 
   use ProcessHub.Constant.Event
 
@@ -159,7 +162,7 @@ defmodule ProcessHub.DistributedSupervisor do
       cond do
         # No new pid found, the child process has been terminated.
         new_pid === :undefined ->
-          handle_child_removal(hub.procs.event_queue, cid)
+          handle_child_removal(hub, cid)
 
         # The child process has been restarted with a new pid.
         is_pid(new_pid) and old_pid !== new_pid ->
@@ -171,17 +174,16 @@ defmodule ProcessHub.DistributedSupervisor do
     end
   end
 
-  defp handle_child_removal(event_queue, child_id) do
+  defp handle_child_removal(hub, child_id) do
     node = node()
+    sync_strategy = Storage.get(hub.storage.misc, StorageKey.strsyn())
+    request_handler = ProcessHub.Request.Handler.PidsUnregisterHandler.new([{child_id, [node]}])
 
-    Dispatcher.propagate_event(
-      event_queue,
-      @event_children_unregistration,
-      {[{child_id, :self_exit, node}], node, []},
-      %{
-        members: :global,
-        priority: PriorityLevel.high()
-      }
+    SynchronizationStrategy.propagate(
+      sync_strategy,
+      hub,
+      ProcessHub.Request.NodeRequest.new(hub, request_handler),
+      members: :external
     )
 
     # Deletes the child specification from the supervisor by sending an asynchrounous request

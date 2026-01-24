@@ -229,7 +229,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         Enum.flat_map(arg.rem_node_cids, fn {child_id, nodes} ->
           [{child_id, nodes}]
         end)
-        |> Map.new()
 
       if !Enum.empty?(children_nodes) do
         ProcessRegistry.bulk_delete(arg.hub.hub_id, children_nodes,
