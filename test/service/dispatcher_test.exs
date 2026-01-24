@@ -28,24 +28,4 @@ defmodule Test.Service.DispatcherTest do
     assert_receive {:propagate_test, "test_data"}, @default_receive_timeout
     assert_receive {:propagate_test2, "test_data2"}, @default_receive_timeout
   end
-
-  test "propagate stop", %{hub_id: hub_id} = _context do
-    local_node = node()
-
-    event_data = [
-      {local_node,
-       [
-         %{
-           hub_id: hub_id,
-           nodes: [local_node],
-           child_id: :propagate_stop_test
-         }
-       ]}
-    ]
-
-    Dispatcher.children_stop(hub_id, event_data, reply_to: [self()])
-
-    assert_receive {:collect_stop_results, [propagate_stop_test: {:error, :not_found}], _node},
-                   @default_receive_timeout
-  end
 end

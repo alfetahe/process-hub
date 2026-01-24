@@ -91,7 +91,6 @@ defmodule Test.Service.ProcessRegistryTest do
       Enum.map(insert_data, fn {child_id, {_, child_nodes, _}} ->
         {child_id, Enum.map(child_nodes, fn {node, _pid} -> node end)}
       end)
-      |> Map.new()
 
     ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data))
     ProcessRegistry.bulk_delete(hub_id, del_data, hook_storage: hub.storage.hook)
