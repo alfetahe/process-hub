@@ -83,7 +83,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
         acks =
           if Enum.member?(unacked_nodes, node()) do
-            handle_propagation_type(hub.hub_id, child_data, update_node, type)
+            # TODO: fix later. handle_request_propagation(hub.hub_id, child_data, update_node, type)
 
             [node() | acks]
           else
@@ -133,23 +133,14 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     Enum.take_random(nodes, strategy.recipients)
   end
 
-  @spec handle_propagation_type(
+  @spec handle_request_propagation(
           ProcessHub.hub_id(),
-          [term()],
-          node(),
-          :add | :rem
+          NodeRequest.t()
         ) :: :ok
-  def handle_propagation_type(hub_id, children, updated_node, :add) do
+  def handle_request_propagation(hub_id, request) do
     try do
-      send(hub_id, {@event_children_registration, {children, updated_node, []}})
-    catch
-      _, _ -> :ok
-    end
-  end
-
-  def handle_propagation_type(hub_id, children, updated_node, :rem) do
-    try do
-      send(hub_id, {@event_children_unregistration, {children, updated_node, []}})
+      # TODO: something messed up here? Where exactly are we sending this?
+      send(hub_id, {@event_request_handle, request})
     catch
       _, _ -> :ok
     end
@@ -173,18 +164,17 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     @spec propagate(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
             Hub.t(),
-            [term()],
-            node(),
-            :add | :rem,
+            NodeRequest.t(),
             keyword()
           ) :: :ok
-    def propagate(strategy, hub, children, update_node, type, _opts) do
+    def propagate(strategy, hub, request, _opts) do
       ref = make_ref()
-      Gossip.handle_propagation_type(hub.hub_id, children, update_node, type)
+      Gossip.handle_request_propagation(hub.hub_id, request)
 
       Cluster.nodes(hub.storage.misc)
       |> Gossip.recipients_select(strategy)
-      |> Gossip.propagate_data(hub, strategy, {ref, [node()], children, update_node}, type)
+
+      # TODO: fix later. |> Gossip.propagate_data(hub, strategy, {ref, [node()], children, update_node}, type)
 
       :ok
     end

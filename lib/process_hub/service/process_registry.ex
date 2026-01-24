@@ -327,14 +327,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   ## Parameters
   - `hub_id` - The hub identifier
-  - `children` - Map of child_id to list of nodes to remove
+  - `children` - List of child_id with nodes to remove
   - `opts` - Options keyword list
   """
   @spec bulk_delete(
           ProcessHub.hub_id(),
-          %{
-            ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
-          },
+          [{ProcessHub.child_id(), [node()]}],
           keyword()
         ) :: :ok
   def bulk_delete(hub_id, children, opts \\ []) do

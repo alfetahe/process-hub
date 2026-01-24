@@ -1,6 +1,5 @@
 defprotocol ProcessHub.Strategy.Synchronization.Base do
-  alias ProcessHub.Handler.ChildrenAdd.PostStartData
-  alias ProcessHub.Handler.ChildrenRem.StopHandle
+  alias ProcessHub.Request.NodeRequest
   alias ProcessHub.Hub
 
   @moduledoc """
@@ -16,19 +15,15 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   def init(strategy, hub)
 
   @doc """
-  This function is called when a process has been started on the local node, and the
-  information about the process is about to be propagated to other nodes.
+  Propagates a request to other nodes in the cluster.
   """
   @spec propagate(
           __MODULE__.t(),
           Hub.t(),
-          [PostStartData.t() | StopHandle.t()],
-          node(),
-          :add | :rem,
+          NodeRequest.t(),
           keyword()
-        ) ::
-          :ok
-  def propagate(strategy, hub, children, node, type, opts)
+        ) :: :ok
+  def propagate(strategy, hub, request, opts)
 
   @doc """
   Initializes the periodic synchronization of the process registry.

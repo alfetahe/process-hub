@@ -205,13 +205,10 @@ defmodule ProcessHub.Handler.ChildrenAdd do
             ProcessHub.Handler.ChildrenAdd.store_format(arg.process_data)
           )
 
-        # TODO: the sync strategy callback should now accept the node request directly.
         SynchronizationStrategy.propagate(
           arg.sync_strategy,
           arg.hub,
           ProcessHub.Request.NodeRequest.new(arg.hub, request_handler),
-          node(),
-          :add,
           members: :external
         )
       end

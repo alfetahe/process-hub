@@ -24,11 +24,6 @@ defmodule ProcessHub.Constant.Event do
   @type event_children_registration() :: :children_registration_event
 
   @typedoc """
-  Event used when a process has been unregistered from the ProcessHub registry.
-  """
-  @type event_children_unregistration() :: :children_unregistration_event
-
-  @typedoc """
   Event used when external node sends migration event.
   """
   @type migration_add_event() :: :migration_add_event
@@ -54,8 +49,8 @@ defmodule ProcessHub.Constant.Event do
       @event_cluster_join :cluster_join_event
       @event_cluster_leave :cluster_leave_event
       @event_cluster_leave_batch :cluster_leave_batch_event
+      # TODO: remove
       @event_children_registration :children_registration_event
-      @event_children_unregistration :children_unregistration_event
       @event_child_process_pid_update :child_process_pid_update_event
       @event_node_join_sync :node_join_sync_event
       @event_request_handle :request_handle_event
