@@ -24,11 +24,6 @@ defmodule ProcessHub.Constant.Event do
   @type event_children_registration() :: :children_registration_event
 
   @typedoc """
-  Event used when external node sends migration event.
-  """
-  @type migration_add_event() :: :migration_add_event
-
-  @typedoc """
   Child process is restarted by the local supervisor.
   """
   @type event_child_process_pid_update() :: :child_process_pid_update_event

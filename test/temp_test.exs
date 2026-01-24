@@ -54,8 +54,7 @@ defmodule Test.TempTest do
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true, skip_await: true)
 
-    # Give the cluster time to stabilize after adding nodes
-    # TODO:
+    # TODO: replace with hooks.
     Process.sleep(1000)
 
     # Tests if all child_specs are used for starting children.
@@ -64,22 +63,19 @@ defmodule Test.TempTest do
     # Tests redundancy and check if started children's count matches replication factor.
     Common.validate_replication(context)
 
-    # TODO: uncomment.
-    # # Note: validate_redundancy_mode is skipped after scale-up due to inherent race conditions
-    # # when multiple nodes join simultaneously. Mode is validated after scale-down instead.
+    # Now scale down back to original nodes and see if replication is still maintained
+    # Wait for stability after each node removal to allow redistribution to complete
+    Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
+      removed_peers = Common.stop_peers(acc, 1)
+      Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
+    end)
 
-    # # Now scale down back to original nodes and see if replication is still maintained
-    # # Wait for stability after each node removal to allow redistribution to complete
-    # Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
-    #   removed_peers = Common.stop_peers(acc, 1)
-    #   # Wait for redistribution to complete before removing next node
-    #   :ok = Common.await_registry_stable(context, timeout: 15000)
-    #   Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
-    # end)
+    # TODO: replace with hooks.
+    Process.sleep(2000)
 
-    # Common.validate_registry_length(context, child_specs)
-    # Common.validate_replication(context)
-    # Common.validate_redundancy_mode(context)
+    Common.validate_registry_length(context, child_specs)
+    Common.validate_replication(context)
+    Common.validate_redundancy_mode(context)
 
     :net_kernel.monitor_nodes(false)
   end

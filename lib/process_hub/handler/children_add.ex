@@ -192,7 +192,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
           |> update_registry()
           |> dispatch_process_startups()
           |> sync_propagate()
-          |> release_lock()
 
           :ok
       end
@@ -245,14 +244,6 @@ defmodule ProcessHub.Handler.ChildrenAdd do
       |> Task.await()
 
       arg
-    end
-
-    defp release_lock(%__MODULE__{hub: hub, start_opts: so}) do
-      # Release the event queue lock only when migrating
-      # processes rather than regular startup.
-      if Keyword.get(so, :migration_add, false) === true do
-        State.unlock_event_handler(hub)
-      end
     end
 
     defp start_children(

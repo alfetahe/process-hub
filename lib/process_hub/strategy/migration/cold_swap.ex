@@ -392,9 +392,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       request_signature = DistributionStrategy.distribution_signature(dist_strat, hub)
       originating_node = node()
 
-      # migration_add flag is critical for lock release on remote nodes
-      passthrough_opts = [migration_add: true]
-
       Enum.flat_map(to_send_to_nodes, fn {target_node, children_data} ->
         if length(children_data) > 0 do
           children =
@@ -417,7 +414,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
               reply_to: nil,
               node: target_node,
               children: children,
-              options: passthrough_opts,
+              options: [],
               status: :dispatched
             }
           ]

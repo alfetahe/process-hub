@@ -160,7 +160,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_cast({:start_children, %NodeStartRequest{} = request}, state) do
     if length(request.children) > 0 do
-      Task.Supervisor.start_child(
+      Task.Supervisor.async(
         state.procs.task_sup,
         ChildrenAdd.StartHandle,
         :handle,
@@ -171,6 +171,7 @@ defmodule ProcessHub.Coordinator do
           }
         ]
       )
+      |> Task.await()
     end
 
     {:noreply, state}
@@ -854,7 +855,8 @@ defmodule ProcessHub.Coordinator do
         }
       )
 
-      State.lock_event_handler(state)
+      # TODO: remove later
+      # State.lock_event_handler(state)
     end
 
     state
@@ -885,13 +887,14 @@ defmodule ProcessHub.Coordinator do
 
       # Lock is already set via atomic_priority_set in {:nodedown} handler,
       # but call again to ensure consistent state for hooks.
-      State.lock_event_handler(state)
+      # TODO: remove later.
+      # State.lock_event_handler(state)
       Cluster.rem_hub_node(state.storage.misc, down_node)
 
       # Get current hub_nodes AFTER this node has been removed
       updated_hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
-      Task.Supervisor.start_child(
+      Task.Supervisor.async(
         state.procs.task_sup,
         fn ->
           # Use the unified handler with single-element list
@@ -902,6 +905,7 @@ defmodule ProcessHub.Coordinator do
           })
         end
       )
+      |> Task.await()
     else
       # Node not in hub - unlock immediately since we locked at dispatch time
       State.unlock_event_handler(state)
@@ -924,7 +928,8 @@ defmodule ProcessHub.Coordinator do
         HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), node)
       end)
 
-      State.lock_event_handler(state)
+      # TODO: remove later.
+      # State.lock_event_handler(state)
 
       # Remove ALL down nodes from cluster state FIRST
       Enum.each(valid_down_nodes, fn node ->
@@ -935,7 +940,7 @@ defmodule ProcessHub.Coordinator do
       updated_hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
       # Start a single task that handles all down nodes together
-      Task.Supervisor.start_child(
+      Task.Supervisor.async(
         state.procs.task_sup,
         fn ->
           # Use unified handler that processes all nodes in one pass
@@ -946,9 +951,11 @@ defmodule ProcessHub.Coordinator do
           })
         end
       )
+      |> Task.await()
     else
       # No valid nodes - unlock since we locked at dispatch time
-      State.unlock_event_handler(state)
+      # TODO: remove later.
+      # State.unlock_event_handler(state)
     end
 
     state
