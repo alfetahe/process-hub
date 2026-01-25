@@ -1,4 +1,4 @@
-defmodule ProcessHub.StopChildrenRequest do
+defmodule ProcessHub.Request.Handler.StopChildrenRequest do
   @moduledoc """
   Represents a request to stop child processes across multiple nodes.
 
@@ -10,6 +10,7 @@ defmodule ProcessHub.StopChildrenRequest do
   """
 
   alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.RequestTracker
 
   @default_request_timeout :timer.minutes(10)
 
@@ -17,7 +18,7 @@ defmodule ProcessHub.StopChildrenRequest do
           transaction_id: reference(),
           hub_id: ProcessHub.hub_id(),
           nodes_data: [{node(), [map()]}],
-          sub_requests: [NodeStopRequest.t()],
+          sub_requests: [ChildStopRequest.t()],
           future: ProcessHub.Future.t() | nil,
           options: keyword(),
           expires_at: integer(),
@@ -39,11 +40,23 @@ defmodule ProcessHub.StopChildrenRequest do
     not_found_children: []
   ]
 
-  defmodule NodeStopRequest do
+  defmodule ChildStopRequest do
     @moduledoc """
-    Represents a stop request for a specific node, containing all data
-    needed for the remote node to stop children and route responses.
+    Represents a request to stop children on a specific target node.
+
+    Contains all data needed for the remote node to stop children
+    and route responses back to the coordinator.
+
+    Implements `ProcessHub.Request.CrossNodeRequest` protocol for execution
+    on the target node.
     """
+
+    alias ProcessHub.Service.Distributor
+    alias ProcessHub.Service.RequestExecutor
+    alias ProcessHub.Constant.StorageKey
+    alias ProcessHub.Service.Storage
+    alias ProcessHub.Request.Handler.StopChildrenRequest
+    alias ProcessHub.Hub
 
     @type t() :: %__MODULE__{
             # Routing fields
@@ -74,27 +87,49 @@ defmodule ProcessHub.StopChildrenRequest do
     ]
 
     @doc """
-    Converts NodeStopRequest to keyword options for backward compatibility
+    Converts ChildStopRequest to keyword options for backward compatibility
     with existing code that expects stop_opts.
     """
     @spec to_stop_opts(t()) :: keyword()
-    def to_stop_opts(%__MODULE__{} = req) do
-      # Start with additional options
-      opts = req.options || []
+    def to_stop_opts(%__MODULE__{} = req), do: RequestExecutor.child_request_to_opts(req)
 
-      # Add routing fields
-      opts = if req.transaction_id, do: [{:transaction_id, req.transaction_id} | opts], else: opts
-      opts = if req.hub_id, do: [{:hub_id, req.hub_id} | opts], else: opts
+    @doc """
+    Executes the stop request on the target node.
 
-      opts =
-        if req.originating_node,
-          do: [{:originating_node, req.originating_node} | opts],
-          else: opts
+    This consolidates the logic previously in ChildrenRem.StopHandle.handle/1.
+    """
+    @spec execute(t(), Hub.t()) :: :ok | {:error, :partitioned}
+    def execute(%__MODULE__{} = request, hub) do
+      RequestExecutor.with_partition_check(hub, fn ->
+        sync_strategy = Storage.get(hub.storage.misc, StorageKey.strsyn())
 
-      opts = if req.reply_to, do: [{:reply_to, req.reply_to} | opts], else: opts
-      opts
+        # Extract child IDs
+        cids =
+          Enum.reduce(request.children, [], fn child_data, cids ->
+            [child_data.child_id | cids]
+          end)
+
+        # Terminate children
+        Distributor.children_terminate(hub, cids, sync_strategy)
+
+        # Build and send response
+        results = StopChildrenRequest.build_node_response(request.children)
+        stop_opts = to_stop_opts(request)
+
+        RequestExecutor.send_response(
+          :stop_children_response,
+          stop_opts,
+          results
+        )
+
+        :ok
+      end)
     end
   end
+
+  ##############################################################################
+  # Request tracking functions
+  ##############################################################################
 
   def new(hub, nodes_data, opts, not_found_children \\ []) do
     transaction_id = make_ref()
@@ -123,20 +158,14 @@ defmodule ProcessHub.StopChildrenRequest do
   end
 
   @spec expired?(t()) :: boolean()
-  def expired?(%__MODULE__{expires_at: expires_at}) do
-    System.monotonic_time(:millisecond) > expires_at
-  end
+  def expired?(%__MODULE__{} = request), do: RequestTracker.expired?(request)
 
   @spec all_nodes_responded?(t()) :: boolean()
-  def all_nodes_responded?(%__MODULE__{nodes_data: nodes_data, completed_nodes: completed}) do
-    expected_nodes = Enum.map(nodes_data, fn {node, _} -> node end) |> MapSet.new()
-    MapSet.equal?(expected_nodes, completed)
-  end
+  def all_nodes_responded?(%__MODULE__{} = request), do: RequestTracker.all_responded?(request)
 
   @spec mark_node_completed(t(), node()) :: t()
-  def mark_node_completed(%__MODULE__{} = request, node) do
-    %{request | completed_nodes: MapSet.put(request.completed_nodes, node)}
-  end
+  def mark_node_completed(%__MODULE__{} = request, node),
+    do: RequestTracker.mark_completed(request, node)
 
   @spec compose_sub_requests(t()) :: {:ok, t()} | {:error, :no_children}
   def compose_sub_requests(%__MODULE__{nodes_data: []} = _request) do
@@ -157,7 +186,7 @@ defmodule ProcessHub.StopChildrenRequest do
 
     sub_requests =
       Enum.map(mappings, fn {target_node, children} ->
-        %NodeStopRequest{
+        %ChildStopRequest{
           transaction_id: tid,
           hub_id: hub_id,
           originating_node: originating,
@@ -177,66 +206,20 @@ defmodule ProcessHub.StopChildrenRequest do
 
   @doc """
   Records a node's response to the stop children request.
-
-  Updates the sub_request for the given node with the stop results
-  and marks the node as completed.
-
-  ## Parameters
-    - `request` - The StopChildrenRequest struct
-    - `response_node` - The node that responded
-    - `results` - List of `{child_id, result}` tuples from the node
-
-  ## Returns
-    Updated StopChildrenRequest struct with the node's results recorded.
   """
   @spec record_node_response(t(), node(), [{ProcessHub.child_id(), term()}]) :: t()
   def record_node_response(%__MODULE__{} = request, response_node, results) do
-    updated_sub_requests =
-      Enum.map(request.sub_requests, fn sub_req ->
-        if sub_req.node == response_node do
-          %{sub_req | stop_results: results, status: :completed}
-        else
-          sub_req
-        end
-      end)
-
-    request
-    |> Map.put(:sub_requests, updated_sub_requests)
-    |> mark_node_completed(response_node)
+    RequestTracker.record_response(request, response_node, results, :stop_results)
   end
 
   @doc """
   Sets the awaiter for this request.
-
-  The awaiter is the GenServer `from` tuple that will receive the result
-  when the request completes.
-
-  ## Parameters
-    - `request` - The StopChildrenRequest struct
-    - `from` - The GenServer `from` tuple `{pid, ref}`
-
-  ## Returns
-    Updated StopChildrenRequest struct with the awaiter set.
   """
   @spec set_awaiter(t(), {pid(), reference()}) :: t()
-  def set_awaiter(%__MODULE__{} = request, from) do
-    %{request | awaiter: from}
-  end
+  def set_awaiter(%__MODULE__{} = request, from), do: RequestTracker.set_awaiter(request, from)
 
   @doc """
   Converts a completed request into a StopResult struct.
-
-  Aggregates results from all sub_requests into a single StopResult,
-  categorizing each child as either stopped successfully or errored.
-
-  ## Parameters
-    - `request` - The StopChildrenRequest struct
-
-  ## Returns
-    A `ProcessHub.StopResult` struct with:
-    - `:status` - `:ok` if all children stopped, `:error` if any failed
-    - `:stopped` - List of `{child_id, :ok}` for successful stops
-    - `:errors` - List of `{child_id, reason}` for failed stops
   """
   @spec to_stop_result(t()) :: ProcessHub.StopResult.t()
   def to_stop_result(%__MODULE__{} = request) do
@@ -288,56 +271,40 @@ defmodule ProcessHub.StopChildrenRequest do
   @doc """
   Builds the response data to send back to the coordinator from post_stop_results.
 
-  This is used by nodes that receive sub-requests to format their results
-  before sending them back to the originating coordinator.
-
-  ## Parameters
-    - `post_stop_results` - List of `{child_id, result, node}` tuples from the node's child stops
-
-  ## Returns
-    List of `{child_id, result}` tuples for this node's children.
+  This function handles multiple input formats for flexibility:
+  - List of maps with `:child_id` key (from NodeStopRequest.children)
+  - List of `{child_id, result, node}` tuples (legacy format)
   """
-  @spec build_node_response([{ProcessHub.child_id(), term(), node()}]) ::
+  @spec build_node_response([map() | {ProcessHub.child_id(), term(), node()}]) ::
           [{ProcessHub.child_id(), term()}]
   def build_node_response(post_stop_results) do
     local_node = node()
 
     post_stop_results
-    |> Enum.filter(fn {_cid, _result, stop_node} -> stop_node === local_node end)
-    |> Enum.map(fn {cid, result, _node} -> {cid, result} end)
+    |> Enum.filter(fn
+      # Map format from NodeStopRequest.children
+      %{child_id: _cid} -> true
+      # Tuple format (legacy)
+      {_cid, _result, stop_node} -> stop_node === local_node
+    end)
+    |> Enum.map(fn
+      # Map format - result is :ok since we're building response after successful termination
+      %{child_id: cid} -> {cid, :ok}
+      # Tuple format (legacy)
+      {cid, result, _node} -> {cid, result}
+    end)
   end
+end
 
-  @doc """
-  Sends the node's stop results back to the originating coordinator.
+##############################################################################
+# CrossNodeRequest protocol implementation
+##############################################################################
 
-  This function extracts the transaction info from stop_opts and sends
-  a GenServer.cast to the coordinator on the originating node.
+defimpl ProcessHub.Request.CrossNodeRequest,
+  for: ProcessHub.Request.Handler.StopChildrenRequest.ChildStopRequest do
+  alias ProcessHub.Request.Handler.StopChildrenRequest.ChildStopRequest
 
-  ## Parameters
-    - `stop_opts` - Keyword list with `:hub_id`, `:transaction_id`, and `:originating_node`
-    - `results` - List of `{child_id, result}` tuples from this node
-
-  ## Returns
-    - `:ok` if the response was sent
-    - `:skip` if no transaction info was present (legacy mode)
-  """
-  @spec send_response_to_coordinator(keyword(), [{ProcessHub.child_id(), term()}]) :: :ok | :skip
-  def send_response_to_coordinator(stop_opts, results) do
-    hub_id = Keyword.get(stop_opts, :hub_id)
-    transaction_id = Keyword.get(stop_opts, :transaction_id)
-
-    if hub_id && transaction_id do
-      originating_node = Keyword.get(stop_opts, :originating_node, node())
-      local_node = node()
-
-      GenServer.cast(
-        {hub_id, originating_node},
-        {:stop_children_response, transaction_id, local_node, results}
-      )
-
-      :ok
-    else
-      :skip
-    end
+  def handle(request, hub) do
+    ChildStopRequest.execute(request, hub)
   end
 end

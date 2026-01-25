@@ -27,9 +27,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-  alias ProcessHub.Handler.ChildrenRem
   alias ProcessHub.Handler.ClusterUpdate
-  alias ProcessHub.Handler.ChildrenAdd
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.State
   alias ProcessHub.Service.HookManager
@@ -38,11 +36,8 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Service.State
-  alias ProcessHub.StartChildrenRequest
-  alias ProcessHub.StartChildrenRequest.NodeStartRequest
-  alias ProcessHub.StopChildrenRequest
-  alias ProcessHub.StopChildrenRequest.NodeStopRequest
+  alias ProcessHub.Request.Handler.StartChildrenRequest
+  alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Request.CrossNodeRequest
   alias ProcessHub.Hub
 
@@ -154,71 +149,6 @@ defmodule ProcessHub.Coordinator do
     |> Enum.each(fn pid ->
       Task.Supervisor.terminate_child(task_sup, pid)
     end)
-  end
-
-  @impl true
-  def handle_cast({:start_children, %NodeStartRequest{} = request}, state) do
-    if length(request.children) > 0 do
-      Task.Supervisor.async(
-        state.procs.task_sup,
-        ChildrenAdd.StartHandle,
-        :handle,
-        [
-          %ChildrenAdd.StartHandle{
-            node_start_request: request,
-            hub: state
-          }
-        ]
-      )
-      |> Task.await()
-    end
-
-    {:noreply, state}
-  end
-
-  # New pattern - receives NodeStopRequest struct directly
-  @impl true
-  def handle_cast({:stop_children, %NodeStopRequest{children: children} = request}, state) do
-    if length(children) > 0 do
-      Task.Supervisor.async(
-        state.procs.task_sup,
-        ChildrenRem.StopHandle,
-        :handle,
-        [
-          %ChildrenRem.StopHandle{
-            children: children,
-            node_stop_request: request,
-            hub: state
-          }
-        ]
-      )
-      |> Task.await()
-    end
-
-    {:noreply, state}
-  end
-
-  # TODO: remove in future versions
-  # Legacy pattern - receives children list and stop_opts separately
-  @impl true
-  def handle_cast({:stop_children, children, stop_opts}, state) when is_list(children) do
-    if length(children) > 0 do
-      Task.Supervisor.async(
-        state.procs.task_sup,
-        ChildrenRem.StopHandle,
-        :handle,
-        [
-          %ChildrenRem.StopHandle{
-            children: children,
-            stop_opts: stop_opts,
-            hub: state
-          }
-        ]
-      )
-      |> Task.await()
-    end
-
-    {:noreply, state}
   end
 
   @impl true
@@ -574,28 +504,6 @@ defmodule ProcessHub.Coordinator do
   def handle_info({@event_node_join_sync, {sync_data, remote_node}}, state) do
     sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
     SynchronizationStrategy.handle_node_join_data(sync_strategy, state, sync_data, remote_node)
-
-    {:noreply, state}
-  end
-
-  # TODO: check the code and move inside the new request handler instead.
-  # Also remove any legacy code.
-  # TODO: remove this and replace usage with request handler.
-  @impl true
-  def handle_info({@event_children_registration, {post_start_results, _node, start_opts}}, state) do
-    Task.Supervisor.async(
-      state.procs.task_sup,
-      ChildrenAdd.SyncHandle,
-      :handle,
-      [
-        %ChildrenAdd.SyncHandle{
-          hub: state,
-          post_start_results: post_start_results,
-          start_opts: start_opts
-        }
-      ]
-    )
-    |> Task.await()
 
     {:noreply, state}
   end
@@ -1027,8 +935,6 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_cluster_join)
     Blockade.add_handler(eq, @event_cluster_leave)
     Blockade.add_handler(eq, @event_cluster_leave_batch)
-    # TODO: remove.
-    Blockade.add_handler(eq, @event_children_registration)
     Blockade.add_handler(eq, @event_child_process_pid_update)
     Blockade.add_handler(eq, @event_node_join_sync)
     Blockade.add_handler(eq, @event_request_handle)
@@ -1059,7 +965,7 @@ defmodule ProcessHub.Coordinator do
     Process.send_after(self(), :propagate, interval)
   end
 
-  defp store_pending_request(state, %ProcessHub.StartChildrenRequest{} = request) do
+  defp store_pending_request(state, %StartChildrenRequest{} = request) do
     pending = Map.put(state.pending_requests, request.transaction_id, request)
     %{state | pending_requests: pending}
   end
@@ -1068,7 +974,7 @@ defmodule ProcessHub.Coordinator do
     Map.get(state.pending_requests, transaction_id)
   end
 
-  defp update_pending_request(state, %ProcessHub.StartChildrenRequest{} = request) do
+  defp update_pending_request(state, %StartChildrenRequest{} = request) do
     pending = Map.put(state.pending_requests, request.transaction_id, request)
     %{state | pending_requests: pending}
   end
@@ -1078,7 +984,7 @@ defmodule ProcessHub.Coordinator do
     %{state | pending_requests: pending}
   end
 
-  defp store_pending_stop_request(state, %ProcessHub.StopChildrenRequest{} = request) do
+  defp store_pending_stop_request(state, %StopChildrenRequest{} = request) do
     pending = Map.put(state.pending_stop_requests, request.transaction_id, request)
     %{state | pending_stop_requests: pending}
   end
@@ -1087,7 +993,7 @@ defmodule ProcessHub.Coordinator do
     Map.get(state.pending_stop_requests, transaction_id)
   end
 
-  defp update_pending_stop_request(state, %ProcessHub.StopChildrenRequest{} = request) do
+  defp update_pending_stop_request(state, %StopChildrenRequest{} = request) do
     pending = Map.put(state.pending_stop_requests, request.transaction_id, request)
     %{state | pending_stop_requests: pending}
   end

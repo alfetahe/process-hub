@@ -9,12 +9,11 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
-  alias ProcessHub.Handler.ChildrenRem.StopHandle
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.StartChildrenRequest
-  alias ProcessHub.StopChildrenRequest
+  alias ProcessHub.Request.Handler.StartChildrenRequest
+  alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Hub
 
   # 10 seconds
@@ -145,7 +144,7 @@ defmodule ProcessHub.Service.Distributor do
           Hub.t(),
           [ProcessHub.child_id()],
           ProcessHub.Strategy.Synchronization.Base
-        ) :: [StopHandle.t()]
+        ) :: [{ProcessHub.child_id(), term(), node()}]
   def children_terminate(hub, child_ids, sync_strategy) do
     dist_sup = hub.procs.dist_sup
 

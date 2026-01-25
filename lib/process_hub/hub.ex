@@ -27,8 +27,10 @@ defmodule ProcessHub.Hub do
             nodedown: batch_state(),
             cluster_join: batch_state()
           },
-          pending_requests: %{reference() => ProcessHub.StartChildrenRequest.t()},
-          pending_stop_requests: %{reference() => ProcessHub.StopChildrenRequest.t()}
+          pending_requests: %{reference() => ProcessHub.Request.Handler.StartChildrenRequest.t()},
+          pending_stop_requests: %{
+            reference() => ProcessHub.Request.Handler.StopChildrenRequest.t()
+          }
         }
 
   @doc """

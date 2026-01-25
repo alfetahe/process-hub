@@ -41,16 +41,13 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Constant.Hook
-  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.HookManager
-  alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Utility.Extractor
-  alias ProcessHub.DistributedSupervisor
-  alias ProcessHub.StartChildrenRequest.NodeStartRequest
+  alias ProcessHub.Request.Handler.StartChildrenRequest.ChildStartRequest
   alias ProcessHub.Service.Dispatcher
 
   # TODO: refactor the new protocol functions.
@@ -347,29 +344,13 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       handler
     end
 
-    defp create_contraction_requests(hub, grouped, local_node) do
-      dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
-      sig = DistributionStrategy.distribution_signature(dist_strat, hub)
-
+    defp create_contraction_requests(hub, grouped, _local_node) do
       Enum.flat_map(grouped, fn {_node, children} ->
-        kids =
-          Enum.map(children, fn {cs, m} ->
-            %{child_id: cs.id, child_spec: cs, metadata: m, nodes: [local_node], migration: true}
-          end)
-
-        [
-          %NodeStartRequest{
-            transaction_id: make_ref(),
-            request_signature: sig,
-            hub_id: hub.hub_id,
-            originating_node: local_node,
-            reply_to: nil,
-            node: local_node,
-            children: kids,
-            options: [migration_add: true],
-            status: :dispatched
-          }
-        ]
+        if children != [] do
+          [ChildStartRequest.for_contraction(hub, children)]
+        else
+          []
+        end
       end)
     end
 
@@ -459,37 +440,9 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     end
 
     defp create_migration_requests(hub, to_send_to_nodes) do
-      transaction_id = make_ref()
-      dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
-      request_signature = DistributionStrategy.distribution_signature(dist_strat, hub)
-      originating_node = node()
-
       Enum.flat_map(to_send_to_nodes, fn {target_node, children_data} ->
-        if length(children_data) > 0 do
-          children =
-            Enum.map(children_data, fn {child_spec, metadata} ->
-              %{
-                child_id: child_spec.id,
-                child_spec: child_spec,
-                metadata: metadata,
-                nodes: [target_node],
-                migration: true
-              }
-            end)
-
-          [
-            %NodeStartRequest{
-              transaction_id: transaction_id,
-              request_signature: request_signature,
-              hub_id: hub.hub_id,
-              originating_node: originating_node,
-              reply_to: nil,
-              node: target_node,
-              children: children,
-              options: [],
-              status: :dispatched
-            }
-          ]
+        if children_data != [] do
+          [ChildStartRequest.for_migration(hub, target_node, children_data)]
         else
           []
         end
