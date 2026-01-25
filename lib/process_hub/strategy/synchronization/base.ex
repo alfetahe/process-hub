@@ -1,5 +1,5 @@
 defprotocol ProcessHub.Strategy.Synchronization.Base do
-  alias ProcessHub.Request.NodeRequest
+  alias ProcessHub.Request.CrossNodeRequest
   alias ProcessHub.Hub
 
   @moduledoc """
@@ -20,7 +20,7 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   @spec propagate(
           __MODULE__.t(),
           Hub.t(),
-          NodeRequest.t(),
+          CrossNodeRequest.t(),
           keyword()
         ) :: :ok
   def propagate(strategy, hub, request, opts)

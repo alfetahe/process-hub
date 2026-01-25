@@ -13,6 +13,7 @@ defmodule ProcessHub.DistributedSupervisor do
   alias ProcessHub.Coordinator
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Request.Handler.PidsUnregisterRequest
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
 
   use ProcessHub.Constant.Event
@@ -175,14 +176,11 @@ defmodule ProcessHub.DistributedSupervisor do
   end
 
   defp handle_child_removal(hub, child_id) do
-    node = node()
-    sync_strategy = Storage.get(hub.storage.misc, StorageKey.strsyn())
-    request_handler = ProcessHub.Request.Handler.PidsUnregisterHandler.new([{child_id, [node]}])
-
-    SynchronizationStrategy.propagate(
-      sync_strategy,
+    hub.storage.misc
+    |> Storage.get(StorageKey.strsyn())
+    |> SynchronizationStrategy.propagate(
       hub,
-      ProcessHub.Request.NodeRequest.new(hub, request_handler),
+      PidsUnregisterRequest.new([{child_id, [node()]}]),
       members: :external
     )
 

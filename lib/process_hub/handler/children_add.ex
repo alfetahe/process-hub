@@ -199,15 +199,15 @@ defmodule ProcessHub.Handler.ChildrenAdd do
 
     defp sync_propagate(%__MODULE__{} = arg) do
       if !Enum.empty?(arg.process_data) do
-        request_handler =
-          ProcessHub.Request.Handler.PidsRegisterHandler.new(
+        request =
+          ProcessHub.Request.Handler.PidsRegisterRequest.new(
             ProcessHub.Handler.ChildrenAdd.store_format(arg.process_data)
           )
 
         SynchronizationStrategy.propagate(
           arg.sync_strategy,
           arg.hub,
-          ProcessHub.Request.NodeRequest.new(arg.hub, request_handler),
+          request,
           members: :external
         )
       end

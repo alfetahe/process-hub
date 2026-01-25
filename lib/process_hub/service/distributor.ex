@@ -6,7 +6,7 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Request.Handler.PidsUnregisterRequest
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Handler.ChildrenRem.StopHandle
@@ -162,8 +162,6 @@ defmodule ProcessHub.Service.Distributor do
         {child_id, [node]}
       end)
 
-    request_handler = ProcessHub.Request.Handler.PidsUnregisterHandler.new(filtered_stop_results)
-
     # Locally clear registry entries.
     if !Enum.empty?(filtered_stop_results) do
       ProcessRegistry.bulk_delete(hub.hub_id, filtered_stop_results,
@@ -175,7 +173,7 @@ defmodule ProcessHub.Service.Distributor do
     SynchronizationStrategy.propagate(
       sync_strategy,
       hub,
-      ProcessHub.Request.NodeRequest.new(hub, request_handler),
+      PidsUnregisterRequest.new(filtered_stop_results),
       members: :external
     )
 

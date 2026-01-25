@@ -177,8 +177,15 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     def init(strategy, _hub), do: strategy
 
     @impl MigrationStrategy
-    def handle_migrate(_struct, _hub, _registry_data, _nodes, _replication_factor, _sync_strategy),
-      do: :ok
+    def handle_migrate(
+          _struct,
+          _hub,
+          _registry_data,
+          _nodes,
+          _replication_factor,
+          _sync_strategy
+        ),
+        do: :ok
 
     @impl MigrationStrategy
     def handle_topology_expansion(
@@ -345,21 +352,24 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       sig = DistributionStrategy.distribution_signature(dist_strat, hub)
 
       Enum.flat_map(grouped, fn {_node, children} ->
-        kids = Enum.map(children, fn {cs, m} ->
-          %{child_id: cs.id, child_spec: cs, metadata: m, nodes: [local_node], migration: true}
-        end)
+        kids =
+          Enum.map(children, fn {cs, m} ->
+            %{child_id: cs.id, child_spec: cs, metadata: m, nodes: [local_node], migration: true}
+          end)
 
-        [%NodeStartRequest{
-          transaction_id: make_ref(),
-          request_signature: sig,
-          hub_id: hub.hub_id,
-          originating_node: local_node,
-          reply_to: nil,
-          node: local_node,
-          children: kids,
-          options: [migration_add: true],
-          status: :dispatched
-        }]
+        [
+          %NodeStartRequest{
+            transaction_id: make_ref(),
+            request_signature: sig,
+            hub_id: hub.hub_id,
+            originating_node: local_node,
+            reply_to: nil,
+            node: local_node,
+            children: kids,
+            options: [migration_add: true],
+            status: :dispatched
+          }
+        ]
       end)
     end
 

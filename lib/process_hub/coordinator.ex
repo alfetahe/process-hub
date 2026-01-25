@@ -43,8 +43,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.StartChildrenRequest.NodeStartRequest
   alias ProcessHub.StopChildrenRequest
   alias ProcessHub.StopChildrenRequest.NodeStopRequest
-  alias ProcessHub.Request.NodeRequest
-  alias ProcessHub.Request.RequestHandler
+  alias ProcessHub.Request.CrossNodeRequest
   alias ProcessHub.Hub
 
   # TODO: make configurable.
@@ -463,12 +462,9 @@ defmodule ProcessHub.Coordinator do
     {:reply, :bong, state}
   end
 
-  # TODO: remove all legacy code that is now  handled inside request handlers.
   @impl true
-  def handle_info({@event_request_handle, %NodeRequest{request_handler: request_handler}}, state) do
-    request_handler
-    |> RequestHandler.preprocess(state)
-    |> RequestHandler.handle(state)
+  def handle_info({@event_request_handle, request}, state) do
+    CrossNodeRequest.handle(request, state)
 
     {:noreply, state}
   end
