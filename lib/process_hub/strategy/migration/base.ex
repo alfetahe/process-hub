@@ -43,7 +43,31 @@ defprotocol ProcessHub.Strategy.Migration.Base do
           struct :: __MODULE__.t(),
           hub :: Hub.t(),
           nodes :: [node()],
-          handler :: ProcessHub.Handler.ClusterUpdate.t()
-        ) :: ProcessHub.Handler.ClusterUpdate.t()
+          handler :: ProcessHub.Handler.ClusterUpdate.NodeUp.t()
+        ) :: ProcessHub.Handler.ClusterUpdate.NodeUp.t()
   def handle_topology_expansion(struct, hub, nodes, handler)
+
+  @doc """
+  Handles migration when nodes leave the cluster (topology contraction).
+
+  Called from NodeDown handler to redistribute processes from removed nodes.
+  Each strategy implementation handles its own logic for starting processes
+  that should now be on the local node.
+
+  ## Parameters
+  - `struct` - the strategy struct
+  - `hub` - the hub state
+  - `removed_nodes` - list of nodes that have left the cluster
+  - `handler` - the NodeDown handler struct
+
+  ## Returns
+  Updated handler struct with any additional data computed during processing.
+  """
+  @spec handle_topology_contraction(
+          struct :: __MODULE__.t(),
+          hub :: Hub.t(),
+          removed_nodes :: [node()],
+          handler :: ProcessHub.Handler.ClusterUpdate.NodeDown.t()
+        ) :: ProcessHub.Handler.ClusterUpdate.NodeDown.t()
+  def handle_topology_contraction(struct, hub, removed_nodes, handler)
 end

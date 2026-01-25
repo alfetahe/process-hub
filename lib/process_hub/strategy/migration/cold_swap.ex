@@ -177,6 +177,10 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     def init(strategy, _hub), do: strategy
 
     @impl MigrationStrategy
+    def handle_migrate(_struct, _hub, _registry_data, _nodes, _replication_factor, _sync_strategy),
+      do: :ok
+
+    @impl MigrationStrategy
     def handle_topology_expansion(
           %ColdSwap{handover: handover, state_ttl: ttl, state_query_timeout: timeout} = _struct,
           hub,
@@ -300,7 +304,65 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       handler
     end
 
-    # TODO: Refactor order of private functions.
+    @impl MigrationStrategy
+    def handle_topology_contraction(%ColdSwap{} = _struct, hub, _removed_nodes, handler) do
+      local_node = node()
+      repl_fact = RedundancyStrategy.replication_factor(handler.redun_strat)
+      registry_data = ProcessRegistry.dump(hub.hub_id)
+      cids = Enum.map(registry_data, fn {cid, _} -> cid end)
+
+      cid_node_pairs =
+        if cids != [] do
+          DistributionStrategy.belongs_to(handler.dist_strat, hub, cids, repl_fact)
+        else
+          []
+        end
+
+      # Find children that should be local but aren't
+      children_to_start =
+        Enum.reduce(registry_data, [], fn {child_id, {cspec, node_pids, meta}}, acc ->
+          nodes_orig = Keyword.keys(node_pids)
+          nodes_new = Bag.get_by_key(cid_node_pairs, child_id, [])
+
+          if Enum.member?(nodes_new, local_node) and not Enum.member?(nodes_orig, local_node) do
+            [{cspec, meta} | acc]
+          else
+            acc
+          end
+        end)
+
+      if children_to_start != [] do
+        grouped = %{local_node => children_to_start}
+        requests = create_contraction_requests(hub, grouped, local_node)
+        Dispatcher.children_start(hub.hub_id, requests)
+      end
+
+      handler
+    end
+
+    defp create_contraction_requests(hub, grouped, local_node) do
+      dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+      sig = DistributionStrategy.distribution_signature(dist_strat, hub)
+
+      Enum.flat_map(grouped, fn {_node, children} ->
+        kids = Enum.map(children, fn {cs, m} ->
+          %{child_id: cs.id, child_spec: cs, metadata: m, nodes: [local_node], migration: true}
+        end)
+
+        [%NodeStartRequest{
+          transaction_id: make_ref(),
+          request_signature: sig,
+          hub_id: hub.hub_id,
+          originating_node: local_node,
+          reply_to: nil,
+          node: local_node,
+          children: kids,
+          options: [migration_add: true],
+          status: :dispatched
+        }]
+      end)
+    end
+
     defp find_new_nodes(old_nodes, new_nodes) do
       Enum.filter(new_nodes, fn n -> !Enum.member?(old_nodes, n) end)
     end

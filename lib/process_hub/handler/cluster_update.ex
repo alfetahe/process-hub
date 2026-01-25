@@ -5,9 +5,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.HookManager
-  alias ProcessHub.Service.Distributor
-  alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
@@ -23,7 +20,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     @moduledoc """
     Handler for the node up event.
     """
-    alias ProcessHub.Constant.PriorityLevel
     use Event
 
     @type t() :: %__MODULE__{
@@ -149,6 +145,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             partition_strat: PartitionToleranceStrategy.t(),
             redun_strat: RedundancyStrategy.t(),
             dist_strat: DistributionStrategy.t(),
+            migr_strat: MigrationStrategy.t(),
             hub_nodes: [node()],
             hub: Hub.t(),
             rem_node_cids: [ProcessHub.child_id()]
@@ -159,7 +156,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :hub_nodes,
       :hub
     ]
-    defstruct @enforce_keys ++ [:partition_strat, :redun_strat, :dist_strat, :rem_node_cids]
+    defstruct @enforce_keys ++
+                [:partition_strat, :redun_strat, :dist_strat, :migr_strat, :rem_node_cids]
 
     @spec handle(t()) :: any()
     def handle(%__MODULE__{hub: hub} = arg) do
@@ -167,7 +165,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         arg
         | partition_strat: Storage.get(hub.storage.misc, StorageKey.strpart()),
           redun_strat: Storage.get(hub.storage.misc, StorageKey.strred()),
-          dist_strat: Storage.get(hub.storage.misc, StorageKey.strdist())
+          dist_strat: Storage.get(hub.storage.misc, StorageKey.strdist()),
+          migr_strat: Storage.get(hub.storage.misc, StorageKey.strmigr())
       }
       |> dispatch_down_hooks()
       |> distribute_processes()
@@ -240,46 +239,41 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp distribute_processes(%__MODULE__{} = arg) do
-      local_node = node()
+      # Get affected children for registry cleanup and redundancy updates
+      affected = removed_nodes_processes(arg)
+      cids = Enum.map(affected, fn {cid, _, _, _, _, rem} -> {cid, rem} end)
 
-      {redun, redist, cids} =
-        removed_nodes_processes(arg)
-        |> Enum.reduce({[], [], []}, fn {cid, cspec, m, nlist1, nlist2, rem_nodes},
-                                        {redun, redist, cids} ->
-          case Enum.member?(nlist1, local_node) do
-            true ->
-              # Already have locally - just update redundancy info
-              {[{cid, nlist2, nlist1, []} | redun], redist, [{cid, rem_nodes} | cids]}
+      # Build redundancy list from ALL local children (ring changes affect any child)
+      redun = build_redundancy_list(arg)
 
-            false ->
-              case Enum.member?(nlist2, local_node) do
-                true ->
-                  # Need to start locally
-                  {redun, [{cspec, m} | redist], [{cid, rem_nodes} | cids]}
+      if !Enum.empty?(redun), do: handle_redundancy(arg, redun)
 
-                false ->
-                  # Not our concern
-                  {redun, redist, [{cid, rem_nodes} | cids]}
-              end
-          end
-        end)
-
-      # Handle redundancy signals for processes that already exist locally
-      if !Enum.empty?(redun) do
-        handle_redundancy(arg, redun)
-      end
-
-      # Handle redistribution of processes that need to be started locally
-      if !Enum.empty?(redist) do
-        handle_redistribution(arg.hub, redist)
-      end
+      arg =
+        MigrationStrategy.handle_topology_contraction(
+          arg.migr_strat,
+          arg.hub,
+          arg.removed_nodes,
+          arg
+        )
 
       Map.put(arg, :rem_node_cids, cids)
     end
 
-    defp handle_redistribution(hub, children_data) do
-      # TODO: add new implementation.
-      # Distributor.children_redist_init(hub, node(), children_data)
+    defp build_redundancy_list(arg) do
+      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
+      local_children = ProcessRegistry.local_children(arg.hub.hub_id)
+      cids = Map.keys(local_children)
+
+      cid_node_pairs =
+        if cids != [] do
+          DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
+        else
+          []
+        end
+
+      Enum.map(local_children, fn {cid, {_, node_pids, _}} ->
+        {cid, Bag.get_by_key(cid_node_pairs, cid, []), Keyword.keys(node_pids), []}
+      end)
     end
 
     defp handle_redundancy(arg, children) do

@@ -49,7 +49,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.HookManager
-  alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
@@ -359,6 +358,20 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     def init(strategy, _hub), do: strategy
+
+    @impl MigrationStrategy
+    def handle_topology_expansion(%HotSwap{} = _struct, _hub, _nodes, handler) do
+      # TODO: implement hot swap expansion logic
+      # For now, return handler unchanged
+      handler
+    end
+
+    @impl MigrationStrategy
+    def handle_topology_contraction(%HotSwap{} = _struct, _hub, _removed_nodes, handler) do
+      # TODO: implement hot swap contraction logic
+      # For now, return handler unchanged
+      handler
+    end
 
     @impl true
     def handle_migrate(
