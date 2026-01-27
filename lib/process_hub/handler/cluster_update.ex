@@ -147,7 +147,8 @@ defmodule ProcessHub.Handler.ClusterUpdate do
             migr_strat: MigrationStrategy.t(),
             hub_nodes: [node()],
             hub: Hub.t(),
-            rem_node_cids: [ProcessHub.child_id()]
+            rem_node_cids: [ProcessHub.child_id()],
+            calculated_cids: %{ProcessHub.child_id() => [node()]}
           }
 
     @enforce_keys [
@@ -156,7 +157,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       :hub
     ]
     defstruct @enforce_keys ++
-                [:partition_strat, :redun_strat, :dist_strat, :migr_strat, :rem_node_cids]
+                [
+                  :partition_strat,
+                  :redun_strat,
+                  :dist_strat,
+                  :migr_strat,
+                  :rem_node_cids,
+                  calculated_cids: %{}
+                ]
 
     @spec handle(t()) :: any()
     def handle(%__MODULE__{hub: hub} = arg) do
@@ -238,9 +246,25 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     end
 
     defp distribute_processes(%__MODULE__{} = arg) do
+      # Get registry data once and calculate belongs_to for all cids upfront.
+      # This avoids expensive repeated hash ring calculations.
+      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
+      registry_data = ProcessRegistry.dump(arg.hub.hub_id)
+      cids = Enum.map(registry_data, fn {cid, _} -> cid end)
+
+      cid_node_map =
+        if cids != [] do
+          DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
+        else
+          %{}
+        end
+
+      # Store calculated cids in arg for reuse by migration strategies.
+      arg = %__MODULE__{arg | calculated_cids: cid_node_map}
+
       # Get affected children for registry cleanup and redundancy updates
-      affected = removed_nodes_processes(arg)
-      cids = Enum.map(affected, fn {cid, _, _, _, _, rem} -> {cid, rem} end)
+      affected = removed_nodes_processes(arg, registry_data)
+      rem_cids = Enum.map(affected, fn {cid, _, _, _, _, rem} -> {cid, rem} end)
 
       # Build redundancy list from ALL local children (ring changes affect any child)
       redun = build_redundancy_list(arg)
@@ -255,23 +279,15 @@ defmodule ProcessHub.Handler.ClusterUpdate do
           arg
         )
 
-      Map.put(arg, :rem_node_cids, cids)
+      Map.put(arg, :rem_node_cids, rem_cids)
     end
 
     defp build_redundancy_list(arg) do
-      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
       local_children = ProcessRegistry.local_children(arg.hub.hub_id)
-      cids = Map.keys(local_children)
 
-      cid_node_map =
-        if cids != [] do
-          DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
-        else
-          %{}
-        end
-
+      # Use pre-calculated cid_node_map from arg to avoid recalculating hash ring.
       Enum.map(local_children, fn {cid, {_, node_pids, _}} ->
-        {cid, Map.get(cid_node_map, cid, []), Keyword.keys(node_pids), []}
+        {cid, Map.get(arg.calculated_cids, cid, []), Keyword.keys(node_pids), []}
       end)
     end
 
@@ -286,25 +302,14 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       )
     end
 
-    # Find all children affected by any of the removed nodes
-    defp removed_nodes_processes(arg) do
-      repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
-
-      reg_dump = ProcessRegistry.dump(arg.hub.hub_id)
-
-      cids = Enum.map(reg_dump, fn {cid, _} -> cid end)
+    # Find all children affected by any of the removed nodes.
+    # Uses pre-calculated cid_node_map from arg to avoid recalculating hash ring.
+    defp removed_nodes_processes(arg, registry_data) do
       local_node = node()
 
-      cid_node_map =
-        if cids != [] do
-          DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
-        else
-          %{}
-        end
-
-      Enum.reduce(reg_dump, [], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
+      Enum.reduce(registry_data, [], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
         nodes_orig = Keyword.keys(node_pids)
-        nodes_updated = Map.get(cid_node_map, child_id, [])
+        nodes_updated = Map.get(arg.calculated_cids, child_id, [])
 
         # Find which removed nodes had this child
         affected_removed_nodes =

@@ -309,17 +309,11 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     @impl MigrationStrategy
     def handle_topology_contraction(%ColdSwap{} = _struct, hub, _removed_nodes, handler) do
       local_node = node()
-      repl_fact = RedundancyStrategy.replication_factor(handler.redun_strat)
+
+      # Use pre-calculated cid_node_map from handler to avoid recalculating hash ring.
+      cid_node_map = Map.get(handler, :calculated_cids, %{})
 
       registry_data = ProcessRegistry.dump(hub.hub_id)
-      cids = Enum.map(registry_data, fn {cid, _} -> cid end)
-
-      cid_node_map =
-        if cids != [] do
-          DistributionStrategy.belongs_to(handler.dist_strat, hub, cids, repl_fact)
-        else
-          %{}
-        end
 
       # Find children that should be local but aren't
       children_to_start =

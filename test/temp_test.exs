@@ -35,7 +35,7 @@ defmodule Test.TempTest do
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)
 
-    child_count = 1000
+    child_count = 2000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.
@@ -51,7 +51,7 @@ defmodule Test.TempTest do
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true, skip_await: true)
 
     # TODO: replace with hooks.
-    Process.sleep(1000)
+    Process.sleep(2000)
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
@@ -67,7 +67,7 @@ defmodule Test.TempTest do
     end)
 
     # TODO: replace with hooks.
-    Process.sleep(1000)
+    Process.sleep(2000)
 
     Common.validate_registry_length(context, child_specs)
     Common.validate_replication(context)
