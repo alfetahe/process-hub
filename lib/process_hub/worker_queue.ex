@@ -1,6 +1,10 @@
 defmodule ProcessHub.WorkerQueue do
   alias ProcessHub.Request.CrossNodeRequest
+  alias ProcessHub.Handler.ClusterUpdate
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.HookManager
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Future
 
@@ -32,6 +36,46 @@ defmodule ProcessHub.WorkerQueue do
       on_timeout: :kill_task
     )
     |> Stream.run()
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:handle_node_down, params}, state) do
+    # Remove nodes from cluster state first (serialized here in worker)
+    Enum.each(params.removed_nodes, fn node ->
+      Cluster.rem_hub_node(params.hub.storage.misc, node)
+    end)
+
+    # Get updated hub_nodes AFTER removal
+    updated_hub_nodes = Cluster.nodes(params.hub.storage.misc, [:include_local])
+
+    ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
+      removed_nodes: params.removed_nodes,
+      hub_nodes: updated_hub_nodes,
+      hub: params.hub
+    })
+
+    Enum.each(params.removed_nodes, fn node ->
+      HookManager.dispatch_hook(params.hook_storage, Hook.post_cluster_leave(), %{
+        removed_node: node
+      })
+    end)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:handle_node_up, params}, state) do
+    # Add nodes to cluster state first (serialized here in worker)
+    Enum.each(params.joined_nodes, fn node ->
+      Cluster.add_hub_node(params.hub.storage.misc, node)
+    end)
+
+    ClusterUpdate.NodeUp.handle(%ClusterUpdate.NodeUp{
+      joined_nodes: params.joined_nodes,
+      hub: params.hub
+    })
 
     {:noreply, state}
   end

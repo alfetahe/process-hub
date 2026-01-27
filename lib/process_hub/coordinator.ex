@@ -459,18 +459,14 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_distribute_children, nodes}, state) do
-    Task.Supervisor.async(
-      state.procs.task_sup,
-      ClusterUpdate.NodeUp,
-      :handle,
-      [
-        %ClusterUpdate.NodeUp{
-          joined_nodes: nodes,
-          hub: state
-        }
-      ]
+    GenServer.cast(
+      state.procs.worker_queue,
+      {:handle_node_up,
+       %{
+         joined_nodes: nodes,
+         hub: state
+       }}
     )
-    |> Task.await(10000)
 
     {:noreply, state}
   end
@@ -716,6 +712,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   # Handle multiple nodes joining together (batched).
+  # Cluster state modification (add_hub_node) happens in worker to ensure serialization.
   defp handle_hub_join(state, nodes) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
     local_node = node()
@@ -727,11 +724,6 @@ defmodule ProcessHub.Coordinator do
       end)
 
     if length(new_nodes) > 0 do
-      # Add all new nodes to cluster state
-      Enum.each(new_nodes, fn node ->
-        Cluster.add_hub_node(state.storage.misc, node)
-      end)
-
       # Broadcast local registry data to joining nodes
       broadcast_local_registry(state, new_nodes)
 
@@ -786,7 +778,8 @@ defmodule ProcessHub.Coordinator do
   end
 
   # Handle a single node going down (from explicit @event_cluster_leave).
-  # Delegates to the same handler as batched events, but with a single-element list.
+  # Delegates work to the WorkerQueue to keep coordinator responsive.
+  # Cluster state modification (rem_hub_node) happens in worker to ensure serialization.
   defp handle_node_down(state, down_node) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
@@ -797,23 +790,16 @@ defmodule ProcessHub.Coordinator do
       # but call again to ensure consistent state for hooks.
       # TODO: remove later.
       # State.lock_event_handler(state)
-      Cluster.rem_hub_node(state.storage.misc, down_node)
 
-      # Get current hub_nodes AFTER this node has been removed
-      updated_hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
-
-      Task.Supervisor.async(
-        state.procs.task_sup,
-        fn ->
-          # Use the unified handler with single-element list
-          ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
-            removed_nodes: [down_node],
-            hub_nodes: updated_hub_nodes,
-            hub: state
-          })
-        end
+      GenServer.cast(
+        state.procs.worker_queue,
+        {:handle_node_down,
+         %{
+           removed_nodes: [down_node],
+           hub: state,
+           hook_storage: state.storage.hook
+         }}
       )
-      |> Task.await()
     else
       # Node not in hub - unlock immediately since we locked at dispatch time
       State.unlock_event_handler(state)
@@ -823,7 +809,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   # Handle multiple nodes going down together (batched).
-  # This removes all nodes from cluster state first, then does ONE redistribution.
+  # Delegates redistribution to WorkerQueue. Cluster state modification happens in worker.
   defp handle_node_down_batch(state, down_nodes) do
     hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
 
@@ -839,27 +825,15 @@ defmodule ProcessHub.Coordinator do
       # TODO: remove later.
       # State.lock_event_handler(state)
 
-      # Remove ALL down nodes from cluster state FIRST
-      Enum.each(valid_down_nodes, fn node ->
-        Cluster.rem_hub_node(state.storage.misc, node)
-      end)
-
-      # Get updated hub_nodes AFTER all nodes have been removed
-      updated_hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
-
-      # Start a single task that handles all down nodes together
-      Task.Supervisor.async(
-        state.procs.task_sup,
-        fn ->
-          # Use unified handler that processes all nodes in one pass
-          ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
-            removed_nodes: valid_down_nodes,
-            hub_nodes: updated_hub_nodes,
-            hub: state
-          })
-        end
+      GenServer.cast(
+        state.procs.worker_queue,
+        {:handle_node_down,
+         %{
+           removed_nodes: valid_down_nodes,
+           hub: state,
+           hook_storage: state.storage.hook
+         }}
       )
-      |> Task.await()
     else
       # No valid nodes - unlock since we locked at dispatch time
       # TODO: remove later.
