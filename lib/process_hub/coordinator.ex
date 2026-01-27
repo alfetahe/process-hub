@@ -394,20 +394,16 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_requests_handle, requests}, state) do
-    timeout = Storage.get(state.storage.misc, StorageKey.cnrt()) || 5000
-
-    requests
-    |> Task.async_stream(&CrossNodeRequest.handle(&1, state),
-      timeout: timeout,
-      ordered: false,
-      on_timeout: :kill_task
+    GenServer.cast(
+      state.procs.worker_queue,
+      {:handle_requests, requests, state}
     )
-    |> Stream.run()
 
     {:noreply, state}
   end
 
   @impl true
+  # TODO: handle everything inside worker instead.
   def handle_info({@event_cluster_leave, node}, state) do
     {:noreply, handle_node_down(state, node)}
   end

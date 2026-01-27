@@ -1,4 +1,5 @@
 defmodule ProcessHub.WorkerQueue do
+  alias ProcessHub.Request.CrossNodeRequest
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Future
@@ -19,6 +20,18 @@ defmodule ProcessHub.WorkerQueue do
   @impl true
   def handle_cast({:handle_work, func}, state) do
     func.()
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:handle_requests, requests, hub}, state) do
+    Task.async_stream(requests, &CrossNodeRequest.handle(&1, hub),
+      timeout: Storage.get(hub.storage.misc, StorageKey.cnrt()) || 5000,
+      ordered: false,
+      on_timeout: :kill_task
+    )
+    |> Stream.run()
 
     {:noreply, state}
   end
