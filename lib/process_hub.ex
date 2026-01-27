@@ -182,6 +182,8 @@ defmodule ProcessHub do
   for cluster events (nodedown, cluster_join). Each new event resets the timer, and events
   are processed only after no new events arrive for this duration. Events are validated
   against `Node.list()` before processing to filter stale events. The default is `500` (0.5 seconds).
+  - `:cross_node_request_timeout` is optional and defines the timeout in milliseconds
+  for each cross-node request in the batch. The default is `5000` (5 seconds).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -211,7 +213,8 @@ defmodule ProcessHub do
           dsup_max_restarts: pos_integer(),
           dsup_max_seconds: pos_integer(),
           dsup_shutdown_timeout: pos_integer(),
-          cluster_event_debounce: pos_integer()
+          cluster_event_debounce: pos_integer(),
+          cross_node_request_timeout: pos_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -231,7 +234,8 @@ defmodule ProcessHub do
     dsup_max_restarts: 100,
     dsup_max_seconds: 4,
     dsup_shutdown_timeout: 60000,
-    cluster_event_debounce: 500
+    cluster_event_debounce: 500,
+    cross_node_request_timeout: 5000
   ]
 
   @doc """

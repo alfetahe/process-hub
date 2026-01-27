@@ -6,6 +6,7 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.RequestSplitter
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
@@ -169,10 +170,12 @@ defmodule ProcessHub.Service.Distributor do
     end
 
     # Propagate unregister to all external nodes.
+    request = PidsUnregisterRequest.new(filtered_stop_results)
+
     SynchronizationStrategy.propagate(
       sync_strategy,
       hub,
-      PidsUnregisterRequest.new(filtered_stop_results),
+      RequestSplitter.split(request),
       members: :external
     )
 

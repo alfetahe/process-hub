@@ -15,15 +15,15 @@ defprotocol ProcessHub.Strategy.Synchronization.Base do
   def init(strategy, hub)
 
   @doc """
-  Propagates a request to other nodes in the cluster.
+  Propagates requests to other nodes in the cluster.
   """
   @spec propagate(
           __MODULE__.t(),
           Hub.t(),
-          CrossNodeRequest.t(),
+          [CrossNodeRequest.t()],
           keyword()
         ) :: :ok
-  def propagate(strategy, hub, request, opts)
+  def propagate(strategy, hub, requests, opts)
 
   @doc """
   Initializes the periodic synchronization of the process registry.

@@ -98,6 +98,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
     alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
     alias ProcessHub.Service.ProcessRegistry
+    alias ProcessHub.Service.RequestSplitter
     alias ProcessHub.Service.Dispatcher
     alias ProcessHub.Service.HookManager
     alias ProcessHub.Service.Storage
@@ -446,7 +447,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
         SynchronizationStrategy.propagate(
           sync_strategy,
           hub,
-          request,
+          RequestSplitter.split(request),
           members: :external
         )
       end

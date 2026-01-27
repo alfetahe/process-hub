@@ -85,7 +85,7 @@ defmodule Test.Helper.Bootstrap do
       distribution_strategy: distribution_strategy(context),
       hooks: [],
       # Disable debounce for tests
-      cluster_event_debounce: 0
+      cluster_event_debounce: 500
     }
   end
 

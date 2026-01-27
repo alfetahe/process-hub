@@ -34,9 +34,9 @@ defmodule ProcessHub.Constant.Event do
   @type event_node_join_sync() :: :node_join_sync_event
 
   @typedoc """
-  Event used when handling node request.
+  Event used when handling node requests (batched).
   """
-  @type event_request_handle() :: :request_handle_event
+  @type event_requests_handle() :: :requests_handle_event
 
   defmacro __using__(_) do
     quote do
@@ -46,7 +46,7 @@ defmodule ProcessHub.Constant.Event do
       @event_cluster_leave_batch :cluster_leave_batch_event
       @event_child_process_pid_update :child_process_pid_update_event
       @event_node_join_sync :node_join_sync_event
-      @event_request_handle :request_handle_event
+      @event_requests_handle :requests_handle_event
     end
   end
 end

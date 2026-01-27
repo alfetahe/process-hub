@@ -33,11 +33,11 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     def init(strategy, _hub_id), do: strategy
 
     @impl SynchronizationStrategy
-    def propagate(_strategy, %Hub{} = hub, request, opts) do
+    def propagate(_strategy, %Hub{} = hub, requests, opts) when is_list(requests) do
       Blockade.dispatch_sync(
         hub.procs.event_queue,
-        @event_request_handle,
-        request,
+        @event_requests_handle,
+        requests,
         %{
           priority: PriorityLevel.high(),
           members: Keyword.get(opts, :members, :global)

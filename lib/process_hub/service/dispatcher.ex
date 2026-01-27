@@ -5,6 +5,7 @@ defmodule ProcessHub.Service.Dispatcher do
 
   alias ProcessHub.Request.Handler.StartChildrenRequest.ChildStartRequest
   alias ProcessHub.Request.Handler.StopChildrenRequest.ChildStopRequest
+  alias ProcessHub.Service.RequestSplitter
   alias :blockade, as: Blockade
 
   use ProcessHub.Constant.Event
@@ -27,8 +28,11 @@ defmodule ProcessHub.Service.Dispatcher do
   """
   @spec children_start(ProcessHub.hub_id(), [ChildStartRequest.t()]) :: :ok
   def children_start(hub_id, node_start_requests) when is_list(node_start_requests) do
-    Enum.each(node_start_requests, fn %ChildStartRequest{node: target_node} = request ->
-      send({hub_id, target_node}, {@event_request_handle, request})
+    node_start_requests
+    |> Enum.group_by(fn %ChildStartRequest{node: node} -> node end)
+    |> Enum.each(fn {target_node, requests} ->
+      split_requests = Enum.flat_map(requests, &RequestSplitter.split/1)
+      send({hub_id, target_node}, {@event_requests_handle, split_requests})
     end)
   end
 
@@ -40,8 +44,11 @@ defmodule ProcessHub.Service.Dispatcher do
   """
   @spec children_stop(ProcessHub.hub_id(), [ChildStopRequest.t()]) :: :ok
   def children_stop(hub_id, node_stop_requests) when is_list(node_stop_requests) do
-    Enum.each(node_stop_requests, fn %ChildStopRequest{node: target_node} = request ->
-      send({hub_id, target_node}, {@event_request_handle, request})
+    node_stop_requests
+    |> Enum.group_by(fn %ChildStopRequest{node: node} -> node end)
+    |> Enum.each(fn {target_node, requests} ->
+      split_requests = Enum.flat_map(requests, &RequestSplitter.split/1)
+      send({hub_id, target_node}, {@event_requests_handle, split_requests})
     end)
   end
 

@@ -393,8 +393,16 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_request_handle, request}, state) do
-    CrossNodeRequest.handle(request, state)
+  def handle_info({@event_requests_handle, requests}, state) do
+    timeout = Storage.get(state.storage.misc, StorageKey.cnrt()) || 5000
+
+    requests
+    |> Task.async_stream(&CrossNodeRequest.handle(&1, state),
+      timeout: timeout,
+      ordered: false,
+      on_timeout: :kill_task
+    )
+    |> Stream.run()
 
     {:noreply, state}
   end
@@ -928,6 +936,7 @@ defmodule ProcessHub.Coordinator do
     Storage.insert(storage.misc, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
     Storage.insert(storage.misc, StorageKey.mbt(), settings.migr_base_timeout)
     Storage.insert(storage.misc, StorageKey.ced(), settings.cluster_event_debounce)
+    Storage.insert(storage.misc, StorageKey.cnrt(), settings.cross_node_request_timeout)
   end
 
   defp register_handlers(%{event_queue: eq}) do
@@ -937,7 +946,7 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_cluster_leave_batch)
     Blockade.add_handler(eq, @event_child_process_pid_update)
     Blockade.add_handler(eq, @event_node_join_sync)
-    Blockade.add_handler(eq, @event_request_handle)
+    Blockade.add_handler(eq, @event_requests_handle)
   end
 
   defp register_handlers(hook_storage, hooks) when is_map(hooks) do

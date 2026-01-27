@@ -9,6 +9,7 @@ defmodule ProcessHub.DistributedSupervisor do
 
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.RequestSplitter
   alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Coordinator
   alias ProcessHub.Service.Storage
@@ -176,11 +177,13 @@ defmodule ProcessHub.DistributedSupervisor do
   end
 
   defp handle_child_removal(hub, child_id) do
+    request = PidsUnregisterRequest.new([{child_id, [node()]}])
+
     hub.storage.misc
     |> Storage.get(StorageKey.strsyn())
     |> SynchronizationStrategy.propagate(
       hub,
-      PidsUnregisterRequest.new([{child_id, [node()]}]),
+      RequestSplitter.split(request),
       members: :external
     )
 

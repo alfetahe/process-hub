@@ -135,12 +135,11 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
   @spec handle_request_propagation(
           ProcessHub.hub_id(),
-          NodeRequest.t()
+          [NodeRequest.t()]
         ) :: :ok
-  def handle_request_propagation(hub_id, request) do
+  def handle_request_propagation(hub_id, requests) when is_list(requests) do
     try do
-      # TODO: something messed up here? Where exactly are we sending this?
-      send(hub_id, {@event_request_handle, request})
+      send(hub_id, {@event_requests_handle, requests})
     catch
       _, _ -> :ok
     end
@@ -164,17 +163,11 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     @spec propagate(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
             Hub.t(),
-            NodeRequest.t(),
+            [NodeRequest.t()],
             keyword()
           ) :: :ok
-    def propagate(strategy, hub, request, _opts) do
-      ref = make_ref()
-      Gossip.handle_request_propagation(hub.hub_id, request)
-
-      Cluster.nodes(hub.storage.misc)
-      |> Gossip.recipients_select(strategy)
-
-      # TODO: fix later. |> Gossip.propagate_data(hub, strategy, {ref, [node()], children, update_node}, type)
+    def propagate(_strategy, hub, requests, _opts) when is_list(requests) do
+      Gossip.handle_request_propagation(hub.hub_id, requests)
 
       :ok
     end

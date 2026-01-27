@@ -35,7 +35,7 @@ defmodule Test.TempTest do
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)
 
-    child_count = 1000
+    child_count = 10000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
     dbg("------------------- STARTING TEST -------------------")

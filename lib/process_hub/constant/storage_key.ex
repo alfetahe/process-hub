@@ -36,4 +36,6 @@ defmodule ProcessHub.Constant.StorageKey do
   def mbt, do: :migration_base_timeout
   @spec ced() :: :cluster_event_debounce
   def ced, do: :cluster_event_debounce
+  @spec cnrt() :: :cross_node_request_timeout
+  def cnrt, do: :cross_node_request_timeout
 end
