@@ -17,10 +17,13 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - Significantly improved child process startup performance when starting large batches (10k+) of children:
   - Batched `belongs_to()` calls in `Replication.handle_post_start/3` - reduced from O(n) individual hash ring lookups to a single batch operation.
   - Added topology signature optimization to skip redundant `belongs_to()` revalidation when cluster topology hasn't changed between request creation and execution. This optimization only applies to deterministic distribution strategies (ConsistentHashing, Guided) and is automatically disabled for dynamic strategies (CentralizedLoadBalancer).
-  - Fixed O(n²) bottleneck in `Distributor.init_attach_nodes/3` by replacing linear list lookups with O(1) Map lookups.
+- Improved cluster topology change handling (node join/leave) performance:
+  - Changed `belongs_to/4` return type from list of tuples to a Map, enabling O(1) lookups instead of O(n) linear searches when processing large numbers of children during redistribution.
+  - Migration, redundancy, and cluster update handlers now use Map-based lookups for child-to-node resolution, significantly reducing CPU time during topology changes with 10k+ processes.
 
 ### Breaking changes
 - Configuration validation in `ProcessHub.Initializer` now detects incompatible strategy combinations at startup. Using state handover (`:handover` option in `ColdSwap` or `HotSwap` migration strategies) with the `Replication` redundancy strategy is no longer allowed, as this combination has undefined semantics. Attempting to start a hub with this configuration will return `{:error, {:invalid_config, :handover_with_replication_not_supported}}` instead of silently proceeding with undefined behavior.
+- **Distribution strategy `belongs_to/4` return type changed**: Custom distribution strategies must update their `belongs_to/4` implementation to return a `%{child_id => [node()]}` Map instead of a `[{child_id, [node()]}]` list. This change enables O(1) lookups during redistribution operations.
 - **HotSwap migration strategy reimplemented** with simplified configuration matching ColdSwap's pattern:
   - Removed options: `:retention`, `:confirm_handover`, `:handover_data_wait`, `:child_migration_timeout`
   - New options: `:state_ttl` (default: 30000ms), `:state_query_timeout` (default: 5000ms)

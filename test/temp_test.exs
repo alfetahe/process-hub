@@ -38,12 +38,8 @@ defmodule Test.TempTest do
     child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
 
-    dbg("------------------- STARTING TEST -------------------")
-
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
-
-    dbg("------------------- STARTING ADDITIONAL NODES -------------------")
 
     # Now let's start few more nodes and see if replication is maintained
     peer_to_start = @nr_of_peers

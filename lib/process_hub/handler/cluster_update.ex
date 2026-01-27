@@ -8,7 +8,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Utility.Bag
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
@@ -264,15 +263,15 @@ defmodule ProcessHub.Handler.ClusterUpdate do
       local_children = ProcessRegistry.local_children(arg.hub.hub_id)
       cids = Map.keys(local_children)
 
-      cid_node_pairs =
+      cid_node_map =
         if cids != [] do
           DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
         else
-          []
+          %{}
         end
 
       Enum.map(local_children, fn {cid, {_, node_pids, _}} ->
-        {cid, Bag.get_by_key(cid_node_pairs, cid, []), Keyword.keys(node_pids), []}
+        {cid, Map.get(cid_node_map, cid, []), Keyword.keys(node_pids), []}
       end)
     end
 
@@ -290,16 +289,22 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     # Find all children affected by any of the removed nodes
     defp removed_nodes_processes(arg) do
       repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
+
       reg_dump = ProcessRegistry.dump(arg.hub.hub_id)
+
       cids = Enum.map(reg_dump, fn {cid, _} -> cid end)
       local_node = node()
 
-      cid_pid_node_pairs =
-        DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
+      cid_node_map =
+        if cids != [] do
+          DistributionStrategy.belongs_to(arg.dist_strat, arg.hub, cids, repl_fact)
+        else
+          %{}
+        end
 
       Enum.reduce(reg_dump, [], fn {child_id, {child_spec, node_pids, metadata}}, acc ->
         nodes_orig = Keyword.keys(node_pids)
-        nodes_updated = Bag.get_by_key(cid_pid_node_pairs, child_id, [])
+        nodes_updated = Map.get(cid_node_map, child_id, [])
 
         # Find which removed nodes had this child
         affected_removed_nodes =

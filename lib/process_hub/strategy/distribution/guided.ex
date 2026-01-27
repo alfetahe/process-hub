@@ -66,9 +66,9 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
             Hub.t(),
             [ProcessHub.child_id()],
             pos_integer()
-          ) :: [atom]
+          ) :: %{ProcessHub.child_id() => [node()]}
     def belongs_to(_strategy, hub = %Hub{}, child_ids, replication_factor) do
-      Enum.map(child_ids, fn child_id ->
+      Map.new(child_ids, fn child_id ->
         child_nodes =
           with %{^child_id => child_nodes} <-
                  Storage.get(hub.storage.misc, StorageKey.gdc()),

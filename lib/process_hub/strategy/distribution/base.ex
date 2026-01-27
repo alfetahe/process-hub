@@ -15,9 +15,9 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   def init(strategy, hub)
 
   @doc """
-  Returns the list of nodes where the child process belongs to.
+  Returns a map of child_id to list of nodes where the child process belongs to.
 
-  The list of nodes is used to determine where the child process should be started
+  The map is used to determine where the child process should be started
   or migrated to.
   """
   @spec belongs_to(
@@ -25,7 +25,7 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
           hub :: Hub.t(),
           child_ids :: [ProcessHub.child_id()],
           replication_factor :: pos_integer()
-        ) :: [{ProcessHub.child_id(), [node()]}]
+        ) :: %{ProcessHub.child_id() => [node()]}
   def belongs_to(strategy, hub, child_ids, replication_factor)
 
   @doc """

@@ -190,7 +190,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
       case strategy.scoreboard do
         scoreboard when map_size(scoreboard) == 0 ->
           # Fallback to current node selection if no scoreboard data
-          Enum.map(child_ids, fn child_id ->
+          Map.new(child_ids, fn child_id ->
             {child_id, [node()]}
           end)
 
@@ -225,7 +225,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
             "[ProcessHub][CentralizedLoadBalancer] Timeout waiting for leader node response."
           )
 
-          []
+          %{}
       end
     end
 
@@ -293,7 +293,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
       # Zip children with assigned nodes
       child_ids
       |> Enum.zip(final_node_list)
-      |> Enum.map(fn {child_id, node} -> {child_id, [node]} end)
+      |> Map.new(fn {child_id, node} -> {child_id, [node]} end)
     end
 
     @impl true

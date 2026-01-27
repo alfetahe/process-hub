@@ -167,7 +167,6 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
     canonical_nodes_map =
       DistributionStrategy.belongs_to(dist_strat, hub, all_child_ids, repl_fact)
-      |> Map.new()
 
     Enum.each(post_start_data, fn {child_id, res, child_pid, _child_nodes} ->
       # Only process if:
@@ -395,7 +394,6 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     cid_node_pairs =
       if length(cids) > 0 do
         DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
-        |> Map.new()
       else
         %{}
       end

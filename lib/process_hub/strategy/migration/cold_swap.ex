@@ -45,7 +45,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Utility.Bag
   alias ProcessHub.Utility.Extractor
   alias ProcessHub.Request.Handler.StartChildrenRequest.ChildStartRequest
   alias ProcessHub.Service.Dispatcher
@@ -211,7 +210,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
             cids,
             RedundancyStrategy.replication_factor(handler.redun_strat)
           )
-          |> Map.new()
         else
           %{}
         end
@@ -312,21 +310,22 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     def handle_topology_contraction(%ColdSwap{} = _struct, hub, _removed_nodes, handler) do
       local_node = node()
       repl_fact = RedundancyStrategy.replication_factor(handler.redun_strat)
+
       registry_data = ProcessRegistry.dump(hub.hub_id)
       cids = Enum.map(registry_data, fn {cid, _} -> cid end)
 
-      cid_node_pairs =
+      cid_node_map =
         if cids != [] do
           DistributionStrategy.belongs_to(handler.dist_strat, hub, cids, repl_fact)
         else
-          []
+          %{}
         end
 
       # Find children that should be local but aren't
       children_to_start =
         Enum.reduce(registry_data, [], fn {child_id, {cspec, node_pids, meta}}, acc ->
           nodes_orig = Keyword.keys(node_pids)
-          nodes_new = Bag.get_by_key(cid_node_pairs, child_id, [])
+          nodes_new = Map.get(cid_node_map, child_id, [])
 
           if Enum.member?(nodes_new, local_node) and not Enum.member?(nodes_orig, local_node) do
             [{cspec, meta} | acc]

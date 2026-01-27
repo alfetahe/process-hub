@@ -27,7 +27,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-  alias ProcessHub.Handler.ClusterUpdate
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.State
   alias ProcessHub.Service.HookManager
@@ -38,7 +37,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Request.Handler.StopChildrenRequest
-  alias ProcessHub.Request.CrossNodeRequest
   alias ProcessHub.Hub
 
   # TODO: make configurable.

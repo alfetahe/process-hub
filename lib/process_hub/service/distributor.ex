@@ -327,10 +327,7 @@ defmodule ProcessHub.Service.Distributor do
   defp init_attach_nodes(hub, child_specs, %{distribution: dist, redundancy: redun}) do
     repl_fact = RedundancyStrategy.replication_factor(redun)
     cids = Enum.map(child_specs, & &1.id)
-    cid_node_pids = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
-
-    # Convert to map for O(1) lookups instead of O(n) linear search
-    cid_nodes_map = Map.new(cid_node_pids)
+    cid_nodes_map = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
 
     {
       :ok,
