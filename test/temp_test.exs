@@ -10,6 +10,12 @@ defmodule Test.TempTest do
   # Total nr of nodes to start (without the main node)
   @nr_of_peers 5
 
+  # Number of new nodes to add during scale-up
+  @peers_to_start 3
+
+  # Number of children to start
+  @child_count 1000
+
   setup_all context do
     context = Map.put(context, :validate_metadata, false)
 
@@ -26,6 +32,7 @@ defmodule Test.TempTest do
   @tag replication_model: :active_passive
   @tag validate_metadata: true
   @tag replication_factor: 3
+  @tag cluster_event_debounce: 1000
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
          {Hook.registry_pid_inserted(), :global},
@@ -35,23 +42,20 @@ defmodule Test.TempTest do
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)
 
-    child_count = 2000
-    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+    child_specs = Bag.gen_child_specs(@child_count, prefix: Atom.to_string(hub_id))
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
 
-    # Now let's start few more nodes and see if replication is maintained
-    peer_to_start = @nr_of_peers
-    new_peers = TestNode.start_nodes(peer_to_start, prefix: :redunc_activ_pass_test)
+    # Scale up: start more nodes and verify replication is maintained
+    new_peers = TestNode.start_nodes(@peers_to_start, prefix: :redunc_activ_pass_test)
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
-    # Use skip_await to avoid message counting issues during complex scale-up
     Bootstrap.gen_hub(context)
     |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true, skip_await: true)
 
-    # TODO: replace with hooks.
-    Process.sleep(2000)
+    # Wait until registry is stable (all children have expected nodes)
+    Common.await_registry_stable(hub_id, child_specs, rf)
 
     # Tests if all child_specs are used for starting children.
     Common.validate_registry_length(context, child_specs)
@@ -60,14 +64,15 @@ defmodule Test.TempTest do
     Common.validate_replication(context)
 
     # Now scale down back to original nodes and see if replication is still maintained
-    # Wait for stability after each node removal to allow redistribution to complete
-    Enum.reduce(1..peer_to_start, new_peers, fn _x, acc ->
+    Enum.reduce(1..@peers_to_start, new_peers, fn _x, acc ->
       removed_peers = Common.stop_peers(acc, 1)
-      Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
-    end)
+      remaining = Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
 
-    # TODO: replace with hooks.
-    Process.sleep(2000)
+      # Wait until registry is stable (all children have expected nodes)
+      Common.await_registry_stable(hub_id, child_specs, rf)
+
+      remaining
+    end)
 
     Common.validate_registry_length(context, child_specs)
     Common.validate_replication(context)

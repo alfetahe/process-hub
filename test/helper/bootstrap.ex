@@ -30,6 +30,9 @@ defmodule Test.Helper.Bootstrap do
   # Distrbution options
   @dist_stats_push_interval 30_000
 
+  # Cluster event debounce (0 = no debounce by default for faster tests)
+  @default_cluster_event_debounce 0
+
   def init_nodes(nr_of_peers) do
     peer_nodes = TestNode.start_nodes(nr_of_peers)
 
@@ -84,8 +87,7 @@ defmodule Test.Helper.Bootstrap do
       partition_tolerance_strategy: partition_strategy(context),
       distribution_strategy: distribution_strategy(context),
       hooks: [],
-      # Disable debounce for tests
-      cluster_event_debounce: 500
+      cluster_event_debounce: context[:cluster_event_debounce] || @default_cluster_event_debounce
     }
   end
 

@@ -47,10 +47,7 @@ defmodule ProcessHub.Handler.ClusterUpdate do
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{hub: hub, joined_nodes: nodes} = arg) do
       # Skip processing when partitioned - dist_sup is dead and accessing it would crash.
-      # This can happen due to race conditions when events are dispatched before
-      # partition mode is entered, but processed after.
       if State.is_partitioned?(hub) do
-        State.unlock_event_handler(hub)
         :ok
       else
         arg = attach_data(arg)
@@ -66,9 +63,6 @@ defmodule ProcessHub.Handler.ClusterUpdate do
         if Map.get(arg.dist_strat, :nodeup_redistribution, true) do
           distribute_processes(arg)
         end
-
-        # Unlock the event handler.
-        State.unlock_event_handler(hub)
 
         # Dispatch the nodes post redistribution event.
         dispatch_post_hooks(arg)

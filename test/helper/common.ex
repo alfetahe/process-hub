@@ -473,4 +473,70 @@ defmodule Test.Helper.Common do
 
     IO.puts("=== END DEBUG ===\n")
   end
+
+  @doc """
+  Waits until registry state is stable (all children have expected nodes based on ring).
+
+  This function consumes registry hook events (insert/remove) while checking
+  the registry state against expected node assignments from the hash ring.
+
+  ## Parameters
+  - `hub_id` - The hub identifier
+  - `child_specs` - List of child specs to check
+  - `rf` - Replication factor
+  - `opts` - Options:
+    - `:timeout` - Total timeout in ms (default: 10000ms)
+
+  ## Returns
+  `:ok` when registry is stable
+  """
+  @spec await_registry_stable(atom(), [map()], pos_integer(), Keyword.t()) :: :ok
+  def await_registry_stable(hub_id, child_specs, rf, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 10_000)
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    await_registry_stable_loop(hub_id, child_specs, rf, deadline)
+  end
+
+  defp await_registry_stable_loop(hub_id, child_specs, rf, deadline) do
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    ring = Ring.get_ring(hub.storage.misc)
+    current_registry = ProcessHub.registry_dump(hub_id)
+
+    mismatches =
+      Enum.filter(child_specs, fn child_spec ->
+        child_id = child_spec.id
+
+        current_nodes =
+          case Map.get(current_registry, child_id) do
+            {_, node_pids, _} -> Keyword.keys(node_pids) |> Enum.sort()
+            nil -> []
+          end
+
+        expected_nodes = Ring.key_to_nodes(ring, child_id, rf) |> Enum.sort()
+
+        current_nodes != expected_nodes
+      end)
+
+    if mismatches == [] do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) > deadline do
+        mismatch_ids = Enum.map(mismatches, & &1.id)
+
+        raise "Registry stabilization timeout. Mismatched children: #{inspect(Enum.take(mismatch_ids, 5))}"
+      end
+
+      receive do
+        {key, _data} when key in [:registry_pid_insert_hook, :registry_pid_remove_hook] ->
+          await_registry_stable_loop(hub_id, child_specs, rf, deadline)
+
+        _other ->
+          await_registry_stable_loop(hub_id, child_specs, rf, deadline)
+      after
+        100 ->
+          await_registry_stable_loop(hub_id, child_specs, rf, deadline)
+      end
+    end
+  end
 end
