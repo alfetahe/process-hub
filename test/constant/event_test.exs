@@ -10,11 +10,5 @@ defmodule Test.Constant.EventTest do
     assert @event_cluster_leave === :cluster_leave_event
   end
 
-  test "event distribute children" do
-    assert @event_distribute_children === :distribute_children_event
-  end
-
-  test "event child failure restart" do
-    assert @event_child_process_pid_update === :child_process_pid_update_event
-  end
+  # TODO: Add other event tests.
 end

@@ -456,20 +456,6 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_distribute_children, nodes}, state) do
-    GenServer.cast(
-      state.procs.worker_queue,
-      {:handle_node_up,
-       %{
-         joined_nodes: nodes,
-         hub: state
-       }}
-    )
-
-    {:noreply, state}
-  end
-
-  @impl true
   def handle_info({@event_cluster_join, node}, state) do
     # Batch cluster_join events similar to nodedown
     {:noreply, batch_event(state, :cluster_join, node)}
@@ -504,36 +490,6 @@ defmodule ProcessHub.Coordinator do
     SynchronizationStrategy.handle_node_join_data(sync_strategy, state, sync_data, remote_node)
 
     {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({@event_child_process_pid_update, {child_id, {node, pid}}}, state) do
-    case ProcessRegistry.lookup(
-           state.hub_id,
-           child_id,
-           with_metadata: true
-         ) do
-      nil ->
-        # Child not found in registry, skip update
-        {:noreply, state}
-
-      {cs, nodes_pids, metadata} ->
-        ProcessRegistry.insert(
-          state.hub_id,
-          cs,
-          Keyword.put(nodes_pids, node, pid),
-          metadata: metadata,
-          hook_storage: state.storage.hook
-        )
-
-        HookManager.dispatch_hook(
-          state.storage.hook,
-          Hook.child_process_pid_update(),
-          {node, pid}
-        )
-
-        {:noreply, state}
-    end
   end
 
   @impl true
@@ -709,6 +665,7 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
+  # TODO: refactor and move to separate services.
   # Handle multiple nodes joining together (batched).
   # Cluster state modification (add_hub_node) happens in worker to ensure serialization.
   defp handle_hub_join(state, nodes) do
@@ -742,15 +699,13 @@ defmodule ProcessHub.Coordinator do
         State.toggle_quorum_success(state)
       end
 
-      # Dispatch distribute_children with all new nodes
-      Dispatcher.propagate_event(
-        state.procs.event_queue,
-        @event_distribute_children,
-        new_nodes,
-        %{
-          members: :local,
-          priority: PriorityLevel.low()
-        }
+      GenServer.cast(
+        state.procs.worker_queue,
+        {:handle_node_up,
+         %{
+           joined_nodes: new_nodes,
+           hub: state
+         }}
       )
 
       # TODO: remove later
@@ -908,11 +863,9 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp register_handlers(%{event_queue: eq}) do
-    Blockade.add_handler(eq, @event_distribute_children)
     Blockade.add_handler(eq, @event_cluster_join)
     Blockade.add_handler(eq, @event_cluster_leave)
     Blockade.add_handler(eq, @event_cluster_leave_batch)
-    Blockade.add_handler(eq, @event_child_process_pid_update)
     Blockade.add_handler(eq, @event_node_join_sync)
     Blockade.add_handler(eq, @event_requests_handle)
   end
@@ -934,8 +887,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp schedule_sync(sync_strat) do
-    # TODO: reenabme
-    # Process.send_after(self(), :sync_processes, sync_strat.sync_interval)
+    Process.send_after(self(), :sync_processes, sync_strat.sync_interval)
   end
 
   defp schedule_hub_discovery(interval) do

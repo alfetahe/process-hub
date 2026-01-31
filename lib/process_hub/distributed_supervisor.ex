@@ -7,14 +7,13 @@ defmodule ProcessHub.DistributedSupervisor do
   child processes.
   """
 
-  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.RequestSplitter
-  alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Coordinator
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
+  alias ProcessHub.Request.Handler.PidUpdateRequest
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
 
   use ProcessHub.Constant.Event
@@ -168,7 +167,7 @@ defmodule ProcessHub.DistributedSupervisor do
 
         # The child process has been restarted with a new pid.
         is_pid(new_pid) and old_pid !== new_pid ->
-          handle_child_restart(hub.procs.event_queue, cid, new_pid)
+          handle_child_restart(hub, cid, new_pid)
 
         true ->
           nil
@@ -179,12 +178,13 @@ defmodule ProcessHub.DistributedSupervisor do
   defp handle_child_removal(hub, child_id) do
     request = PidsUnregisterRequest.new([{child_id, [node()]}])
 
+    # TODO: should use the dispatcher service instead here (and other similar calls)
     hub.storage.misc
     |> Storage.get(StorageKey.strsyn())
     |> SynchronizationStrategy.propagate(
       hub,
       RequestSplitter.split(request),
-      members: :external
+      members: :global
     )
 
     # Deletes the child specification from the supervisor by sending an asynchrounous request
@@ -192,15 +192,16 @@ defmodule ProcessHub.DistributedSupervisor do
     Process.send(self(), {:delete_child_spec, child_id}, [])
   end
 
-  defp handle_child_restart(event_queue, child_id, new_pid) do
-    Dispatcher.propagate_event(
-      event_queue,
-      @event_child_process_pid_update,
-      {child_id, {node(), new_pid}},
-      %{
-        members: :global,
-        priority: PriorityLevel.high()
-      }
+  defp handle_child_restart(hub, child_id, new_pid) do
+    request = PidUpdateRequest.new(child_id, node(), new_pid)
+
+    # TODO: should use the dispatcher service instead here (and other similar calls)
+    hub.storage.misc
+    |> Storage.get(StorageKey.strsyn())
+    |> SynchronizationStrategy.propagate(
+      hub,
+      RequestSplitter.split(request),
+      members: :global
     )
   end
 

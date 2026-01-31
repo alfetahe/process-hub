@@ -4,11 +4,6 @@ defmodule ProcessHub.Constant.Event do
   """
 
   @typedoc """
-  Event used when redistributing children to other nodes.
-  """
-  @type event_distribute_children() :: :distribute_children_event
-
-  @typedoc """
   Event used when a node joins the ProcessHub cluster.
   """
   @type event_cluster_join() :: :cluster_join_event
@@ -18,16 +13,7 @@ defmodule ProcessHub.Constant.Event do
   """
   @type event_post_cluster_leave() :: :cluster_leave_event
 
-  @typedoc """
-  Event used when a process has been registered in the ProcessHub registry.
-  """
-  @type event_children_registration() :: :children_registration_event
-
-  @typedoc """
-  Child process is restarted by the local supervisor.
-  """
-  @type event_child_process_pid_update() :: :child_process_pid_update_event
-
+  # TODO: rename.
   @typedoc """
   Event used when broadcasting local registry data to nodes that join the cluster.
   """
@@ -40,11 +26,9 @@ defmodule ProcessHub.Constant.Event do
 
   defmacro __using__(_) do
     quote do
-      @event_distribute_children :distribute_children_event
       @event_cluster_join :cluster_join_event
       @event_cluster_leave :cluster_leave_event
       @event_cluster_leave_batch :cluster_leave_batch_event
-      @event_child_process_pid_update :child_process_pid_update_event
       @event_node_join_sync :node_join_sync_event
       @event_requests_handle :requests_handle_event
     end
