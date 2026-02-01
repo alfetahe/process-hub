@@ -43,8 +43,8 @@ defprotocol ProcessHub.Strategy.Migration.Base do
           struct :: __MODULE__.t(),
           hub :: Hub.t(),
           nodes :: [node()],
-          handler :: ProcessHub.Handler.ClusterUpdate.NodeUp.t()
-        ) :: ProcessHub.Handler.ClusterUpdate.NodeUp.t()
+          handler :: ProcessHub.Task.ClusterUpdateTask.NodeUp.t()
+        ) :: ProcessHub.Task.ClusterUpdateTask.NodeUp.t()
   def handle_topology_expansion(struct, hub, nodes, handler)
 
   @doc """
@@ -67,7 +67,7 @@ defprotocol ProcessHub.Strategy.Migration.Base do
           struct :: __MODULE__.t(),
           hub :: Hub.t(),
           removed_nodes :: [node()],
-          handler :: ProcessHub.Handler.ClusterUpdate.NodeDown.t()
-        ) :: ProcessHub.Handler.ClusterUpdate.NodeDown.t()
+          handler :: ProcessHub.Task.ClusterUpdateTask.NodeDown.t()
+        ) :: ProcessHub.Task.ClusterUpdateTask.NodeDown.t()
   def handle_topology_contraction(struct, hub, removed_nodes, handler)
 end

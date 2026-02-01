@@ -5,7 +5,7 @@ defmodule ProcessHub.Service.Synchronizer do
   """
 
   alias ProcessHub.Coordinator
-  alias ProcessHub.Handler.Synchronization
+  alias ProcessHub.Task.SynchronizationTask
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Hub
 
@@ -18,10 +18,10 @@ defmodule ProcessHub.Service.Synchronizer do
   def trigger_sync(hub) do
     Task.Supervisor.async(
       hub.procs.task_sup,
-      Synchronization.IntervalSyncInit,
+      SynchronizationTask.IntervalSyncInit,
       :handle,
       [
-        %Synchronization.IntervalSyncInit{
+        %SynchronizationTask.IntervalSyncInit{
           hub: hub
         }
       ]
@@ -35,10 +35,10 @@ defmodule ProcessHub.Service.Synchronizer do
 
     Task.Supervisor.async_nolink(
       hub.procs.task_sup,
-      Synchronization.IntervalSyncHandle,
+      SynchronizationTask.IntervalSyncHandle,
       :handle,
       [
-        %Synchronization.IntervalSyncHandle{
+        %SynchronizationTask.IntervalSyncHandle{
           hub: hub,
           sync_strat: strategy,
           sync_data: sync_data,

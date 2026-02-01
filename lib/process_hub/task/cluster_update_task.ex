@@ -1,4 +1,4 @@
-defmodule ProcessHub.Handler.ClusterUpdate do
+defmodule ProcessHub.Task.ClusterUpdateTask do
   @moduledoc false
 
   alias ProcessHub.Constant.Hook

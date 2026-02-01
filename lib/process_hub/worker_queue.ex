@@ -1,6 +1,6 @@
 defmodule ProcessHub.WorkerQueue do
   alias ProcessHub.Request.CrossNodeRequest
-  alias ProcessHub.Handler.ClusterUpdate
+  alias ProcessHub.Task.ClusterUpdateTask
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
@@ -50,7 +50,7 @@ defmodule ProcessHub.WorkerQueue do
     # Get updated hub_nodes AFTER removal
     updated_hub_nodes = Cluster.nodes(params.hub.storage.misc, [:include_local])
 
-    ClusterUpdate.NodeDown.handle(%ClusterUpdate.NodeDown{
+    ClusterUpdateTask.NodeDown.handle(%ClusterUpdateTask.NodeDown{
       removed_nodes: params.removed_nodes,
       hub_nodes: updated_hub_nodes,
       hub: params.hub
@@ -72,7 +72,7 @@ defmodule ProcessHub.WorkerQueue do
       Cluster.add_hub_node(params.hub.storage.misc, node)
     end)
 
-    ClusterUpdate.NodeUp.handle(%ClusterUpdate.NodeUp{
+    ClusterUpdateTask.NodeUp.handle(%ClusterUpdateTask.NodeUp{
       joined_nodes: params.joined_nodes,
       hub: params.hub
     })

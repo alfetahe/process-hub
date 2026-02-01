@@ -1,4 +1,4 @@
-defmodule ProcessHub.Handler.Synchronization do
+defmodule ProcessHub.Task.SynchronizationTask do
   @moduledoc false
 
   alias ProcessHub.Constant.StorageKey
