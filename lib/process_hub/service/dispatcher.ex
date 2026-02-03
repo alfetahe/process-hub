@@ -3,9 +3,9 @@ defmodule ProcessHub.Service.Dispatcher do
   The dispatcher service provides API functions for dispatching events.
   """
 
-  alias ProcessHub.Request.Handler.StartChildrenRequest.ChildStartRequest
-  alias ProcessHub.Request.Handler.StopChildrenRequest.ChildStopRequest
-  alias ProcessHub.Service.RequestSplitter
+  alias ProcessHub.Request.Handler.StartChildrenRequest
+  alias ProcessHub.Request.Handler.StopChildrenRequest
+  alias ProcessHub.Service.RequestManager
   alias :blockade, as: Blockade
 
   use ProcessHub.Constant.Event
@@ -21,33 +21,33 @@ defmodule ProcessHub.Service.Dispatcher do
   end
 
   @doc """
-  Sends ChildStartRequest structs to their target coordinator processes.
+  Sends StartChildrenRequest structs to their target coordinator processes.
 
-  Each ChildStartRequest contains all routing information needed by the
+  Each StartChildrenRequest contains all routing information needed by the
   remote node to process the request and send responses back.
   """
-  @spec children_start(ProcessHub.hub_id(), [ChildStartRequest.t()]) :: :ok
+  @spec children_start(ProcessHub.hub_id(), [StartChildrenRequest.t()]) :: :ok
   def children_start(hub_id, node_start_requests) when is_list(node_start_requests) do
     node_start_requests
-    |> Enum.group_by(fn %ChildStartRequest{node: node} -> node end)
+    |> Enum.group_by(fn %StartChildrenRequest{node: node} -> node end)
     |> Enum.each(fn {target_node, requests} ->
-      split_requests = Enum.flat_map(requests, &RequestSplitter.split/1)
+      split_requests = Enum.flat_map(requests, &RequestManager.split/1)
       send({hub_id, target_node}, {@event_requests_handle, split_requests})
     end)
   end
 
   @doc """
-  Sends ChildStopRequest structs to their target coordinator processes.
+  Sends StopChildrenRequest structs to their target coordinator processes.
 
-  Each ChildStopRequest contains all routing information needed by the
+  Each StopChildrenRequest contains all routing information needed by the
   remote node to process the request and send responses back.
   """
-  @spec children_stop(ProcessHub.hub_id(), [ChildStopRequest.t()]) :: :ok
+  @spec children_stop(ProcessHub.hub_id(), [StopChildrenRequest.t()]) :: :ok
   def children_stop(hub_id, node_stop_requests) when is_list(node_stop_requests) do
     node_stop_requests
-    |> Enum.group_by(fn %ChildStopRequest{node: node} -> node end)
+    |> Enum.group_by(fn %StopChildrenRequest{node: node} -> node end)
     |> Enum.each(fn {target_node, requests} ->
-      split_requests = Enum.flat_map(requests, &RequestSplitter.split/1)
+      split_requests = Enum.flat_map(requests, &RequestManager.split/1)
       send({hub_id, target_node}, {@event_requests_handle, split_requests})
     end)
   end

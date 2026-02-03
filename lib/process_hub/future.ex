@@ -46,19 +46,11 @@ defmodule ProcessHub.Future do
   def await(future) when is_struct(future) do
     ref = future.ref
     timeout = future.timeout || 5000
-    action = Map.get(future, :action, :start)
 
     case future.future_resolver do
-      # New coordinator-based format
       {hub_id, resolver_node} ->
-        await_call =
-          case action do
-            :start -> {:await_start_result, ref}
-            :stop -> {:await_stop_result, ref}
-          end
-
         try do
-          GenServer.call({hub_id, resolver_node}, await_call, timeout + 1000)
+          GenServer.call({hub_id, resolver_node}, {:await_result, ref}, timeout + 1000)
         catch
           :exit, {:timeout, _} -> {:error, :timeout}
           :exit, {:noproc, _} -> {:error, :noproc}

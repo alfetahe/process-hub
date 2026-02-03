@@ -46,7 +46,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Extractor
-  alias ProcessHub.Request.Handler.StartChildrenRequest.ChildStartRequest
+  alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Service.Dispatcher
 
   # TODO: refactor the new protocol functions.
@@ -340,7 +340,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     defp create_contraction_requests(hub, grouped, _local_node) do
       Enum.flat_map(grouped, fn {_node, children} ->
         if children != [] do
-          [ChildStartRequest.for_contraction(hub, children)]
+          [StartChildrenRequest.for_contraction(hub, children)]
         else
           []
         end
@@ -435,7 +435,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     defp create_migration_requests(hub, to_send_to_nodes) do
       Enum.flat_map(to_send_to_nodes, fn {target_node, children_data} ->
         if children_data != [] do
-          [ChildStartRequest.for_migration(hub, target_node, children_data)]
+          [StartChildrenRequest.for_migration(hub, target_node, children_data)]
         else
           []
         end

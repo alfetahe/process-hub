@@ -6,15 +6,17 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.RequestSplitter
+  alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.RequestManager
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
+  alias ProcessHub.Request.Handler.StartChildrenRequest
+  alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.Request.Handler.StartChildrenRequest
-  alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Hub
 
   # 10 seconds
@@ -58,40 +60,41 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  @doc "Initiates processes startup."
-  @spec compose_start_request(ProcessHub.Hub.t(), [ProcessHub.child_spec()], keyword()) ::
-          {:ok, :start_initiated}
-          | (-> {:ok, list})
+  @doc "Composes and dispatches a start children operation."
+  @spec compose_start_operation(Hub.t(), [ProcessHub.child_spec()], keyword()) ::
+          {:ok, RequestManager.t()}
           | {:error,
-             :child_start_timeout
-             | :no_children
+             :no_children
              | {:already_started, [ProcessHub.child_id()]}
              | any()}
-  def compose_start_request(_hub, [], _opts), do: {:error, :no_children}
+  def compose_start_operation(_hub, [], _opts), do: {:error, :no_children}
 
-  def compose_start_request(hub, child_specs, opts) do
+  def compose_start_operation(hub, child_specs, opts) do
     with {:ok, strategies} <- init_strategies(hub),
          :ok <- init_distribution(hub, child_specs, opts, strategies),
          :ok <- init_registry_check(hub, child_specs, opts),
          {:ok, mappings} <- init_attach_nodes(hub, child_specs, strategies),
-         {:ok, composed_data} <- init_compose_data(hub, mappings, opts),
-         {:ok, start_request} <- init_start_request(hub, child_specs, composed_data, opts) do
-      pre_start_children(hub, start_request)
+         {:ok, nodes_data} <- init_compose_data(hub, mappings, opts) do
+      build_and_dispatch_start(hub, nodes_data, opts)
     end
   end
 
-  defp init_start_request(hub, child_specs, mappings, opts) do
-    start_request = StartChildrenRequest.new(hub, child_specs, mappings, opts)
+  # Builds and dispatches the start operation
+  defp build_and_dispatch_start(hub, nodes_data, opts) do
+    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+    signature = DistributionStrategy.distribution_signature(dist_strat, hub)
+    opts = Keyword.put(opts, :request_signature, signature)
 
-    {:ok, start_request}
+    operation = RequestManager.new(hub, StartChildrenRequest, nodes_data, opts)
+    dispatch_operation(hub.hub_id, operation)
   end
 
-  @doc "Composes a stop children request."
-  @spec compose_stop_request(Hub.t(), [ProcessHub.child_id()], keyword()) ::
-          {:ok, StopChildrenRequest.t()} | {:error, :no_children}
-  def compose_stop_request(_hub, [], _opts), do: {:error, :no_children}
+  @doc "Composes and dispatches a stop children operation."
+  @spec compose_stop_operation(Hub.t(), [ProcessHub.child_id()], keyword()) ::
+          {:ok, RequestManager.t()} | {:error, :no_children}
+  def compose_stop_operation(_hub, [], _opts), do: {:error, :no_children}
 
-  def compose_stop_request(hub, child_ids, opts) do
+  def compose_stop_operation(hub, child_ids, opts) do
     # Group children by the nodes where they exist
     # Also track children that were not found
     {nodes_data, not_found} =
@@ -123,16 +126,38 @@ defmodule ProcessHub.Service.Distributor do
         {:error, :no_children}
 
       {[], not_found_children} ->
-        # All children were not found - still create a request so awaitable works
-        # The request will have empty nodes_data and complete immediately with errors
-        stop_request = StopChildrenRequest.new(hub, [], opts, not_found_children)
-        {:ok, stop_request}
+        # All children were not found - still create an operation so awaitable works
+        # The operation will have empty nodes_data and complete immediately with errors
+        opts_with_not_found = Keyword.put(opts, :not_found_children, not_found_children)
+        operation = RequestManager.new(hub, StopChildrenRequest, [], opts_with_not_found)
+        {:ok, operation}
 
       _ ->
         # Some children exist - proceed with normal stop
         # Pass not_found to include them as errors in the result
-        stop_request = StopChildrenRequest.new(hub, nodes_data, opts, not_found)
-        pre_stop_children(stop_request)
+        opts_with_not_found = Keyword.put(opts, :not_found_children, not_found)
+        operation = RequestManager.new(hub, StopChildrenRequest, nodes_data, opts_with_not_found)
+        dispatch_operation(hub.hub_id, operation)
+    end
+  end
+
+  # Dispatches an operation's sub-requests to target nodes
+  defp dispatch_operation(hub_id, %RequestManager{} = operation) do
+    case RequestManager.compose_sub_requests(operation) do
+      {:ok, updated_operation} ->
+        # Dispatch sub-requests based on handler type
+        case updated_operation.handler do
+          StartChildrenRequest ->
+            Dispatcher.children_start(hub_id, updated_operation.sub_requests)
+
+          StopChildrenRequest ->
+            Dispatcher.children_stop(hub_id, updated_operation.sub_requests)
+        end
+
+        {:ok, updated_operation}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -175,7 +200,7 @@ defmodule ProcessHub.Service.Distributor do
     SynchronizationStrategy.propagate(
       sync_strategy,
       hub,
-      RequestSplitter.split(request),
+      RequestManager.split(request),
       members: :external
     )
 
@@ -251,23 +276,6 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:metadata, %{})
     |> Keyword.put_new(:await_timeout, 60000)
     |> Keyword.put_new(:init_cids, [])
-  end
-
-  defp pre_start_children(_hub, %StartChildrenRequest{} = start_request) do
-    # Both :continue and :rollback go through the same initial flow
-    # Rollback handling happens in coordinator after all nodes respond
-    case StartChildrenRequest.compose_sub_requests(start_request) do
-      {:ok, updated_request} -> {:ok, updated_request}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp pre_stop_children(%StopChildrenRequest{} = stop_request) do
-    # Always use compose_sub_requests - coordinator handles awaitable logic
-    case StopChildrenRequest.compose_sub_requests(stop_request) do
-      {:ok, updated_request} -> {:ok, updated_request}
-      {:error, reason} -> {:error, reason}
-    end
   end
 
   defp init_distribution(hub, child_specs, opts, %{distribution: strategy}) do

@@ -18,12 +18,12 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   @typedoc """
   The PubSub synchronization strategy options.
 
-  - `sync_interval` - the periodic synchronization interval in milliseconds. Defaults to `15000`.
+  - `sync_interval` - the periodic synchronization interval in milliseconds. Defaults to `30000`.
   """
   @type t :: %__MODULE__{
           sync_interval: pos_integer()
         }
-  # TODO: change back to 15000
+  # TODO: change back to 30000
   defstruct sync_interval: 5_000_000
 
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.PubSub do
@@ -39,6 +39,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
         @event_requests_handle,
         requests,
         %{
+          # TODO: configurable priority and ability to drop low priority events
           priority: PriorityLevel.high(),
           members: Keyword.get(opts, :members, :global)
         }

@@ -31,12 +31,10 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.State
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Request.Handler.StartChildrenRequest
-  alias ProcessHub.Request.Handler.StopChildrenRequest
+  alias ProcessHub.Service.RequestManager
   alias ProcessHub.Hub
 
   # TODO: make configurable.
@@ -157,69 +155,8 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_cast({:start_children_response, transaction_id, response_node, results}, state) do
-    case get_pending_request(state, transaction_id) do
-      nil ->
-        # Request already completed or expired
-        {:noreply, state}
-
-      request ->
-        updated_request =
-          StartChildrenRequest.record_node_response(request, response_node, results)
-
-        # Check if all nodes responded
-        if StartChildrenRequest.all_nodes_responded?(updated_request) do
-          # Build result and check if rollback is needed
-          result = StartChildrenRequest.to_start_result(updated_request)
-          on_failure = Keyword.get(updated_request.options, :on_failure, :continue)
-
-          final_result =
-            if on_failure == :rollback and result.status == :error do
-              perform_start_rollback(state, result)
-            else
-              result
-            end
-
-          # If someone is waiting, reply to them
-          if updated_request.awaiter do
-            GenServer.reply(updated_request.awaiter, final_result)
-          end
-
-          # Always cleanup when all nodes have responded
-          {:noreply, remove_pending_request(state, transaction_id)}
-        else
-          {:noreply, update_pending_request(state, updated_request)}
-        end
-    end
-  end
-
-  @impl true
-  def handle_cast({:stop_children_response, transaction_id, response_node, results}, state) do
-    case get_pending_stop_request(state, transaction_id) do
-      nil ->
-        # Request already completed or expired
-        {:noreply, state}
-
-      request ->
-        updated_request =
-          StopChildrenRequest.record_node_response(request, response_node, results)
-
-        # Check if all nodes responded
-        if StopChildrenRequest.all_nodes_responded?(updated_request) do
-          # If someone is waiting, reply to them
-          if updated_request.awaiter do
-            GenServer.reply(
-              updated_request.awaiter,
-              StopChildrenRequest.to_stop_result(updated_request)
-            )
-          end
-
-          # Always cleanup when all nodes have responded
-          {:noreply, remove_pending_stop_request(state, transaction_id)}
-        else
-          {:noreply, update_pending_stop_request(state, updated_request)}
-        end
-    end
+  def handle_cast({:operation_response, transaction_id, response_node, results}, state) do
+    RequestManager.handle_response(state, transaction_id, response_node, results)
   end
 
   @impl true
@@ -243,14 +180,14 @@ defmodule ProcessHub.Coordinator do
       |> Keyword.put(:init_cids, Enum.map(child_specs, & &1.id))
       |> Distributor.default_init_opts()
 
-    case Distributor.compose_start_request(state, child_specs, opts) do
-      {:ok, start_request} ->
-        new_state = store_pending_request(state, start_request)
+    case Distributor.compose_start_operation(state, child_specs, opts) do
+      {:ok, operation} ->
+        new_state = RequestManager.store(state, operation)
 
         # Return Future if awaitable: true or async_wait: true (deprecated)
         result =
           if Keyword.get(opts, :awaitable, false) or Keyword.get(opts, :async_wait, false) do
-            start_request.future
+            operation.future
           else
             :start_initiated
           end
@@ -266,14 +203,14 @@ defmodule ProcessHub.Coordinator do
   def handle_call({:init_children_stop, child_ids, opts}, _from, state) do
     opts = Distributor.default_init_opts(opts)
 
-    case Distributor.compose_stop_request(state, child_ids, opts) do
-      {:ok, stop_request} ->
-        new_state = store_pending_stop_request(state, stop_request)
+    case Distributor.compose_stop_operation(state, child_ids, opts) do
+      {:ok, operation} ->
+        new_state = RequestManager.store(state, operation)
 
         # Return Future if awaitable: true or async_wait: true (deprecated)
         result =
           if Keyword.get(opts, :awaitable, false) or Keyword.get(opts, :async_wait, false) do
-            stop_request.future
+            operation.future
           else
             :stop_initiated
           end
@@ -286,67 +223,8 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_call({:await_start_result, transaction_id}, from, state) do
-    case get_pending_request(state, transaction_id) do
-      nil ->
-        {:reply, {:error, :pending_request_not_found}, state}
-
-      request ->
-        timeout = Keyword.get(request.options, :timeout, 5000)
-
-        cond do
-          StartChildrenRequest.all_nodes_responded?(request) ->
-            # All nodes responded - return result immediately and cleanup
-            result = StartChildrenRequest.to_start_result(request)
-            new_state = remove_pending_request(state, transaction_id)
-            {:reply, result, new_state}
-
-          timeout == 0 ->
-            # Timeout is 0 - return immediately with what we have (non-responded = timeout errors)
-            result = StartChildrenRequest.to_start_result(request)
-            new_state = remove_pending_request(state, transaction_id)
-            {:reply, result, new_state}
-
-          true ->
-            # Not all nodes responded yet - store awaiter and defer reply
-            updated_request = StartChildrenRequest.set_awaiter(request, from)
-            new_state = update_pending_request(state, updated_request)
-            Process.send_after(self(), {:await_timeout, transaction_id, from}, timeout)
-            {:noreply, new_state}
-        end
-    end
-  end
-
-  @impl true
-  def handle_call({:await_stop_result, transaction_id}, from, state) do
-    case get_pending_stop_request(state, transaction_id) do
-      nil ->
-        {:reply, {:error, :pending_request_not_found}, state}
-
-      request ->
-        timeout = Keyword.get(request.options, :timeout, 5000)
-
-        cond do
-          StopChildrenRequest.all_nodes_responded?(request) ->
-            # All nodes responded - return result immediately and cleanup
-            result = StopChildrenRequest.to_stop_result(request)
-            new_state = remove_pending_stop_request(state, transaction_id)
-            {:reply, result, new_state}
-
-          timeout == 0 ->
-            # Timeout is 0 - return immediately with what we have (non-responded = timeout errors)
-            result = StopChildrenRequest.to_stop_result(request)
-            new_state = remove_pending_stop_request(state, transaction_id)
-            {:reply, result, new_state}
-
-          true ->
-            # Not all nodes responded yet - store awaiter and defer reply
-            updated_request = StopChildrenRequest.set_awaiter(request, from)
-            new_state = update_pending_stop_request(state, updated_request)
-            Process.send_after(self(), {:await_stop_timeout, transaction_id, from}, timeout)
-            {:noreply, new_state}
-        end
-    end
+  def handle_call({:await_result, transaction_id}, from, state) do
+    RequestManager.handle_await(state, transaction_id, from)
   end
 
   @impl true
@@ -534,63 +412,13 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({:await_timeout, transaction_id, from}, state) do
-    case get_pending_request(state, transaction_id) do
-      nil ->
-        # Already completed and removed
-        {:noreply, state}
-
-      request ->
-        # Check if awaiter is still the same (hasn't been replaced or already replied)
-        if request.awaiter == from do
-          # Timeout reached - return whatever we have
-          GenServer.reply(from, StartChildrenRequest.to_start_result(request))
-          new_state = remove_pending_request(state, transaction_id)
-          {:noreply, new_state}
-        else
-          # Awaiter changed or already handled
-          {:noreply, state}
-        end
-    end
-  end
-
-  @impl true
-  def handle_info({:await_stop_timeout, transaction_id, from}, state) do
-    case get_pending_stop_request(state, transaction_id) do
-      nil ->
-        # Already completed and removed
-        {:noreply, state}
-
-      request ->
-        # Check if awaiter is still the same (hasn't been replaced or already replied)
-        if request.awaiter == from do
-          # Timeout reached - return whatever we have
-          GenServer.reply(from, StopChildrenRequest.to_stop_result(request))
-          new_state = remove_pending_stop_request(state, transaction_id)
-          {:noreply, new_state}
-        else
-          # Awaiter changed or already handled
-          {:noreply, state}
-        end
-    end
+    RequestManager.handle_timeout(state, transaction_id, from)
   end
 
   @impl true
   def handle_info(:cleanup_expired_requests, state) do
-    # Clean up expired start requests
-    pending_start =
-      state.pending_requests
-      |> Enum.reject(fn {_id, request} -> StartChildrenRequest.expired?(request) end)
-      |> Map.new()
-
-    # Clean up expired stop requests
-    pending_stop =
-      state.pending_stop_requests
-      |> Enum.reject(fn {_id, request} -> StopChildrenRequest.expired?(request) end)
-      |> Map.new()
-
     schedule_request_cleanup()
-
-    {:noreply, %{state | pending_requests: pending_start, pending_stop_requests: pending_stop}}
+    {:noreply, RequestManager.cleanup_expired(state)}
   end
 
   @impl true
@@ -754,6 +582,7 @@ defmodule ProcessHub.Coordinator do
          }}
       )
     else
+      # TOOD: remove
       # Node not in hub - unlock immediately since we locked at dispatch time
       State.unlock_event_handler(state)
     end
@@ -892,69 +721,6 @@ defmodule ProcessHub.Coordinator do
 
   defp schedule_hub_discovery(interval) do
     Process.send_after(self(), :propagate, interval)
-  end
-
-  defp store_pending_request(state, %StartChildrenRequest{} = request) do
-    pending = Map.put(state.pending_requests, request.transaction_id, request)
-    %{state | pending_requests: pending}
-  end
-
-  defp get_pending_request(state, transaction_id) do
-    Map.get(state.pending_requests, transaction_id)
-  end
-
-  defp update_pending_request(state, %StartChildrenRequest{} = request) do
-    pending = Map.put(state.pending_requests, request.transaction_id, request)
-    %{state | pending_requests: pending}
-  end
-
-  defp remove_pending_request(state, transaction_id) do
-    pending = Map.delete(state.pending_requests, transaction_id)
-    %{state | pending_requests: pending}
-  end
-
-  defp store_pending_stop_request(state, %StopChildrenRequest{} = request) do
-    pending = Map.put(state.pending_stop_requests, request.transaction_id, request)
-    %{state | pending_stop_requests: pending}
-  end
-
-  defp get_pending_stop_request(state, transaction_id) do
-    Map.get(state.pending_stop_requests, transaction_id)
-  end
-
-  defp update_pending_stop_request(state, %StopChildrenRequest{} = request) do
-    pending = Map.put(state.pending_stop_requests, request.transaction_id, request)
-    %{state | pending_stop_requests: pending}
-  end
-
-  defp remove_pending_stop_request(state, transaction_id) do
-    pending = Map.delete(state.pending_stop_requests, transaction_id)
-    %{state | pending_stop_requests: pending}
-  end
-
-  # Performs rollback by stopping all successfully started children
-  # Called when on_failure: :rollback is set and some children failed to start
-  defp perform_start_rollback(state, start_result) do
-    alias ProcessHub.DistributedSupervisor
-
-    # Extract successfully started child IDs
-    success_cids = Enum.map(start_result.started, fn {cid, _nodes} -> cid end)
-
-    if length(success_cids) > 0 do
-      # For rollback, we need synchronous cleanup. Instead of going through
-      # the async sync strategy, we directly:
-      # 1. Terminate each child process
-      # 2. Remove from registry directly
-      Enum.each(success_cids, fn cid ->
-        # Terminate the child process
-        DistributedSupervisor.terminate_child(state.procs.dist_sup, cid)
-        # Directly remove from registry (synchronous)
-        ProcessRegistry.delete(state.hub_id, cid)
-      end)
-    end
-
-    # Return result with rollback flag set
-    %{start_result | rollback: true}
   end
 
   defp schedule_request_cleanup do

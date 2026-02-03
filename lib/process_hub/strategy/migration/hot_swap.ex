@@ -450,7 +450,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       # The hook handler will terminate after delivering state
 
       # Send start requests to new nodes (fire and forget)
-      Enum.each(to_send_to_nodes, fn {target_node, children_data} ->
+      Enum.each(to_send_to_nodes, fn {_target_node, children_data} ->
         if length(children_data) > 0 do
           # TODO: add the new implementation.
           #  Distributor.children_redist_init(hub, target_node, children_data)

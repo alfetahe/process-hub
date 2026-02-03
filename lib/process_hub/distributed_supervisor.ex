@@ -8,7 +8,7 @@ defmodule ProcessHub.DistributedSupervisor do
   """
 
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.RequestSplitter
+  alias ProcessHub.Service.RequestManager
   alias ProcessHub.Coordinator
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
@@ -183,7 +183,7 @@ defmodule ProcessHub.DistributedSupervisor do
     |> Storage.get(StorageKey.strsyn())
     |> SynchronizationStrategy.propagate(
       hub,
-      RequestSplitter.split(request),
+      RequestManager.split(request),
       members: :global
     )
 
@@ -200,7 +200,7 @@ defmodule ProcessHub.DistributedSupervisor do
     |> Storage.get(StorageKey.strsyn())
     |> SynchronizationStrategy.propagate(
       hub,
-      RequestSplitter.split(request),
+      RequestManager.split(request),
       members: :global
     )
   end
