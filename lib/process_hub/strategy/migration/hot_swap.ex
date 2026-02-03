@@ -40,8 +40,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   > the hub will fail to start with `{:error, {:invalid_config, :handover_with_replication_not_supported}}`.
   """
 
-  require Logger
-
+  alias ProcessHub.Service.LoggerService
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -231,7 +230,12 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
             {cid, state}
         after
           timeout ->
-            Logger.error("Handover timeout while shutting down the node #{local_node}")
+            LoggerService.error(
+              "Handover timeout while shutting down the node @node",
+              %{"node" => local_node},
+              prefix: "HotSwap"
+            )
+
             nil
         end
       end)

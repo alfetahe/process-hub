@@ -15,8 +15,6 @@ defmodule ProcessHub.Coordinator do
   `ProcessHub` instance, such as initial synchronization, propagation, etc.
   """
 
-  require Logger
-
   alias :blockade, as: Blockade
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Constant.Event
@@ -35,6 +33,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Service.LoggerService
   alias ProcessHub.Hub
 
   use Event
@@ -136,7 +135,6 @@ defmodule ProcessHub.Coordinator do
     # Terminate all the running tasks before shutting down the coordinator.
     task_sup = state.procs.task_sup
 
-    # TODO: recheck the code.
     Task.Supervisor.children(task_sup)
     |> Enum.each(fn pid ->
       Task.Supervisor.terminate_child(task_sup, pid)
@@ -419,7 +417,9 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(msg, state) do
-    Logger.warning("Unhandled message: #{inspect(msg)}")
+    LoggerService.warning("Unhandled message: @message", %{"message" => msg},
+      prefix: "Coordinator"
+    )
 
     {:noreply, state}
   end

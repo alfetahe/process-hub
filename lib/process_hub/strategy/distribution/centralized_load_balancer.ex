@@ -99,11 +99,11 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.HookManager
+  alias ProcessHub.Service.LoggerService
   alias ProcessHub.Constant.StorageKey
   alias :elector, as: Elector
 
   use GenServer
-  require Logger
 
   @type node_metrics() :: %{
           scheduler_utilization: float(),
@@ -221,8 +221,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
         {:child_assignments, assignments} -> assignments
       after
         10_000 ->
-          Logger.error(
-            "[ProcessHub][CentralizedLoadBalancer] Timeout waiting for leader node response."
+          LoggerService.error("Timeout waiting for leader node response", %{},
+            prefix: "CentralizedLoadBalancer"
           )
 
           %{}
@@ -374,7 +374,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
         end
 
       _ ->
-        Logger.error("[ProcessHub][CentralizedLoadBalancer] Failed to get leader node.")
+        LoggerService.error("Failed to get leader node", %{}, prefix: "CentralizedLoadBalancer")
     end
 
     # Reschedule the next calculation.

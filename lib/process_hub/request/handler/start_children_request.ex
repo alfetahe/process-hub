@@ -19,8 +19,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
   then dispatched to target nodes where `execute/2` runs the actual start logic.
   """
 
-  require Logger
-
+  alias ProcessHub.Service.LoggerService
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
@@ -547,8 +546,10 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
 
         err ->
           if disable_logging === false do
-            Logger.error(
-              "Child start failed with #{inspect(err)}. Enable SASL logs for more information."
+            LoggerService.error(
+              "Child start failed with @error. Enable SASL logs for more information.",
+              %{"error" => err},
+              prefix: "StartChildrenRequest"
             )
           end
 

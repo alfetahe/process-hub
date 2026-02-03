@@ -1,7 +1,6 @@
 defmodule ProcessHub.Janitor do
   alias ProcessHub.Service.Storage
-
-  require Logger
+  alias ProcessHub.Service.LoggerService
 
   use GenServer
 
@@ -90,12 +89,14 @@ defmodule ProcessHub.Janitor do
     target_nodes = Map.get(metadata, :target_nodes, [])
     forwarded_at = Map.get(metadata, :forwarded_at, 0)
 
-    Logger.notice(
-      "[ProcessHub:#{hub_id}] Pending child entry expired - " <>
-        "child_id: #{inspect(child_id)}, " <>
-        "module: #{inspect(child_spec.start |> elem(0))}, " <>
-        "target_nodes: #{inspect(target_nodes)}, " <>
-        "forwarded_at: #{forwarded_at}"
+    LoggerService.notice(
+      "Pending child entry expired - child_id: @child_id, module: @module, target_nodes: @target_nodes, forwarded_at: @forwarded_at",
+      %{
+        "child_id" => child_id,
+        "module" => child_spec.start |> elem(0),
+        "target_nodes" => target_nodes,
+        "forwarded_at" => forwarded_at
+      }
     )
   end
 end
