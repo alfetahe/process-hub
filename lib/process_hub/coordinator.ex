@@ -37,10 +37,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.RequestManager
   alias ProcessHub.Hub
 
-  # TODO: make configurable.
-  # Pending request management
-  @cleanup_interval :timer.minutes(1)
-
   use Event
   use GenServer
 
@@ -93,7 +89,7 @@ defmodule ProcessHub.Coordinator do
     # Schedule periodic tasks.
     schedule_hub_discovery(Storage.get(local_store, StorageKey.hdi()))
     schedule_sync(Storage.get(local_store, StorageKey.strsyn()))
-    schedule_request_cleanup()
+    schedule_request_cleanup(state)
 
     # Monitor cluster join events.
     Blockade.monitor_handlers(event_queue, @event_cluster_join)
@@ -417,7 +413,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(:cleanup_expired_requests, state) do
-    schedule_request_cleanup()
+    schedule_request_cleanup(state)
     {:noreply, RequestManager.cleanup_expired(state)}
   end
 
@@ -689,6 +685,7 @@ defmodule ProcessHub.Coordinator do
     Storage.insert(storage.misc, StorageKey.mbt(), settings.migr_base_timeout)
     Storage.insert(storage.misc, StorageKey.ced(), settings.cluster_event_debounce)
     Storage.insert(storage.misc, StorageKey.cnrt(), settings.cross_node_request_timeout)
+    Storage.insert(storage.misc, StorageKey.rci(), settings.req_cleanup_interval)
   end
 
   defp register_handlers(%{event_queue: eq}) do
@@ -723,7 +720,8 @@ defmodule ProcessHub.Coordinator do
     Process.send_after(self(), :propagate, interval)
   end
 
-  defp schedule_request_cleanup do
-    Process.send_after(self(), :cleanup_expired_requests, @cleanup_interval)
+  defp schedule_request_cleanup(state) do
+    interval = Storage.get(state.storage.misc, StorageKey.rci())
+    Process.send_after(self(), :cleanup_expired_requests, interval)
   end
 end

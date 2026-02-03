@@ -38,4 +38,6 @@ defmodule ProcessHub.Constant.StorageKey do
   def ced, do: :cluster_event_debounce
   @spec cnrt() :: :cross_node_request_timeout
   def cnrt, do: :cross_node_request_timeout
+  @spec rci() :: :req_cleanup_interval
+  def rci, do: :req_cleanup_interval
 end

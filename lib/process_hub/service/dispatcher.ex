@@ -48,6 +48,7 @@ defmodule ProcessHub.Service.Dispatcher do
     |> Enum.group_by(fn %StopChildrenRequest{node: node} -> node end)
     |> Enum.each(fn {target_node, requests} ->
       split_requests = Enum.flat_map(requests, &RequestManager.split/1)
+      # TODO: use Blockade.
       send({hub_id, target_node}, {@event_requests_handle, split_requests})
     end)
   end

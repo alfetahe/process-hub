@@ -184,6 +184,8 @@ defmodule ProcessHub do
   against `Node.list()` before processing to filter stale events. The default is `500` (0.5 seconds).
   - `:cross_node_request_timeout` is optional and defines the timeout in milliseconds
   for each cross-node request in the batch. The default is `5000` (5 seconds).
+  - `:req_cleanup_interval` is optional and defines the interval in milliseconds
+  for cleaning up expired pending requests. The default is `60000` (1 minute).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -214,7 +216,8 @@ defmodule ProcessHub do
           dsup_max_seconds: pos_integer(),
           dsup_shutdown_timeout: pos_integer(),
           cluster_event_debounce: pos_integer(),
-          cross_node_request_timeout: pos_integer()
+          cross_node_request_timeout: pos_integer(),
+          req_cleanup_interval: pos_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -235,7 +238,8 @@ defmodule ProcessHub do
     dsup_max_seconds: 4,
     dsup_shutdown_timeout: 60000,
     cluster_event_debounce: 500,
-    cross_node_request_timeout: 5000
+    cross_node_request_timeout: 5000,
+    req_cleanup_interval: 60000
   ]
 
   @doc """

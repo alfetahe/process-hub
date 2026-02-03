@@ -66,4 +66,8 @@ defmodule Test.Constant.StorageKeyTest do
   test "migration base timeout" do
     assert StorageKey.mbt() === :migration_base_timeout
   end
+
+  test "request cleanup interval" do
+    assert StorageKey.rci() === :req_cleanup_interval
+  end
 end
