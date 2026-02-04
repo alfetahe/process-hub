@@ -357,7 +357,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_node_join_sync, {sync_data, remote_node}}, state) do
+  def handle_info({@event_node_registry_broadcast, {sync_data, remote_node}}, state) do
     sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
     SynchronizationStrategy.handle_node_join_data(sync_strategy, state, sync_data, remote_node)
 
@@ -560,7 +560,7 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_cluster_join)
     Blockade.add_handler(eq, @event_cluster_leave)
     Blockade.add_handler(eq, @event_cluster_leave_batch)
-    Blockade.add_handler(eq, @event_node_join_sync)
+    Blockade.add_handler(eq, @event_node_registry_broadcast)
     Blockade.add_handler(eq, @event_requests_handle)
   end
 

@@ -89,7 +89,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
 
       Blockade.dispatch_sync(
         hub.procs.event_queue,
-        @event_node_join_sync,
+        @event_node_registry_broadcast,
         {sync_data, local_node},
         %{
           members: target_nodes

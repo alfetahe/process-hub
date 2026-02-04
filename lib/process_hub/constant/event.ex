@@ -13,11 +13,10 @@ defmodule ProcessHub.Constant.Event do
   """
   @type event_post_cluster_leave() :: :cluster_leave_event
 
-  # TODO: rename.
   @typedoc """
   Event used when broadcasting local registry data to nodes that join the cluster.
   """
-  @type event_node_join_sync() :: :node_join_sync_event
+  @type event_node_registry_broadcast() :: :node_registry_broadcast_event
 
   @typedoc """
   Event used when handling node requests (batched).
@@ -29,7 +28,7 @@ defmodule ProcessHub.Constant.Event do
       @event_cluster_join :cluster_join_event
       @event_cluster_leave :cluster_leave_event
       @event_cluster_leave_batch :cluster_leave_batch_event
-      @event_node_join_sync :node_join_sync_event
+      @event_node_registry_broadcast :node_registry_broadcast_event
       @event_requests_handle :requests_handle_event
     end
   end

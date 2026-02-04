@@ -200,7 +200,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end
   end
 
-
   @doc """
   Returns all children that are running on the local node.
 

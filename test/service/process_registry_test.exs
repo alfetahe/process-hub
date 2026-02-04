@@ -288,7 +288,8 @@ defmodule Test.Service.ProcessRegistryTest do
 
     children_formatted = Enum.map(children, fn {child_id, {_cs, nodes}} -> {child_id, nodes} end)
 
-    assert Enum.sort(ProcessRegistry.process_list(hub_id, :global)) === Enum.sort(children_formatted)
+    assert Enum.sort(ProcessRegistry.process_list(hub_id, :global)) ===
+             Enum.sort(children_formatted)
   end
 
   test "local data", %{hub_id: hub_id} = _context do

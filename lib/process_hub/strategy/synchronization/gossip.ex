@@ -438,7 +438,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       local_node = node()
 
       Enum.each(recipients, fn recipient ->
-        send({hub.hub_id, recipient}, {@event_node_join_sync, {sync_data, local_node}})
+        send({hub.hub_id, recipient}, {@event_node_registry_broadcast, {sync_data, local_node}})
       end)
     end
 
