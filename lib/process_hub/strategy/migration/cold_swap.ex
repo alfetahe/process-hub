@@ -47,6 +47,8 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Extractor
   alias ProcessHub.Request.Handler.StartChildrenRequest
+  alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
+  alias ProcessHub.Request.PostAction
   alias ProcessHub.Service.Dispatcher
 
   # TODO: refactor the new protocol functions.
@@ -68,36 +70,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   defstruct handover: false,
             state_ttl: 30000,
             state_query_timeout: 5000
-
-  @doc """
-  Handles registry_pid_inserted hook to deliver stored state to new processes.
-  """
-  def handle_registry_insert(_strategy, hub, {child_id, node_pids}) do
-    case Storage.get(hub.storage.misc, {:coldswap_state, child_id}) do
-      nil ->
-        :ok
-
-      state ->
-        # Send state to new process(es)
-        Enum.each(node_pids, fn {_node, pid} ->
-          if is_pid(pid) do
-            send(pid, {:process_hub, :coldswap_handover, child_id, state})
-          end
-        end)
-
-        # Cleanup stored state
-        Storage.remove(hub.storage.misc, {:coldswap_state, child_id})
-
-        # Dispatch hook to signal handover delivery complete
-        HookManager.dispatch_hook(
-          hub.storage.hook,
-          Hook.coldswap_handover_delivered(),
-          {child_id, node_pids}
-        )
-    end
-
-    :ok
-  end
 
   @doc """
   Options:
@@ -147,32 +119,75 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     end
   end
 
+  @doc """
+  Post-action callback executed on the target node after children are started.
+
+  Sends a generic callback message to the originating node to deliver stored
+  handover states to the newly started processes.
+  """
+  @spec handle_post_action_state_fetch(ProcessHub.Hub.t(), [PostStartData.t()], node(), [
+          ProcessHub.child_id()
+        ]) :: :ok
+  def handle_post_action_state_fetch(hub, results, originating_node, child_ids) do
+    # Build child_id -> pid mapping for successfully started children
+    started_pids =
+      results
+      |> Enum.filter(&match?({:ok, _}, &1.result))
+      |> Enum.map(fn %PostStartData{cid: cid, pid: pid} -> {cid, pid} end)
+      |> Map.new()
+
+    # Filter to requested child_ids that were actually started
+    valid_cid_pids =
+      child_ids
+      |> Enum.filter(&Map.has_key?(started_pids, &1))
+      |> Enum.map(&{&1, Map.get(started_pids, &1)})
+
+    if valid_cid_pids != [] do
+      send(
+        {hub.hub_id, originating_node},
+        {:post_action_callback, __MODULE__, :deliver_handover_states, [node(), valid_cid_pids]}
+      )
+    end
+
+    :ok
+  end
+
+  @doc """
+  Callback executed on the originating node to deliver stored handover states.
+
+  Called via generic `:post_action_callback` message from the target node.
+  """
+  @spec deliver_handover_states(ProcessHub.Hub.t(), node(), [{ProcessHub.child_id(), pid()}]) ::
+          :ok
+  def deliver_handover_states(hub, target_node, cid_pids) do
+    delivered_child_ids =
+      Enum.reduce(cid_pids, [], fn {child_id, pid}, acc ->
+        case Storage.get(hub.storage.misc, {:coldswap_state, child_id}) do
+          nil ->
+            acc
+
+          state ->
+            if is_pid(pid), do: send(pid, {:process_hub, :coldswap_handover, child_id, state})
+            Storage.remove(hub.storage.misc, {:coldswap_state, child_id})
+            [child_id | acc]
+        end
+      end)
+
+    if delivered_child_ids != [] do
+      HookManager.dispatch_hook(
+        hub.storage.hook,
+        Hook.handover_delivered(),
+        %{child_ids: delivered_child_ids, target_node: target_node}
+      )
+    end
+
+    :ok
+  end
+
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.ColdSwap do
     alias ProcessHub.Strategy.Migration.ColdSwap
 
     @impl true
-    def init(%ColdSwap{handover: true} = strategy, hub) do
-      # Register for registry_pid_inserted hook to detect new processes
-      # if handover is enabled.
-      if strategy.handover do
-        handler = %HookManager{
-          id: :mcs_registry_insert,
-          m: ColdSwap,
-          f: :handle_registry_insert,
-          a: [strategy, hub, :_],
-          p: 100
-        }
-
-        HookManager.register_handler(
-          hub.storage.hook,
-          Hook.registry_pid_inserted(),
-          handler
-        )
-      end
-
-      strategy
-    end
-
     def init(strategy, _hub), do: strategy
 
     @impl MigrationStrategy
@@ -291,7 +306,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         end)
 
       # Execute: Send start requests to new nodes (fire and forget)
-      node_start_requests = create_migration_requests(hub, to_send_to_nodes)
+      node_start_requests = create_migration_requests(hub, to_send_to_nodes, handover)
 
       if length(node_start_requests) > 0 do
         Dispatcher.children_start(hub.hub_id, node_start_requests)
@@ -435,10 +450,22 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       end
     end
 
-    defp create_migration_requests(hub, to_send_to_nodes) do
+    defp create_migration_requests(hub, to_send_to_nodes, handover) do
       Enum.flat_map(to_send_to_nodes, fn {target_node, children_data} ->
         if children_data != [] do
-          [StartChildrenRequest.for_migration(hub, target_node, children_data)]
+          opts =
+            if handover do
+              child_ids = Enum.map(children_data, fn {cspec, _meta} -> cspec.id end)
+
+              [
+                post_action:
+                  PostAction.new(ColdSwap, :handle_post_action_state_fetch, [node(), child_ids])
+              ]
+            else
+              []
+            end
+
+          [StartChildrenRequest.for_migration(hub, target_node, children_data, opts)]
         else
           []
         end

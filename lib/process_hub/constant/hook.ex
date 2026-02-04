@@ -120,16 +120,18 @@ defmodule ProcessHub.Constant.Hook do
   @spec child_data_alter() :: atom()
   def child_data_alter(), do: :child_data_alter_hook
 
-  # TODO: need to be general hooks.
-  @doc """
-  Hook triggered after ColdSwap migration has delivered state to a new process.
-  """
-  @spec coldswap_handover_delivered() :: atom()
-  def coldswap_handover_delivered(), do: :coldswap_handover_delivered_hook
-
+  # TODO: remove
   @doc """
   Hook triggered after HotSwap migration has delivered state to a new process.
   """
   @spec hotswap_handover_delivered() :: atom()
   def hotswap_handover_delivered(), do: :hotswap_handover_delivered_hook
+
+  @doc """
+  Hook dispatched when handover states have been delivered to migrated processes.
+
+  Data: %{child_ids: [child_id()], target_node: node()}
+  """
+  @spec handover_delivered() :: atom()
+  def handover_delivered(), do: :handover_delivered_hook
 end

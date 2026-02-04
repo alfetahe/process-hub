@@ -259,4 +259,133 @@ defmodule ProcessHub.Utility.Bag do
       0 -> messages |> Enum.reverse()
     end
   end
+
+  @doc """
+  Receives messages until a reducer callback signals completion.
+
+  The reducer function receives `(accumulator, message_data)` and returns:
+  - `{:cont, new_acc}` - Continue waiting for more messages
+  - `{:halt, result}` - Stop and return the result
+
+  ## Parameters
+  - `receive_key` - The message key to match (atom or {key1, key2} tuple)
+  - `initial_acc` - Initial accumulator value
+  - `reducer` - Function `(acc, msg_data) -> {:cont, new_acc} | {:halt, result}`
+  - `opts` - Options:
+    - `:timeout` - Per-message timeout (default: 10000ms)
+    - `:error_msg` - Custom error message on timeout
+
+  ## Examples
+
+      # Wait until all expected child_ids are received
+      expected_ids = MapSet.new(child_ids)
+      Bag.receive_until(Hook.handover_delivered(), expected_ids, fn acc, %{child_ids: ids} ->
+        remaining = MapSet.difference(acc, MapSet.new(ids))
+        if MapSet.size(remaining) == 0 do
+          {:halt, :all_received}
+        else
+          {:cont, remaining}
+        end
+      end)
+
+      # Collect all messages until a specific count
+      Bag.receive_until(:my_hook, [], fn acc, data ->
+        new_acc = [data | acc]
+        if length(new_acc) >= 10, do: {:halt, new_acc}, else: {:cont, new_acc}
+      end)
+  """
+  @spec receive_until(
+          term(),
+          term(),
+          (term(), term() -> {:cont, term()} | {:halt, term()}),
+          Keyword.t()
+        ) :: term()
+  def receive_until(receive_key, initial_acc, reducer, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    error_msg = Keyword.get(opts, :error_msg, "receive_until timeout")
+
+    do_receive_until(receive_key, initial_acc, reducer, timeout, error_msg)
+  end
+
+  defp do_receive_until(receive_key, acc, reducer, timeout, error_msg) do
+    case receive_key do
+      {key1, key2} ->
+        receive do
+          {^key1, data} ->
+            handle_reducer_result(receive_key, reducer.(acc, data), reducer, timeout, error_msg)
+
+          {^key2, data} ->
+            handle_reducer_result(receive_key, reducer.(acc, data), reducer, timeout, error_msg)
+        after
+          timeout -> raise(error_msg)
+        end
+
+      _ ->
+        receive do
+          {^receive_key, data} ->
+            handle_reducer_result(receive_key, reducer.(acc, data), reducer, timeout, error_msg)
+        after
+          timeout -> raise(error_msg)
+        end
+    end
+  end
+
+  defp handle_reducer_result(_receive_key, {:halt, result}, _reducer, _timeout, _error_msg),
+    do: result
+
+  defp handle_reducer_result(receive_key, {:cont, new_acc}, reducer, timeout, error_msg) do
+    do_receive_until(receive_key, new_acc, reducer, timeout, error_msg)
+  end
+
+  @doc """
+  Awaits messages until all expected child_ids have been received.
+
+  Useful for hooks like `handover_delivered` that send `%{child_ids: [...]}`.
+
+  ## Parameters
+  - `receive_key` - The message key to match
+  - `expected_child_ids` - List of child_ids to wait for
+  - `opts` - Options:
+    - `:timeout` - Per-message timeout (default: 10000ms)
+    - `:error_msg` - Custom error message on timeout
+    - `:child_ids_key` - Key to extract child_ids from message (default: `:child_ids`)
+
+  ## Returns
+  List of all received message data.
+
+  ## Example
+
+      Bag.await_child_ids(Hook.handover_delivered(), migrated_child_ids, timeout: 60_000)
+  """
+  @spec await_child_ids(term(), [term()], Keyword.t()) :: [map()]
+  def await_child_ids(receive_key, expected_child_ids, opts \\ []) do
+    child_ids_key = Keyword.get(opts, :child_ids_key, :child_ids)
+    error_msg = Keyword.get(opts, :error_msg, "await_child_ids timeout")
+    opts = Keyword.put(opts, :error_msg, error_msg)
+
+    initial_acc = %{
+      remaining: MapSet.new(expected_child_ids),
+      received: []
+    }
+
+    result =
+      receive_until(
+        receive_key,
+        initial_acc,
+        fn acc, data ->
+          ids_in_msg = Map.get(data, child_ids_key, [])
+          new_remaining = MapSet.difference(acc.remaining, MapSet.new(ids_in_msg))
+          new_acc = %{acc | remaining: new_remaining, received: [data | acc.received]}
+
+          if MapSet.size(new_remaining) == 0 do
+            {:halt, new_acc}
+          else
+            {:cont, new_acc}
+          end
+        end,
+        opts
+      )
+
+    Enum.reverse(result.received)
+  end
 end

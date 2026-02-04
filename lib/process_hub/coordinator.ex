@@ -416,6 +416,12 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_info({:post_action_callback, m, f, a}, state) do
+    apply(m, f, [state | a])
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(msg, state) do
     LoggerService.warning("Unhandled message: @message", %{"message" => msg},
       prefix: "Coordinator"

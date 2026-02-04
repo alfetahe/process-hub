@@ -354,6 +354,8 @@ defmodule ProcessHub.Service.RequestManager do
   def migration_request(hub, target_node, children_data, opts \\ []) do
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     request_signature = DistributionStrategy.distribution_signature(dist_strat, hub)
+    post_action = Keyword.get(opts, :post_action)
+    passthrough_opts = Keyword.drop(opts, [:post_action])
 
     children =
       Enum.map(children_data, fn {child_spec, metadata} ->
@@ -374,7 +376,8 @@ defmodule ProcessHub.Service.RequestManager do
       reply_to: nil,
       node: target_node,
       children: children,
-      options: opts
+      options: passthrough_opts,
+      post_action: post_action
     }
   end
 

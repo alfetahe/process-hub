@@ -85,7 +85,7 @@ defmodule ProcessHub.Janitor do
     :ok
   end
 
-  defp log_pending_expiry(hub_id, child_id, child_spec, metadata) do
+  defp log_pending_expiry(_hub_id, child_id, child_spec, metadata) do
     target_nodes = Map.get(metadata, :target_nodes, [])
     forwarded_at = Map.get(metadata, :forwarded_at, 0)
 

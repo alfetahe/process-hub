@@ -74,4 +74,8 @@ defmodule Test.Constant.HookTest do
   test "child data alter" do
     assert Hook.child_data_alter() === :child_data_alter_hook
   end
+
+  test "handover delivered" do
+    assert Hook.handover_delivered() === :handover_delivered_hook
+  end
 end

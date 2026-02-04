@@ -33,6 +33,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Request.PostAction
   alias ProcessHub.Hub
 
   # TTL for pending registry entries (10 minutes)
@@ -57,7 +58,9 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
           options: keyword(),
           # Response tracking
           results: [{ProcessHub.child_id(), term()}] | nil,
-          status: :pending | :dispatched | :completed
+          status: :pending | :dispatched | :completed,
+          # Post-action to execute after children are started
+          post_action: ProcessHub.Request.PostAction.t() | nil
         }
 
   defstruct [
@@ -69,6 +72,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     :node,
     :children,
     :results,
+    :post_action,
     options: [],
     status: :pending
   ]
@@ -205,6 +209,11 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       # Sync propagate to other nodes
       sync_propagate(hub, post_start_results, strategies.sync)
 
+      # Execute post-action if present
+      if request.post_action do
+        execute_post_action(request.post_action, hub, post_start_results)
+      end
+
       :ok
     end)
   end
@@ -319,11 +328,14 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
   def to_start_opts(%__MODULE__{} = req), do: RequestManager.request_to_opts(req)
 
   @doc """
-  Factory: Creates a migration request for ColdSwap topology expansion.
+  Factory: Creates a migration request for topology expansion.
+
+  ## Options
+    - `:post_action` - Optional `PostAction` to execute after children are started
   """
-  @spec for_migration(Hub.t(), node(), [{ProcessHub.child_spec(), map()}]) :: t()
-  def for_migration(hub, target_node, children_data) do
-    RequestManager.migration_request(hub, target_node, children_data)
+  @spec for_migration(Hub.t(), node(), [{ProcessHub.child_spec(), map()}], keyword()) :: t()
+  def for_migration(hub, target_node, children_data, opts \\ []) do
+    RequestManager.migration_request(hub, target_node, children_data, opts)
   end
 
   @doc """
@@ -612,5 +624,9 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
         members: :external
       )
     end
+  end
+
+  defp execute_post_action(%PostAction{m: m, f: f, a: a}, hub, results) do
+    apply(m, f, [hub, results | a])
   end
 end
