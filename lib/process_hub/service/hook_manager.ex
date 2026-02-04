@@ -6,24 +6,7 @@ defmodule ProcessHub.Service.HookManager do
 
   alias ProcessHub.Service.Storage
 
-  # TODO: need more dynamic way of defining those.
-  @type hook_key() ::
-          :pre_cluster_join_hook
-          | :post_cluster_join_hook
-          | :pre_cluster_leave_hook
-          | :post_cluster_leave_hook
-          | :registry_pid_insert_hook
-          | :registry_pid_remove_hook
-          | :children_migrated_hook
-          | :forwarded_migration_hook
-          | :priority_state_updated_hook
-          | :pre_nodes_redistribution_hook
-          | :post_nodes_redistribution_hook
-          | :pre_children_start_hook
-          | :post_children_start_hook
-          | :pre_children_redistribution_hook
-          | :coordinator_shutdown_hook
-          | :process_startups_hook
+  @type hook_key() :: atom()
 
   @type handler_id() :: atom() | String.t()
 
