@@ -275,7 +275,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   # TODO: handle everything inside worker instead.
   def handle_info({@event_cluster_leave, node}, state) do
-    {:noreply, handle_node_down(state, node)}
+    {:noreply, Cluster.process_node_down(state, node)}
   end
 
   @impl true
@@ -319,7 +319,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_leave_batch, nodes}, state) do
-    {:noreply, handle_node_down_batch(state, nodes)}
+    {:noreply, Cluster.process_node_down_batch(state, nodes)}
   end
 
   @impl true
@@ -348,7 +348,7 @@ defmodule ProcessHub.Coordinator do
     state =
       if length(valid_join_nodes) > 0 do
         # Process all validated joining nodes together
-        handle_hub_join(state, valid_join_nodes)
+        Cluster.process_hub_join(state, valid_join_nodes)
       else
         state
       end
@@ -487,138 +487,6 @@ defmodule ProcessHub.Coordinator do
     else
       state
     end
-  end
-
-  # TODO: refactor and move to separate services.
-  # Handle multiple nodes joining together (batched).
-  # Cluster state modification (add_hub_node) happens in worker to ensure serialization.
-  defp handle_hub_join(state, nodes) do
-    hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
-    local_node = node()
-
-    # Filter to only new nodes.
-    new_nodes =
-      Enum.filter(nodes, fn node ->
-        Cluster.new_node?(hub_nodes, node) and node !== local_node
-      end)
-
-    if length(new_nodes) > 0 do
-      # Broadcast local registry data to joining nodes
-      broadcast_local_registry(state, new_nodes)
-
-      # Dispatch pre hooks for all nodes
-      Enum.each(new_nodes, fn node ->
-        HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_join(), node)
-      end)
-
-      # Check if any node should trigger quorum unlock
-      part_strat = Storage.get(state.storage.misc, StorageKey.strpart())
-
-      unlock_status =
-        Enum.any?(new_nodes, fn node ->
-          PartitionToleranceStrategy.toggle_unlock?(part_strat, state, node)
-        end)
-
-      if unlock_status do
-        State.toggle_quorum_success(state)
-      end
-
-      GenServer.cast(
-        state.procs.worker_queue,
-        {:handle_node_up,
-         %{
-           joined_nodes: new_nodes,
-           hub: state
-         }}
-      )
-
-      # TODO: remove later
-      # State.lock_event_handler(state)
-    end
-
-    state
-  end
-
-  # TODO: refactor and move to separate services.
-  # Broadcasts local registry data to the specified target nodes.
-  # Called when new nodes join the cluster.
-  defp broadcast_local_registry(state, target_nodes) do
-    sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
-    local_data = Synchronizer.local_sync_data(state)
-
-    SynchronizationStrategy.broadcast_local_data(
-      sync_strategy,
-      state,
-      local_data,
-      target_nodes
-    )
-  end
-
-  # Handle a single node going down (from explicit @event_cluster_leave).
-  # Delegates work to the WorkerQueue to keep coordinator responsive.
-  # Cluster state modification (rem_hub_node) happens in worker to ensure serialization.
-  defp handle_node_down(state, down_node) do
-    hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
-
-    if Enum.member?(hub_nodes, down_node) do
-      HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), down_node)
-
-      # Lock is already set via atomic_priority_set in {:nodedown} handler,
-      # but call again to ensure consistent state for hooks.
-      # TODO: remove later.
-      # State.lock_event_handler(state)
-
-      GenServer.cast(
-        state.procs.worker_queue,
-        {:handle_node_down,
-         %{
-           removed_nodes: [down_node],
-           hub: state,
-           hook_storage: state.storage.hook
-         }}
-      )
-    else
-      # TOOD: remove
-      # Node not in hub - unlock immediately since we locked at dispatch time
-      State.unlock_event_handler(state)
-    end
-
-    state
-  end
-
-  # Handle multiple nodes going down together (batched).
-  # Delegates redistribution to WorkerQueue. Cluster state modification happens in worker.
-  defp handle_node_down_batch(state, down_nodes) do
-    hub_nodes = Cluster.nodes(state.storage.misc, [:include_local])
-
-    # Filter to only nodes that are actually in the hub
-    valid_down_nodes = Enum.filter(down_nodes, &Enum.member?(hub_nodes, &1))
-
-    if length(valid_down_nodes) > 0 do
-      # Dispatch pre hooks for all nodes
-      Enum.each(valid_down_nodes, fn node ->
-        HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), node)
-      end)
-
-      # TODO: remove later.
-      # State.lock_event_handler(state)
-
-      GenServer.cast(
-        state.procs.worker_queue,
-        {:handle_node_down,
-         %{
-           removed_nodes: valid_down_nodes,
-           hub: state,
-           hook_storage: state.storage.hook
-         }}
-      )
-    else
-      # No valid nodes - unlock since we locked at dispatch time
-      # TODO: remove later.
-      # State.unlock_event_handler(state)
-    end
-
-    state
   end
 
   defp get_hub_nodes(misc_storage) do

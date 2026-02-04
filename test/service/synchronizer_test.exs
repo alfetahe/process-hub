@@ -68,4 +68,31 @@ defmodule Test.Service.SynchronizerTest do
     registry = ProcessRegistry.dump(hub.hub_id)
     assert Map.to_list(registry) |> length() === 0
   end
+
+  test "broadcast_local_registry with empty registry", %{hub: hub} = _context do
+    # With no local data, broadcast should still succeed
+    result = Synchronizer.broadcast_local_registry(hub, [:fake_node1, :fake_node2])
+
+    assert result === :ok
+  end
+
+  test "broadcast_local_registry with local data", %{hub: hub} = _context do
+    # Insert some local registry data first
+    ProcessRegistry.insert(hub.hub_id, %{id: :broadcast_test1}, [{node(), self()}],
+      metadata: %{tag: "test1"}
+    )
+
+    ProcessRegistry.insert(hub.hub_id, %{id: :broadcast_test2}, [{node(), self()}],
+      metadata: %{tag: "test2"}
+    )
+
+    # Verify local_sync_data returns the inserted data
+    local_data = Synchronizer.local_sync_data(hub)
+    assert length(local_data) === 2
+
+    # Broadcast should succeed - actual network send fails silently since nodes don't exist
+    result = Synchronizer.broadcast_local_registry(hub, [:fake_node1, :fake_node2])
+
+    assert result === :ok
+  end
 end

@@ -9,7 +9,7 @@ ProcessHub heavily uses hooks internally in the integration tests and strategy i
 Hooks have to be in the format of an `mfa` tuple. Basically, they are functions that will be called
 when the hook is triggered.
 
-It is possible to register a hook handler with a wildcard argument `:_`, which will be replaced with the hook data when the hook is dispatched.
+It is possible to register a hook handler with a wildcard argument `:_`, which will be replaced with the hook data when the hook is dispatched. Note that `:_` replacement only works at the top level of the args list, not inside nested structures like tuples or lists.
 
 ## Hook registration examples
 

@@ -7,6 +7,9 @@ defmodule ProcessHub.Service.Synchronizer do
   alias ProcessHub.Coordinator
   alias ProcessHub.Task.SynchronizationTask
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Hub
 
   # TODO: add tests
@@ -133,5 +136,23 @@ defmodule ProcessHub.Service.Synchronizer do
         end
       end)
     end)
+  end
+
+  @doc """
+  Broadcasts local registry data to the specified target nodes.
+
+  Called when new nodes join the cluster to share local process information.
+  """
+  @spec broadcast_local_registry(Hub.t(), [node()]) :: :ok
+  def broadcast_local_registry(state, target_nodes) do
+    sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
+    local_data = local_sync_data(state)
+
+    SynchronizationStrategy.broadcast_local_data(
+      sync_strategy,
+      state,
+      local_data,
+      target_nodes
+    )
   end
 end
