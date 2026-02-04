@@ -153,19 +153,22 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     @impl true
     def init(%ColdSwap{handover: true} = strategy, hub) do
       # Register for registry_pid_inserted hook to detect new processes
-      handler = %HookManager{
-        id: :mcs_registry_insert,
-        m: ColdSwap,
-        f: :handle_registry_insert,
-        a: [strategy, hub, :_],
-        p: 100
-      }
+      # if handover is enabled.
+      if strategy.handover do
+        handler = %HookManager{
+          id: :mcs_registry_insert,
+          m: ColdSwap,
+          f: :handle_registry_insert,
+          a: [strategy, hub, :_],
+          p: 100
+        }
 
-      HookManager.register_handler(
-        hub.storage.hook,
-        Hook.registry_pid_inserted(),
-        handler
-      )
+        HookManager.register_handler(
+          hub.storage.hook,
+          Hook.registry_pid_inserted(),
+          handler
+        )
+      end
 
       strategy
     end
