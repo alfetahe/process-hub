@@ -72,13 +72,13 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @doc "Returns information about all registered processes. Will be deprecated in the future."
   @spec registry(ProcessHub.hub_id()) :: registry()
   def registry(hub_id) do
-    hub_id
-    |> Storage.export_all()
-    |> Enum.map(fn
-      {key, {c, n, _m}} -> {key, {c, n}}
-      {key, {c, n, _m}, _ttl} -> {key, {c, n}}
+    Storage.foldl(hub_id, %{}, fn
+      {child_id, {child_spec, nodes, _metadata}}, acc ->
+        Map.put(acc, child_id, {child_spec, nodes})
+
+      {child_id, {child_spec, nodes, _metadata}, _ttl}, acc ->
+        Map.put(acc, child_id, {child_spec, nodes})
     end)
-    |> Map.new()
   end
 
   @doc """
@@ -101,9 +101,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
           {ProcessHub.child_id(), [{node(), pid()}] | pid()}
         ]
   def process_list(hub_id, :global) do
-    dump(hub_id)
-    |> Enum.map(fn {child_id, {_child_spec, nodes, _metadata}} ->
-      {child_id, nodes}
+    Storage.foldl(hub_id, [], fn
+      {child_id, {_child_spec, nodes, _metadata}}, acc ->
+        [{child_id, nodes} | acc]
+
+      {child_id, {_child_spec, nodes, _metadata}, _ttl}, acc ->
+        [{child_id, nodes} | acc]
     end)
   end
 
@@ -120,11 +123,14 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec contains_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
   @doc "Returns a list of child_ids that match the given `child_ids` variable."
   def contains_children(hub_id, child_ids) do
-    Enum.reduce(dump(hub_id), [], fn {child_id, _}, acc ->
-      case Enum.member?(child_ids, child_id) do
-        true -> [child_id | acc]
-        false -> acc
-      end
+    child_id_set = MapSet.new(child_ids)
+
+    Storage.foldl(hub_id, [], fn
+      {child_id, _}, acc ->
+        if MapSet.member?(child_id_set, child_id), do: [child_id | acc], else: acc
+
+      {child_id, _, _ttl}, acc ->
+        if MapSet.member?(child_id_set, child_id), do: [child_id | acc], else: acc
     end)
     |> Enum.reverse()
   end
@@ -152,9 +158,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def local_data(hub_id) do
     local_node = node()
 
-    dump(hub_id)
-    |> Enum.filter(fn {_, {_, nodes, _}} ->
-      Enum.member?(Keyword.keys(nodes), local_node)
+    Storage.foldl(hub_id, [], fn
+      {child_id, {_, nodes, _} = value}, acc ->
+        if Keyword.has_key?(nodes, local_node), do: [{child_id, value} | acc], else: acc
+
+      {child_id, {_, nodes, _} = value, _ttl}, acc ->
+        if Keyword.has_key?(nodes, local_node), do: [{child_id, value} | acc], else: acc
     end)
   end
 
@@ -191,13 +200,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end
   end
 
-  # TODO: replace all dump calls with foldl calls unless  not needed.
 
   @doc """
   Returns all children that are running on the local node.
-
-  This is more performant than `local_data/1` as it uses ETS fold
-  instead of copying the entire table first.
 
   Returns a map of child_id to {child_spec, node_pids, metadata} tuples
   for all children where the local node has a running process.
@@ -208,20 +213,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def local_children(hub_id) do
     local_node = node()
 
-    fold_handler = fn acc, child_id, child_spec, node_pids, metadata, local_node ->
-      if Keyword.has_key?(node_pids, local_node) do
-        Map.put(acc, child_id, {child_spec, node_pids, metadata})
-      else
-        acc
-      end
-    end
-
     Storage.foldl(hub_id, %{}, fn
-      {child_id, {child_spec, node_pids, metadata}}, acc ->
-        fold_handler.(acc, child_id, child_spec, node_pids, metadata, local_node)
+      {child_id, {_, nodes, _} = value}, acc ->
+        if Keyword.has_key?(nodes, local_node), do: Map.put(acc, child_id, value), else: acc
 
-      {child_id, {child_spec, node_pids, metadata}, _ttl}, acc ->
-        fold_handler.(acc, child_id, child_spec, node_pids, metadata, local_node)
+      {child_id, {_, nodes, _} = value, _ttl}, acc ->
+        if Keyword.has_key?(nodes, local_node), do: Map.put(acc, child_id, value), else: acc
     end)
   end
 

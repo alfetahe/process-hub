@@ -271,7 +271,7 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes)
     end)
 
-    assert ProcessRegistry.process_list(hub_id, :local) === [{2, "pid3"}, {3, :pid5}]
+    assert Enum.sort(ProcessRegistry.process_list(hub_id, :local)) === [{2, "pid3"}, {3, :pid5}]
   end
 
   test "process list global", %{hub_id: hub_id} = _context do
@@ -288,7 +288,7 @@ defmodule Test.Service.ProcessRegistryTest do
 
     children_formatted = Enum.map(children, fn {child_id, {_cs, nodes}} -> {child_id, nodes} end)
 
-    assert ProcessRegistry.process_list(hub_id, :global) === children_formatted
+    assert Enum.sort(ProcessRegistry.process_list(hub_id, :global)) === Enum.sort(children_formatted)
   end
 
   test "local data", %{hub_id: hub_id} = _context do
