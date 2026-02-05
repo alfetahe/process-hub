@@ -51,8 +51,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Request.PostAction
   alias ProcessHub.Service.Dispatcher
 
-  # TODO: refactor the new protocol functions.
-
   @typedoc """
   The cold swap migration struct.
 
@@ -191,17 +189,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     def init(strategy, _hub), do: strategy
 
     @impl MigrationStrategy
-    def handle_migrate(
-          _struct,
-          _hub,
-          _registry_data,
-          _nodes,
-          _replication_factor,
-          _sync_strategy
-        ),
-        do: :ok
-
-    @impl MigrationStrategy
     def handle_topology_expansion(
           %ColdSwap{handover: handover, state_ttl: ttl, state_query_timeout: timeout} = _struct,
           hub,
@@ -309,7 +296,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       node_start_requests = create_migration_requests(hub, to_send_to_nodes, handover)
 
       if length(node_start_requests) > 0 do
-        Dispatcher.children_start(hub.hub_id, node_start_requests)
+        Dispatcher.children_start(hub, node_start_requests)
       end
 
       # Dispatch migration hook
@@ -349,7 +336,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
       if children_to_start != [] do
         grouped = %{local_node => children_to_start}
         requests = create_contraction_requests(hub, grouped, local_node)
-        Dispatcher.children_start(hub.hub_id, requests)
+        Dispatcher.children_start(hub, requests)
       end
 
       handler

@@ -86,7 +86,7 @@ defmodule ProcessHub.Service.Distributor do
     opts = Keyword.put(opts, :request_signature, signature)
 
     operation = RequestManager.new(hub, StartChildrenRequest, nodes_data, opts)
-    dispatch_operation(hub.hub_id, operation)
+    dispatch_operation(hub, operation)
   end
 
   @doc "Composes and dispatches a stop children operation."
@@ -137,21 +137,21 @@ defmodule ProcessHub.Service.Distributor do
         # Pass not_found to include them as errors in the result
         opts_with_not_found = Keyword.put(opts, :not_found_children, not_found)
         operation = RequestManager.new(hub, StopChildrenRequest, nodes_data, opts_with_not_found)
-        dispatch_operation(hub.hub_id, operation)
+        dispatch_operation(hub, operation)
     end
   end
 
   # Dispatches an operation's sub-requests to target nodes
-  defp dispatch_operation(hub_id, %RequestManager{} = operation) do
+  defp dispatch_operation(hub, %RequestManager{} = operation) do
     case RequestManager.compose_sub_requests(operation) do
       {:ok, updated_operation} ->
         # Dispatch sub-requests based on handler type
         case updated_operation.handler do
           StartChildrenRequest ->
-            Dispatcher.children_start(hub_id, updated_operation.sub_requests)
+            Dispatcher.children_start(hub, updated_operation.sub_requests)
 
           StopChildrenRequest ->
-            Dispatcher.children_stop(hub_id, updated_operation.sub_requests)
+            Dispatcher.children_stop(hub, updated_operation.sub_requests)
         end
 
         {:ok, updated_operation}
@@ -161,7 +161,6 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  # TODO: Perhaps move this function to another service module?
   @doc """
   Terminates child processes locally and propagates all nodes in the cluster
   to remove the child processes from their registry.

@@ -469,7 +469,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     if length(forw) > 0 do
       insert_pending_entries(hub, forw)
       node_start_requests = create_forward_requests(hub, forw, start_opts)
-      Dispatcher.children_start(hub.hub_id, node_start_requests)
+      Dispatcher.children_start(hub, node_start_requests)
       HookManager.dispatch_hook(hub.storage.hook, Hook.forwarded_migration(), forw)
     end
 

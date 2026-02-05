@@ -13,7 +13,6 @@ defmodule ProcessHub.Utility.Extractor do
   def local_cid_pid_pairs(registry_items) do
     node = node()
 
-    # TODO: maybe we can use match instead.
     Enum.reduce(registry_items, %{}, fn
       {child_id, {_cspec, node_pids, _metadata}}, acc when is_list(node_pids) ->
         case Enum.find(node_pids, fn {n, _pid} -> n == node end) do

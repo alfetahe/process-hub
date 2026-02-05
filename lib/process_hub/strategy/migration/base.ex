@@ -14,31 +14,21 @@ defprotocol ProcessHub.Strategy.Migration.Base do
   def init(strategy, hub)
 
   @doc """
-  Handles migration when nodes join the cluster.
+  Handles migration when nodes join the cluster (topology expansion).
 
-  The strategy receives the full registry data and decides internally
-  what actions to take (terminate, start, migrate to remote, etc).
-  Each strategy implementation handles its own logic without the caller
-  needing to know implementation details.
+  Called from NodeUp handler to redistribute processes to newly joined nodes.
+  Each strategy implementation handles its own logic for migrating processes
+  that should now be on the new nodes.
 
   ## Parameters
   - `struct` - the strategy struct
   - `hub` - the hub state
-  - `registry_data` - full dump from ProcessRegistry.dump()
-  - `nodes` - list of nodes that triggered redistribution
-  - `replication_factor` - from redundancy strategy
-  - `sync_strategy` - synchronization strategy for propagating changes
-  """
-  @spec handle_migrate(
-          __MODULE__.t(),
-          Hub.t(),
-          registry_data :: list(),
-          nodes :: [node()],
-          replication_factor :: pos_integer(),
-          ProcessHub.Strategy.Synchronization.Base.t()
-        ) :: :ok
-  def handle_migrate(struct, hub, registry_data, nodes, replication_factor, sync_strategy)
+  - `nodes` - list of nodes that have joined the cluster
+  - `handler` - the NodeUp handler struct
 
+  ## Returns
+  Updated handler struct with any additional data computed during processing.
+  """
   @spec handle_topology_expansion(
           struct :: __MODULE__.t(),
           hub :: Hub.t(),

@@ -127,7 +127,7 @@ defmodule ProcessHub.Coordinator do
     )
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
-    Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_leave, node(), %{
+    Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_leave, node(), %{
       members: :external,
       priority: PriorityLevel.high()
     })
@@ -302,7 +302,7 @@ defmodule ProcessHub.Coordinator do
     if length(valid_down_nodes) > 0 do
       # Dispatch a single batch event with all validated down nodes.
       # This ensures we calculate redistribution once based on final cluster state.
-      Dispatcher.propagate_event(
+      Dispatcher.dispatch_event(
         state.procs.event_queue,
         @event_cluster_leave_batch,
         valid_down_nodes,
@@ -391,7 +391,7 @@ defmodule ProcessHub.Coordinator do
     |> Storage.get(StorageKey.hdi())
     |> schedule_hub_discovery()
 
-    Dispatcher.propagate_event(state.procs.event_queue, @event_cluster_join, node(), %{
+    Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_join, node(), %{
       members: :external,
       priority: PriorityLevel.high()
     })

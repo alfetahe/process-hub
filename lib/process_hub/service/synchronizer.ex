@@ -75,8 +75,6 @@ defmodule ProcessHub.Service.Synchronizer do
     Enum.each(remote_data, fn {remote_node, remote_children} ->
       # TODO: may want to add some type of locking or transactions here.
       Enum.each(remote_children, fn {remote_cs, remote_pid, remote_meta} ->
-        # TODO: The lookup below should be optimized away if possible.
-
         # Check if local children contain remote node data.
         case ProcessRegistry.lookup(hub.hub_id, remote_cs.id) do
           nil ->

@@ -8,13 +8,10 @@ defmodule ProcessHub.DistributedSupervisor do
   """
 
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Coordinator
-  alias ProcessHub.Service.Storage
-  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
   alias ProcessHub.Request.Handler.PidUpdateRequest
-  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
 
   use ProcessHub.Constant.Event
 
@@ -73,7 +70,6 @@ defmodule ProcessHub.DistributedSupervisor do
     Supervisor.delete_child(distributed_sup, child_id)
   end
 
-  # TODO: remove
   # @doc """
   # Returns only the child IDs that are currently running (have a valid PID).
   # This filters out children that are :undefined or {:restarting, _}.
@@ -121,26 +117,6 @@ defmodule ProcessHub.DistributedSupervisor do
     end
   end
 
-  # TODO: remove
-  @doc false
-  # def handle_call(:running_child_ids, _from, state) do
-  #   children_map = state |> elem(3) |> elem(1)
-
-  #   running_ids =
-  #     :maps.fold(
-  #       fn cid, child_rec, acc ->
-  #         case elem(child_rec, 1) do
-  #           pid when is_pid(pid) -> [cid | acc]
-  #           _ -> acc
-  #         end
-  #       end,
-  #       [],
-  #       children_map
-  #     )
-
-  #   {:reply, running_ids, state}
-  # end
-
   defp handle_child_exit(old_state, new_state, pid) do
     hub_id = Process.get(:hub_id)
 
@@ -178,31 +154,15 @@ defmodule ProcessHub.DistributedSupervisor do
   defp handle_child_removal(hub, child_id) do
     request = PidsUnregisterRequest.new([{child_id, [node()]}])
 
-    # TODO: should use the dispatcher service instead here (and other similar calls)
-    hub.storage.misc
-    |> Storage.get(StorageKey.strsyn())
-    |> SynchronizationStrategy.propagate(
-      hub,
-      RequestManager.split(request),
-      members: :global
-    )
+    Dispatcher.propagate_event(hub, request, members: :global)
 
-    # Deletes the child specification from the supervisor by sending an asynchrounous request
-    # to the Supervisor process itself.
     Process.send(self(), {:delete_child_spec, child_id}, [])
   end
 
   defp handle_child_restart(hub, child_id, new_pid) do
     request = PidUpdateRequest.new(child_id, node(), new_pid)
 
-    # TODO: should use the dispatcher service instead here (and other similar calls)
-    hub.storage.misc
-    |> Storage.get(StorageKey.strsyn())
-    |> SynchronizationStrategy.propagate(
-      hub,
-      RequestManager.split(request),
-      members: :global
-    )
+    Dispatcher.propagate_event(hub, request, members: :global)
   end
 
   defp find_cid_from_pid(state, compare_pid) do
