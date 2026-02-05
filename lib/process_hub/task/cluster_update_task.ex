@@ -89,11 +89,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
     end
 
     defp distribute_processes(arg) do
-      # Get registry data once
-      # TODO: remove and check hotswap.
-      registry_data = ProcessRegistry.dump(arg.hub.hub_id)
-
-      # Migration strategy handles process migration.
+      # Migration strategy handles PRIMARY process migration.
       arg =
         MigrationStrategy.handle_topology_expansion(
           arg.migr_strat,
@@ -102,13 +98,12 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
           arg
         )
 
-      # TODO: update, remove the registry dump parameter if not needed anymore and use the
-      # calculated cids from arg.
-      # Redundancy strategy handles redundancy adjustments.
+      # Redundancy strategy handles REPLICAS (indices 1+) + mode signals.
+      # Pass calculated_cids from migration strategy.
       RedundancyStrategy.handle_redundancy(
         arg.redun_strat,
         arg.hub,
-        registry_data,
+        arg.calculated_cids,
         arg.joined_nodes
       )
 
@@ -265,6 +260,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
 
       if !Enum.empty?(redun), do: handle_redundancy(arg, redun)
 
+      # Migration handles PRIMARY placement only
       arg =
         MigrationStrategy.handle_topology_contraction(
           arg.migr_strat,
@@ -272,6 +268,14 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
           arg.removed_nodes,
           arg
         )
+
+      # Redundancy handles REPLICA starting after contraction
+      RedundancyStrategy.handle_redundancy(
+        arg.redun_strat,
+        arg.hub,
+        arg.calculated_cids,
+        arg.removed_nodes
+      )
 
       Map.put(arg, :rem_node_cids, rem_cids)
     end

@@ -28,7 +28,7 @@ defmodule ProcessHub.Strategy.Redundancy.Singularity do
     end
 
     @impl true
-    def handle_redundancy(_strategy, _hub, _registry_data, _nodes) do
+    def handle_redundancy(_strategy, _hub, _calculated_cids, _nodes) do
       # Singularity has no replication, so no redundancy handling needed
       :ok
     end

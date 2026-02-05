@@ -229,19 +229,26 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
                                                                                   node_pids, meta}},
                                                                                 acc ->
           curr_nodes = Keyword.keys(node_pids)
-          calculated_nodes = Map.get(cid_node_pairs, child_id, [])
+          all_calculated_nodes = Map.get(cid_node_pairs, child_id, [])
+
+          # ColdSwap only handles PRIMARY (index 0) migration.
+          # Replication strategy handles replicas (indices 1+).
+          primary_node = List.first(all_calculated_nodes)
+
+          # For forwarding decisions, only consider the primary node
+          primary_nodes = if primary_node, do: [primary_node], else: []
 
           # Determine if migration needed.
-          # First check if calculated nodes differ from current nodes.
-          if Enum.sort(curr_nodes) != Enum.sort(calculated_nodes) do
+          # Check if distribution differs from current nodes.
+          if Enum.sort(curr_nodes) != Enum.sort(all_calculated_nodes) do
             # Update forward_to list conditionally.
             forward_list = Map.get(acc, :forward_to)
 
             new_forward_list =
-              case eligible_for_sending?(curr_nodes, calculated_nodes, local_node) do
-                # Local node should send start request to new nodes.
+              case eligible_for_sending?(curr_nodes, primary_nodes, local_node) do
+                # Local node should send start request to new primary.
                 true ->
-                  new_nodes = find_new_nodes(curr_nodes, calculated_nodes)
+                  new_nodes = find_new_nodes(curr_nodes, primary_nodes)
                   [{cspec, meta, new_nodes} | forward_list]
 
                 # Local node should not forward child.
@@ -249,12 +256,14 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
                   forward_list
               end
 
-            case Enum.member?(calculated_nodes, local_node) do
-              # Local node is still a target, conditionally forward.
+            # Local node should stop if it's no longer in ANY of the calculated nodes.
+            # Replication strategy handles starting/stopping replicas.
+            case Enum.member?(all_calculated_nodes, local_node) do
+              # Local node is still a target (primary or replica), conditionally forward.
               true ->
                 Map.put(acc, :forward_to, new_forward_list)
 
-              # Local node is no longer a target, mark for stopping and conditionally forward.
+              # Local node is no longer a target at all, mark for stopping and conditionally forward.
               false ->
                 acc
                 |> Map.put(:stop_local, [child_id | Map.get(acc, :stop_local)])
@@ -320,13 +329,17 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
       registry_data = ProcessRegistry.dump(hub.hub_id)
 
-      # Find children that should be local but aren't
+      # Find children that should be started locally as PRIMARY.
+      # ColdSwap only handles primary (index 0), Replication handles replicas (indices 1+).
       children_to_start =
         Enum.reduce(registry_data, [], fn {child_id, {cspec, node_pids, meta}}, acc ->
           nodes_orig = Keyword.keys(node_pids)
           nodes_new = Map.get(cid_node_map, child_id, [])
 
-          if Enum.member?(nodes_new, local_node) and not Enum.member?(nodes_orig, local_node) do
+          # Only start if local node is the PRIMARY (index 0) and wasn't running before
+          primary_node = List.first(nodes_new)
+
+          if primary_node == local_node and not Enum.member?(nodes_orig, local_node) do
             [{cspec, meta} | acc]
           else
             acc

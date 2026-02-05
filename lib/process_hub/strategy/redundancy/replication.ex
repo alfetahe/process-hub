@@ -44,10 +44,14 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Service.LoggerService
   alias ProcessHub.Utility.Extractor
   alias ProcessHub.Hub
 
@@ -139,14 +143,14 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
 
     @impl true
-    def handle_redundancy(strategy, hub, registry_data, nodes) do
-      # Handle replication redundancy when nodes join.
-      # This includes:
-      # 1. Starting replicas locally if this node should now have a replica
-      # 2. Stopping replicas locally if this node should no longer have a replica
-      # 3. Sending mode signals for active/passive transitions
+    def handle_redundancy(strategy, hub, calculated_cids, nodes) do
+      # Handle replica management when nodes join or leave:
+      # 1. Start replicas locally if this node is at index 1+ for a child
+      # 2. Stop replicas locally if this node is no longer a replica
+      # 3. Send mode signals (active/passive transitions)
+      # Note: Primary (index 0) is handled by migration strategy.
 
-      Replication.do_handle_redundancy(strategy, hub, registry_data, nodes)
+      Replication.do_handle_redundancy(strategy, hub, calculated_cids, nodes)
     end
   end
 
@@ -161,8 +165,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     repl_fact = RedundancyStrategy.replication_factor(strategy)
     local_node = node()
 
-    # OPTIMIZATION: Batch belongs_to() call for all children upfront instead of
-    # calling it individually inside the loop. This reduces 10k hash ring lookups to 1.
+    # Batch belongs_to() call for all children upfront instead of
+    # calling it individually inside the loop.
     all_child_ids = Enum.map(post_start_data, &elem(&1, 0))
 
     canonical_nodes_map =
@@ -383,20 +387,11 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   defp send_redundancy_signal(_pid, _mode), do: nil
 
   @doc false
-  def do_handle_redundancy(strategy, hub, registry_data, nodes) do
+  def do_handle_redundancy(strategy, hub, calculated_cids, nodes) do
     local_node = node()
-    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
-    repl_fact = RedundancyStrategy.replication_factor(strategy)
 
-    # Calculate new distribution for all children
-    cids = Enum.map(registry_data, fn {cid, _} -> cid end)
-
-    cid_node_pairs =
-      if length(cids) > 0 do
-        DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
-      else
-        %{}
-      end
+    # Get registry data for child_specs and current state
+    registry_data = ProcessRegistry.dump(hub.hub_id)
 
     # Get currently running local children
     local_pids =
@@ -407,41 +402,132 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     local_child_ids = Map.keys(local_pids)
 
     # Process each child for redundancy updates
-    Enum.each(registry_data, fn {child_id, {_cs, node_pids, _m}} ->
-      _nodes_old = Keyword.keys(node_pids)
+    Enum.each(registry_data, fn {child_id, {child_spec, _node_pids, meta}} ->
+      all_nodes = Map.get(calculated_cids, child_id, [])
 
-      nodes_new = Map.get(cid_node_pairs, child_id, [])
+      # Replica nodes are indices 1+ (skip primary at index 0)
+      replica_nodes = Enum.drop(all_nodes, 1)
 
       running_locally = Enum.member?(local_child_ids, child_id)
-      should_be_local = Enum.member?(nodes_new, local_node)
+      should_be_replica = Enum.member?(replica_nodes, local_node)
+      is_primary = List.first(all_nodes) == local_node
 
-      # Only send mode signals for processes that are running locally and staying local
-      if running_locally and should_be_local do
-        # Check if any of the joining nodes affects this child's distribution
-        relevant_to_new_nodes = Enum.any?(nodes, fn n -> Enum.member?(nodes_new, n) end)
+      cond do
+        # Case 1: Should be replica here but not running -> start locally
+        should_be_replica and not running_locally ->
+          start_replica_locally(hub, child_spec, meta, strategy, all_nodes)
 
-        if relevant_to_new_nodes do
-          # Send mode signal based on current master calculation
-          local_pid = Map.get(local_pids, child_id)
+        # Case 2: Running locally as replica but shouldn't be -> stop
+        # Note: Only stop if we're not primary. ColdSwap handles primary migration.
+        running_locally and not should_be_replica and not is_primary ->
+          stop_replica_locally(hub, child_id)
 
-          if is_pid(local_pid) do
-            mode = process_mode(strategy, hub, child_id, nodes_new)
+        # Case 3: Running locally and should stay -> send mode signal if needed
+        running_locally and (should_be_replica or is_primary) ->
+          # Check if any of the changing nodes affects this child's distribution
+          relevant_to_nodes = Enum.any?(nodes, fn n -> Enum.member?(all_nodes, n) end)
 
-            cond do
-              strategy.redundancy_signal === :all ->
-                send_redundancy_signal(local_pid, mode)
-
-              mode === strategy.redundancy_signal ->
-                send_redundancy_signal(local_pid, mode)
-
-              true ->
-                :ok
-            end
+          if relevant_to_nodes do
+            local_pid = Map.get(local_pids, child_id)
+            send_mode_signal_if_needed(strategy, hub, child_id, all_nodes, local_pid)
           end
-        end
+
+        true ->
+          :ok
       end
     end)
 
     :ok
   end
+
+  defp start_replica_locally(hub, child_spec, meta, strategy, all_nodes) do
+    # Start child on local DistributedSupervisor
+    result = DistributedSupervisor.start_child(hub.procs.dist_sup, child_spec)
+
+    case result do
+      {:ok, pid} ->
+        local_node = node()
+
+        # Register in ProcessRegistry
+        ProcessRegistry.insert(hub.hub_id, child_spec, [{local_node, pid}], metadata: meta)
+
+        # Propagate registration to other nodes
+        sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
+        store_data = %{child_spec.id => {child_spec, [{local_node, pid}], meta}}
+        request = ProcessHub.Request.Handler.PidsRegisterRequest.new(store_data)
+
+        SynchronizationStrategy.propagate(
+          sync_strat,
+          hub,
+          RequestManager.split(request),
+          members: :external
+        )
+
+        # Send mode signal if needed (replicas are typically passive)
+        send_mode_signal_if_needed(strategy, hub, child_spec.id, all_nodes, pid)
+
+        :ok
+
+      {:error, {:already_started, _pid}} ->
+        # Child already running, nothing to do
+        :ok
+
+      {:error, reason} ->
+        # Log error but don't crash
+        LoggerService.error(
+          "Failed to start replica for @child_id: @reason",
+          %{"child_id" => child_spec.id, "reason" => reason},
+          prefix: "Replication"
+        )
+
+        :error
+    end
+  end
+
+  defp stop_replica_locally(hub, child_id) do
+    local_node = node()
+
+    # Terminate the child process
+    result = DistributedSupervisor.terminate_child(hub.procs.dist_sup, child_id)
+
+    if result == :ok do
+      # Remove from local registry
+      ProcessRegistry.bulk_delete(hub.hub_id, [{child_id, [local_node]}],
+        hook_storage: hub.storage.hook
+      )
+
+      # Propagate unregistration to other nodes
+      sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
+      request = ProcessHub.Request.Handler.PidsUnregisterRequest.new([{child_id, [local_node]}])
+
+      SynchronizationStrategy.propagate(
+        sync_strat,
+        hub,
+        RequestManager.split(request),
+        members: :external
+      )
+    end
+
+    :ok
+  end
+
+  defp send_mode_signal_if_needed(strategy, hub, child_id, all_nodes, local_pid)
+       when is_pid(local_pid) and all_nodes != [] do
+    if strategy.redundancy_signal != :none do
+      mode = process_mode(strategy, hub, child_id, all_nodes)
+
+      cond do
+        strategy.redundancy_signal === :all ->
+          send_redundancy_signal(local_pid, mode)
+
+        mode === strategy.redundancy_signal ->
+          send_redundancy_signal(local_pid, mode)
+
+        true ->
+          :ok
+      end
+    end
+  end
+
+  defp send_mode_signal_if_needed(_strategy, _hub, _child_id, _all_nodes, _local_pid), do: :ok
 end
