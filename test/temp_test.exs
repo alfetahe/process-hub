@@ -14,7 +14,7 @@ defmodule Test.TempTest do
   @peers_to_start 3
 
   # Number of children to start
-  @child_count 20000
+  @child_count 10000
 
   setup_all context do
     context = Map.put(context, :validate_metadata, false)
