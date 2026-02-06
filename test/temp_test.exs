@@ -26,6 +26,37 @@ defmodule Test.TempTest do
     Bootstrap.bootstrap(context)
   end
 
+  @tag hub_id: :pubsub_start_rem_test
+  @tag sync_strategy: :pubsub
+  @tag validate_metadata: true
+  @tag listed_hooks: [
+         {Hook.post_cluster_join(), :global},
+         {Hook.registry_pid_inserted(), :global},
+         {Hook.registry_pid_removed(), :global}
+       ]
+  test "pubsub children starting and removing", %{hub_id: hub_id} = context do
+    child_count = 30000
+    child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id))
+
+    # Starts children on all nodes.
+    Common.sync_base_test(context, child_specs, :add, scope: :global)
+
+    # Tests if all child_specs are used for starting children.
+    Common.validate_registry_length(context, child_specs)
+
+    # Tests if all child_specs are started on all nodes.
+    Common.validate_started_children(context, child_specs)
+
+    # Tests children adding and syncing.
+    Common.validate_sync(context)
+
+    # Stops children on all nodes.
+    Common.sync_base_test(context, child_specs, :rem, scope: :global)
+
+    # Tests children removing and syncing.
+    Common.validate_sync(context)
+  end
+
   # @tag migr_strategy: :cold
   # @tag dist_strategy: :consistent_hashing
   # @tag hub_id: :migration_coldswap_test
@@ -119,58 +150,58 @@ defmodule Test.TempTest do
   #   end)
   # end
 
-  @tag redun_strategy: :replication
-  @tag migr_strategy: :cold
-  @tag hub_id: :redunc_activ_pass_test
-  @tag replication_model: :active_passive
-  @tag validate_metadata: true
-  @tag replication_factor: 3
-  @tag cluster_event_debounce: 1000
-  @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global},
-         {Hook.post_nodes_redistribution(), :global}
-       ]
-  test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
-    :net_kernel.monitor_nodes(true)
+  # @tag redun_strategy: :replication
+  # @tag migr_strategy: :cold
+  # @tag hub_id: :redunc_activ_pass_test
+  # @tag replication_model: :active_passive
+  # @tag validate_metadata: true
+  # @tag replication_factor: 3
+  # @tag cluster_event_debounce: 1000
+  # @tag listed_hooks: [
+  #        {Hook.post_cluster_join(), :global},
+  #        {Hook.registry_pid_inserted(), :global},
+  #        {Hook.registry_pid_removed(), :global},
+  #        {Hook.post_nodes_redistribution(), :global}
+  #      ]
+  # test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
+  #   :net_kernel.monitor_nodes(true)
 
-    child_specs = Bag.gen_child_specs(@child_count, prefix: Atom.to_string(hub_id))
+  #   child_specs = Bag.gen_child_specs(@child_count, prefix: Atom.to_string(hub_id))
 
-    # Starts children on all nodes.
-    Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
+  #   # Starts children on all nodes.
+  #   Common.sync_base_test(context, child_specs, :add, scope: :global, replication_factor: rf)
 
-    # Scale up: start more nodes and verify replication is maintained
-    new_peers = TestNode.start_nodes(@peers_to_start, prefix: :redunc_activ_pass_test)
-    peer_names = for {peer, _pid} <- new_peers, do: peer
+  #   # Scale up: start more nodes and verify replication is maintained
+  #   new_peers = TestNode.start_nodes(@peers_to_start, prefix: :redunc_activ_pass_test)
+  #   peer_names = for {peer, _pid} <- new_peers, do: peer
 
-    Bootstrap.gen_hub(context)
-    |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true, skip_await: true)
+  #   Bootstrap.gen_hub(context)
+  #   |> Bootstrap.start_hubs(peer_names, context.listed_hooks, new_nodes: true, skip_await: true)
 
-    # Wait until registry is stable (all children have expected nodes)
-    Common.await_registry_stable(hub_id, child_specs, rf)
+  #   # Wait until registry is stable (all children have expected nodes)
+  #   Common.await_registry_stable(hub_id, child_specs, rf)
 
-    # Tests if all child_specs are used for starting children.
-    Common.validate_registry_length(context, child_specs)
+  #   # Tests if all child_specs are used for starting children.
+  #   Common.validate_registry_length(context, child_specs)
 
-    # Tests redundancy and check if started children's count matches replication factor.
-    Common.validate_replication(context)
+  #   # Tests redundancy and check if started children's count matches replication factor.
+  #   Common.validate_replication(context)
 
-    # Now scale down back to original nodes and see if replication is still maintained
-    Enum.reduce(1..@peers_to_start, new_peers, fn _x, acc ->
-      removed_peers = Common.stop_peers(acc, 1)
-      remaining = Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
+  #   # Now scale down back to original nodes and see if replication is still maintained
+  #   Enum.reduce(1..@peers_to_start, new_peers, fn _x, acc ->
+  #     removed_peers = Common.stop_peers(acc, 1)
+  #     remaining = Enum.filter(acc, fn node -> !Enum.member?(removed_peers, node) end)
 
-      # Wait until registry is stable (all children have expected nodes)
-      Common.await_registry_stable(hub_id, child_specs, rf)
+  #     # Wait until registry is stable (all children have expected nodes)
+  #     Common.await_registry_stable(hub_id, child_specs, rf)
 
-      remaining
-    end)
+  #     remaining
+  #   end)
 
-    Common.validate_registry_length(context, child_specs)
-    Common.validate_replication(context)
-    Common.validate_redundancy_mode(context)
+  #   Common.validate_registry_length(context, child_specs)
+  #   Common.validate_replication(context)
+  #   Common.validate_redundancy_mode(context)
 
-    :net_kernel.monitor_nodes(false)
-  end
+  #   :net_kernel.monitor_nodes(false)
+  # end
 end
