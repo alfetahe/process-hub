@@ -9,6 +9,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   use GenServer
 
+  @default_timeout 10_000
+
   @type registry() :: %{
           ProcessHub.child_id() => {
             ProcessHub.child_spec(),
@@ -249,7 +251,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end
   end
 
-  # TODO: we should add dynamic timeout option here.
   @doc """
   Inserts information about a child process into the registry.
 
@@ -293,6 +294,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   ## Options
   - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
+  - `:timeout` - GenServer call timeout in milliseconds (default: `10_000`)
 
   ## Parameters
   - `hub_id` - The hub identifier
@@ -307,7 +309,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
           keyword()
         ) :: :ok
   def bulk_insert(hub_id, children, opts \\ []) do
-    GenServer.call(via(hub_id), {:bulk_insert, hub_id, children, opts})
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+
+    GenServer.call(via(hub_id), {:bulk_insert, hub_id, children, opts}, timeout)
   end
 
   @doc """
@@ -320,6 +324,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   ## Options
   - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
+  - `:timeout` - GenServer call timeout in milliseconds (default: `10_000`)
 
   ## Parameters
   - `hub_id` - The hub identifier
@@ -332,7 +337,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
           keyword()
         ) :: :ok
   def bulk_delete(hub_id, children, opts \\ []) do
-    GenServer.call(via(hub_id), {:bulk_delete, hub_id, children, opts})
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+
+    GenServer.call(via(hub_id), {:bulk_delete, hub_id, children, opts}, timeout)
   end
 
   @doc """

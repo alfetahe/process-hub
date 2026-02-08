@@ -61,7 +61,6 @@ defmodule ProcessHub.Service.Dispatcher do
     end)
   end
 
-  # TODO: gossip needs to be able to handle this too.
   @doc """
   Propagates a request to cluster members via the synchronization strategy.
 
