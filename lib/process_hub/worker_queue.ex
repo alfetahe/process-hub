@@ -1,4 +1,6 @@
 defmodule ProcessHub.WorkerQueue do
+  alias ProcessHub.Service.{HookManager, State}
+  alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Request.CrossNodeRequest
   alias ProcessHub.Task.ClusterUpdateTask
   alias ProcessHub.Constant.StorageKey
@@ -6,7 +8,6 @@ defmodule ProcessHub.WorkerQueue do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Future
 
   use GenServer
 
@@ -15,9 +16,7 @@ defmodule ProcessHub.WorkerQueue do
   end
 
   @impl true
-  def init({hub_id, misc_storage}) do
-    handle_static_children(hub_id, misc_storage)
-
+  def init({hub_id, _misc_storage}) do
     {:ok, %{hub_id: hub_id}}
   end
 
@@ -41,23 +40,28 @@ defmodule ProcessHub.WorkerQueue do
   end
 
   @impl true
-  def handle_cast({:handle_node_down, params}, state) do
+  def handle_cast({:handle_node_down, %{removed_nodes: removed_nodes, hub: hub} = arg}, state) do
+    # Dispatch pre hooks for all nodes
+    Enum.each(removed_nodes, fn n ->
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_cluster_leave(), n)
+    end)
+
     # Remove nodes from cluster state first (serialized here in worker)
-    Enum.each(params.removed_nodes, fn node ->
-      Cluster.rem_hub_node(params.hub.storage.misc, node)
+    Enum.each(removed_nodes, fn node ->
+      Cluster.rem_hub_node(hub.storage.misc, node)
     end)
 
     # Get updated hub_nodes AFTER removal
-    updated_hub_nodes = Cluster.nodes(params.hub.storage.misc, [:include_local])
+    updated_hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
     ClusterUpdateTask.NodeDown.handle(%ClusterUpdateTask.NodeDown{
-      removed_nodes: params.removed_nodes,
+      removed_nodes: removed_nodes,
       hub_nodes: updated_hub_nodes,
-      hub: params.hub
+      hub: hub
     })
 
-    Enum.each(params.removed_nodes, fn node ->
-      HookManager.dispatch_hook(params.hook_storage, Hook.post_cluster_leave(), %{
+    Enum.each(removed_nodes, fn node ->
+      HookManager.dispatch_hook(hub.storage.hook, Hook.post_cluster_leave(), %{
         removed_node: node
       })
     end)
@@ -66,15 +70,32 @@ defmodule ProcessHub.WorkerQueue do
   end
 
   @impl true
-  def handle_cast({:handle_node_up, params}, state) do
+  def handle_cast({:handle_node_up, %{joined_nodes: joined_nodes, hub: hub} = _arg}, state) do
+    # Dispatch pre hooks for all nodes
+    Enum.each(joined_nodes, fn n ->
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_cluster_join(), n)
+    end)
+
+    # Check if any node should trigger quorum unlock
+    part_strat = Storage.get(hub.storage.misc, StorageKey.strpart())
+
+    unlock_status =
+      Enum.any?(joined_nodes, fn n ->
+        PartitionToleranceStrategy.toggle_unlock?(part_strat, hub, n)
+      end)
+
+    if unlock_status do
+      State.toggle_quorum_success(hub)
+    end
+
     # Add nodes to cluster state first (serialized here in worker)
-    Enum.each(params.joined_nodes, fn node ->
-      Cluster.add_hub_node(params.hub.storage.misc, node)
+    Enum.each(joined_nodes, fn node ->
+      Cluster.add_hub_node(hub.storage.misc, node)
     end)
 
     ClusterUpdateTask.NodeUp.handle(%ClusterUpdateTask.NodeUp{
-      joined_nodes: params.joined_nodes,
-      hub: params.hub
+      joined_nodes: joined_nodes,
+      hub: hub
     })
 
     {:noreply, state}
@@ -83,24 +104,5 @@ defmodule ProcessHub.WorkerQueue do
   @impl true
   def handle_call({:handle_work, func}, _from, state) do
     {:reply, func.(), state}
-  end
-
-  defp handle_static_children(hub_id, misc_storage) do
-    static_child_specs = Storage.get(misc_storage, StorageKey.staticcs())
-
-    if length(static_child_specs) > 0 do
-      res =
-        ProcessHub.start_children(
-          hub_id,
-          static_child_specs,
-          awaitable: true
-        )
-        |> Future.await()
-
-      case res.status do
-        :ok -> nil
-        :error -> raise RuntimeError, message: "static children startup failed."
-      end
-    end
   end
 end

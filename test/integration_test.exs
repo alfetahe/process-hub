@@ -506,7 +506,7 @@ defmodule Test.IntegrationTest do
          {Hook.post_cluster_join(), :local},
          {Hook.post_cluster_leave(), :global},
          {Hook.registry_pid_inserted(), :global},
-         {Hook.children_migrated(), :global}
+         {Hook.migration_handled(), :global}
        ]
   test "coldswap migration with replication",
        %{hub_id: hub_id, replication_factor: rf, listed_hooks: lh, hub: _hub} = context do
@@ -577,7 +577,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_inserted(), :local},
          {Hook.registry_pid_removed(), :local},
          {Hook.post_nodes_redistribution(), :local},
-         {Hook.children_migrated(), :global},
+         {Hook.migration_handled(), :global},
          {Hook.forwarded_migration(), :global},
          {Hook.handover_delivered(), :local}
        ]
@@ -595,7 +595,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_inserted(), :local},
          {Hook.registry_pid_removed(), :local},
          {Hook.post_nodes_redistribution(), :local},
-         {Hook.children_migrated(), :global},
+         {Hook.migration_handled(), :global},
          {Hook.forwarded_migration(), :global},
          {Hook.handover_delivered(), :local}
        ]
@@ -614,7 +614,7 @@ defmodule Test.IntegrationTest do
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global},
          {Hook.post_nodes_redistribution(), :local},
-         {Hook.children_migrated(), :global},
+         {Hook.migration_handled(), :global},
          {Hook.forwarded_migration(), :global}
        ]
   test "migration hotswap shutdown", %{hub_id: hub_id} = context do

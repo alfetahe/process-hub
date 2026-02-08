@@ -30,6 +30,7 @@ This release introduces per-child metadata support for `start_children/3`, allow
   - Migration now uses ETS-based state storage with `registry_pid_inserted` hook for delivery (same pattern as ColdSwap)
   - Old process is terminated immediately after state delivery (no retention period)
   - New `hotswap_handover_delivered` hook fires after migration completes (state delivered + old process terminated)
+- Renamed `:children_migrated_hook` to `:migration_handled_hook`. The previous name implied that children were fully migrated, but the hook only signals that the migration handler has finished processing. The migration itself may or may not be completed at the time of dispatch.
 
 ### Fixed
 - **Process registry write operations are now synchronous**: All write/delete operations (`insert`, `delete`, `bulk_insert`, `bulk_delete`, `update`, `clear_all`) in `ProcessRegistry` are now routed through the GenServer process. This fixes a race condition where concurrent write operations from different processes could interleave and cause inconsistent registry state. The public API remains unchanged.

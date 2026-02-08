@@ -38,8 +38,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
         @event_requests_handle,
         requests,
         %{
-          # TODO: configurable priority and ability to drop low priority events
-          priority: PriorityLevel.high(),
+          priority: Keyword.get(opts, :priority, PriorityLevel.high()),
           members: Keyword.get(opts, :members, :global)
         }
       )

@@ -52,7 +52,7 @@ end
 
 Pay attention to the `retention` and `handover` options. The `retention` option is the max time in milliseconds that the old process will be kept alive when migrating. The `handover` option is a boolean that indicates whether the process state should be handed over to another node when the process is going to be stopped.
 
-The HotSwap module also supports a option called `:confirm_handover` which works togather with the `:handover` option. The `:confirm_handover` option is a boolean that indicates whether the migration handler should wait for the confirmation message from the new process about the handover. If this option is set to `true`, the `:children_migrated_hook` hook will be called once the handover is confirmed, making it possible to react to the handover process.
+The HotSwap module also supports a option called `:confirm_handover` which works togather with the `:handover` option. The `:confirm_handover` option is a boolean that indicates whether the migration handler should wait for the confirmation message from the new process about the handover. If this option is set to `true`, the `:migration_handled_hook` hook will be called once the handover is confirmed, making it possible to react to the handover process.
 The `:confirm_handover` option is triggered on node join or leave events but not on node shutdown events.
 
 > #### Retention option {: .info}

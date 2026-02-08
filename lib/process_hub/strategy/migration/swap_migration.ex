@@ -156,7 +156,7 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   end
 
   @doc """
-  Dispatches `Hook.children_migrated()` if migrated list is non-empty.
+  Dispatches `Hook.migration_handled()` if migrated list is non-empty.
   """
   @spec dispatch_migration_hook(ProcessHub.Hub.t(), [ProcessHub.child_spec()], [node()]) :: :ok
   def dispatch_migration_hook(_hub, [], _nodes), do: :ok
@@ -164,7 +164,7 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   def dispatch_migration_hook(hub, migrated_cspecs, nodes) do
     HookManager.dispatch_hook(
       hub.storage.hook,
-      Hook.children_migrated(),
+      Hook.migration_handled(),
       {nodes, migrated_cspecs}
     )
   end

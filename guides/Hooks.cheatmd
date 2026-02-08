@@ -318,7 +318,7 @@ Although, it's not recommended to dispatch hooks manually as it can lead to unex
 | `:post_cluster_leave_hook`          | Node leaves hub cluster, handled            | `node()`                                           |
 | `:registry_pid_insert_hook`         | Process registered                          | `{child_id(), [{node(), pid()}]}`                  |
 | `:registry_pid_remove_hook`         | Process unregistered                        | `child_id()`                                       |
-| `:children_migrated_hook`           | Processes migrated                          | `{node(), [child_spec()], map()}`                  |
+| `:migration_handled_hook`           | Migration handler finished                  | `{node(), [child_spec()], map()}`                  |
 | `:priority_state_updated_hook`      | Priority state updated                      | `{priority_level(), list()}`                       |
 | `:pre_nodes_redistribution_hook`    | Nodes redistribution start                  | `{:nodeup or :nodedown, node()}`                   |
 | `:post_nodes_redistribution_hook`   | Nodes redistribution end                    | `{:nodeup or :nodedown, node()}`                   |

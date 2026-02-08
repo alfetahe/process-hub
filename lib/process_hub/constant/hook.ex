@@ -43,13 +43,12 @@ defmodule ProcessHub.Constant.Hook do
   @spec registry_pid_removed() :: atom()
   def registry_pid_removed(), do: :registry_pid_remove_hook
 
-  # TODO: Lets replace this. It's emitted after the handler has finished processing the request
-  # but the migration may or may not be completed yet.
   @doc """
-  Hook triggered when a process is migrated to another node.
+  Hook triggered when the migration handler has finished processing.
+  This does not indicate whether the migration has completed.
   """
-  @spec children_migrated() :: atom()
-  def children_migrated(), do: :children_migrated_hook
+  @spec migration_handled() :: atom()
+  def migration_handled(), do: :migration_handled_hook
 
   @doc """
   Hook triggered when a process is migrated to another node.
