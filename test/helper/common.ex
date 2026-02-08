@@ -113,7 +113,7 @@ defmodule Test.Helper.Common do
     end)
   end
 
-  def validate_registry_length(%{hub_id: hub_id, hub: _hub} = context, child_specs) do
+  def validate_registry_length(%{hub_id: hub_id, hub: _hub} = _context, child_specs) do
     registry = ProcessHub.registry_dump(hub_id) |> Map.to_list()
 
     child_spec_len = length(child_specs)

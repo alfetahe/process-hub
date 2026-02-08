@@ -40,7 +40,7 @@ defmodule ProcessHub.WorkerQueue do
   end
 
   @impl true
-  def handle_cast({:handle_node_down, %{removed_nodes: removed_nodes, hub: hub} = arg}, state) do
+  def handle_cast({:handle_node_down, %{removed_nodes: removed_nodes, hub: hub} = _arg}, state) do
     # Dispatch pre hooks for all nodes
     Enum.each(removed_nodes, fn n ->
       HookManager.dispatch_hook(hub.storage.hook, Hook.pre_cluster_leave(), n)
@@ -60,12 +60,6 @@ defmodule ProcessHub.WorkerQueue do
       hub: hub
     })
 
-    Enum.each(removed_nodes, fn node ->
-      HookManager.dispatch_hook(hub.storage.hook, Hook.post_cluster_leave(), %{
-        removed_node: node
-      })
-    end)
-
     {:noreply, state}
   end
 
@@ -76,7 +70,12 @@ defmodule ProcessHub.WorkerQueue do
       HookManager.dispatch_hook(hub.storage.hook, Hook.pre_cluster_join(), n)
     end)
 
-    # Check if any node should trigger quorum unlock
+    # Add nodes to cluster state FIRST (consistent with handle_node_down)
+    Enum.each(joined_nodes, fn node ->
+      Cluster.add_hub_node(hub.storage.misc, node)
+    end)
+
+    # Check if any node should trigger quorum unlock (AFTER adding)
     part_strat = Storage.get(hub.storage.misc, StorageKey.strpart())
 
     unlock_status =
@@ -87,11 +86,6 @@ defmodule ProcessHub.WorkerQueue do
     if unlock_status do
       State.toggle_quorum_success(hub)
     end
-
-    # Add nodes to cluster state first (serialized here in worker)
-    Enum.each(joined_nodes, fn node ->
-      Cluster.add_hub_node(hub.storage.misc, node)
-    end)
 
     ClusterUpdateTask.NodeUp.handle(%ClusterUpdateTask.NodeUp{
       joined_nodes: joined_nodes,

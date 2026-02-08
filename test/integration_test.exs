@@ -371,7 +371,7 @@ defmodule Test.IntegrationTest do
     :net_kernel.monitor_nodes(false)
   end
 
-  @tag hub_id: :dynamic_quroum_test
+  @tag hub_id: :dynamic_quorum_test
   @tag partition_strategy: :dynamic
   @tag quorum_size: 80
   # 1 hour
@@ -423,6 +423,77 @@ defmodule Test.IntegrationTest do
     Bag.await_cluster_leave(1, scope: :global, cluster_size: current_cluster_size)
 
     # At this point we have 70% of cluster left.
+    assert ProcessHub.is_partitioned?(hub_id) === true
+
+    :net_kernel.monitor_nodes(false)
+  end
+
+  @tag hub_id: :static_quroum_test
+  @tag partition_strategy: :static
+  @tag quorum_size: @nr_of_peers + 2
+  @tag quorum_startup_confirm: true
+  @tag listed_hooks: [
+         {Hook.post_cluster_leave(), :local},
+         {Hook.post_nodes_redistribution(), :local}
+       ]
+  test "static quorum with min of #{@nr_of_peers + 2} nodes",
+       %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
+    # We don't have enough nodes to form the cluster and startup_confirm is set `true`
+    assert ProcessHub.is_partitioned?(hub_id) === true
+
+    # Start new nodes one at a time to avoid Erlang global module conflicts.
+    peers_to_start = @nr_of_peers - 3
+
+    new_peers =
+      Enum.flat_map(1..peers_to_start, fn idx ->
+        node = TestNode.start_nodes(1, prefix: :"static_quorum_test_n#{idx}")
+        [peer_name] = for {peer, _pid} <- node, do: peer
+
+        Bootstrap.gen_hub(context)
+        |> Bootstrap.start_hubs([peer_name], lh, new_nodes: true, skip_await: true)
+
+        Bag.receive_until(Hook.post_nodes_redistribution(), nil, fn _acc, data ->
+          if is_map(data) && data[:joined_node] && peer_name in List.wrap(data.joined_node),
+            do: {:halt, :ok},
+            else: {:cont, nil}
+        end)
+
+        node
+      end)
+
+    # We have added `peers_to_start` nodes so our cluster shouldn't be partitioned anymore.
+    assert ProcessHub.is_partitioned?(hub_id) === false
+
+    :net_kernel.monitor_nodes(true)
+
+    removed_peers = Common.stop_peers(new_peers, 1)
+    [{removed_node, _}] = removed_peers
+    new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
+
+    # Wait for the specific redistribution for the removed node to ensure
+    # the worker_queue has fully processed the removal (including handle_locking).
+    Bag.receive_until(Hook.post_nodes_redistribution(), nil, fn _acc, data ->
+      if data[:removed_nodes] && removed_node in data.removed_nodes,
+        do: {:halt, :ok},
+        else: {:cont, nil}
+    end)
+
+    # We still achive quorum
+    assert ProcessHub.is_partitioned?(hub_id) === false
+
+    removed_peers = Common.stop_peers(new_peers, 1)
+    [{removed_node, _}] = removed_peers
+    _new_peers = Enum.filter(peers, fn node -> !Enum.member?(removed_peers, node) end)
+
+    Bag.receive_until(Hook.post_nodes_redistribution(), nil, fn _acc, data ->
+      if data[:removed_nodes] && removed_node in data.removed_nodes,
+        do: {:halt, :ok},
+        else: {:cont, nil}
+    end)
+
+    Bag.receive_multiple(2, Hook.post_cluster_leave())
+
+    # Quorum not achieved
     assert ProcessHub.is_partitioned?(hub_id) === true
 
     :net_kernel.monitor_nodes(false)
@@ -726,72 +797,6 @@ defmodule Test.IntegrationTest do
     Common.validate_registry_length(context, child_specs)
     Common.validate_replication(context)
     Common.validate_redundancy_mode(context)
-
-    :net_kernel.monitor_nodes(false)
-  end
-
-  @tag hub_id: :static_quroum_test
-  @tag partition_strategy: :static
-  @tag quorum_size: @nr_of_peers + 2
-  @tag quorum_startup_confirm: true
-  @tag listed_hooks: [
-         {Hook.post_cluster_leave(), :local},
-         {Hook.post_nodes_redistribution(), :local}
-       ]
-  test "static quorum with min of #{@nr_of_peers + 2} nodes",
-       %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
-    # We don't have enough nodes to form the cluster and startup_confirm is set `true`
-    assert ProcessHub.is_partitioned?(hub_id) === true
-
-    # Start new nodes one at a time to avoid Erlang global module conflicts.
-    peers_to_start = @nr_of_peers - 3
-
-    new_peers =
-      Enum.flat_map(1..peers_to_start, fn idx ->
-        node = TestNode.start_nodes(1, prefix: :"static_quorum_test_n#{idx}")
-        [peer_name] = for {peer, _pid} <- node, do: peer
-
-        Bootstrap.gen_hub(context)
-        |> Bootstrap.start_hubs([peer_name], lh, new_nodes: true, skip_await: true)
-
-        Bag.receive_multiple(1, Hook.post_nodes_redistribution())
-        node
-      end)
-
-    # We have added `peers_to_start` nodes so our cluster shouldn't be partitioned anymore.
-    assert ProcessHub.is_partitioned?(hub_id) === false
-
-    :net_kernel.monitor_nodes(true)
-
-    removed_peers = Common.stop_peers(new_peers, 1)
-    [{removed_node, _}] = removed_peers
-    new_peers = Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
-
-    # Wait for the specific redistribution for the removed node to ensure
-    # the worker_queue has fully processed the removal (including handle_locking).
-    Bag.receive_until(Hook.post_nodes_redistribution(), nil, fn _acc, data ->
-      if data[:removed_nodes] && removed_node in data.removed_nodes,
-        do: {:halt, :ok},
-        else: {:cont, nil}
-    end)
-
-    # We still achive quorum
-    assert ProcessHub.is_partitioned?(hub_id) === false
-
-    removed_peers = Common.stop_peers(new_peers, 1)
-    [{removed_node, _}] = removed_peers
-    _new_peers = Enum.filter(peers, fn node -> !Enum.member?(removed_peers, node) end)
-
-    Bag.receive_until(Hook.post_nodes_redistribution(), nil, fn _acc, data ->
-      if data[:removed_nodes] && removed_node in data.removed_nodes,
-        do: {:halt, :ok},
-        else: {:cont, nil}
-    end)
-
-    Bag.receive_multiple(4, Hook.post_cluster_leave())
-
-    # Quorum not achieved
-    assert ProcessHub.is_partitioned?(hub_id) === true
 
     :net_kernel.monitor_nodes(false)
   end
