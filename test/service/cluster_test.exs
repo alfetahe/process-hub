@@ -147,7 +147,7 @@ defmodule Test.Service.ClusterTest do
     refute_receive {:hook_called, :hub_join_filter, _}, 100
   end
 
-  test "process_node_down dispatches hook with correct node data", %{hub: hub} = _context do
+  test "process_node_down_batch dispatches hook for single node", %{hub: hub} = _context do
     test_pid = self()
 
     handler = %HookManager{
@@ -162,8 +162,8 @@ defmodule Test.Service.ClusterTest do
     # Add the node first so it can be "removed"
     Cluster.add_hub_node(hub.storage.misc, :node_to_remove)
 
-    # process_node_down should dispatch the hook with the node name
-    result = Cluster.process_node_down(hub, :node_to_remove)
+    # process_node_down_batch should dispatch the hook with the node name
+    result = Cluster.process_node_down_batch(hub, [:node_to_remove])
 
     assert result.hub_id === hub.hub_id
 
@@ -171,7 +171,7 @@ defmodule Test.Service.ClusterTest do
     assert_receive {:hook_called, :node_down, :node_to_remove}, 1000
   end
 
-  test "process_node_down ignores nodes not in hub", %{hub: hub} = _context do
+  test "process_node_down_batch ignores nodes not in hub", %{hub: hub} = _context do
     test_pid = self()
 
     handler = %HookManager{
@@ -184,7 +184,7 @@ defmodule Test.Service.ClusterTest do
     HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), handler)
 
     # Try to remove a node that doesn't exist in the hub
-    result = Cluster.process_node_down(hub, :non_existent_node)
+    result = Cluster.process_node_down_batch(hub, [:non_existent_node])
 
     assert result.hub_id === hub.hub_id
     refute_receive {:hook_called, :node_down_ignore, _}, 100

@@ -46,10 +46,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
 
     @spec handle(t()) :: :ok
     def handle(%__MODULE__{hub: hub, joined_nodes: nodes} = arg) do
-      # Skip processing when partitioned - dist_sup is dead and accessing it would crash.
-      if State.is_partitioned?(hub) do
-        :ok
-      else
+      if !State.is_partitioned?(hub) do
         arg = attach_data(arg)
 
         # Dispatch the nodes pre redistribution event.
@@ -63,12 +60,12 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
         if Map.get(arg.dist_strat, :nodeup_redistribution, true) do
           distribute_processes(arg)
         end
-
-        # Dispatch the nodes post redistribution event.
-        dispatch_post_hooks(arg)
-
-        :ok
       end
+
+      # Dispatch the nodes post redistribution event.
+      dispatch_post_hooks(arg)
+
+      :ok
     end
 
     defp dispatch_post_hooks(%__MODULE__{
@@ -84,7 +81,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
       HookManager.dispatch_hook(
         hook_storage,
         Hook.post_nodes_redistribution(),
-        {:nodeup, nodes}
+        %{joined_node: nodes}
       )
     end
 
@@ -173,16 +170,16 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
 
     defp dispatch_post_hooks(%__MODULE__{hub: %Hub{storage: %{hook: hook_storage}}} = arg) do
       Enum.each(arg.removed_nodes, fn node ->
-        HookManager.dispatch_hook(
-          hook_storage,
-          Hook.post_nodes_redistribution(),
-          {:nodedown, node}
-        )
-
         HookManager.dispatch_hook(hook_storage, Hook.post_cluster_leave(), %{
           removed_node: node
         })
       end)
+
+      HookManager.dispatch_hook(
+        hook_storage,
+        Hook.post_nodes_redistribution(),
+        %{removed_nodes: arg.removed_nodes}
+      )
     end
 
     defp handle_locking(arg) do

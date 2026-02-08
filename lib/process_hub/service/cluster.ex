@@ -141,38 +141,7 @@ defmodule ProcessHub.Service.Cluster do
   end
 
   @doc """
-  Handles a single node leaving the cluster.
-
-  Checks if the node is in the hub, dispatches pre_cluster_leave hook,
-  and casts `{:handle_node_down, ...}` to worker_queue.
-  """
-  @spec process_node_down(Hub.t(), node()) :: Hub.t()
-  def process_node_down(state, down_node) do
-    hub_nodes = nodes(state.storage.misc, [:include_local])
-
-    if Enum.member?(hub_nodes, down_node) do
-      HookManager.dispatch_hook(state.storage.hook, Hook.pre_cluster_leave(), down_node)
-
-      GenServer.cast(
-        state.procs.worker_queue,
-        {:handle_node_down,
-         %{
-           removed_nodes: [down_node],
-           hub: state,
-           hook_storage: state.storage.hook
-         }}
-      )
-    else
-      # TODO: remove.
-      # Node not in hub - unlock immediately since we locked at dispatch time
-      State.unlock_event_handler(state)
-    end
-
-    state
-  end
-
-  @doc """
-  Handles a batch of nodes leaving the cluster.
+  Handles nodes leaving the cluster.
 
   Filters to nodes actually in the hub, dispatches pre_cluster_leave hooks,
   and casts a single `{:handle_node_down, ...}` to worker_queue.

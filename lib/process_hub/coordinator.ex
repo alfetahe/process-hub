@@ -274,7 +274,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_leave, node}, state) do
-    {:noreply, Cluster.process_node_down(state, node)}
+    # Batch graceful leave events like nodedown and cluster_join.
+    {:noreply, batch_event(state, :cluster_leave, node)}
   end
 
   @impl true
@@ -305,6 +306,28 @@ defmodule ProcessHub.Coordinator do
         state.procs.event_queue,
         @event_cluster_leave_batch,
         valid_down_nodes,
+        %{
+          members: :local,
+          atomic_priority_set: PriorityLevel.high(),
+          local_priority_set: true
+        }
+      )
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:process_batch, :cluster_leave}, state) do
+    {state, nodes} = take_batch(state, :cluster_leave)
+
+    if length(nodes) > 0 do
+      # Graceful leaves don't need connection validation (the node announced
+      # its departure before shutting down), so dispatch them directly.
+      Dispatcher.dispatch_event(
+        state.procs.event_queue,
+        @event_cluster_leave_batch,
+        nodes,
         %{
           members: :local,
           atomic_priority_set: PriorityLevel.high(),
