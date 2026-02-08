@@ -73,9 +73,9 @@ defmodule ProcessHub.Initializer do
         dist_sup(hub_conf, procs),
         {Task.Supervisor, name: procs.task_sup},
         {ProcessHub.Coordinator, {hub_conf, procs, storage}},
-        {ProcessHub.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
-        {ProcessHub.PostStartWorker, {hub_id, procs.post_start_worker, storage.misc}},
-        {ProcessHub.Janitor,
+        {ProcessHub.Worker.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
+        {ProcessHub.Worker.BootstrapWorker, {hub_id, procs.bootstrap_worker, storage.misc}},
+        {ProcessHub.Worker.Janitor,
          {
            hub_id,
            procs.janitor,
@@ -125,7 +125,7 @@ defmodule ProcessHub.Initializer do
       dist_sup: {:via, Registry, {system_registry, "dist_sup"}},
       task_sup: {:via, Registry, {system_registry, "task_sup"}},
       worker_queue: {:via, Registry, {system_registry, "worker_queue"}},
-      post_start_worker: {:via, Registry, {system_registry, "post_start_worker"}},
+      bootstrap_worker: {:via, Registry, {system_registry, "bootstrap_worker"}},
       janitor: {:via, Registry, {system_registry, "janitor"}}
     }
   end

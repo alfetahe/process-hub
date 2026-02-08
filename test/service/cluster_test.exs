@@ -91,5 +91,4 @@ defmodule Test.Service.ClusterTest do
 
     :peer.stop(peer_pid)
   end
-
 end

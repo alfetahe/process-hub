@@ -1,6 +1,6 @@
 defmodule Test.JanitorTest do
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Janitor
+  alias ProcessHub.Worker.Janitor
 
   use ExUnit.Case
 

@@ -1,4 +1,4 @@
-defmodule ProcessHub.Janitor do
+defmodule ProcessHub.Worker.Janitor do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.LoggerService

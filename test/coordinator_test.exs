@@ -250,7 +250,8 @@ defmodule CoordinatorTest do
       Cluster.add_hub_node(hub.storage.misc, :batch_node3)
 
       # Process batch with some valid and one invalid node
-      result = Coordinator.process_node_down_batch(hub, [:batch_node1, :batch_node2, :non_existent])
+      result =
+        Coordinator.process_node_down_batch(hub, [:batch_node1, :batch_node2, :non_existent])
 
       assert result.hub_id === hub.hub_id
 

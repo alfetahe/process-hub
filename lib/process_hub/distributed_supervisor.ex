@@ -15,7 +15,7 @@ defmodule ProcessHub.DistributedSupervisor do
 
   use ProcessHub.Constant.Event
 
-  use ProcessHub.Injector,
+  use ProcessHub.Utility.Injector,
     override: [:init, :start_link, :terminate_child, :start_child],
     base_module: :supervisor
 

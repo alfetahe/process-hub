@@ -1,4 +1,4 @@
-defmodule ProcessHub.PostStartWorker do
+defmodule ProcessHub.Worker.BootstrapWorker do
   @moduledoc """
   A worker process that handles post-startup tasks after the core supervisor
   tree is initialized.

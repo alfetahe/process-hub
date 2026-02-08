@@ -73,7 +73,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   @doc """
   Options:
-  - `:declare_behaviour` - When `true` (default), declares the `ProcessHub.Behaviour.Handover`
+  - `:declare_behaviour` - When `true` (default), declares the `ProcessHub.Strategy.Migration.HandoverBehaviour`
     behaviour and provides default implementations. Set to `false` when using both HotSwap
     and ColdSwap macros in the same module to avoid duplicate declarations.
   """
@@ -83,12 +83,12 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     behaviour_ast =
       if declare_behaviour do
         quote do
-          @behaviour ProcessHub.Behaviour.Handover
+          @behaviour ProcessHub.Strategy.Migration.HandoverBehaviour
 
-          @impl ProcessHub.Behaviour.Handover
+          @impl ProcessHub.Strategy.Migration.HandoverBehaviour
           def prepare_handover_state(state), do: state
 
-          @impl ProcessHub.Behaviour.Handover
+          @impl ProcessHub.Strategy.Migration.HandoverBehaviour
           def alter_handover_state(_current_state, handover_state), do: handover_state
 
           defoverridable prepare_handover_state: 1, alter_handover_state: 2

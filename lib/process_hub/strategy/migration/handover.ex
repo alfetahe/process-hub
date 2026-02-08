@@ -1,4 +1,4 @@
-defmodule ProcessHub.Behaviour.Handover do
+defmodule ProcessHub.Strategy.Migration.HandoverBehaviour do
   @moduledoc """
   Shared behaviour for migration state handover callbacks.
 

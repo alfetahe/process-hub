@@ -19,5 +19,4 @@ defmodule Test.TempTest do
   setup context do
     Bootstrap.bootstrap(context)
   end
-
 end

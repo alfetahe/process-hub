@@ -160,7 +160,7 @@ Performance improvements, bugfixes and other minor improvements including one ne
 ### Fixed
 - `ProcessHub.Strategy.Redundancy.Replication` was not properly updating the redundancy_signal value on some occasions
 due to race condition.
-- Fixed issue with `ProcessHub.Janitor` not purging the cache properly when using Gossip protocol.
+- Fixed issue with `ProcessHub.Worker.Janitor` not purging the cache properly when using Gossip protocol.
 - State passing on hotswap migration with graceful shutdown fixed.
 - Timeout option was not properly used in some cases.
 

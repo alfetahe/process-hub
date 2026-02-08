@@ -1,4 +1,4 @@
-defmodule ProcessHub.WorkerQueue do
+defmodule ProcessHub.Worker.WorkerQueue do
   alias ProcessHub.Request.CrossNodeRequest
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Cluster
