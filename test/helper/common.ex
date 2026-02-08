@@ -119,35 +119,6 @@ defmodule Test.Helper.Common do
     child_spec_len = length(child_specs)
     registry_len = length(registry)
 
-    if registry_len !== child_spec_len do
-      # Find missing children
-      registry_ids = Enum.map(registry, fn {id, _} -> id end) |> MapSet.new()
-      expected_ids = Enum.map(child_specs, & &1.id) |> MapSet.new()
-
-      missing = MapSet.difference(expected_ids, registry_ids) |> MapSet.to_list()
-      extra = MapSet.difference(registry_ids, expected_ids) |> MapSet.to_list()
-
-      IO.puts("\n=== DEBUG: Registry Length Mismatch ===")
-      IO.puts("Expected: #{child_spec_len}, Actual: #{registry_len}")
-      IO.puts("Missing count: #{length(missing)}")
-      IO.puts("Extra count: #{length(extra)}")
-
-      if length(missing) > 0 do
-        IO.puts("\nFirst 10 missing child_ids:")
-        Enum.take(missing, 10) |> Enum.each(&IO.inspect/1)
-
-        # Debug: Check all nodes for missing children
-        debug_missing_children(context, missing, 5)
-      end
-
-      if length(extra) > 0 do
-        IO.puts("\nFirst 10 extra child_ids:")
-        Enum.take(extra, 10) |> Enum.each(&IO.inspect/1)
-      end
-
-      IO.puts("=======================================\n")
-    end
-
     assert registry_len === child_spec_len,
            "The length of registry(#{registry_len}) does not match length of child specs(#{child_spec_len})"
   end
@@ -224,9 +195,6 @@ defmodule Test.Helper.Common do
   end
 
   def sync_type_exec(actions, hub_id, opts) do
-    # TODO: remove later.
-    opts = Keyword.put_new(opts, :timeout, 15_000)
-
     Enum.each(actions, fn {function_name, hook_key, timeout_msg, children} ->
       apply(ProcessHub, function_name, [hub_id, children, Keyword.get(opts, :start_opts, [])])
 
@@ -362,117 +330,6 @@ defmodule Test.Helper.Common do
   def sync_start(hub_id, child_specs) do
     ProcessHub.start_children(hub_id, child_specs, awaitable: true)
     |> ProcessHub.Future.await()
-  end
-
-  # TODO: remove later.
-  def debug_missing_children(
-        %{hub_id: hub_id, hub: hub, hub_conf: hub_conf} = _context,
-        missing_cids,
-        sample_size \\ 3
-      ) do
-    all_nodes = [node() | Node.list()]
-    dist_sup = hub.procs.dist_sup
-    dist_strat = hub_conf.distribution_strategy
-    rf = RedundancyStrategy.replication_factor(hub_conf.redundancy_strategy)
-    sample = Enum.take(missing_cids, sample_size)
-
-    IO.puts("\n=== DEBUG: Analyzing #{length(sample)} missing children ===")
-    IO.puts("Cluster nodes: #{inspect(all_nodes)}")
-    IO.puts("Replication factor: #{rf}\n")
-
-    # Check distribution signature consistency
-    IO.puts("--- Distribution Signatures ---")
-    local_sig = DistributionStrategy.distribution_signature(dist_strat, hub)
-    IO.puts("  #{node()}: #{local_sig}")
-
-    Enum.each(Node.list(), fn n ->
-      remote_sig =
-        :erpc.call(
-          n,
-          fn ->
-            # Get hub fresh on remote node
-            remote_hub = ProcessHub.Coordinator.get_hub(hub_id)
-
-            remote_dist_strat =
-              ProcessHub.Service.Storage.get(
-                remote_hub.storage.misc,
-                ProcessHub.Constant.StorageKey.strdist()
-              )
-
-            DistributionStrategy.distribution_signature(remote_dist_strat, remote_hub)
-          end,
-          5000
-        )
-
-      match = if remote_sig == local_sig, do: "OK", else: "MISMATCH!"
-      IO.puts("  #{n}: #{remote_sig} #{match}")
-    end)
-
-    IO.puts("")
-
-    Enum.each(sample, fn cid ->
-      IO.puts("--- Child: #{cid} ---")
-
-      # Where should it be according to local node?
-      local_targets =
-        DistributionStrategy.belongs_to(dist_strat, hub, [cid], rf)
-        |> Enum.find(fn {id, _} -> id == cid end)
-        |> elem(1)
-
-      IO.puts("  Local belongs_to: #{inspect(local_targets)}")
-
-      # Check each target node - is child there?
-      Enum.each(local_targets, fn target ->
-        {in_sup, in_reg} =
-          if target == node() do
-            sup_children = Supervisor.which_children(dist_sup)
-            in_supervisor = Enum.any?(sup_children, fn {id, _, _, _} -> id == cid end)
-            in_registry = ProcessHub.Service.ProcessRegistry.lookup(hub_id, cid) != nil
-            {in_supervisor, in_registry}
-          else
-            :erpc.call(
-              target,
-              fn ->
-                # Get hub fresh on remote node
-                remote_hub = ProcessHub.Coordinator.get_hub(hub_id)
-                sup_children = Supervisor.which_children(remote_hub.procs.dist_sup)
-                in_supervisor = Enum.any?(sup_children, fn {id, _, _, _} -> id == cid end)
-                in_registry = ProcessHub.Service.ProcessRegistry.lookup(hub_id, cid) != nil
-                {in_supervisor, in_registry}
-              end,
-              5000
-            )
-          end
-
-        IO.puts("    #{target}: sup=#{in_sup}, reg=#{in_reg}")
-      end)
-
-      # Check what OTHER nodes think belongs_to returns
-      IO.puts("  Remote belongs_to calculations:")
-
-      Enum.each(Node.list() |> Enum.take(3), fn n ->
-        remote_targets =
-          :erpc.call(
-            n,
-            fn ->
-              # Get hub fresh on remote node
-              remote_hub = ProcessHub.Coordinator.get_hub(hub_id)
-
-              DistributionStrategy.belongs_to(dist_strat, remote_hub, [cid], rf)
-              |> Enum.find(fn {id, _} -> id == cid end)
-              |> elem(1)
-            end,
-            5000
-          )
-
-        match = if remote_targets == local_targets, do: "OK", else: "DIFFERENT!"
-        IO.puts("    #{n}: #{inspect(remote_targets)} #{match}")
-      end)
-
-      IO.puts("")
-    end)
-
-    IO.puts("=== END DEBUG ===\n")
   end
 
   @doc """

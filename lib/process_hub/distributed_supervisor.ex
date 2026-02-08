@@ -94,7 +94,11 @@ defmodule ProcessHub.DistributedSupervisor do
   defp wrap_child_spec(child_spec) do
     spec = Supervisor.child_spec(child_spec, [])
     {mod, fun, args} = spec.start
-    %{spec | start: {__MODULE__, :start_proxy, [spec.id, {mod, fun, args}]}}
+    modules = Map.get(spec, :modules, [mod])
+
+    spec
+    |> Map.put(:modules, modules)
+    |> Map.put(:start, {__MODULE__, :start_proxy, [spec.id, {mod, fun, args}]})
   end
 
   @doc false

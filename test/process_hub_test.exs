@@ -572,331 +572,329 @@ defmodule ProcessHubTest do
     assert not_existing === nil
   end
 
-  # test "register hook handlers", %{hub_id: hub_id} = _context do
-  #   # Test registering single handler
-  #   handler1 = %ProcessHub.Service.HookManager{
-  #     id: :test_hook_1,
-  #     m: :erlang,
-  #     f: :send,
-  #     a: [self(), :hook_test_1],
-  #     p: 100
-  #   }
+  test "register hook handlers", %{hub_id: hub_id} = _context do
+    # Test registering single handler
+    handler1 = %ProcessHub.Service.HookManager{
+      id: :test_hook_1,
+      m: :erlang,
+      f: :send,
+      a: [self(), :hook_test_1],
+      p: 100
+    }
 
-  #   result1 =
-  #     ProcessHub.register_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.pre_cluster_join(),
-  #       [handler1]
-  #     )
+    result1 =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.pre_cluster_join(),
+        [handler1]
+      )
 
-  #   assert result1 === :ok
+    assert result1 === :ok
 
-  #   # Test registering multiple handlers
-  #   handler2 = %ProcessHub.Service.HookManager{
-  #     id: :test_hook_2,
-  #     m: :erlang,
-  #     f: :send,
-  #     a: [self(), :hook_test_2],
-  #     p: 50
-  #   }
+    # Test registering multiple handlers
+    handler2 = %ProcessHub.Service.HookManager{
+      id: :test_hook_2,
+      m: :erlang,
+      f: :send,
+      a: [self(), :hook_test_2],
+      p: 50
+    }
 
-  #   handler3 = %ProcessHub.Service.HookManager{
-  #     id: :test_hook_3,
-  #     m: :erlang,
-  #     f: :send,
-  #     a: [self(), :hook_test_3],
-  #     p: 150
-  #   }
+    handler3 = %ProcessHub.Service.HookManager{
+      id: :test_hook_3,
+      m: :erlang,
+      f: :send,
+      a: [self(), :hook_test_3],
+      p: 150
+    }
 
-  #   result2 =
-  #     ProcessHub.register_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.post_cluster_join(),
-  #       [handler2, handler3]
-  #     )
+    result2 =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.post_cluster_join(),
+        [handler2, handler3]
+      )
 
-  #   assert result2 === :ok
+    assert result2 === :ok
 
-  #   # Test registering duplicate handler (should fail)
-  #   duplicate_result =
-  #     ProcessHub.register_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.pre_cluster_join(),
-  #       [handler1]
-  #     )
+    # Test registering duplicate handler (should fail)
+    duplicate_result =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.pre_cluster_join(),
+        [handler1]
+      )
 
-  #   assert duplicate_result === {:error, :failed_to_register_some_handlers}
+    assert duplicate_result === {:error, :failed_to_register_some_handlers}
 
-  #   # Test registering multiple handlers with duplicates
-  #   duplicate_multiple_result =
-  #     ProcessHub.register_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.post_cluster_join(),
-  #       [handler2, handler3]
-  #     )
+    # Test registering multiple handlers with duplicates
+    duplicate_multiple_result =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.post_cluster_join(),
+        [handler2, handler3]
+      )
 
-  #   assert duplicate_multiple_result ===
-  #            {:error, :failed_to_register_some_handlers}
-  # end
+    assert duplicate_multiple_result ===
+             {:error, :failed_to_register_some_handlers}
+  end
 
-  # test "cancel hook handlers", %{hub_id: hub_id} = _context do
-  #   # First register some handlers
-  #   handler1 = %ProcessHub.Service.HookManager{
-  #     id: :cancel_test_hook_1,
-  #     m: :erlang,
-  #     f: :send,
-  #     a: [self(), :cancel_hook_test_1],
-  #     p: 100
-  #   }
+  test "cancel hook handlers", %{hub_id: hub_id} = _context do
+    # First register some handlers
+    handler1 = %ProcessHub.Service.HookManager{
+      id: :cancel_test_hook_1,
+      m: :erlang,
+      f: :send,
+      a: [self(), :cancel_hook_test_1],
+      p: 100
+    }
 
-  #   handler2 = %ProcessHub.Service.HookManager{
-  #     id: :cancel_test_hook_2,
-  #     m: :erlang,
-  #     f: :send,
-  #     a: [self(), :cancel_hook_test_2],
-  #     p: 50
-  #   }
+    handler2 = %ProcessHub.Service.HookManager{
+      id: :cancel_test_hook_2,
+      m: :erlang,
+      f: :send,
+      a: [self(), :cancel_hook_test_2],
+      p: 50
+    }
 
-  #   handler3 = %ProcessHub.Service.HookManager{
-  #     id: :cancel_test_hook_3,
-  #     m: :erlang,
-  #     f: :send,
-  #     a: [self(), :cancel_hook_test_3],
-  #     p: 150
-  #   }
+    handler3 = %ProcessHub.Service.HookManager{
+      id: :cancel_test_hook_3,
+      m: :erlang,
+      f: :send,
+      a: [self(), :cancel_hook_test_3],
+      p: 150
+    }
 
-  #   ProcessHub.register_hook_handlers(
-  #     hub_id,
-  #     ProcessHub.Constant.Hook.registry_pid_inserted(),
-  #     [handler1, handler2, handler3]
-  #   )
+    ProcessHub.register_hook_handlers(
+      hub_id,
+      ProcessHub.Constant.Hook.registry_pid_inserted(),
+      [handler1, handler2, handler3]
+    )
 
-  #   # Test canceling single handler
-  #   result1 =
-  #     ProcessHub.cancel_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.registry_pid_inserted(),
-  #       [:cancel_test_hook_1]
-  #     )
+    # Test canceling single handler
+    result1 =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [:cancel_test_hook_1]
+      )
 
-  #   assert result1 === :ok
+    assert result1 === :ok
 
-  #   # Test canceling multiple handlers
-  #   result2 =
-  #     ProcessHub.cancel_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.registry_pid_inserted(),
-  #       [:cancel_test_hook_2, :cancel_test_hook_3]
-  #     )
+    # Test canceling multiple handlers
+    result2 =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [:cancel_test_hook_2, :cancel_test_hook_3]
+      )
 
-  #   assert result2 === :ok
+    assert result2 === :ok
 
-  #   # Test canceling non-existing handlers (should still return :ok)
-  #   result3 =
-  #     ProcessHub.cancel_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.registry_pid_inserted(),
-  #       [:non_existing_handler]
-  #     )
+    # Test canceling non-existing handlers (should still return :ok)
+    result3 =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [:non_existing_handler]
+      )
 
-  #   assert result3 === :ok
+    assert result3 === :ok
 
-  #   # Test canceling from empty hook key (should still return :ok)
-  #   result4 =
-  #     ProcessHub.cancel_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.registry_pid_removed(),
-  #       [:some_handler]
-  #     )
+    # Test canceling from empty hook key (should still return :ok)
+    result4 =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_removed(),
+        [:some_handler]
+      )
 
-  #   assert result4 === :ok
-  # end
+    assert result4 === :ok
+  end
 
-  # test "hook handlers integration", %{hub_id: hub_id} = _context do
-  #   # Test full cycle: register, use, cancel
-  #   test_pid = self()
+  test "hook handlers integration", %{hub_id: hub_id} = _context do
+    # Test full cycle: register, use, cancel
+    test_pid = self()
 
-  #   handler = %ProcessHub.Service.HookManager{
-  #     id: :integration_test_hook,
-  #     m: :erlang,
-  #     f: :send,
-  #     a: [test_pid, :integration_hook_fired],
-  #     p: 100
-  #   }
+    handler = %ProcessHub.Service.HookManager{
+      id: :integration_test_hook,
+      m: :erlang,
+      f: :send,
+      a: [test_pid, :integration_hook_fired],
+      p: 100
+    }
 
-  #   # Register handler
-  #   :ok =
-  #     ProcessHub.register_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.registry_pid_inserted(),
-  #       [handler]
-  #     )
+    # Register handler
+    :ok =
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [handler]
+      )
 
-  #   # Trigger the hook by starting a child (which registers a PID)
-  #   [child_spec] = ProcessHub.Utility.Bag.gen_child_specs(1)
+    # Trigger the hook by starting a child (which registers a PID)
+    [child_spec] = ProcessHub.Utility.Bag.gen_child_specs(1)
 
-  #   ProcessHub.start_child(hub_id, child_spec, awaitable: true)
-  #   |> ProcessHub.Future.await()
+    ProcessHub.start_child(hub_id, child_spec, awaitable: true)
+    |> ProcessHub.Future.await()
 
-  #   # Verify the hook was called
-  #   assert_receive :integration_hook_fired, 1000
+    # Verify the hook was called
+    assert_receive :integration_hook_fired, 1000
 
-  #   # Cancel the handler
-  #   :ok =
-  #     ProcessHub.cancel_hook_handlers(
-  #       hub_id,
-  #       ProcessHub.Constant.Hook.registry_pid_inserted(),
-  #       [:integration_test_hook]
-  #     )
+    # Cancel the handler
+    :ok =
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        [:integration_test_hook]
+      )
 
-  #   # Start another child to verify hook is no longer active
-  #   [child_spec2] = ProcessHub.Utility.Bag.gen_child_specs(1, id_type: :atom)
+    # Start another child to verify hook is no longer active
+    [child_spec2] = ProcessHub.Utility.Bag.gen_child_specs(1, id_type: :atom)
 
-  #   ProcessHub.start_child(hub_id, child_spec2, awaitable: true)
-  #   |> ProcessHub.Future.await()
+    ProcessHub.start_child(hub_id, child_spec2, awaitable: true)
+    |> ProcessHub.Future.await()
 
-  #   # Verify the hook was NOT called this time
-  #   refute_receive :integration_hook_fired, 100
-  # end
+    # Verify the hook was NOT called this time
+    refute_receive :integration_hook_fired, 100
+  end
 
-  # test "per-child metadata only", %{hub_id: hub_id} = _context do
-  #   [cs1, cs2, cs3] = ProcessHub.Utility.Bag.gen_child_specs(3)
+  test "per-child metadata only", %{hub_id: hub_id} = _context do
+    [cs1, cs2, cs3] = ProcessHub.Utility.Bag.gen_child_specs(3)
 
-  #   child_metadata = %{
-  #     "child1" => %{tag: "tag1"},
-  #     "child2" => %{tag: "tag2"},
-  #     "child3" => %{tag: "tag3"}
-  #   }
+    child_metadata = %{
+      "child1" => %{tag: "tag1"},
+      "child2" => %{tag: "tag2"},
+      "child3" => %{tag: "tag3"}
+    }
 
-  #   ProcessHub.start_children(
-  #     hub_id,
-  #     [cs1, cs2, cs3],
-  #     awaitable: true,
-  #     child_metadata: child_metadata
-  #   )
-  #   |> ProcessHub.Future.await()
+    ProcessHub.start_children(
+      hub_id,
+      [cs1, cs2, cs3],
+      awaitable: true,
+      child_metadata: child_metadata
+    )
+    |> ProcessHub.Future.await()
 
-  #   # Verify each child has its specific metadata
-  #   %{"child1" => {^cs1, _nodepids1, metadata1}} = ProcessHub.registry_dump(hub_id)
-  #   %{"child2" => {^cs2, _nodepids2, metadata2}} = ProcessHub.registry_dump(hub_id)
-  #   %{"child3" => {^cs3, _nodepids3, metadata3}} = ProcessHub.registry_dump(hub_id)
+    # Verify each child has its specific metadata
+    %{"child1" => {^cs1, _nodepids1, metadata1}} = ProcessHub.registry_dump(hub_id)
+    %{"child2" => {^cs2, _nodepids2, metadata2}} = ProcessHub.registry_dump(hub_id)
+    %{"child3" => {^cs3, _nodepids3, metadata3}} = ProcessHub.registry_dump(hub_id)
 
-  #   assert metadata1 === %{tag: "tag1"}
-  #   assert metadata2 === %{tag: "tag2"}
-  #   assert metadata3 === %{tag: "tag3"}
+    assert metadata1 === %{tag: "tag1"}
+    assert metadata2 === %{tag: "tag2"}
+    assert metadata3 === %{tag: "tag3"}
 
-  #   # Verify tag_query works with per-child metadata
-  #   tag1_result = ProcessHub.tag_query(hub_id, "tag1")
-  #   tag2_result = ProcessHub.tag_query(hub_id, "tag2")
-  #   tag3_result = ProcessHub.tag_query(hub_id, "tag3")
+    # Verify tag_query works with per-child metadata
+    tag1_result = ProcessHub.tag_query(hub_id, "tag1")
+    tag2_result = ProcessHub.tag_query(hub_id, "tag2")
+    tag3_result = ProcessHub.tag_query(hub_id, "tag3")
 
-  #   assert length(tag1_result) === 1
-  #   assert elem(Enum.at(tag1_result, 0), 0) === "child1"
-  #   assert length(tag2_result) === 1
-  #   assert elem(Enum.at(tag2_result, 0), 0) === "child2"
-  #   assert length(tag3_result) === 1
-  #   assert elem(Enum.at(tag3_result, 0), 0) === "child3"
-  # end
+    assert length(tag1_result) === 1
+    assert elem(Enum.at(tag1_result, 0), 0) === "child1"
+    assert length(tag2_result) === 1
+    assert elem(Enum.at(tag2_result, 0), 0) === "child2"
+    assert length(tag3_result) === 1
+    assert elem(Enum.at(tag3_result, 0), 0) === "child3"
+  end
 
-  # test "mixed per-child and global metadata", %{hub_id: hub_id} = _context do
-  #   [cs1, cs2, cs3] = ProcessHub.Utility.Bag.gen_child_specs(3)
+  test "mixed per-child and global metadata", %{hub_id: hub_id} = _context do
+    [cs1, cs2, cs3] = ProcessHub.Utility.Bag.gen_child_specs(3)
 
-  #   global_metadata = %{tag: "global_tag"}
+    global_metadata = %{tag: "global_tag"}
 
-  #   # Only provide specific metadata for child1 and child2
-  #   child_metadata = %{
-  #     "child1" => %{tag: "specific_tag1"},
-  #     "child2" => %{tag: "specific_tag2"}
-  #   }
+    # Only provide specific metadata for child1 and child2
+    child_metadata = %{
+      "child1" => %{tag: "specific_tag1"},
+      "child2" => %{tag: "specific_tag2"}
+    }
 
-  #   ProcessHub.start_children(
-  #     hub_id,
-  #     [cs1, cs2, cs3],
-  #     awaitable: true,
-  #     metadata: global_metadata,
-  #     child_metadata: child_metadata
-  #   )
-  #   |> ProcessHub.Future.await()
+    ProcessHub.start_children(
+      hub_id,
+      [cs1, cs2, cs3],
+      awaitable: true,
+      metadata: global_metadata,
+      child_metadata: child_metadata
+    )
+    |> ProcessHub.Future.await()
 
-  #   # Verify child1 and child2 have their specific metadata
-  #   %{"child1" => {^cs1, _nodepids1, metadata1}} = ProcessHub.registry_dump(hub_id)
-  #   %{"child2" => {^cs2, _nodepids2, metadata2}} = ProcessHub.registry_dump(hub_id)
+    # Verify child1 and child2 have their specific metadata
+    %{"child1" => {^cs1, _nodepids1, metadata1}} = ProcessHub.registry_dump(hub_id)
+    %{"child2" => {^cs2, _nodepids2, metadata2}} = ProcessHub.registry_dump(hub_id)
 
-  #   assert metadata1 === %{tag: "specific_tag1"}
-  #   assert metadata2 === %{tag: "specific_tag2"}
+    assert metadata1 === %{tag: "specific_tag1"}
+    assert metadata2 === %{tag: "specific_tag2"}
 
-  #   # Verify child3 falls back to global metadata
-  #   %{"child3" => {^cs3, _nodepids3, metadata3}} = ProcessHub.registry_dump(hub_id)
-  #   assert metadata3 === %{tag: "global_tag"}
+    # Verify child3 falls back to global metadata
+    %{"child3" => {^cs3, _nodepids3, metadata3}} = ProcessHub.registry_dump(hub_id)
+    assert metadata3 === %{tag: "global_tag"}
 
-  #   # Verify tag_query works correctly
-  #   tag1_result = ProcessHub.tag_query(hub_id, "specific_tag1")
-  #   tag2_result = ProcessHub.tag_query(hub_id, "specific_tag2")
-  #   global_tag_result = ProcessHub.tag_query(hub_id, "global_tag")
+    # Verify tag_query works correctly
+    tag1_result = ProcessHub.tag_query(hub_id, "specific_tag1")
+    tag2_result = ProcessHub.tag_query(hub_id, "specific_tag2")
+    global_tag_result = ProcessHub.tag_query(hub_id, "global_tag")
 
-  #   assert length(tag1_result) === 1
-  #   assert elem(Enum.at(tag1_result, 0), 0) === "child1"
-  #   assert length(tag2_result) === 1
-  #   assert elem(Enum.at(tag2_result, 0), 0) === "child2"
-  #   assert length(global_tag_result) === 1
-  #   assert elem(Enum.at(global_tag_result, 0), 0) === "child3"
-  # end
+    assert length(tag1_result) === 1
+    assert elem(Enum.at(tag1_result, 0), 0) === "child1"
+    assert length(tag2_result) === 1
+    assert elem(Enum.at(tag2_result, 0), 0) === "child2"
+    assert length(global_tag_result) === 1
+    assert elem(Enum.at(global_tag_result, 0), 0) === "child3"
+  end
 
-  # test "per-child metadata edge cases", %{hub_id: hub_id} = _context do
-  #   # Test 1: Empty child_metadata map - should use global metadata
-  #   [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
-  #   global_metadata = %{tag: "fallback_tag"}
+  test "per-child metadata edge cases", %{hub_id: hub_id} = _context do
+    # Test 1: Empty child_metadata map - should use global metadata
+    [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
+    global_metadata = %{tag: "fallback_tag"}
 
-  #   ProcessHub.start_children(
-  #     hub_id,
-  #     [cs1, cs2],
-  #     awaitable: true,
-  #     metadata: global_metadata,
-  #     child_metadata: %{}
-  #   )
-  #   |> ProcessHub.Future.await()
+    ProcessHub.start_children(
+      hub_id,
+      [cs1, cs2],
+      awaitable: true,
+      metadata: global_metadata,
+      child_metadata: %{}
+    )
+    |> ProcessHub.Future.await()
 
-  #   dump1 = ProcessHub.registry_dump(hub_id)
-  #   %{"child1" => {^cs1, _nodepids1, metadata1}} = dump1
-  #   %{"child2" => {^cs2, _nodepids2, metadata2}} = dump1
+    dump1 = ProcessHub.registry_dump(hub_id)
+    %{"child1" => {^cs1, _nodepids1, metadata1}} = dump1
+    %{"child2" => {^cs2, _nodepids2, metadata2}} = dump1
 
-  #   # Both should have global metadata since child_metadata is empty
-  #   assert metadata1 === %{tag: "fallback_tag"}
-  #   assert metadata2 === %{tag: "fallback_tag"}
+    # Both should have global metadata since child_metadata is empty
+    assert metadata1 === %{tag: "fallback_tag"}
+    assert metadata2 === %{tag: "fallback_tag"}
 
-  #   # Stop children for next test
-  #   ProcessHub.stop_children(hub_id, [cs1.id, cs2.id], awaitable: true)
-  #   |> ProcessHub.Future.await()
+    # Stop children for next test
+    ProcessHub.stop_children(hub_id, [cs1.id, cs2.id], awaitable: true)
+    |> ProcessHub.Future.await()
 
-  #   # Verify registry is cleared
-  #   assert ProcessHub.registry_dump(hub_id) === %{}
+    # Verify registry is cleared
+    assert ProcessHub.registry_dump(hub_id) === %{}
 
-  #   # Test 2: child_metadata but no global metadata
-  #   # Note: gen_child_specs starts from "child1" again, which is fine since previous ones were stopped
-  #   [cs3, cs4] = ProcessHub.Utility.Bag.gen_child_specs(2)
+    # Test 2: child_metadata but no global metadata
+    # Note: gen_child_specs starts from "child1" again, which is fine since previous ones were stopped
+    [cs3, cs4] = ProcessHub.Utility.Bag.gen_child_specs(2)
 
-  #   child_metadata_only = %{
-  #     "child1" => %{tag: "only_tag1"}
-  #     # child2 intentionally omitted
-  #   }
+    child_metadata_only = %{
+      "child1" => %{tag: "only_tag1"}
+      # child2 intentionally omitted
+    }
 
-  #   ProcessHub.start_children(
-  #     hub_id,
-  #     [cs3, cs4],
-  #     awaitable: true,
-  #     child_metadata: child_metadata_only
-  #   )
-  #   |> ProcessHub.Future.await()
+    ProcessHub.start_children(
+      hub_id,
+      [cs3, cs4],
+      awaitable: true,
+      child_metadata: child_metadata_only
+    )
+    |> ProcessHub.Future.await()
 
-  #   dump2 = ProcessHub.registry_dump(hub_id)
-  #   %{"child1" => {^cs3, _nodepids3, metadata3}} = dump2
-  #   %{"child2" => {^cs4, _nodepids4, metadata4}} = dump2
+    dump2 = ProcessHub.registry_dump(hub_id)
+    %{"child1" => {^cs3, _nodepids3, metadata3}} = dump2
+    %{"child2" => {^cs4, _nodepids4, metadata4}} = dump2
 
-  #   # child1 should have specific metadata
-  #   assert metadata3 === %{tag: "only_tag1"}
-  #   # child2 should have empty metadata (no global fallback)
-  #   assert metadata4 === %{}
-  # end
-
-  # TODO:
+    # child1 should have specific metadata
+    assert metadata3 === %{tag: "only_tag1"}
+    # child2 should have empty metadata (no global fallback)
+    assert metadata4 === %{}
+  end
 end
