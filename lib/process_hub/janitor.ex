@@ -1,4 +1,5 @@
 defmodule ProcessHub.Janitor do
+  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.LoggerService
 
@@ -75,7 +76,7 @@ defmodule ProcessHub.Janitor do
       [child_id, {child_spec, _nodes, metadata}, ttl_expire] ->
         if curr_timestamp > ttl_expire do
           log_pending_expiry(hub_id, child_id, child_spec, metadata)
-          Storage.remove(hub_id, child_id)
+          ProcessRegistry.delete(hub_id, child_id)
         end
 
       _ ->

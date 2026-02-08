@@ -97,8 +97,8 @@ defmodule Test.Service.StorageTest do
   end
 
   test "clear all" do
-    # Were not using local storage because this would result in error.
-    process_storage = @hub_id
+    # Use a dedicated public ETS table to avoid conflicts with misc storage data.
+    process_storage = :ets.new(:test_clear_all, [:set, :public])
 
     Storage.insert(process_storage, "test_clear_1", "my_value")
     Storage.insert(process_storage, "test_clear_2", "my_value")
@@ -112,8 +112,8 @@ defmodule Test.Service.StorageTest do
   end
 
   test "export all" do
-    # Were not using local storage because it has other required elements inside it.
-    process_storage = @hub_id
+    # Use a dedicated public ETS table to avoid conflicts with misc storage data.
+    process_storage = :ets.new(:test_export_all, [:set, :public])
 
     assert Storage.export_all(process_storage) === []
 

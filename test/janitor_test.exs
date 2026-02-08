@@ -1,6 +1,5 @@
 defmodule Test.JanitorTest do
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.Storage
   alias ProcessHub.Janitor
 
   use ExUnit.Case
@@ -25,9 +24,8 @@ defmodule Test.JanitorTest do
       child_spec = %{id: :pending_child_1, start: {TestModule, :start_link, []}}
       metadata = %{pending: true, forwarded_at: 1_234_567_890, target_nodes: [:node1]}
 
-      # Insert directly into ETS with expired TTL (timestamp in the past)
-      expired_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.-(1000)
-      :ets.insert(hub_id, {:pending_child_1, {child_spec, [], metadata}, expired_timestamp})
+      # Insert via ProcessRegistry with a negative TTL to create an expired entry
+      ProcessRegistry.insert(hub_id, child_spec, [], metadata: metadata, ttl: -1000)
 
       # Verify the entry exists
       assert :ets.lookup(hub_id, :pending_child_1) != []
@@ -45,8 +43,7 @@ defmodule Test.JanitorTest do
       metadata = %{pending: true, forwarded_at: 1_234_567_890, target_nodes: [:node2]}
 
       # Insert with future TTL (10 minutes from now)
-      future_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.+(600_000)
-      :ets.insert(hub_id, {:pending_child_2, {child_spec, [], metadata}, future_timestamp})
+      ProcessRegistry.insert(hub_id, child_spec, [], metadata: metadata, ttl: 600_000)
 
       # Call purge directly
       Janitor.purge_pending_registry(hub_id)
@@ -55,7 +52,7 @@ defmodule Test.JanitorTest do
       assert :ets.lookup(hub_id, :pending_child_2) != []
 
       # Cleanup
-      Storage.remove(hub_id, :pending_child_2)
+      ProcessRegistry.delete(hub_id, :pending_child_2)
     end
 
     test "does not affect regular entries without TTL", %{hub_id: hub_id} do
@@ -71,14 +68,12 @@ defmodule Test.JanitorTest do
     end
 
     test "handles multiple expired entries", %{hub_id: hub_id} do
-      expired_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.-(1000)
-
       # Insert multiple expired pending entries
       Enum.each(1..5, fn i ->
         child_id = :"multi_pending_#{i}"
         child_spec = %{id: child_id, start: {TestModule, :start_link, []}}
         metadata = %{pending: true, forwarded_at: 1_234_567_890, target_nodes: [:node1]}
-        :ets.insert(hub_id, {child_id, {child_spec, [], metadata}, expired_timestamp})
+        ProcessRegistry.insert(hub_id, child_spec, [], metadata: metadata, ttl: -1000)
       end)
 
       # Verify entries exist
@@ -106,8 +101,7 @@ defmodule Test.JanitorTest do
       child_spec = %{id: :dump_pending, start: {TestModule, :start_link, []}}
       metadata = %{pending: true, forwarded_at: 1_234_567_890, target_nodes: [:node1]}
 
-      future_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.+(600_000)
-      :ets.insert(hub_id, {:dump_pending, {child_spec, [], metadata}, future_timestamp})
+      ProcessRegistry.insert(hub_id, child_spec, [], metadata: metadata, ttl: 600_000)
 
       # Verify dump returns the entry (without TTL in the result)
       dump = ProcessRegistry.dump(hub_id)
@@ -115,7 +109,7 @@ defmodule Test.JanitorTest do
       assert dump[:dump_pending] == {child_spec, [], metadata}
 
       # Cleanup
-      Storage.remove(hub_id, :dump_pending)
+      ProcessRegistry.delete(hub_id, :dump_pending)
     end
   end
 end
