@@ -6,8 +6,7 @@ defmodule ProcessHub.Utility.Bag do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
 
-  # TODO: change back to 5k
-  @default_timeout 10000
+  @default_timeout 5000
 
   @doc """
   Sends hook messages to the given process.

@@ -273,7 +273,6 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  # TODO: handle everything inside worker instead.
   def handle_info({@event_cluster_leave, node}, state) do
     {:noreply, Cluster.process_node_down(state, node)}
   end

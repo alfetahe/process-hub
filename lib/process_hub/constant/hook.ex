@@ -43,6 +43,8 @@ defmodule ProcessHub.Constant.Hook do
   @spec registry_pid_removed() :: atom()
   def registry_pid_removed(), do: :registry_pid_remove_hook
 
+  # TODO: Lets replace this. It's emitted after the handler has finished processing the request
+  # but the migration may or may not be completed yet.
   @doc """
   Hook triggered when a process is migrated to another node.
   """
@@ -119,13 +121,6 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec child_data_alter() :: atom()
   def child_data_alter(), do: :child_data_alter_hook
-
-  # TODO: remove
-  @doc """
-  Hook triggered after HotSwap migration has delivered state to a new process.
-  """
-  @spec hotswap_handover_delivered() :: atom()
-  def hotswap_handover_delivered(), do: :hotswap_handover_delivered_hook
 
   @doc """
   Hook dispatched when handover states have been delivered to migrated processes.
