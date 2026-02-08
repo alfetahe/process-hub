@@ -40,6 +40,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Migration.SwapMigration
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
@@ -165,10 +166,72 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     :ok
   end
 
+  # Graceful shutdown handlers - delegate to SwapMigration
+
+  @doc false
+  def handle_shutdown(%__MODULE__{handover: true, state_query_timeout: timeout} = _struct, hub) do
+    SwapMigration.handle_shutdown(
+      hub,
+      timeout,
+      :query_cold_handover_state,
+      :coldswap_state,
+      __MODULE__,
+      "ColdSwap"
+    )
+  end
+
+  def handle_shutdown(_struct, _hub), do: :ok
+
+  @doc false
+  def handle_process_startups(%__MODULE__{handover: true} = _struct, hub, cpids) do
+    SwapMigration.handle_process_startups(hub, cpids, StorageKey.mcsk(), :coldswap_handover)
+  end
+
+  def handle_process_startups(_struct, _hub, _pids), do: nil
+
+  @doc false
+  def handle_storage_update(hub, data) do
+    SwapMigration.handle_storage_update(hub, data, StorageKey.mcsk())
+  end
+
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.ColdSwap do
     alias ProcessHub.Strategy.Migration.ColdSwap
 
     @impl true
+    def init(%ColdSwap{handover: true} = strategy, hub) do
+      # Register for graceful shutdown
+      shutdown_handler = %HookManager{
+        id: :mcs_shutdown,
+        m: ColdSwap,
+        f: :handle_shutdown,
+        a: [strategy, hub],
+        p: 100
+      }
+
+      HookManager.register_handler(
+        hub.storage.hook,
+        Hook.coordinator_shutdown(),
+        shutdown_handler
+      )
+
+      # Register for process startups (graceful shutdown handover delivery)
+      process_startups_handler = %HookManager{
+        id: :mcs_process_startups,
+        m: ColdSwap,
+        f: :handle_process_startups,
+        a: [strategy, hub, :_],
+        p: 100
+      }
+
+      HookManager.register_handler(
+        hub.storage.hook,
+        Hook.process_startups(),
+        process_startups_handler
+      )
+
+      strategy
+    end
+
     def init(strategy, _hub), do: strategy
 
     @impl MigrationStrategy

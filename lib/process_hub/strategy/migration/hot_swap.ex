@@ -41,18 +41,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   > the hub will fail to start with `{:error, {:invalid_config, :handover_with_replication_not_supported}}`.
   """
 
-  alias ProcessHub.Service.LoggerService
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Migration.SwapMigration
-  alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.HookManager
-  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Strategy.Migration.HotSwap
   alias ProcessHub.Utility.Extractor
   alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
@@ -75,9 +70,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defstruct handover: false,
             state_ttl: 30000,
             state_query_timeout: 5000
-
-  # TTL for graceful shutdown state storage (longer than regular migration)
-  @graceful_shutdown_ttl :timer.seconds(60)
 
   @doc """
   Options:
@@ -192,152 +184,32 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     :ok
   end
 
-  # Graceful shutdown handlers
+  # Graceful shutdown handlers - delegate to SwapMigration
 
   @doc false
   def handle_shutdown(%__MODULE__{handover: true, state_query_timeout: timeout} = _struct, hub) do
-    # Make sure there are other nodes in the cluster left.
-    if Cluster.nodes(hub.storage.misc) |> length() > 0 do
-      ProcessRegistry.local_data(hub.hub_id)
-      |> query_states_for_shutdown(timeout)
-      |> send_states_to_target_nodes(hub)
-    end
-
-    :ok
+    SwapMigration.handle_shutdown(
+      hub,
+      timeout,
+      :query_hot_handover_state,
+      :hotswap_state,
+      __MODULE__,
+      "HotSwap"
+    )
   end
 
   def handle_shutdown(_struct, _hub), do: :ok
 
   @doc false
   def handle_process_startups(%__MODULE__{handover: true} = _struct, hub, cpids) do
-    state_data = Storage.get(hub.storage.misc, StorageKey.msk()) || []
-
-    Enum.each(cpids, fn %{cid: cid, pid: pid} ->
-      pstate = Enum.find(state_data, fn {child_id, _} -> child_id === cid end)
-
-      if is_tuple(pstate) do
-        send(pid, {:process_hub, :hotswap_handover, cid, pstate |> elem(1)})
-      end
-    end)
-
-    # Clean up after delivery
-    rem_states(Enum.map(state_data, fn {cid, _} -> cid end), hub.storage.misc)
+    SwapMigration.handle_process_startups(hub, cpids, StorageKey.msk(), :hotswap_handover)
   end
 
   def handle_process_startups(_struct, _hub, _pids), do: nil
 
   @doc false
   def handle_storage_update(hub, data) do
-    old_value = Storage.get(hub.storage.misc, StorageKey.msk())
-
-    new_value =
-      case old_value do
-        nil -> data
-        _ -> data ++ old_value
-      end
-
-    Storage.insert(hub.storage.misc, StorageKey.msk(), new_value, ttl: @graceful_shutdown_ttl)
-  end
-
-  # Private helpers for graceful shutdown
-
-  defp query_states_for_shutdown(local_data, timeout) do
-    local_node = node()
-    self_pid = self()
-
-    # Send query messages to all local processes
-    Enum.each(local_data, fn {child_id, {_cs, cn, _m}} ->
-      local_pid = Keyword.get(cn, local_node)
-
-      if is_pid(local_pid) do
-        send(local_pid, {:process_hub, :query_hot_handover_state, self_pid, child_id})
-      end
-    end)
-
-    # Collect responses
-    states =
-      Enum.map(local_data, fn _x ->
-        receive do
-          {:process_hub, :hotswap_state, cid, state} ->
-            {cid, state}
-        after
-          timeout ->
-            LoggerService.error(
-              "Handover timeout while shutting down the node @node",
-              %{"node" => local_node},
-              prefix: "HotSwap"
-            )
-
-            nil
-        end
-      end)
-      |> Enum.filter(&(&1 != nil))
-
-    {local_data, states}
-  end
-
-  defp send_states_to_target_nodes({local_data, states}, hub) do
-    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
-
-    repl_fact =
-      Storage.get(hub.storage.misc, StorageKey.strred())
-      |> RedundancyStrategy.replication_factor()
-
-    cids = Enum.map(local_data, &elem(&1, 0))
-    cid_node_pairs = DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
-
-    send_data =
-      Enum.reduce(cid_node_pairs, %{}, fn {cid, new_nodes}, acc ->
-        case ProcessHub.Utility.Bag.get_by_key(local_data, cid) do
-          nil ->
-            acc
-
-          {_, cn, _m} ->
-            nodes = Keyword.keys(cn)
-            migration_node = Enum.find(new_nodes, fn node -> not Enum.member?(nodes, node) end)
-
-            case migration_node do
-              nil ->
-                acc
-
-              _ ->
-                migr_data =
-                  (Enum.find(states, fn {child_id, _} -> child_id === cid end) || {nil, nil})
-                  |> elem(1)
-
-                node_data = Map.get(acc, migration_node, [])
-                Map.put(acc, migration_node, [{cid, migr_data} | node_data])
-            end
-        end
-      end)
-
-    # Send the data to each node
-    Enum.each(send_data, fn {target_node, data} ->
-      cluster_nodes = Cluster.nodes(hub.storage.misc)
-
-      if Enum.member?(cluster_nodes, target_node) && Enum.member?(Node.list(), target_node) do
-        GenServer.cast(
-          {hub.hub_id, target_node},
-          {:exec_cast, {__MODULE__, :handle_storage_update, [data]}}
-        )
-      end
-    end)
-  end
-
-  defp rem_states(cids, misc_storage) do
-    case Storage.get(misc_storage, StorageKey.msk()) do
-      nil ->
-        :ok
-
-      states ->
-        new_states = Enum.reject(states, fn {cid, _} -> Enum.member?(cids, cid) end)
-
-        if new_states == [] do
-          Storage.remove(misc_storage, StorageKey.msk())
-        else
-          Storage.insert(misc_storage, StorageKey.msk(), new_states, ttl: @graceful_shutdown_ttl)
-        end
-    end
+    SwapMigration.handle_storage_update(hub, data, StorageKey.msk())
   end
 
   # Protocol implementation
