@@ -56,10 +56,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   @spec handle_propagation(
           ProcessHub.Strategy.Synchronization.Gossip.t(),
           Hub.t(),
-          term(),
-          :add | :rem
+          term()
         ) :: :ok
-  def handle_propagation(strategy, hub, {ref, acks, child_data, update_node}, type) do
+  def handle_propagation(strategy, hub, {ref, acks, requests}) do
     misc_storage = hub.storage.misc
 
     cached_acks =
@@ -83,7 +82,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
         acks =
           if Enum.member?(unacked_nodes, node()) do
-            # TODO: fix later. handle_request_propagation(hub.hub_id, child_data, update_node, type)
+            handle_request_propagation(hub.hub_id, requests)
 
             [node() | acks]
           else
@@ -93,7 +92,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         Storage.insert(misc_storage, ref, acks, ttl: strategy.sync_interval)
 
         recipients_select(unacked_nodes, strategy)
-        |> propagate_data(hub, strategy, {ref, acks, child_data, update_node}, type)
+        |> propagate_data(hub, strategy, {ref, acks, requests})
     end
 
     :ok
@@ -112,17 +111,16 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           [node()],
           Hub.t(),
           ProcessHub.Strategy.Synchronization.Gossip.t(),
-          term(),
-          :add | :rem
+          term()
         ) :: :ok
-  def propagate_data(nodes, hub, strategy, data, type) do
+  def propagate_data(nodes, hub, strategy, data) do
     Enum.each(nodes, fn node ->
       Node.spawn(node, fn ->
         local_hub = Coordinator.get_hub(hub.hub_id)
 
         GenServer.cast(
           local_hub.procs.worker_queue,
-          {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data, type) end}
+          {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data) end}
         )
       end)
     end)
@@ -135,7 +133,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
   @spec handle_request_propagation(
           ProcessHub.hub_id(),
-          [NodeRequest.t()]
+          [struct()]
         ) :: :ok
   def handle_request_propagation(hub_id, requests) when is_list(requests) do
     try do
@@ -153,6 +151,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.Gossip do
     alias ProcessHub.Strategy.Synchronization.Gossip
+    alias ProcessHub.Service.Cluster
 
     use Event
 
@@ -163,11 +162,16 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     @spec propagate(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
             Hub.t(),
-            [NodeRequest.t()],
+            [struct()],
             keyword()
           ) :: :ok
-    def propagate(_strategy, hub, requests, _opts) when is_list(requests) do
+    def propagate(strategy, hub, requests, _opts) when is_list(requests) do
+      ref = make_ref()
       Gossip.handle_request_propagation(hub.hub_id, requests)
+
+      Cluster.nodes(hub.storage.misc)
+      |> Gossip.recipients_select(strategy)
+      |> Gossip.propagate_data(hub, strategy, {ref, [node()], requests})
 
       :ok
     end
