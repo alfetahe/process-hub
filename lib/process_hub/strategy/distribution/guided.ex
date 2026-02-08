@@ -156,8 +156,8 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
           optional(any()) => any()
         }) ::
           :ok
-  def handle_children_start(hub, %{start_opts: start_opts}) do
-    insert_child_mappings(hub, Keyword.get(start_opts, :child_mapping, %{}))
+  def handle_children_start(hub, %{request: request}) do
+    insert_child_mappings(hub, Keyword.get(request.options, :child_mapping, %{}))
   end
 
   @spec insert_child_mappings(Hub.t(), any()) :: :ok
