@@ -5,6 +5,7 @@ defmodule Test.Helper.Common do
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Service.Ring
   alias ProcessHub.Constant.Hook
+  alias Test.Helper.Bootstrap
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -472,6 +473,164 @@ defmodule Test.Helper.Common do
     end)
 
     IO.puts("=== END DEBUG ===\n")
+  end
+
+  @doc """
+  Runs a migration test for both hot and cold swap strategies.
+
+  Stops peer hubs, starts children on the local node, sets handoff data,
+  restarts peer hubs, waits for migration to complete, then validates:
+  - Handoff data was correctly transferred to migrated children
+  - Each migrated child is running on the correct target node
+  - Registry has the correct total child count
+  - Each child is on the expected node(s) per the distribution strategy
+  - Per-node child counts match the expected distribution
+  """
+  def run_migration_test(context, nodes_count, child_count) do
+    %{hub_id: hub_id, listed_hooks: lh, hub_conf: hub_conf, hub: hub} = context
+
+    child_specs =
+      Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub_id), id_type: :string)
+
+    # Stop hubs on peer nodes before we start.
+    Enum.each(Node.list(), fn node ->
+      :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
+    end)
+
+    # Node downs.
+    Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
+      error_msg: "Post redistribution timeout"
+    )
+
+    # Confirm that hubs are stopped.
+    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave(),
+      error_msg: "Cluster leave timeout"
+    )
+
+    # Start children on local node.
+    sync_base_test(context, child_specs, :add)
+
+    # Add custom data to children.
+    Enum.each(child_specs, fn child_spec ->
+      {_child_spec, [{_, pid}]} = ProcessHub.child_lookup(hub_id, child_spec.id)
+      GenServer.call(pid, {:set_value, :handoff_data, child_spec.id})
+    end)
+
+    # Calculate expected distribution BEFORE restarting hubs.
+    local_node = node()
+    dist_strat = hub_conf.distribution_strategy
+    child_ids = Enum.map(child_specs, & &1.id)
+    expected_distribution = DistributionStrategy.belongs_to(dist_strat, hub, child_ids, 1)
+
+    migrated_children =
+      expected_distribution
+      |> Enum.map(fn {child_id, nodes} -> {child_id, List.first(nodes)} end)
+      |> Enum.filter(fn {_, n} -> n !== local_node end)
+
+    # Restart hubs on peer nodes.
+    Bootstrap.gen_hub(context)
+    |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true, skip_await: true)
+
+    # Wait for all handover deliveries to complete.
+    migrated_child_ids = Enum.map(migrated_children, fn {child_id, _node} -> child_id end)
+
+    if length(migrated_child_ids) > 0 do
+      Bag.await_child_ids(
+        Hook.handover_delivered(),
+        migrated_child_ids,
+        error_msg: "Handover delivery timeout",
+        timeout: 60_000
+      )
+    end
+
+    # Validate handoff data was transferred correctly.
+    validate_handoff_data(hub_id, migrated_children)
+
+    # Validate children are on the correct nodes.
+    validate_node_placement(hub_id, migrated_children)
+
+    # Validate full registry state and distribution.
+    validate_migration_distribution(hub_id, child_specs, expected_distribution)
+  end
+
+  @doc """
+  Validates that handoff data was correctly transferred to migrated children.
+  """
+  def validate_handoff_data(hub_id, migrated_children) do
+    Enum.each(migrated_children, fn {child_id, _node} ->
+      {_child_spec, nodes} = ProcessHub.child_lookup(hub_id, child_id)
+      {_node, pid} = List.first(nodes)
+      handover_data = GenServer.call(pid, {:get_value, :handoff_data})
+
+      assert handover_data === child_id,
+             "Child #{child_id} invalid handoff data: #{inspect(handover_data)} with pid #{inspect(pid)}"
+    end)
+  end
+
+  @doc """
+  Validates that each child in the list is running on the expected node.
+  Accepts a list of `{child_id, expected_node}` tuples.
+  """
+  def validate_node_placement(hub_id, expected_children) do
+    Enum.each(expected_children, fn {child_id, expected_node} ->
+      {_child_spec, nodes} = ProcessHub.child_lookup(hub_id, child_id)
+      {actual_node, _pid} = List.first(nodes)
+
+      assert actual_node === expected_node,
+             "Child #{child_id} is on #{actual_node}, expected #{expected_node}"
+    end)
+  end
+
+  @doc """
+  Validates the full registry state after migration:
+  - Total child count matches expected
+  - Each child is on the correct node(s) per the expected distribution
+  - Per-node child counts match the expected distribution
+  """
+  def validate_migration_distribution(hub_id, child_specs, expected_distribution) do
+    registry = ProcessHub.registry_dump(hub_id)
+
+    # Validate total count.
+    registry_count = map_size(registry)
+    expected_count = length(child_specs)
+
+    assert registry_count === expected_count,
+           "Registry has #{registry_count} children, expected #{expected_count}"
+
+    # Validate each child is on the expected node(s).
+    Enum.each(expected_distribution, fn {child_id, expected_nodes} ->
+      case Map.get(registry, child_id) do
+        nil ->
+          flunk("Child #{child_id} missing from registry after migration")
+
+        {_spec, actual_node_pids, _metadata} ->
+          actual_nodes = Keyword.keys(actual_node_pids) |> Enum.sort()
+          sorted_expected = Enum.sort(expected_nodes)
+
+          assert actual_nodes === sorted_expected,
+                 "Child #{child_id} on nodes #{inspect(actual_nodes)}, expected #{inspect(sorted_expected)}"
+      end
+    end)
+
+    # Validate per-node child counts.
+    expected_per_node =
+      expected_distribution
+      |> Enum.flat_map(fn {_child_id, nodes} -> nodes end)
+      |> Enum.frequencies()
+
+    actual_per_node =
+      registry
+      |> Enum.flat_map(fn {_child_id, {_spec, node_pids, _meta}} ->
+        Keyword.keys(node_pids)
+      end)
+      |> Enum.frequencies()
+
+    Enum.each(expected_per_node, fn {n, expected_n_count} ->
+      actual_n_count = Map.get(actual_per_node, n, 0)
+
+      assert actual_n_count === expected_n_count,
+             "Node #{n} has #{actual_n_count} children, expected #{expected_n_count}"
+    end)
   end
 
   @doc """

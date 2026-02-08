@@ -38,18 +38,14 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   """
 
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
-  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Strategy.Migration.SwapMigration
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Extractor
-  alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
   alias ProcessHub.Request.PostAction
-  alias ProcessHub.Service.Dispatcher
 
   @typedoc """
   The cold swap migration struct.
@@ -127,27 +123,14 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
           ProcessHub.child_id()
         ]) :: :ok
   def handle_post_action_state_fetch(hub, results, originating_node, child_ids) do
-    # Build child_id -> pid mapping for successfully started children
-    started_pids =
-      results
-      |> Enum.filter(&match?({:ok, _}, &1.result))
-      |> Enum.map(fn %PostStartData{cid: cid, pid: pid} -> {cid, pid} end)
-      |> Map.new()
-
-    # Filter to requested child_ids that were actually started
-    valid_cid_pids =
-      child_ids
-      |> Enum.filter(&Map.has_key?(started_pids, &1))
-      |> Enum.map(&{&1, Map.get(started_pids, &1)})
-
-    if valid_cid_pids != [] do
-      send(
-        {hub.hub_id, originating_node},
-        {:post_action_callback, __MODULE__, :deliver_handover_states, [node(), valid_cid_pids]}
-      )
-    end
-
-    :ok
+    SwapMigration.notify_originating_node(
+      hub,
+      results,
+      originating_node,
+      child_ids,
+      __MODULE__,
+      :deliver_handover_states
+    )
   end
 
   @doc """
@@ -195,217 +178,71 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
           nodes,
           handler
         ) do
-      local_node = node()
-
-      # Get all registry entries that belong to the current node + entries
-      # which do not belong to any node.
-      migration_candidates = Extractor.local_and_empty_children(hub.hub_id)
-
-      # Get all cids.
-      cids = Enum.map(migration_candidates, fn {cid, _} -> cid end)
-
-      # Calculate belonging nodes for all candidates.
-      # Prepare the calculated cid -> nodes map.
-      # This acts as a source of truth for where each child should be.
-      cid_node_pairs =
-        if length(cids) > 0 do
-          DistributionStrategy.belongs_to(
-            handler.dist_strat,
-            hub,
-            cids,
-            RedundancyStrategy.replication_factor(handler.redun_strat)
-          )
-        else
-          %{}
-        end
-
-      # Populate calculated_cids in handler for future reference to
-      # avoid recalculation.
-      handler = Map.put(handler, :calculated_cids, cid_node_pairs)
-
-      processable =
-        Enum.reduce(migration_candidates, %{stop_local: [], forward_to: []}, fn {child_id,
-                                                                                 {cspec,
-                                                                                  node_pids, meta}},
-                                                                                acc ->
-          curr_nodes = Keyword.keys(node_pids)
-          all_calculated_nodes = Map.get(cid_node_pairs, child_id, [])
-
-          # ColdSwap only handles PRIMARY (index 0) migration.
-          # Replication strategy handles replicas (indices 1+).
-          primary_node = List.first(all_calculated_nodes)
-
-          # For forwarding decisions, only consider the primary node
-          primary_nodes = if primary_node, do: [primary_node], else: []
-
-          # Determine if migration needed.
-          # Check if distribution differs from current nodes.
-          if Enum.sort(curr_nodes) != Enum.sort(all_calculated_nodes) do
-            # Update forward_to list conditionally.
-            forward_list = Map.get(acc, :forward_to)
-
-            new_forward_list =
-              case eligible_for_sending?(curr_nodes, primary_nodes, local_node) do
-                # Local node should send start request to new primary.
-                true ->
-                  new_nodes = find_new_nodes(curr_nodes, primary_nodes)
-                  [{cspec, meta, new_nodes} | forward_list]
-
-                # Local node should not forward child.
-                false ->
-                  forward_list
-              end
-
-            # Local node should stop if it's no longer in ANY of the calculated nodes.
-            # Replication strategy handles starting/stopping replicas.
-            case Enum.member?(all_calculated_nodes, local_node) do
-              # Local node is still a target (primary or replica), conditionally forward.
-              true ->
-                Map.put(acc, :forward_to, new_forward_list)
-
-              # Local node is no longer a target at all, mark for stopping and conditionally forward.
-              false ->
-                acc
-                |> Map.put(:stop_local, [child_id | Map.get(acc, :stop_local)])
-                |> Map.put(:forward_to, new_forward_list)
-            end
-          else
-            acc
-          end
-        end)
+      {handler, processable, migration_candidates} =
+        SwapMigration.compute_processable(hub, handler)
 
       %{stop_local: to_stop_locally, forward_to: to_send_to_nodes} = processable
 
-      # Execute: Stop children locally.
+      # ColdSwap: terminate local children BEFORE sending start requests.
       if length(to_stop_locally) > 0 do
-        # If handover enabled, query and store states before termination
         if handover do
           local_pids = Extractor.local_cid_pid_pairs(migration_candidates)
-
           query_and_store_states(hub, to_stop_locally, local_pids, ttl, timeout)
         end
 
-        # Locally terminate children and propagate termination across cluster.
         Distributor.children_terminate(hub, to_stop_locally, handler.sync_strat)
       end
 
       migrated = Enum.map(to_send_to_nodes, fn {cspec, _meta, _target_nodes} -> cspec end)
 
-      # Prepare item to send and group by target node.
-      to_send_to_nodes =
-        Enum.reduce(to_send_to_nodes, %{}, fn {cspec, meta, target_nodes}, acc ->
-          Enum.reduce(target_nodes, acc, fn target_node, inner_acc ->
-            Map.update(inner_acc, target_node, [{cspec, meta}], fn list ->
-              [{cspec, meta} | list]
-            end)
-          end)
-        end)
+      # Group by target node and create/send requests.
+      grouped = SwapMigration.group_children_by_node(to_send_to_nodes)
 
-      # Execute: Send start requests to new nodes (fire and forget)
-      node_start_requests = create_migration_requests(hub, to_send_to_nodes, handover)
+      requests =
+        if handover do
+          create_handover_requests(hub, grouped)
+        else
+          SwapMigration.create_migration_requests(hub, grouped, nil)
+        end
 
-      if length(node_start_requests) > 0 do
-        Dispatcher.children_start(hub, node_start_requests)
-      end
-
-      # Dispatch migration hook
-      if length(migrated) > 0 do
-        HookManager.dispatch_hook(
-          hub.storage.hook,
-          Hook.children_migrated(),
-          {nodes, migrated}
-        )
-      end
+      SwapMigration.send_start_requests(hub, requests)
+      SwapMigration.dispatch_migration_hook(hub, migrated, nodes)
 
       handler
     end
 
     @impl MigrationStrategy
     def handle_topology_contraction(%ColdSwap{} = _struct, hub, _removed_nodes, handler) do
-      local_node = node()
-
-      # Use pre-calculated cid_node_map from handler to avoid recalculating hash ring.
-      cid_node_map = Map.get(handler, :calculated_cids, %{})
-
-      registry_data = ProcessRegistry.dump(hub.hub_id)
-
-      # Find children that should be started locally as PRIMARY.
-      # ColdSwap only handles primary (index 0), Replication handles replicas (indices 1+).
-      children_to_start =
-        Enum.reduce(registry_data, [], fn {child_id, {cspec, node_pids, meta}}, acc ->
-          nodes_orig = Keyword.keys(node_pids)
-          nodes_new = Map.get(cid_node_map, child_id, [])
-
-          # Only start if local node is the PRIMARY (index 0) and wasn't running before
-          primary_node = List.first(nodes_new)
-
-          if primary_node == local_node and not Enum.member?(nodes_orig, local_node) do
-            [{cspec, meta} | acc]
-          else
-            acc
-          end
-        end)
-
-      if children_to_start != [] do
-        grouped = %{local_node => children_to_start}
-        requests = create_contraction_requests(hub, grouped, local_node)
-        Dispatcher.children_start(hub, requests)
-      end
-
-      handler
+      SwapMigration.handle_contraction(hub, handler)
     end
 
-    defp create_contraction_requests(hub, grouped, _local_node) do
-      Enum.flat_map(grouped, fn {_node, children} ->
-        if children != [] do
-          [StartChildrenRequest.for_contraction(hub, children)]
+    # Creates per-node migration requests with handover post-actions.
+    # Each node gets its own post_action containing only its child_ids.
+    defp create_handover_requests(hub, grouped_by_node) do
+      Enum.flat_map(grouped_by_node, fn {target_node, children_data} ->
+        if children_data != [] do
+          child_ids = Enum.map(children_data, fn {cspec, _meta} -> cspec.id end)
+
+          post_action =
+            PostAction.new(ColdSwap, :handle_post_action_state_fetch, [node(), child_ids])
+
+          [
+            ProcessHub.Request.Handler.StartChildrenRequest.for_migration(
+              hub,
+              target_node,
+              children_data,
+              post_action: post_action
+            )
+          ]
         else
           []
         end
       end)
     end
 
-    defp find_new_nodes(old_nodes, new_nodes) do
-      Enum.filter(new_nodes, fn n -> !Enum.member?(old_nodes, n) end)
-    end
-
-    defp find_existing_nodes(old_nodes, new_nodes) do
-      Enum.filter(new_nodes, fn n -> Enum.member?(old_nodes, n) end)
-    end
-
-    defp eligible_for_sending?(registry_nodes, calculated_nodes, local_node) do
-      cond do
-        # Old nodes list is empty, meaning this is a first-time assignment.
-        registry_nodes == [] ->
-          true
-
-        # New nodes contains only one node, meaning there are no other nodes
-        # that can send the info, so send it.
-        length(calculated_nodes) === 1 ->
-          true
-
-        # Local node is the first among the existing nodes that are still targets,
-        # so it takes the responsibility to send the start request to the new nodes.
-        find_existing_nodes(registry_nodes, calculated_nodes)
-        |> List.first() == local_node ->
-          true
-
-        # No overlap between old and new nodes - first OLD node takes responsibility.
-        # This happens when all target nodes are different from current nodes.
-        find_existing_nodes(registry_nodes, calculated_nodes) == [] and
-            List.first(Enum.sort(registry_nodes)) == local_node ->
-          true
-
-        # Otherwise, do not send.
-        true ->
-          false
-      end
-    end
-
     defp query_and_store_states(hub, children_to_stop, local_pids, ttl, timeout) do
       self_pid = self()
 
-      # Send query messages to all processes and collect child_ids
       child_ids =
         Enum.reduce(children_to_stop, [], fn cid, acc ->
           pid = Map.get(local_pids, cid)
@@ -418,10 +255,8 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
           end
         end)
 
-      # Collect responses with timeout
-      states = collect_states(child_ids, timeout, [])
+      states = SwapMigration.collect_states(child_ids, timeout, [], :coldswap_state)
 
-      # Store collected states with TTL
       Enum.each(states, fn {child_id, state} ->
         Storage.insert(
           hub.storage.misc,
@@ -429,46 +264,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
           state,
           ttl: ttl
         )
-      end)
-    end
-
-    defp collect_states([], _timeout, acc), do: acc
-
-    defp collect_states(remaining_cids, timeout, acc) do
-      start_time = System.monotonic_time(:millisecond)
-
-      receive do
-        {:process_hub, :coldswap_state, cid, state} ->
-          new_remaining = List.delete(remaining_cids, cid)
-          elapsed = System.monotonic_time(:millisecond) - start_time
-          new_timeout = max(0, timeout - elapsed)
-          collect_states(new_remaining, new_timeout, [{cid, state} | acc])
-      after
-        timeout ->
-          # Return what we have, some processes may not respond
-          acc
-      end
-    end
-
-    defp create_migration_requests(hub, to_send_to_nodes, handover) do
-      Enum.flat_map(to_send_to_nodes, fn {target_node, children_data} ->
-        if children_data != [] do
-          opts =
-            if handover do
-              child_ids = Enum.map(children_data, fn {cspec, _meta} -> cspec.id end)
-
-              [
-                post_action:
-                  PostAction.new(ColdSwap, :handle_post_action_state_fetch, [node(), child_ids])
-              ]
-            else
-              []
-            end
-
-          [StartChildrenRequest.for_migration(hub, target_node, children_data, opts)]
-        else
-          []
-        end
       end)
     end
   end

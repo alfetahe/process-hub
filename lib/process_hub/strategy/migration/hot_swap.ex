@@ -18,8 +18,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   1. Query state from local processes before sending start requests
   2. Store states in ETS with TTL (along with old process reference)
   3. Send start requests to new nodes
-  4. When new processes are registered, deliver stored state via hook
-  5. Terminate the old local process after state delivery
+  4. When new processes start on the target node, the post-action callback
+     notifies the originating node
+  5. Originating node delivers stored state and terminates old local process
 
   To use state handover, your GenServer must `use ProcessHub.Strategy.Migration.HotSwap`:
 
@@ -42,18 +43,20 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
+  alias ProcessHub.Strategy.Migration.SwapMigration
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Cluster
+  alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Strategy.Migration.HotSwap
   alias ProcessHub.Utility.Extractor
-  alias ProcessHub.Utility.Bag
+  alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
+  alias ProcessHub.Request.PostAction
 
   @typedoc """
   The hot swap migration struct.
@@ -75,42 +78,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   # TTL for graceful shutdown state storage (longer than regular migration)
   @graceful_shutdown_ttl :timer.seconds(60)
-
-  @doc """
-  Handles registry_pid_inserted hook to deliver stored state to new processes
-  and terminate the old local process.
-  """
-  def handle_registry_insert(_strategy, hub, {child_id, node_pids}) do
-    case Storage.get(hub.storage.misc, {:hotswap_state, child_id}) do
-      nil ->
-        :ok
-
-      {state, old_pid} ->
-        # Send state to new process(es)
-        Enum.each(node_pids, fn {_node, pid} ->
-          if is_pid(pid) do
-            send(pid, {:process_hub, :hotswap_handover, child_id, state})
-          end
-        end)
-
-        # Terminate the old local process - this is the key difference from ColdSwap
-        if is_pid(old_pid) and Process.alive?(old_pid) do
-          DistributedSupervisor.terminate_child(hub.procs.dist_sup, child_id)
-        end
-
-        # Cleanup stored state
-        Storage.remove(hub.storage.misc, {:hotswap_state, child_id})
-
-        # Dispatch hook to signal handover delivery complete
-        HookManager.dispatch_hook(
-          hub.storage.hook,
-          Hook.hotswap_handover_delivered(),
-          {child_id, node_pids}
-        )
-    end
-
-    :ok
-  end
 
   @doc """
   Options:
@@ -158,6 +125,71 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       unquote(behaviour_ast)
       unquote(handlers_ast)
     end
+  end
+
+  # Post-action and callback functions
+
+  @doc """
+  Post-action callback executed on the target node after children are started.
+
+  Filters successfully started children and sends a callback message to the
+  originating node to complete the migration (deliver state + terminate old).
+  """
+  @spec handle_post_action_migrate_complete(
+          ProcessHub.Hub.t(),
+          [PostStartData.t()],
+          node(),
+          [ProcessHub.child_id()]
+        ) :: :ok
+  def handle_post_action_migrate_complete(hub, results, originating_node, child_ids) do
+    SwapMigration.notify_originating_node(
+      hub,
+      results,
+      originating_node,
+      child_ids,
+      __MODULE__,
+      :complete_migration
+    )
+  end
+
+  @doc """
+  Callback executed on the originating node to complete migration.
+
+  Called via generic `:post_action_callback` message from the target node.
+  Delivers stored handover states (if any) to new processes, then terminates
+  old local processes.
+  """
+  @spec complete_migration(ProcessHub.Hub.t(), node(), [{ProcessHub.child_id(), pid()}]) :: :ok
+  def complete_migration(hub, target_node, cid_pids) do
+    child_ids = Enum.map(cid_pids, fn {cid, _pid} -> cid end)
+
+    # If handover enabled, deliver stored states to new processes
+    delivered_child_ids =
+      Enum.reduce(cid_pids, [], fn {child_id, pid}, acc ->
+        case Storage.get(hub.storage.misc, {:hotswap_state, child_id}) do
+          nil ->
+            acc
+
+          {state, _old_pid} ->
+            if is_pid(pid), do: send(pid, {:process_hub, :hotswap_handover, child_id, state})
+            Storage.remove(hub.storage.misc, {:hotswap_state, child_id})
+            [child_id | acc]
+        end
+      end)
+
+    if delivered_child_ids != [] do
+      HookManager.dispatch_hook(
+        hub.storage.hook,
+        Hook.handover_delivered(),
+        %{child_ids: delivered_child_ids, target_node: target_node}
+      )
+    end
+
+    # Always terminate old local processes after remote start succeeded.
+    sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
+    Distributor.children_terminate(hub, child_ids, sync_strat)
+
+    :ok
   end
 
   # Graceful shutdown handlers
@@ -256,7 +288,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     send_data =
       Enum.reduce(cid_node_pairs, %{}, fn {cid, new_nodes}, acc ->
-        case Bag.get_by_key(local_data, cid) do
+        case ProcessHub.Utility.Bag.get_by_key(local_data, cid) do
           nil ->
             acc
 
@@ -313,21 +345,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   defimpl MigrationStrategy, for: ProcessHub.Strategy.Migration.HotSwap do
     @impl true
     def init(%HotSwap{handover: true} = strategy, hub) do
-      # Register for registry_pid_inserted hook to detect new processes
-      registry_handler = %HookManager{
-        id: :mhs_registry_insert,
-        m: HotSwap,
-        f: :handle_registry_insert,
-        a: [strategy, hub, :_],
-        p: 100
-      }
-
-      HookManager.register_handler(
-        hub.storage.hook,
-        Hook.registry_pid_inserted(),
-        registry_handler
-      )
-
       # Register for graceful shutdown
       shutdown_handler = %HookManager{
         id: :mhs_shutdown,
@@ -364,126 +381,92 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     def init(strategy, _hub), do: strategy
 
     @impl MigrationStrategy
-    def handle_topology_expansion(%HotSwap{} = _struct, _hub, _nodes, handler) do
-      # TODO: implement hot swap expansion logic
-      # For now, return handler unchanged
+    def handle_topology_expansion(
+          %HotSwap{handover: handover, state_ttl: ttl, state_query_timeout: timeout} = _struct,
+          hub,
+          nodes,
+          handler
+        ) do
+      {handler, processable, migration_candidates} =
+        SwapMigration.compute_processable(hub, handler)
+
+      %{stop_local: to_stop_locally, forward_to: to_send_to_nodes} = processable
+
+      # HotSwap: query and store states BEFORE sending (if handover), but DO NOT terminate.
+      if handover and length(to_stop_locally) > 0 do
+        local_pids = Extractor.local_cid_pid_pairs(migration_candidates)
+        query_and_store_states_with_pids(hub, to_stop_locally, local_pids, ttl, timeout)
+      end
+
+      migrated = Enum.map(to_send_to_nodes, fn {cspec, _meta, _target_nodes} -> cspec end)
+
+      # Group by target node and create requests.
+      # HotSwap ALWAYS uses a post-action (even without handover) to terminate
+      # old processes after remote start succeeds.
+      grouped = SwapMigration.group_children_by_node(to_send_to_nodes)
+
+      requests = create_hotswap_requests(hub, grouped, to_stop_locally)
+      SwapMigration.send_start_requests(hub, requests)
+      SwapMigration.dispatch_migration_hook(hub, migrated, nodes)
+
       handler
     end
 
     @impl MigrationStrategy
-    def handle_topology_contraction(%HotSwap{} = _struct, _hub, _removed_nodes, handler) do
-      # TODO: implement hot swap contraction logic
-      # For now, return handler unchanged
-      handler
+    def handle_topology_contraction(%HotSwap{} = _struct, hub, _removed_nodes, handler) do
+      SwapMigration.handle_contraction(hub, handler)
     end
 
-    @impl true
-    def handle_migrate(
-          %HotSwap{handover: handover, state_ttl: ttl, state_query_timeout: timeout} = _struct,
-          hub,
-          registry_data,
-          nodes,
-          replication_factor,
-          _sync_strategy
-        ) do
-      local_node = node()
-      dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+    # Creates per-node migration requests with post-action that terminates
+    # old processes after remote start succeeds.
+    defp create_hotswap_requests(hub, grouped_by_node, to_stop_locally) do
+      Enum.flat_map(grouped_by_node, fn {target_node, children_data} ->
+        if children_data != [] do
+          # Only include child_ids that need to be terminated on the originating node.
+          child_ids =
+            children_data
+            |> Enum.map(fn {cspec, _meta} -> cspec.id end)
+            |> Enum.filter(fn cid -> Enum.member?(to_stop_locally, cid) end)
 
-      # Calculate new distribution for all children
-      cids = Enum.map(registry_data, fn {cid, _} -> cid end)
+          opts =
+            if child_ids != [] do
+              [
+                post_action:
+                  PostAction.new(
+                    HotSwap,
+                    :handle_post_action_migrate_complete,
+                    [node(), child_ids]
+                  )
+              ]
+            else
+              []
+            end
 
-      cid_node_pairs =
-        if length(cids) > 0 do
-          DistributionStrategy.belongs_to(dist_strat, hub, cids, replication_factor)
+          [
+            ProcessHub.Request.Handler.StartChildrenRequest.for_migration(
+              hub,
+              target_node,
+              children_data,
+              opts
+            )
+          ]
         else
           []
         end
-
-      # Get currently running local children
-      local_pids =
-        hub.hub_id
-        |> ProcessRegistry.local_children()
-        |> Extractor.local_cid_pid_pairs()
-
-      local_child_ids = Map.keys(local_pids)
-
-      # Categorize each child based on whether it should migrate to new nodes
-      {to_migrate, to_send_to_nodes, migrated} =
-        Enum.reduce(registry_data, {[], %{}, []}, fn {child_id, {cs, node_pids, m}},
-                                                     {migrate_acc, send_acc, migrated_acc} ->
-          nodes_new = Bag.get_by_key(cid_node_pairs, child_id, [])
-          running_locally = Enum.member?(local_child_ids, child_id)
-          is_orphaned = Keyword.keys(node_pids) == []
-
-          # Find which new node(s) this child should be assigned to
-          target_new_nodes = Enum.filter(nodes, fn n -> Enum.member?(nodes_new, n) end)
-
-          cond do
-            # Case 1: Running locally, should move to new node, should NOT stay local
-            running_locally and length(target_new_nodes) > 0 and
-                not Enum.member?(nodes_new, local_node) ->
-              target_node = List.first(target_new_nodes)
-
-              updated_send =
-                Map.update(send_acc, target_node, [{cs, m}], fn list -> [{cs, m} | list] end)
-
-              # Track this child for migration (state storage + later termination)
-              {[{cs, m} | migrate_acc], updated_send, [{cs, m} | migrated_acc]}
-
-            # Case 2: Orphaned (not running anywhere) and should be on new node
-            is_orphaned and length(target_new_nodes) > 0 ->
-              target_node = List.first(target_new_nodes)
-
-              updated_send =
-                Map.update(send_acc, target_node, [{cs, m}], fn list -> [{cs, m} | list] end)
-
-              {migrate_acc, updated_send, [{cs, m} | migrated_acc]}
-
-            # Case 3: No action needed
-            true ->
-              {migrate_acc, send_acc, migrated_acc}
-          end
-        end)
-
-      # If handover enabled, query and store states BEFORE sending start requests
-      if handover and length(to_migrate) > 0 do
-        query_and_store_states_with_pids(hub, to_migrate, local_pids, ttl, timeout)
-      end
-
-      # DO NOT terminate locally - this is the key difference from ColdSwap
-      # The hook handler will terminate after delivering state
-
-      # Send start requests to new nodes (fire and forget)
-      Enum.each(to_send_to_nodes, fn {_target_node, children_data} ->
-        if length(children_data) > 0 do
-          # TODO: add the new implementation.
-          #  Distributor.children_redist_init(hub, target_node, children_data)
-        end
       end)
-
-      # Dispatch migration hook
-      if length(migrated) > 0 do
-        HookManager.dispatch_hook(
-          hub.storage.hook,
-          Hook.children_migrated(),
-          {nodes, migrated}
-        )
-      end
-
-      :ok
     end
 
-    defp query_and_store_states_with_pids(hub, children_to_migrate, local_pids, ttl, timeout) do
+    defp query_and_store_states_with_pids(hub, children_to_stop, local_pids, ttl, timeout) do
       self_pid = self()
 
       # Send query messages to all processes and collect child_ids with their PIDs
       child_id_pids =
-        Enum.reduce(children_to_migrate, [], fn {cs, _m}, acc ->
-          pid = Map.get(local_pids, cs.id)
+        Enum.reduce(children_to_stop, [], fn cid, acc ->
+          pid = Map.get(local_pids, cid)
 
-          if is_pid(pid) do
-            send(pid, {:process_hub, :query_hot_handover_state, self_pid, cs.id})
-            [{cs.id, pid} | acc]
+          if is_pid(pid) && Process.alive?(pid) do
+            send(pid, {:process_hub, :query_hot_handover_state, self_pid, cid})
+            [{cid, pid} | acc]
           else
             acc
           end
@@ -492,7 +475,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       child_ids = Enum.map(child_id_pids, fn {cid, _} -> cid end)
 
       # Collect responses with timeout
-      states = collect_states(child_ids, timeout, [])
+      states = SwapMigration.collect_states(child_ids, timeout, [], :hotswap_state)
 
       # Store collected states with TTL, including the old PID reference
       Enum.each(states, fn {child_id, state} ->
@@ -508,24 +491,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           ttl: ttl
         )
       end)
-    end
-
-    defp collect_states([], _timeout, acc), do: acc
-
-    defp collect_states(remaining_cids, timeout, acc) do
-      start_time = System.monotonic_time(:millisecond)
-
-      receive do
-        {:process_hub, :hotswap_state, cid, state} ->
-          new_remaining = List.delete(remaining_cids, cid)
-          elapsed = System.monotonic_time(:millisecond) - start_time
-          new_timeout = max(0, timeout - elapsed)
-          collect_states(new_remaining, new_timeout, [{cid, state} | acc])
-      after
-        timeout ->
-          # Return what we have, some processes may not respond
-          acc
-      end
     end
   end
 end
