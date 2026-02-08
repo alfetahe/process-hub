@@ -4,10 +4,15 @@ defmodule ProcessHub.Service.Cluster do
   The cluster service provides API functions for managing the cluster.
   """
 
-  alias ProcessHub.Service.{ProcessRegistry, Synchronizer}
+  alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.HookManager
+  alias ProcessHub.Service.State
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
+  alias ProcessHub.Task.ClusterUpdateTask
   alias ProcessHub.Hub
 
   use Event
@@ -86,60 +91,60 @@ defmodule ProcessHub.Service.Cluster do
   end
 
   @doc """
-  Handles nodes joining the ProcessHub cluster.
-
-  Filters new nodes, broadcasts local registry data, dispatches pre_cluster_join hooks,
-  checks partition tolerance for quorum unlock, and casts `{:handle_node_up, ...}` to worker_queue.
+  Handles the node down event by dispatching hooks, removing nodes from cluster state,
+  and triggering the node down update task.
   """
-  @spec process_hub_join(Hub.t(), [node()]) :: Hub.t()
-  def process_hub_join(hub, nodes) do
-    hub_nodes = nodes(hub.storage.misc, [:include_local])
-    local_node = node()
+  def handle_node_down(%{removed_nodes: removed_nodes, hub: hub}) do
+    # Dispatch pre hooks for all nodes
+    Enum.each(removed_nodes, fn n ->
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_cluster_leave(), n)
+    end)
 
-    # Filter to only new nodes.
-    new_nodes =
-      Enum.filter(nodes, fn n ->
-        new_node?(hub_nodes, n) and n !== local_node
-      end)
+    # Remove nodes from cluster state first (serialized here in worker)
+    Enum.each(removed_nodes, fn node ->
+      rem_hub_node(hub.storage.misc, node)
+    end)
 
-    if length(new_nodes) > 0 do
-      # Broadcast local registry data to joining nodes
-      Synchronizer.broadcast_local_registry(hub, new_nodes)
+    # Get updated hub_nodes AFTER removal
+    updated_hub_nodes = nodes(hub.storage.misc, [:include_local])
 
-      GenServer.cast(
-        hub.procs.worker_queue,
-        {:handle_node_up,
-         %{
-           joined_nodes: new_nodes,
-           hub: hub
-         }}
-      )
-    end
-
-    hub
+    ClusterUpdateTask.NodeDown.handle(%ClusterUpdateTask.NodeDown{
+      removed_nodes: removed_nodes,
+      hub_nodes: updated_hub_nodes,
+      hub: hub
+    })
   end
 
   @doc """
-  Handles nodes leaving the cluster.
+  Handles the node up event by dispatching hooks, adding nodes to cluster state,
+  checking partition tolerance for quorum unlock, and triggering the node up update task.
   """
-  @spec process_node_down_batch(Hub.t(), [node()]) :: Hub.t()
-  def process_node_down_batch(hub, down_nodes) do
-    hub_nodes = nodes(hub.storage.misc, [:include_local])
+  def handle_node_up(%{joined_nodes: joined_nodes, hub: hub}) do
+    # Dispatch pre hooks for all nodes
+    Enum.each(joined_nodes, fn n ->
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_cluster_join(), n)
+    end)
 
-    # Filter to only nodes that are actually in the hub
-    valid_down_nodes = Enum.filter(down_nodes, &Enum.member?(hub_nodes, &1))
+    # Add nodes to cluster state FIRST (consistent with handle_node_down)
+    Enum.each(joined_nodes, fn node ->
+      add_hub_node(hub.storage.misc, node)
+    end)
 
-    if length(valid_down_nodes) > 0 do
-      GenServer.cast(
-        hub.procs.worker_queue,
-        {:handle_node_down,
-         %{
-           removed_nodes: valid_down_nodes,
-           hub: hub
-         }}
-      )
+    # Check if any node should trigger quorum unlock (AFTER adding)
+    part_strat = Storage.get(hub.storage.misc, StorageKey.strpart())
+
+    unlock_status =
+      Enum.any?(joined_nodes, fn n ->
+        PartitionToleranceStrategy.toggle_unlock?(part_strat, hub, n)
+      end)
+
+    if unlock_status do
+      State.toggle_quorum_success(hub)
     end
 
-    hub
+    ClusterUpdateTask.NodeUp.handle(%ClusterUpdateTask.NodeUp{
+      joined_nodes: joined_nodes,
+      hub: hub
+    })
   end
 end

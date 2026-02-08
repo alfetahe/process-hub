@@ -341,7 +341,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_leave_batch, nodes}, state) do
-    {:noreply, Cluster.process_node_down_batch(state, nodes)}
+    {:noreply, process_node_down_batch(state, nodes)}
   end
 
   @impl true
@@ -370,7 +370,7 @@ defmodule ProcessHub.Coordinator do
     state =
       if length(valid_join_nodes) > 0 do
         # Process all validated joining nodes together
-        Cluster.process_hub_join(state, valid_join_nodes)
+        process_hub_join(state, valid_join_nodes)
       else
         state
       end
@@ -455,6 +455,55 @@ defmodule ProcessHub.Coordinator do
   ##############################################################################
   ### Private functions
   ##############################################################################
+
+  @doc false
+  def process_hub_join(hub, nodes) do
+    hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
+    local_node = node()
+
+    # Filter to only new nodes.
+    new_nodes =
+      Enum.filter(nodes, fn n ->
+        Cluster.new_node?(hub_nodes, n) and n !== local_node
+      end)
+
+    if length(new_nodes) > 0 do
+      # Broadcast local registry data to joining nodes
+      Synchronizer.broadcast_local_registry(hub, new_nodes)
+
+      GenServer.cast(
+        hub.procs.worker_queue,
+        {:handle_node_up,
+         %{
+           joined_nodes: new_nodes,
+           hub: hub
+         }}
+      )
+    end
+
+    hub
+  end
+
+  @doc false
+  def process_node_down_batch(hub, down_nodes) do
+    hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
+
+    # Filter to only nodes that are actually in the hub
+    valid_down_nodes = Enum.filter(down_nodes, &Enum.member?(hub_nodes, &1))
+
+    if length(valid_down_nodes) > 0 do
+      GenServer.cast(
+        hub.procs.worker_queue,
+        {:handle_node_down,
+         %{
+           removed_nodes: valid_down_nodes,
+           hub: hub
+         }}
+      )
+    end
+
+    hub
+  end
 
   # Adds a node to the event batch and starts a timer if this is the first event.
   # Returns the updated state.
