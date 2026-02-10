@@ -113,6 +113,11 @@ defmodule Test.Service.HookManagerTest do
                ]}}
   end
 
+  test "dispatch hooks with empty map returns ok", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+    assert :ok == HookManager.dispatch_hooks(hook_table, %{})
+  end
+
   test "dispatch hooks", %{hub: hub} = _context do
     hook_table = hub.storage.hook
 

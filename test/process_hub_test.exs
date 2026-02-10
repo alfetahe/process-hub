@@ -450,6 +450,30 @@ defmodule ProcessHubTest do
     Supervisor.stop(hub.procs.initializer)
   end
 
+  test "initializer start_link with invalid input" do
+    assert ProcessHub.Initializer.start_link(:not_a_hub) === {:error, :expected_hub_settings}
+  end
+
+  test "initializer rejects handover with replication config" do
+    cold_swap_conf = %ProcessHub{
+      hub_id: :handover_repl_test_cold,
+      migration_strategy: %ProcessHub.Strategy.Migration.ColdSwap{handover: true},
+      redundancy_strategy: %ProcessHub.Strategy.Redundancy.Replication{replication_factor: 2}
+    }
+
+    assert ProcessHub.Initializer.start_link(cold_swap_conf) ===
+             {:error, {:invalid_config, :handover_with_replication_not_supported}}
+
+    hot_swap_conf = %ProcessHub{
+      hub_id: :handover_repl_test_hot,
+      migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{handover: true},
+      redundancy_strategy: %ProcessHub.Strategy.Redundancy.Replication{replication_factor: 2}
+    }
+
+    assert ProcessHub.Initializer.start_link(hot_swap_conf) ===
+             {:error, {:invalid_config, :handover_with_replication_not_supported}}
+  end
+
   test "stop", %{hub_id: hub_id} = _context do
     assert ProcessHub.stop(:none) === {:error, :not_alive}
     assert ProcessHub.stop(hub_id) === :ok
@@ -842,6 +866,42 @@ defmodule ProcessHubTest do
     assert elem(Enum.at(global_tag_result, 0), 0) === "child3"
   end
 
+  test "deprecated await function", %{hub_id: hub_id} = _context do
+    cs_await1 = %{id: :await_test_1, start: {Test.Helper.TestServer, :start_link, [%{name: :await_test_1}]}}
+    cs_await2 = %{id: :await_test_2, start: {Test.Helper.TestServer, :start_link, [%{name: :await_test_2}]}}
+
+    # Test await({:ok, future}) — L543
+    {:ok, future} = ProcessHub.start_child(hub_id, cs_await1, awaitable: true, timeout: 1000)
+    result = apply(ProcessHub, :await, [{:ok, future}])
+    assert ProcessHub.StartResult.status(result) === :ok
+
+    # Test await(future) — L547 (bare struct)
+    {:ok, future2} = ProcessHub.start_child(hub_id, cs_await2, awaitable: true, timeout: 1000)
+    result2 = apply(ProcessHub, :await, [future2])
+    assert ProcessHub.StartResult.status(result2) === :ok
+
+    # Test await({:error, msg}) — L550
+    assert apply(ProcessHub, :await, [{:error, :some_error}]) === {:error, :some_error}
+
+    # Test await(_) catch-all — L552
+    assert apply(ProcessHub, :await, [:invalid]) === {:error, :invalid_await_input}
+  end
+
+  test "deprecated process_registry", %{hub_id: hub_id} = _context do
+    result = apply(ProcessHub, :process_registry, [hub_id])
+    assert is_map(result)
+  end
+
+  test "promote to node", %{hub_id: hub_id} = _context do
+    # Test promote_to_node/1 — L865-866
+    result = ProcessHub.promote_to_node(hub_id)
+    assert result === :ok
+
+    # Test promote_to_node/2 with explicit node name
+    result2 = ProcessHub.promote_to_node(hub_id, node())
+    assert result2 === :ok
+  end
+
   test "per-child metadata edge cases", %{hub_id: hub_id} = _context do
     # Test 1: Empty child_metadata map - should use global metadata
     [cs1, cs2] = ProcessHub.Utility.Bag.gen_child_specs(2)
@@ -896,5 +956,19 @@ defmodule ProcessHubTest do
     assert metadata3 === %{tag: "only_tag1"}
     # child2 should have empty metadata (no global fallback)
     assert metadata4 === %{}
+  end
+
+  test "cancel_hook_handlers error branch" do
+    pid = spawn(fn ->
+      receive do
+        {:"$gen_call", from, {:cancel_hook_handlers, _, _}} ->
+          GenServer.reply(from, [:ok, {:error, :fail}])
+      end
+    end)
+
+    Process.register(pid, :cancel_error_stub)
+
+    result = ProcessHub.cancel_hook_handlers(:cancel_error_stub, :some_hook, [:h1, :h2])
+    assert result === {:error, :failed_to_cancel_some_handlers}
   end
 end

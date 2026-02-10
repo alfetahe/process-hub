@@ -298,6 +298,34 @@ defmodule Test.Service.DistributorTest do
     end
   end
 
+  test "compose_stop_operation returns error when children have empty node_pids",
+       %{hub: hub} do
+    # Insert a child into the process registry with empty node_pids.
+    # This means the child exists but is assigned to no nodes, so both
+    # nodes_data and not_found will be [] after the reduce.
+    child_spec = %{id: :empty_pids_child, start: {Agent, :start_link, [fn -> nil end]}}
+    ProcessRegistry.insert(hub.hub_id, child_spec, [])
+
+    opts = Distributor.default_init_opts([])
+    assert {:error, :no_children} = Distributor.compose_stop_operation(hub, [:empty_pids_child], opts)
+  end
+
+  test "compose_start_operation returns error when distribution assigns no nodes",
+       %{hub: hub} do
+    # Replace the hash ring with an empty one so belongs_to returns no nodes,
+    # causing dispatch_operation to receive empty nodes_data.
+    empty_ring = ProcessHub.Service.Ring.create_ring([])
+    ProcessHub.Service.Storage.insert(hub.storage.misc, :hash_ring, empty_ring)
+
+    child_spec = %{
+      id: :no_nodes_child,
+      start: {Test.Helper.TestServer, :start_link, [%{name: :no_nodes_child}]}
+    }
+
+    opts = Distributor.default_init_opts(check_existing: false)
+    assert {:error, :no_children} = Distributor.compose_start_operation(hub, [child_spec], opts)
+  end
+
   describe "calculate_call_timeout/2" do
     test "calculates timeout based on child count with default formula" do
       # Formula: 5000ms + (1ms × child_count)

@@ -56,4 +56,27 @@ defmodule Test.Service.StateTest do
     assert State.is_locked?(hub) === false
     assert Registry.lookup(hub.procs.system_registry, "dist_sup") |> List.first() |> elem(0)
   end
+
+  test "is_partitioned? returns false for multiple dist_sup registrations" do
+    reg_name = :"state_test_dup_registry_#{System.unique_integer([:positive])}"
+    {:ok, _} = Registry.start_link(keys: :duplicate, name: reg_name)
+
+    {:ok, _} = Registry.register(reg_name, "dist_sup", nil)
+
+    test_pid = self()
+
+    task =
+      Task.async(fn ->
+        {:ok, _} = Registry.register(reg_name, "dist_sup", nil)
+        send(test_pid, :registered)
+        Process.sleep(:infinity)
+      end)
+
+    assert_receive :registered, 1000
+
+    fake_hub = %{procs: %{system_registry: reg_name}}
+    assert State.is_partitioned?(fake_hub) === false
+
+    Task.shutdown(task, :brutal_kill)
+  end
 end

@@ -5,6 +5,12 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
   alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
   alias ProcessHub.Service.RequestManager
 
+  @hub_id :scr_test_hub
+
+  setup_all do
+    Test.Helper.SetupHelper.setup_base(%{}, @hub_id)
+  end
+
   defp make_operation(opts) do
     %RequestManager{
       transaction_id: Keyword.get(opts, :transaction_id, make_ref()),
@@ -179,6 +185,84 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
       # Default (no on_failure option)
       op_default = %RequestManager{options: []}
       assert StartChildrenRequest.post_process(op_default, start_result, %{}) == start_result
+    end
+  end
+
+  describe "build_request/8" do
+    test "builds correct struct" do
+      txn_id = make_ref()
+
+      req =
+        StartChildrenRequest.build_request(
+          :hub1,
+          txn_id,
+          42,
+          :node1,
+          [self()],
+          :target,
+          [%{child_id: :c1}],
+          [opt: true]
+        )
+
+      assert %StartChildrenRequest{} = req
+      assert req.hub_id == :hub1
+      assert req.transaction_id == txn_id
+      assert req.request_signature == 42
+      assert req.originating_node == :node1
+      assert req.reply_to == [self()]
+      assert req.node == :target
+      assert req.children == [%{child_id: :c1}]
+      assert req.options == [opt: true]
+      assert req.status == :dispatched
+    end
+  end
+
+  describe "aggregate_results/1 with raw pid" do
+    test "handles raw pid results" do
+      pid = self()
+
+      sub_req = %StartChildrenRequest{
+        node: :node1,
+        results: [{:child1, pid}],
+        children: []
+      }
+
+      op = %RequestManager{sub_requests: [sub_req], options: []}
+      result = StartChildrenRequest.aggregate_results(op)
+
+      assert result.status == :ok
+      assert length(result.started) == 1
+      assert {:child1, [{:node1, ^pid}]} = hd(result.started)
+    end
+  end
+
+  describe "for_migration/4" do
+    test "creates migration request", %{hub: hub} do
+      child_spec = %{id: :migr_child, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+      children_data = [{child_spec, %{some: :meta}}]
+
+      req = StartChildrenRequest.for_migration(hub, :target_node, children_data)
+
+      assert %StartChildrenRequest{} = req
+      assert req.hub_id == hub.hub_id
+      assert req.node == :target_node
+      assert length(req.children) == 1
+      assert hd(req.children).migration == true
+    end
+  end
+
+  describe "for_contraction/2" do
+    test "creates contraction request", %{hub: hub} do
+      child_spec = %{id: :contr_child, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+      children_data = [{child_spec, %{some: :meta}}]
+
+      req = StartChildrenRequest.for_contraction(hub, children_data)
+
+      assert %StartChildrenRequest{} = req
+      assert req.hub_id == hub.hub_id
+      assert req.node == node()
+      assert length(req.children) == 1
+      assert hd(req.children).migration == true
     end
   end
 end

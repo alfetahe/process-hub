@@ -101,6 +101,35 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       assert {:child1, {:error, :no_response}} in result.errors
     end
 
+    test "handles {:error, reason} results" do
+      sub_req = %StopChildrenRequest{
+        node: :node1,
+        results: [{:child1, {:error, :not_found}}, {:child2, :ok}],
+        children: []
+      }
+
+      op = %RequestManager{sub_requests: [sub_req], options: []}
+      result = StopChildrenRequest.aggregate_results(op)
+
+      assert result.status == :error
+      assert {:child1, :not_found} in result.errors
+      assert {:child2, [:node1]} in result.stopped
+    end
+
+    test "handles non-standard error results" do
+      sub_req = %StopChildrenRequest{
+        node: :node1,
+        results: [{:child1, :some_unexpected_error}],
+        children: []
+      }
+
+      op = %RequestManager{sub_requests: [sub_req], options: []}
+      result = StopChildrenRequest.aggregate_results(op)
+
+      assert result.status == :error
+      assert {:child1, :some_unexpected_error} in result.errors
+    end
+
     test "includes not_found_children from options" do
       sub_req = %StopChildrenRequest{
         node: :node1,

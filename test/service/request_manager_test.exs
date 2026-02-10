@@ -2,11 +2,16 @@ defmodule Test.Service.RequestManagerTest do
   use ExUnit.Case, async: false
 
   alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Service.State
   alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Request.Handler.PidsRegisterRequest
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
   alias ProcessHub.Hub
+
+  setup_all do
+    Test.Helper.SetupHelper.setup_base(%{}, :request_manager_test_hub)
+  end
 
   # Helper to create a minimal hub state with pending_operations
   defp hub_state(pending \\ %{}) do
@@ -363,6 +368,79 @@ defmodule Test.Service.RequestManagerTest do
       assert {:noreply, ^state} =
                RequestManager.handle_response(state, txn_id, node(), [])
     end
+
+    test "completes and removes operation when all nodes responded" do
+      sub_req = %StartChildrenRequest{
+        node: node(),
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{node(), [%{child_id: :child1}]}])
+      op = %{op | sub_requests: [sub_req]}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:noreply, new_state} =
+               RequestManager.handle_response(state, op.transaction_id, node(), [
+                 {:child1, {:ok, self()}}
+               ])
+
+      assert new_state.pending_operations == %{}
+    end
+
+    test "keeps operation pending when not all nodes responded" do
+      sub1 = %StartChildrenRequest{
+        node: :node1,
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      sub2 = %StartChildrenRequest{
+        node: :node2,
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child2}]
+      }
+
+      op = make_operation(nodes_data: [{:node1, []}, {:node2, []}])
+      op = %{op | sub_requests: [sub1, sub2]}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:noreply, new_state} =
+               RequestManager.handle_response(state, op.transaction_id, :node1, [
+                 {:child1, {:ok, self()}}
+               ])
+
+      updated_op = new_state.pending_operations[op.transaction_id]
+      assert MapSet.member?(updated_op.completed_nodes, :node1)
+      refute MapSet.member?(updated_op.completed_nodes, :node2)
+    end
+
+    test "replies to awaiter on complete" do
+      ref = make_ref()
+      from = {self(), ref}
+
+      sub_req = %StartChildrenRequest{
+        node: node(),
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{node(), []}])
+      op = %{op | sub_requests: [sub_req], awaiter: from}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:noreply, new_state} =
+               RequestManager.handle_response(state, op.transaction_id, node(), [
+                 {:child1, {:ok, self()}}
+               ])
+
+      assert new_state.pending_operations == %{}
+      assert_receive {^ref, %ProcessHub.StartResult{}}
+    end
   end
 
   describe "handle_await/3" do
@@ -374,6 +452,64 @@ defmodule Test.Service.RequestManagerTest do
       assert {:reply, {:error, :pending_request_not_found}, ^state} =
                RequestManager.handle_await(state, txn_id, from)
     end
+
+    test "replies immediately when all nodes responded" do
+      sub_req = %StartChildrenRequest{
+        node: node(),
+        results: [{:child1, {:ok, self()}}],
+        status: :completed,
+        children: []
+      }
+
+      op = make_operation(nodes_data: [{node(), []}])
+      op = %{op | sub_requests: [sub_req], completed_nodes: MapSet.new([node()])}
+      state = hub_state(%{op.transaction_id => op})
+      from = {self(), make_ref()}
+
+      assert {:reply, %ProcessHub.StartResult{status: :ok}, new_state} =
+               RequestManager.handle_await(state, op.transaction_id, from)
+
+      assert new_state.pending_operations == %{}
+    end
+
+    test "replies immediately when timeout is 0" do
+      sub_req = %StartChildrenRequest{
+        node: :node1,
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{:node1, []}, {:node2, []}])
+      op = %{op | sub_requests: [sub_req], options: [timeout: 0]}
+      state = hub_state(%{op.transaction_id => op})
+      from = {self(), make_ref()}
+
+      assert {:reply, %ProcessHub.StartResult{}, new_state} =
+               RequestManager.handle_await(state, op.transaction_id, from)
+
+      assert new_state.pending_operations == %{}
+    end
+
+    test "sets awaiter and returns noreply when waiting" do
+      sub_req = %StartChildrenRequest{
+        node: :node1,
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{:node1, []}, {:node2, []}])
+      op = %{op | sub_requests: [sub_req], options: [timeout: 5000]}
+      state = hub_state(%{op.transaction_id => op})
+      from = {self(), make_ref()}
+
+      assert {:noreply, new_state} =
+               RequestManager.handle_await(state, op.transaction_id, from)
+
+      updated_op = new_state.pending_operations[op.transaction_id]
+      assert updated_op.awaiter == from
+    end
   end
 
   describe "handle_timeout/3" do
@@ -384,6 +520,149 @@ defmodule Test.Service.RequestManagerTest do
 
       assert {:noreply, ^state} =
                RequestManager.handle_timeout(state, txn_id, from)
+    end
+
+    test "replies and removes when awaiter matches" do
+      ref = make_ref()
+      from = {self(), ref}
+
+      sub_req = %StartChildrenRequest{
+        node: node(),
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{node(), []}])
+      op = %{op | sub_requests: [sub_req], awaiter: from}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:noreply, new_state} =
+               RequestManager.handle_timeout(state, op.transaction_id, from)
+
+      assert new_state.pending_operations == %{}
+      assert_receive {^ref, %ProcessHub.StartResult{}}
+    end
+
+    test "does not reply when awaiter does not match" do
+      from_stored = {self(), make_ref()}
+      from_called = {self(), make_ref()}
+
+      op = make_operation()
+      op = %{op | awaiter: from_stored}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:noreply, ^state} =
+               RequestManager.handle_timeout(state, op.transaction_id, from_called)
+    end
+  end
+
+  ##############################################################################
+  # request_to_opts
+  ##############################################################################
+
+  describe "request_to_opts/1" do
+    test "includes all fields when present" do
+      request = %StartChildrenRequest{
+        transaction_id: make_ref(),
+        hub_id: :test_hub,
+        originating_node: node(),
+        reply_to: [self()],
+        options: [some_opt: true]
+      }
+
+      opts = RequestManager.request_to_opts(request)
+
+      assert Keyword.get(opts, :transaction_id) == request.transaction_id
+      assert Keyword.get(opts, :hub_id) == :test_hub
+      assert Keyword.get(opts, :originating_node) == node()
+      assert Keyword.get(opts, :reply_to) == [self()]
+      assert Keyword.get(opts, :some_opt) == true
+    end
+
+    test "excludes nil transaction_id, originating_node, and reply_to" do
+      request = %StartChildrenRequest{
+        transaction_id: nil,
+        hub_id: :test_hub,
+        originating_node: nil,
+        reply_to: nil,
+        options: [some_opt: true]
+      }
+
+      opts = RequestManager.request_to_opts(request)
+
+      refute Keyword.has_key?(opts, :transaction_id)
+      refute Keyword.has_key?(opts, :originating_node)
+      refute Keyword.has_key?(opts, :reply_to)
+      assert Keyword.get(opts, :hub_id) == :test_hub
+      assert Keyword.get(opts, :some_opt) == true
+    end
+  end
+
+  ##############################################################################
+  # with_partition_check
+  ##############################################################################
+
+  describe "with_partition_check/2" do
+    test "executes function when not partitioned" do
+      reg_name = :"test_not_part_reg_#{:erlang.unique_integer([:positive])}"
+      {:ok, _} = Registry.start_link(keys: :unique, name: reg_name)
+      Registry.register(reg_name, "dist_sup", nil)
+
+      fake_hub = %Hub{hub_id: :fake_hub, procs: %{system_registry: reg_name}}
+
+      result = RequestManager.with_partition_check(fake_hub, fn -> :my_result end)
+      assert result == :my_result
+    end
+
+    test "returns {:error, :partitioned} when partitioned" do
+      reg_name = :"test_part_reg_#{:erlang.unique_integer([:positive])}"
+      {:ok, _} = Registry.start_link(keys: :unique, name: reg_name)
+
+      fake_hub = %Hub{hub_id: :fake_hub, procs: %{system_registry: reg_name}}
+
+      result = RequestManager.with_partition_check(fake_hub, fn -> :should_not_run end)
+      assert result == {:error, :partitioned}
+    end
+  end
+
+  ##############################################################################
+  # Factory functions (require real hub)
+  ##############################################################################
+
+  describe "migration_request/4" do
+    test "creates StartChildrenRequest for migration", %{hub: hub} do
+      child_spec = %{id: :migr_child, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+      children_data = [{child_spec, %{some: :meta}}]
+
+      req = RequestManager.migration_request(hub, :target_node, children_data)
+
+      assert %StartChildrenRequest{} = req
+      assert req.hub_id == hub.hub_id
+      assert req.originating_node == node()
+      assert req.node == :target_node
+      assert length(req.children) == 1
+      assert hd(req.children).child_id == :migr_child
+      assert hd(req.children).migration == true
+      assert req.request_signature != nil
+    end
+  end
+
+  describe "contraction_request/3" do
+    test "creates StartChildrenRequest for contraction", %{hub: hub} do
+      child_spec = %{id: :contr_child, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+      children_data = [{child_spec, %{some: :meta}}]
+
+      req = RequestManager.contraction_request(hub, children_data)
+
+      assert %StartChildrenRequest{} = req
+      assert req.hub_id == hub.hub_id
+      assert req.originating_node == node()
+      assert req.node == node()
+      assert length(req.children) == 1
+      assert hd(req.children).child_id == :contr_child
+      assert hd(req.children).migration == true
+      assert req.request_signature != nil
     end
   end
 end

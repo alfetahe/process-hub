@@ -24,6 +24,23 @@ defmodule Test.Utility.BagTest do
     end
   end
 
+  test "receive_multiple with tuple key" do
+    send(self(), {:key_a, :data_a})
+    send(self(), {:key_b, :data_b})
+
+    result = Bag.receive_multiple(2, {:key_a, :key_b}, timeout: 1000)
+
+    assert length(result) == 2
+    assert {:ok, :data_a} in result
+    assert {:ok, :data_b} in result
+  end
+
+  test "receive_multiple with tuple key timeout" do
+    assert_raise RuntimeError, ~r/failed iteration/, fn ->
+      Bag.receive_multiple(1, {:no_key_a, :no_key_b}, timeout: 50)
+    end
+  end
+
   test "gen child specs" do
     child_specs = Bag.gen_child_specs(10, prefix: "gen_test", id_type: :atom)
 

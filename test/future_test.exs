@@ -54,6 +54,29 @@ defmodule Test.FutureTest do
     end
   end
 
+  describe "await/1 with timeout" do
+    test "returns timeout error when GenServer.call times out" do
+      pid =
+        spawn(fn ->
+          receive do
+            _ -> Process.sleep(:infinity)
+          end
+        end)
+
+      Process.register(pid, :timeout_test_hub)
+
+      future = %Future{
+        future_resolver: {:timeout_test_hub, node()},
+        ref: make_ref(),
+        timeout: 0
+      }
+
+      assert Future.await(future) == {:error, :timeout}
+
+      Process.exit(pid, :kill)
+    end
+  end
+
   describe "Future struct defaults" do
     test "action defaults to :start" do
       future = %Future{future_resolver: nil, ref: nil, timeout: nil}

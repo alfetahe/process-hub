@@ -93,6 +93,16 @@ defmodule Test.JanitorTest do
     test "returns :ok", %{hub_id: hub_id} do
       assert Janitor.purge_pending_registry(hub_id) == :ok
     end
+
+    test "handles malformed 3-tuple entries gracefully" do
+      # Create a public ETS table with a malformed 3-tuple that matches {$1, $2, $3}
+      # but does NOT match [child_id, {child_spec, _nodes, metadata}, ttl_expire]
+      table = :ets.new(:test_malformed_purge, [:set, :public])
+      :ets.insert(table, {:malformed_child, "not_a_tuple_value", 0})
+
+      # Should not crash — hits the catch-all `_ -> nil` branch
+      assert Janitor.purge_pending_registry(table) == :ok
+    end
   end
 
   describe "purge_expired_cache/1" do

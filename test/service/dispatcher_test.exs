@@ -95,6 +95,18 @@ defmodule Test.Service.DispatcherTest do
     assert List.first(dispatched_req.children).child_id === :dispatch_stop_child
   end
 
+  test "propagate_event/2 uses default opts", %{hub: hub} do
+    :blockade.add_handler(hub.procs.event_queue, @event_requests_handle)
+
+    request = PidsUnregisterRequest.new([{:test_child_default, [node()]}])
+
+    assert :ok = Dispatcher.propagate_event(hub, request)
+
+    assert_receive {@event_requests_handle, requests}, @default_receive_timeout
+    assert is_list(requests)
+    assert length(requests) == 1
+  end
+
   test "children_start groups requests by target node into single dispatch", %{hub: hub} do
     :blockade.add_handler(hub.procs.event_queue, @event_requests_handle)
 

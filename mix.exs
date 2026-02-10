@@ -20,6 +20,18 @@ defmodule ProcessHub.MixProject do
           "Changelog" => "https://github.com/alfetahe/process-hub/blob/master/CHANGELOG.md"
         }
       ],
+      test_coverage: [
+        ignore_modules: [
+          Test.Helper.Common,
+          Test.Helper.SetupHelper,
+          Test.Helper.TestServer,
+          Test.Helper.TestNode,
+          Test.Helper.Bootstrap,
+          Mix.Tasks.Benchmark,
+          ProcessHubTest.Fixture.ScoreboardFixture,
+          ProcessHub.Utility.Injector
+        ]
+      ],
       aliases: aliases(),
       docs: [
         main: "readme",
