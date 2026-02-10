@@ -202,11 +202,6 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       # Because track_max_size is false, max_seen stays at 3
       # Quorum = 2, we have 5, so we have quorum
       refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
-
-      # Verify max_seen didn't update (still 3)
-      # (It gets initialized to max(initial_cluster_size, current_size) = max(3, 5) = 5 initially)
-      # Actually, looking at init, it DOES initialize with current_size
-      # So let me adjust this test
     end
 
     test "with track_max_size: true, adapts to cluster growth", %{hub: hub} do

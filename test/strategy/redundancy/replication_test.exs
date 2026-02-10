@@ -112,18 +112,10 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
   end
 
   describe "struct defaults" do
-    test "replication_factor defaults to 2" do
+    test "has expected default values" do
       strategy = %Replication{}
       assert strategy.replication_factor == 2
-    end
-
-    test "replication_model defaults to :active_active" do
-      strategy = %Replication{}
       assert strategy.replication_model == :active_active
-    end
-
-    test "redundancy_signal defaults to :none" do
-      strategy = %Replication{}
       assert strategy.redundancy_signal == :none
     end
   end
