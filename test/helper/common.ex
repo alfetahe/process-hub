@@ -217,9 +217,7 @@ defmodule Test.Helper.Common do
 
     Enum.each(Node.list(), fn node ->
       remote_registry =
-        :erpc.call(node, fn ->
-          ProcessHub.registry_dump(hub_id)
-        end)
+        :erpc.call(node, ProcessHub, :registry_dump, [hub_id])
 
       Enum.each(registry_data, fn {id, {child_spec, nodes, metadata}} ->
         if validate_metadata do
@@ -554,5 +552,20 @@ defmodule Test.Helper.Common do
           await_registry_stable_loop(hub_id, child_specs, rf, deadline)
       end
     end
+  end
+
+  def set_remote_scoreboard(hub_id, scoreboard) do
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+
+    dist_strat =
+      ProcessHub.Service.Storage.get(
+        hub.storage.misc,
+        ProcessHub.Constant.StorageKey.strdist()
+      )
+
+    GenServer.call(
+      dist_strat.calculator_pid,
+      {:set_scoreboard, scoreboard}
+    )
   end
 end

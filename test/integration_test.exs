@@ -37,20 +37,7 @@ defmodule Test.IntegrationTest do
     {:ok, leader_node} = :elector.get_leader()
 
     # Manually settings the scoreboard to the leader node.
-    Node.spawn(leader_node, fn ->
-      hub = ProcessHub.Coordinator.get_hub(context.hub_id)
-
-      dist_strat =
-        ProcessHub.Service.Storage.get(
-          hub.storage.misc,
-          ProcessHub.Constant.StorageKey.strdist()
-        )
-
-      GenServer.call(
-        dist_strat.calculator_pid,
-        {:set_scoreboard, scoreboard}
-      )
-    end)
+    :erpc.call(leader_node, Common, :set_remote_scoreboard, [context.hub_id, scoreboard])
 
     # Starts children on all nodes.
     Common.sync_base_test(context, child_specs, :add, scope: :global)

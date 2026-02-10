@@ -25,6 +25,17 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
         }
   defstruct sync_interval: 30000
 
+  @doc false
+  def remote_sync_cast(worker_queue, hub_id, strategy, sync_data, from_node) do
+    GenServer.cast(
+      worker_queue,
+      {:handle_work,
+       fn ->
+         Synchronizer.exec_interval_sync(hub_id, strategy, sync_data, from_node)
+       end}
+    )
+  end
+
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.PubSub do
     use Event
 
@@ -55,17 +66,12 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       cluster_nodes
       |> Enum.filter(&(&1 !== local_node))
       |> Enum.each(fn node ->
-        Node.spawn(node, fn ->
-          GenServer.cast(
-            hub.procs.worker_queue,
-            {
-              :handle_work,
-              fn ->
-                Synchronizer.exec_interval_sync(hub.hub_id, strategy, local_data, local_node)
-              end
-            }
-          )
-        end)
+        Node.spawn(
+          node,
+          ProcessHub.Strategy.Synchronization.PubSub,
+          :remote_sync_cast,
+          [hub.procs.worker_queue, hub.hub_id, strategy, local_data, local_node]
+        )
       end)
 
       :ok

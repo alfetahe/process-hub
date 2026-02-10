@@ -115,15 +115,18 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         ) :: :ok
   def propagate_data(nodes, hub, strategy, data) do
     Enum.each(nodes, fn node ->
-      Node.spawn(node, fn ->
-        local_hub = Coordinator.get_hub(hub.hub_id)
-
-        GenServer.cast(
-          local_hub.procs.worker_queue,
-          {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data) end}
-        )
-      end)
+      Node.spawn(node, __MODULE__, :remote_propagate_cast, [hub.hub_id, strategy, data])
     end)
+  end
+
+  @doc false
+  def remote_propagate_cast(hub_id, strategy, data) do
+    local_hub = Coordinator.get_hub(hub_id)
+
+    GenServer.cast(
+      local_hub.procs.worker_queue,
+      {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data) end}
+    )
   end
 
   @spec recipients_select([node()], ProcessHub.Strategy.Synchronization.Gossip.t()) :: [node()]
@@ -147,6 +150,17 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   def unacked_nodes(sync_acks, misc_storage) do
     Cluster.nodes(misc_storage, [:include_local])
     |> Enum.filter(fn node -> !Enum.member?(sync_acks, node) end)
+  end
+
+  @doc false
+  def remote_sync_cast(worker_queue, hub_id, strategy, sync_data, from_node) do
+    GenServer.cast(
+      worker_queue,
+      {:handle_work,
+       fn ->
+         Synchronizer.exec_interval_sync(hub_id, strategy, sync_data, from_node)
+       end}
+    )
   end
 
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.Gossip do
@@ -424,15 +438,12 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       local_node = node()
 
       Enum.each(recipients, fn recipient ->
-        Node.spawn(recipient, fn ->
-          GenServer.cast(
-            hub.procs.worker_queue,
-            {:handle_work,
-             fn ->
-               Synchronizer.exec_interval_sync(hub.hub_id, strategy, sync_data, local_node)
-             end}
-          )
-        end)
+        Node.spawn(
+          recipient,
+          ProcessHub.Strategy.Synchronization.Gossip,
+          :remote_sync_cast,
+          [hub.procs.worker_queue, hub.hub_id, strategy, sync_data, local_node]
+        )
       end)
     end
 

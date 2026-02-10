@@ -101,9 +101,17 @@ defmodule Test.Helper.Bootstrap do
 
   defp kill_hubs(peer_nodes, hub_id) do
     for {node, _pid} <- peer_nodes do
-      :erpc.call(node, fn ->
-        ProcessHub.Initializer.stop(hub_id)
-      end)
+      :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
+    end
+  end
+
+  def start_hub_on_node(%ProcessHub{} = hub, hooks) do
+    case ProcessHub.Initializer.start_link(%ProcessHub{hub | hooks: hooks}) do
+      {:ok, pid} ->
+        :erlang.unlink(pid)
+
+      {:error, error} ->
+        throw(error)
     end
   end
 
@@ -136,15 +144,7 @@ defmodule Test.Helper.Bootstrap do
         |> Enum.reject(fn hook -> hook === nil end)
         |> Map.new()
 
-      :erpc.call(node, fn ->
-        case ProcessHub.Initializer.start_link(%ProcessHub{hub | hooks: hooks}) do
-          {:ok, pid} ->
-            :erlang.unlink(pid)
-
-          {:error, error} ->
-            throw(error)
-        end
-      end)
+      :erpc.call(node, __MODULE__, :start_hub_on_node, [hub, hooks])
     end)
 
     # Wait for cluster to stabilize after starting hubs.

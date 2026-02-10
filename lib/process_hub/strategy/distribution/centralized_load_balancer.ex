@@ -135,6 +135,38 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
             push_interval: 10_000,
             nodeup_redistribution: false
 
+  @doc false
+  def remote_belongs_to_impl(hub_id, child_ids, caller_pid) do
+    nhub = ProcessHub.Coordinator.get_hub(hub_id)
+
+    dist_strat =
+      Storage.get(
+        nhub.storage.misc,
+        StorageKey.strdist()
+      )
+
+    assignments =
+      DistributionStrategy.belongs_to(dist_strat, nhub, child_ids, 1)
+
+    send(caller_pid, {:child_assignments, assignments})
+  end
+
+  @doc false
+  def remote_calculate_score(hub_id, node, local_stats) do
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+
+    dist_strat =
+      Storage.get(
+        hub.storage.misc,
+        StorageKey.strdist()
+      )
+
+    GenServer.cast(
+      dist_strat.calculator_pid,
+      {:calculate_score, node, local_stats}
+    )
+  end
+
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     alias ProcessHub.Strategy.Distribution.CentralizedLoadBalancer
 
@@ -202,20 +234,12 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     defp remote_belongs_to(hub_id, leader_node, child_ids) do
       self = self()
 
-      Node.spawn(leader_node, fn ->
-        nhub = ProcessHub.Coordinator.get_hub(hub_id)
-
-        dist_strat =
-          Storage.get(
-            nhub.storage.misc,
-            StorageKey.strdist()
-          )
-
-        assignments =
-          DistributionStrategy.belongs_to(dist_strat, nhub, child_ids, 1)
-
-        send(self, {:child_assignments, assignments})
-      end)
+      Node.spawn(
+        leader_node,
+        CentralizedLoadBalancer,
+        :remote_belongs_to_impl,
+        [hub_id, child_ids, self]
+      )
 
       receive do
         {:child_assignments, assignments} -> assignments
@@ -357,20 +381,12 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
             {:calculate_score, node, local_stats}
           )
         else
-          Node.spawn(leader_node, fn ->
-            hub = ProcessHub.Coordinator.get_hub(state.hub.hub_id)
-
-            dist_strat =
-              Storage.get(
-                hub.storage.misc,
-                StorageKey.strdist()
-              )
-
-            GenServer.cast(
-              dist_strat.calculator_pid,
-              {:calculate_score, node, local_stats}
-            )
-          end)
+          Node.spawn(
+            leader_node,
+            __MODULE__,
+            :remote_calculate_score,
+            [state.hub.hub_id, node, local_stats]
+          )
         end
 
       _ ->
