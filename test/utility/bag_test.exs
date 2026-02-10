@@ -182,7 +182,9 @@ defmodule Test.Utility.BagTest do
           fn acc, data ->
             new_acc = [data | acc]
             if length(new_acc) >= 3, do: {:halt, Enum.reverse(new_acc)}, else: {:cont, new_acc}
-          end, timeout: 1000)
+          end,
+          timeout: 1000
+        )
 
       assert result === [1, 2, 3]
     end
@@ -199,7 +201,9 @@ defmodule Test.Utility.BagTest do
           fn acc, data ->
             new_acc = acc + data
             if new_acc >= 60, do: {:halt, new_acc}, else: {:cont, new_acc}
-          end, timeout: 1000)
+          end,
+          timeout: 1000
+        )
 
       assert result === 60
     end
@@ -211,7 +215,9 @@ defmodule Test.Utility.BagTest do
           :init,
           fn acc, _data ->
             {:cont, acc}
-          end, timeout: 50)
+          end,
+          timeout: 50
+        )
       end
     end
 
@@ -226,7 +232,9 @@ defmodule Test.Utility.BagTest do
           fn acc, data ->
             new_acc = [data | acc]
             if length(new_acc) >= 2, do: {:halt, Enum.reverse(new_acc)}, else: {:cont, new_acc}
-          end, timeout: 1000)
+          end,
+          timeout: 1000
+        )
 
       assert result === [:data_a, :data_b]
     end
@@ -238,7 +246,10 @@ defmodule Test.Utility.BagTest do
           :init,
           fn acc, _data ->
             {:cont, acc}
-          end, timeout: 50, error_msg: "custom timeout msg")
+          end,
+          timeout: 50,
+          error_msg: "custom timeout msg"
+        )
       end
     end
   end

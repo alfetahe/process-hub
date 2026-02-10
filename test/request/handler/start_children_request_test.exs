@@ -201,7 +201,7 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
           [self()],
           :target,
           [%{child_id: :c1}],
-          [opt: true]
+          opt: true
         )
 
       assert %StartChildrenRequest{} = req

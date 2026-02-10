@@ -307,7 +307,9 @@ defmodule Test.Service.DistributorTest do
     ProcessRegistry.insert(hub.hub_id, child_spec, [])
 
     opts = Distributor.default_init_opts([])
-    assert {:error, :no_children} = Distributor.compose_stop_operation(hub, [:empty_pids_child], opts)
+
+    assert {:error, :no_children} =
+             Distributor.compose_stop_operation(hub, [:empty_pids_child], opts)
   end
 
   test "compose_start_operation returns error when distribution assigns no nodes",

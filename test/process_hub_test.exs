@@ -867,8 +867,15 @@ defmodule ProcessHubTest do
   end
 
   test "deprecated await function", %{hub_id: hub_id} = _context do
-    cs_await1 = %{id: :await_test_1, start: {Test.Helper.TestServer, :start_link, [%{name: :await_test_1}]}}
-    cs_await2 = %{id: :await_test_2, start: {Test.Helper.TestServer, :start_link, [%{name: :await_test_2}]}}
+    cs_await1 = %{
+      id: :await_test_1,
+      start: {Test.Helper.TestServer, :start_link, [%{name: :await_test_1}]}
+    }
+
+    cs_await2 = %{
+      id: :await_test_2,
+      start: {Test.Helper.TestServer, :start_link, [%{name: :await_test_2}]}
+    }
 
     # Test await({:ok, future}) — L543
     {:ok, future} = ProcessHub.start_child(hub_id, cs_await1, awaitable: true, timeout: 1000)
@@ -959,12 +966,13 @@ defmodule ProcessHubTest do
   end
 
   test "cancel_hook_handlers error branch" do
-    pid = spawn(fn ->
-      receive do
-        {:"$gen_call", from, {:cancel_hook_handlers, _, _}} ->
-          GenServer.reply(from, [:ok, {:error, :fail}])
-      end
-    end)
+    pid =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", from, {:cancel_hook_handlers, _, _}} ->
+            GenServer.reply(from, [:ok, {:error, :fail}])
+        end
+      end)
 
     Process.register(pid, :cancel_error_stub)
 
