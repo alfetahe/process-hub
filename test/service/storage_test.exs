@@ -27,7 +27,7 @@ defmodule Test.Service.StorageTest do
 
     value = Storage.get(misc_storage, :test_insert2)
 
-    assert value === value
+    assert value === :test_value2
   end
 
   test "get", %{hub: %ProcessHub.Hub{storage: %{misc: misc_storage}}} do

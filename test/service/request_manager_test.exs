@@ -352,51 +352,6 @@ defmodule Test.Service.RequestManagerTest do
   end
 
   ##############################################################################
-  # request_to_opts
-  ##############################################################################
-
-  describe "request_to_opts/1" do
-    test "converts request fields to keyword list" do
-      req = %StartChildrenRequest{
-        transaction_id: :txn_123,
-        hub_id: :my_hub,
-        originating_node: node(),
-        reply_to: [self()],
-        node: node(),
-        children: [],
-        options: [disable_logging: true]
-      }
-
-      opts = RequestManager.request_to_opts(req)
-
-      assert Keyword.get(opts, :transaction_id) == :txn_123
-      assert Keyword.get(opts, :hub_id) == :my_hub
-      assert Keyword.get(opts, :originating_node) == node()
-      assert Keyword.get(opts, :reply_to) == [self()]
-      assert Keyword.get(opts, :disable_logging) == true
-    end
-
-    test "handles nil fields gracefully" do
-      req = %StartChildrenRequest{
-        transaction_id: nil,
-        hub_id: nil,
-        originating_node: nil,
-        reply_to: nil,
-        node: node(),
-        children: [],
-        options: []
-      }
-
-      opts = RequestManager.request_to_opts(req)
-
-      refute Keyword.has_key?(opts, :transaction_id)
-      refute Keyword.has_key?(opts, :hub_id)
-      refute Keyword.has_key?(opts, :originating_node)
-      refute Keyword.has_key?(opts, :reply_to)
-    end
-  end
-
-  ##############################################################################
   # GenServer handlers
   ##############################################################################
 

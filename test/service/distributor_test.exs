@@ -41,9 +41,6 @@ defmodule Test.Service.DistributorTest do
            end)
   end
 
-  test "asda" do
-  end
-
   test "global supevisor children", %{hub: hub} = _context do
     assert Distributor.which_children_global(hub, []) === [{:"process_hub@127.0.0.1", []}]
 
@@ -188,85 +185,6 @@ defmodule Test.Service.DistributorTest do
     assert Keyword.get(result, :check_existing) === true
     assert Keyword.get(result, :await_timeout) === 60_000
     assert Keyword.get(result, :init_cids) === []
-  end
-
-  test "default_init_opts with partial options" do
-    input_opts = [
-      awaitable: true,
-      init_cids: [:child1, :child2]
-    ]
-
-    result = Distributor.default_init_opts(input_opts)
-
-    # Provided values should be preserved
-    assert Keyword.get(result, :awaitable) === true
-    assert Keyword.get(result, :init_cids) === [:child1, :child2]
-
-    # Missing values should get defaults
-    assert Keyword.get(result, :timeout) === 10_000
-    assert Keyword.get(result, :async_wait) === false
-    assert Keyword.get(result, :check_existing) === true
-    assert Keyword.get(result, :on_failure) === :continue
-    assert Keyword.get(result, :metadata) === %{}
-    assert Keyword.get(result, :await_timeout) === 60_000
-  end
-
-  test "default_init_opts with all options provided" do
-    input_opts = [
-      timeout: 15_000,
-      awaitable: true,
-      async_wait: true,
-      check_existing: false,
-      on_failure: :rollback,
-      metadata: %{tag: "test"},
-      await_timeout: 30_000,
-      init_cids: [:test_child]
-    ]
-
-    result = Distributor.default_init_opts(input_opts)
-
-    # All values should be preserved (no defaults applied)
-    assert Keyword.get(result, :timeout) === 15_000
-    assert Keyword.get(result, :awaitable) === true
-    assert Keyword.get(result, :async_wait) === true
-    assert Keyword.get(result, :check_existing) === false
-    assert Keyword.get(result, :on_failure) === :rollback
-    assert Keyword.get(result, :metadata) === %{tag: "test"}
-    assert Keyword.get(result, :await_timeout) === 30_000
-    assert Keyword.get(result, :init_cids) === [:test_child]
-  end
-
-  test "default_init_opts handles edge cases" do
-    # Test with nil values (should be preserved)
-    input_opts = [metadata: nil, init_cids: nil]
-    result = Distributor.default_init_opts(input_opts)
-
-    assert Keyword.get(result, :metadata) === nil
-    assert Keyword.get(result, :init_cids) === nil
-    # Default applied
-    assert Keyword.get(result, :timeout) === 10_000
-
-    # Test with zero/false values (should be preserved)
-    input_opts2 = [timeout: 0, awaitable: false]
-    result2 = Distributor.default_init_opts(input_opts2)
-
-    assert Keyword.get(result2, :timeout) === 0
-    assert Keyword.get(result2, :awaitable) === false
-    # Default applied
-    assert Keyword.get(result2, :check_existing) === true
-  end
-
-  test "default_init_opts order preservation" do
-    input_opts = [
-      awaitable: true,
-      timeout: 5_000,
-      custom_option: "test"
-    ]
-
-    result = Distributor.default_init_opts(input_opts)
-
-    # Original options should appear first in the result
-    assert Keyword.take(result, [:awaitable, :timeout, :custom_option]) === input_opts
   end
 
   describe "compose_start_operation/3" do

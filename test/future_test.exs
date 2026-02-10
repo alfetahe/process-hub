@@ -6,28 +6,16 @@ defmodule Test.FutureTest do
   describe "await/1 with error tuple" do
     test "returns error unchanged" do
       assert Future.await({:error, :some_reason}) == {:error, :some_reason}
-    end
-
-    test "returns error with any reason" do
       assert Future.await({:error, :timeout}) == {:error, :timeout}
       assert Future.await({:error, "string reason"}) == {:error, "string reason"}
     end
   end
 
   describe "await/1 with invalid input" do
-    test "returns error for non-struct, non-tuple" do
+    test "returns error for non-future values" do
       assert Future.await(:invalid) == {:error, :invalid_argument}
-    end
-
-    test "returns error for nil" do
       assert Future.await(nil) == {:error, :invalid_argument}
-    end
-
-    test "returns error for integer" do
       assert Future.await(42) == {:error, :invalid_argument}
-    end
-
-    test "returns error for string" do
       assert Future.await("not a future") == {:error, :invalid_argument}
     end
   end
