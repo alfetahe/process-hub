@@ -133,4 +133,74 @@ defmodule Test.Service.StorageTest do
       assert Enum.find(items, fn item -> item == export_item end)
     end)
   end
+
+  test "foldl accumulates over all entries" do
+    process_storage = :ets.new(:test_foldl, [:set, :public])
+
+    Storage.insert(process_storage, :key1, 10)
+    Storage.insert(process_storage, :key2, 20)
+    Storage.insert(process_storage, :key3, 30)
+
+    # Sum all values using foldl
+    sum = Storage.foldl(process_storage, 0, fn {_key, value}, acc -> acc + value end)
+    assert sum === 60
+  end
+
+  test "foldl on empty table returns initial accumulator" do
+    process_storage = :ets.new(:test_foldl_empty, [:set, :public])
+
+    result = Storage.foldl(process_storage, :initial, fn _entry, acc -> acc end)
+    assert result === :initial
+  end
+
+  test "foldl collects keys" do
+    process_storage = :ets.new(:test_foldl_keys, [:set, :public])
+
+    Storage.insert(process_storage, :alpha, "a")
+    Storage.insert(process_storage, :beta, "b")
+    Storage.insert(process_storage, :gamma, "c")
+
+    keys = Storage.foldl(process_storage, [], fn {key, _value}, acc -> [key | acc] end)
+
+    assert length(keys) === 3
+    assert :alpha in keys
+    assert :beta in keys
+    assert :gamma in keys
+  end
+
+  test "foldl handles entries with TTL" do
+    process_storage = :ets.new(:test_foldl_ttl, [:set, :public])
+
+    Storage.insert(process_storage, :ttl_key, "ttl_value", ttl: 60_000)
+    Storage.insert(process_storage, :no_ttl_key, "no_ttl_value")
+
+    # Collect all entries - foldl sees the raw ETS tuples
+    entries =
+      Storage.foldl(process_storage, [], fn entry, acc -> [entry | acc] end)
+
+    assert length(entries) === 2
+
+    # One entry has TTL (3-tuple), one doesn't (2-tuple)
+    tuple_sizes = Enum.map(entries, &tuple_size/1) |> Enum.sort()
+    assert tuple_sizes === [2, 3]
+  end
+
+  test "foldl can filter entries during traversal" do
+    process_storage = :ets.new(:test_foldl_filter, [:set, :public])
+
+    Storage.insert(process_storage, :keep1, 100)
+    Storage.insert(process_storage, :skip1, 5)
+    Storage.insert(process_storage, :keep2, 200)
+    Storage.insert(process_storage, :skip2, 3)
+
+    # Only accumulate values >= 100
+    large_values =
+      Storage.foldl(process_storage, [], fn {_key, value}, acc ->
+        if value >= 100, do: [value | acc], else: acc
+      end)
+
+    assert length(large_values) === 2
+    assert 100 in large_values
+    assert 200 in large_values
+  end
 end

@@ -95,6 +95,88 @@ defmodule Test.JanitorTest do
     end
   end
 
+  describe "purge_expired_cache/1" do
+    test "removes expired TTL entries from storage" do
+      table = :ets.new(:test_purge_cache, [:set, :public])
+
+      # Insert expired entry (TTL in the past)
+      ProcessHub.Service.Storage.insert(table, :expired1, "val1", ttl: -5000)
+      ProcessHub.Service.Storage.insert(table, :expired2, "val2", ttl: -1000)
+
+      # Insert valid entry (TTL in the future)
+      ProcessHub.Service.Storage.insert(table, :valid1, "val3", ttl: 600_000)
+
+      # Insert non-TTL entry (2-tuple, should be untouched)
+      ProcessHub.Service.Storage.insert(table, :no_ttl, "val4")
+
+      assert Janitor.purge_expired_cache(table) === :ok
+
+      # Expired entries removed
+      assert ProcessHub.Service.Storage.get(table, :expired1) === nil
+      assert ProcessHub.Service.Storage.get(table, :expired2) === nil
+
+      # Valid TTL entry kept
+      assert ProcessHub.Service.Storage.get(table, :valid1) === "val3"
+
+      # Non-TTL entry kept
+      assert ProcessHub.Service.Storage.get(table, :no_ttl) === "val4"
+    end
+
+    test "handles empty table" do
+      table = :ets.new(:test_purge_empty, [:set, :public])
+      assert Janitor.purge_expired_cache(table) === :ok
+    end
+
+    test "preserves entries whose TTL has not yet expired" do
+      table = :ets.new(:test_purge_future, [:set, :public])
+
+      ProcessHub.Service.Storage.insert(table, :future1, "a", ttl: 300_000)
+      ProcessHub.Service.Storage.insert(table, :future2, "b", ttl: 600_000)
+
+      Janitor.purge_expired_cache(table)
+
+      assert ProcessHub.Service.Storage.get(table, :future1) === "a"
+      assert ProcessHub.Service.Storage.get(table, :future2) === "b"
+    end
+  end
+
+  describe "handle_info :ttl_cleanup full cycle" do
+    test "cleans both cache and registry in a single cycle", %{hub: hub} = _context do
+      # Set up expired cache entry
+      ProcessHub.Service.Storage.insert(hub.storage.misc, :cycle_expired, "gone", ttl: -1000)
+
+      # Set up expired registry entry
+      child_spec = %{id: :cycle_reg_expired, start: {TestModule, :start_link, []}}
+      metadata = %{pending: true, forwarded_at: 0, target_nodes: [:node1]}
+      ProcessRegistry.insert(hub.hub_id, child_spec, [], metadata: metadata, ttl: -1000)
+
+      # Set up valid entries that should survive
+      ProcessHub.Service.Storage.insert(hub.storage.misc, :cycle_valid, "stays", ttl: 600_000)
+      valid_spec = %{id: :cycle_reg_valid, start: {TestModule, :start_link, []}}
+      ProcessRegistry.insert(hub.hub_id, valid_spec, [{:node1, self()}], metadata: %{})
+
+      # Trigger the full cleanup cycle via the janitor process
+      janitor_pid = GenServer.whereis(hub.procs.janitor)
+      ref = Process.monitor(janitor_pid)
+      send(janitor_pid, :ttl_cleanup)
+
+      # Wait for the janitor to finish processing (it won't crash, so monitor stays clean)
+      refute_receive {:DOWN, ^ref, :process, ^janitor_pid, _}, 200
+
+      # Expired cache entry purged
+      assert ProcessHub.Service.Storage.get(hub.storage.misc, :cycle_expired) === nil
+
+      # Valid cache entry kept
+      assert ProcessHub.Service.Storage.get(hub.storage.misc, :cycle_valid) === "stays"
+
+      # Expired registry entry purged
+      assert :ets.lookup(hub.hub_id, :cycle_reg_expired) === []
+
+      # Valid registry entry kept
+      assert ProcessRegistry.lookup(hub.hub_id, :cycle_reg_valid) !== nil
+    end
+  end
+
   describe "dump/1 with TTL entries" do
     test "dump includes pending entries with TTL", %{hub_id: hub_id} do
       # Insert a pending entry with TTL

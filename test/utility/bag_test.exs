@@ -151,6 +151,186 @@ defmodule Test.Utility.BagTest do
     assert Bag.get_by_key(list, :missing, :default) === :default
   end
 
+  describe "receive_until/4" do
+    test "collects messages until halt condition" do
+      # Send messages to self
+      send(self(), {:test_key, 1})
+      send(self(), {:test_key, 2})
+      send(self(), {:test_key, 3})
+
+      result =
+        Bag.receive_until(:test_key, [], fn acc, data ->
+          new_acc = [data | acc]
+          if length(new_acc) >= 3, do: {:halt, Enum.reverse(new_acc)}, else: {:cont, new_acc}
+        end, timeout: 1000)
+
+      assert result === [1, 2, 3]
+    end
+
+    test "accumulates values correctly" do
+      send(self(), {:sum_key, 10})
+      send(self(), {:sum_key, 20})
+      send(self(), {:sum_key, 30})
+
+      result =
+        Bag.receive_until(:sum_key, 0, fn acc, data ->
+          new_acc = acc + data
+          if new_acc >= 60, do: {:halt, new_acc}, else: {:cont, new_acc}
+        end, timeout: 1000)
+
+      assert result === 60
+    end
+
+    test "raises on timeout" do
+      assert_raise RuntimeError, "receive_until timeout", fn ->
+        Bag.receive_until(:no_msg_key, :init, fn acc, _data ->
+          {:cont, acc}
+        end, timeout: 50)
+      end
+    end
+
+    test "works with tuple receive key" do
+      send(self(), {:key_a, :data_a})
+      send(self(), {:key_b, :data_b})
+
+      result =
+        Bag.receive_until({:key_a, :key_b}, [], fn acc, data ->
+          new_acc = [data | acc]
+          if length(new_acc) >= 2, do: {:halt, Enum.reverse(new_acc)}, else: {:cont, new_acc}
+        end, timeout: 1000)
+
+      assert result === [:data_a, :data_b]
+    end
+
+    test "custom error message on timeout" do
+      assert_raise RuntimeError, "custom timeout msg", fn ->
+        Bag.receive_until(:no_msg, :init, fn acc, _data ->
+          {:cont, acc}
+        end, timeout: 50, error_msg: "custom timeout msg")
+      end
+    end
+  end
+
+  describe "await_cluster_join/2" do
+    test "receives join messages for local scope" do
+      # Simulate hook messages for 2 joining nodes
+      send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :node1}})
+      send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :node2}})
+
+      result = Bag.await_cluster_join([:node1, :node2], scope: :local, timeout: 1000)
+
+      assert length(result) === 2
+      assert Enum.all?(result, fn {:ok, _data} -> true; _ -> false end)
+    end
+
+    test "accepts integer count" do
+      send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :node1}})
+      send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :node2}})
+
+      result = Bag.await_cluster_join(2, scope: :local, timeout: 1000)
+
+      assert length(result) === 2
+    end
+
+    test "returns empty list for 0 joining nodes" do
+      result = Bag.await_cluster_join([], scope: :local)
+      assert result === []
+    end
+
+    test "global scope calculates correct message count" do
+      # For global scope with 1 joining node and cluster_size 2:
+      # count = 1 * (2 + 1) = 3 messages
+      for _ <- 1..3 do
+        send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :new_node}})
+      end
+
+      result = Bag.await_cluster_join(1, scope: :global, cluster_size: 2, timeout: 1000)
+      assert length(result) === 3
+    end
+  end
+
+  describe "await_cluster_leave/2" do
+    test "receives leave messages for local scope" do
+      send(self(), {ProcessHub.Constant.Hook.post_cluster_leave(), %{removed_node: :node1}})
+
+      result = Bag.await_cluster_leave([:node1], scope: :local, timeout: 1000)
+
+      assert length(result) === 1
+      assert [{:ok, %{removed_node: :node1}}] = result
+    end
+
+    test "returns empty list for 0 leaving nodes" do
+      result = Bag.await_cluster_leave([], scope: :local)
+      assert result === []
+    end
+
+    test "global scope calculates correct message count" do
+      # For global scope with 1 leaving node and cluster_size 3:
+      # count = 1 * (3 - 1) = 2 messages
+      for _ <- 1..2 do
+        send(self(), {ProcessHub.Constant.Hook.post_cluster_leave(), %{removed_node: :gone_node}})
+      end
+
+      result = Bag.await_cluster_leave(1, scope: :global, cluster_size: 3, timeout: 1000)
+      assert length(result) === 2
+    end
+  end
+
+  describe "await_child_ids/3" do
+    test "collects all expected child_ids" do
+      # Send messages containing child_ids in batches
+      send(self(), {:hook_key, %{child_ids: [:child1, :child2]}})
+      send(self(), {:hook_key, %{child_ids: [:child3]}})
+
+      result = Bag.await_child_ids(:hook_key, [:child1, :child2, :child3], timeout: 1000)
+
+      assert is_list(result)
+      assert length(result) === 2
+
+      all_received_ids =
+        Enum.flat_map(result, fn data -> Map.get(data, :child_ids, []) end)
+
+      assert :child1 in all_received_ids
+      assert :child2 in all_received_ids
+      assert :child3 in all_received_ids
+    end
+
+    test "halts as soon as all child_ids received" do
+      # First message covers all expected ids
+      send(self(), {:hook2, %{child_ids: [:a, :b, :c]}})
+      # This message should not be consumed
+      send(self(), {:hook2, %{child_ids: [:extra]}})
+
+      result = Bag.await_child_ids(:hook2, [:a, :b, :c], timeout: 1000)
+
+      assert length(result) === 1
+      assert List.first(result).child_ids === [:a, :b, :c]
+    end
+
+    test "supports custom child_ids_key" do
+      send(self(), {:custom_hook, %{my_ids: [:x, :y]}})
+
+      result =
+        Bag.await_child_ids(:custom_hook, [:x, :y],
+          timeout: 1000,
+          child_ids_key: :my_ids
+        )
+
+      assert length(result) === 1
+      assert List.first(result).my_ids === [:x, :y]
+    end
+
+    test "raises on timeout when not all ids received" do
+      send(self(), {:timeout_hook, %{child_ids: [:partial]}})
+
+      assert_raise RuntimeError, "await_child_ids timeout", fn ->
+        Bag.await_child_ids(:timeout_hook, [:partial, :missing],
+          timeout: 100
+        )
+      end
+    end
+  end
+
   test "get_by_key edge cases" do
     # Single element list
     assert Bag.get_by_key([{:only, "value"}], :only) === "value"

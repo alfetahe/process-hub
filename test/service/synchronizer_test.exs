@@ -76,6 +76,31 @@ defmodule Test.Service.SynchronizerTest do
     assert result === :ok
   end
 
+  test "trigger_sync uses the configured sync strategy and local data", %{hub: hub} = _context do
+    # Insert local registry data that trigger_sync will pick up via local_sync_data
+    ProcessRegistry.insert(hub.hub_id, %{id: :sync_trigger1}, [{node(), self()}],
+      metadata: %{tag: "sync1"}
+    )
+
+    ProcessRegistry.insert(hub.hub_id, %{id: :sync_trigger2}, [{node(), self()}],
+      metadata: %{tag: "sync2"}
+    )
+
+    # Verify the data is visible to local_sync_data (which trigger_sync uses internally)
+    local_data = Synchronizer.local_sync_data(hub)
+    assert length(local_data) === 2
+    child_ids = Enum.map(local_data, fn {cs, _pid, _meta} -> cs.id end)
+    assert :sync_trigger1 in child_ids
+    assert :sync_trigger2 in child_ids
+
+    # trigger_sync spawns a task that calls IntervalSyncInit.handle
+    # which broadcasts local data via the sync strategy. Should complete without error.
+    assert Synchronizer.trigger_sync(hub) === :ok
+
+    # Data should still be intact after sync (sync doesn't mutate local state)
+    assert length(Synchronizer.local_sync_data(hub)) === 2
+  end
+
   test "broadcast_local_registry with local data", %{hub: hub} = _context do
     # Insert some local registry data first
     ProcessRegistry.insert(hub.hub_id, %{id: :broadcast_test1}, [{node(), self()}],

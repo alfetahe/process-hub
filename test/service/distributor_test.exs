@@ -269,6 +269,117 @@ defmodule Test.Service.DistributorTest do
     assert Keyword.take(result, [:awaitable, :timeout, :custom_option]) === input_opts
   end
 
+  describe "compose_start_operation/3" do
+    test "returns error when child_specs is empty", %{hub: hub} do
+      assert Distributor.compose_start_operation(hub, [], []) === {:error, :no_children}
+    end
+
+    test "starts children and returns operation", %{hub: hub} do
+      child_spec = %{
+        id: :compose_start_test,
+        start: {Test.Helper.TestServer, :start_link, [%{name: :compose_start_test}]}
+      }
+
+      opts = Distributor.default_init_opts(timeout: 5000)
+      result = Distributor.compose_start_operation(hub, [child_spec], opts)
+
+      assert {:ok, %ProcessHub.Service.RequestManager{} = operation} = result
+      assert operation.hub_id === hub.hub_id
+      assert operation.handler === ProcessHub.Request.Handler.StartChildrenRequest
+      assert is_list(operation.sub_requests)
+      assert length(operation.sub_requests) >= 1
+    end
+
+    test "returns error for already started children", %{hub: hub} do
+      child_spec = %{
+        id: :compose_dup_test,
+        start: {Test.Helper.TestServer, :start_link, [%{name: :compose_dup_test}]}
+      }
+
+      opts = Distributor.default_init_opts(timeout: 5000)
+      {:ok, _op} = Distributor.compose_start_operation(hub, [child_spec], opts)
+
+      # Wait for the child to be registered
+      Process.sleep(200)
+
+      # Try to start the same child again with check_existing: true
+      opts2 = Distributor.default_init_opts(timeout: 5000, check_existing: true)
+      result = Distributor.compose_start_operation(hub, [child_spec], opts2)
+
+      assert {:error, {:already_started, child_ids}} = result
+      assert :compose_dup_test in child_ids
+    end
+
+    test "skips check_existing when option is false", %{hub: hub} do
+      child_spec = %{
+        id: :compose_nocheck_test,
+        start: {Test.Helper.TestServer, :start_link, [%{name: :compose_nocheck_test}]}
+      }
+
+      opts = Distributor.default_init_opts(timeout: 5000, check_existing: false)
+      result = Distributor.compose_start_operation(hub, [child_spec], opts)
+
+      assert {:ok, %ProcessHub.Service.RequestManager{}} = result
+    end
+  end
+
+  describe "compose_stop_operation/3" do
+    test "returns error when child_ids is empty", %{hub: hub} do
+      opts = Distributor.default_init_opts([])
+      assert Distributor.compose_stop_operation(hub, [], opts) === {:error, :no_children}
+    end
+
+    test "handles stopping non-existent children", %{hub: hub} do
+      opts = Distributor.default_init_opts(timeout: 5000)
+      result = Distributor.compose_stop_operation(hub, [:nonexistent_child], opts)
+
+      # Should still return {:ok, operation} for not_found children so awaitable works
+      assert {:ok, %ProcessHub.Service.RequestManager{} = operation} = result
+      assert operation.handler === ProcessHub.Request.Handler.StopChildrenRequest
+    end
+
+    test "stops existing children and returns operation", %{hub_id: hub_id, hub: hub} do
+      child_spec = %{
+        id: :compose_stop_test,
+        start: {Test.Helper.TestServer, :start_link, [%{name: :compose_stop_test}]}
+      }
+
+      # Start the child first via ProcessHub
+      ProcessHub.start_children(hub_id, [child_spec], awaitable: true, timeout: 5000)
+      |> ProcessHub.Future.await()
+
+      # Verify child exists
+      assert ProcessRegistry.lookup(hub_id, :compose_stop_test) !== nil
+
+      opts = Distributor.default_init_opts(timeout: 5000)
+      result = Distributor.compose_stop_operation(hub, [:compose_stop_test], opts)
+
+      assert {:ok, %ProcessHub.Service.RequestManager{} = operation} = result
+      assert operation.handler === ProcessHub.Request.Handler.StopChildrenRequest
+      assert is_list(operation.sub_requests)
+      assert length(operation.sub_requests) >= 1
+    end
+
+    test "mixed existing and non-existing children", %{hub_id: hub_id, hub: hub} do
+      child_spec = %{
+        id: :compose_stop_mix,
+        start: {Test.Helper.TestServer, :start_link, [%{name: :compose_stop_mix}]}
+      }
+
+      ProcessHub.start_children(hub_id, [child_spec], awaitable: true, timeout: 5000)
+      |> ProcessHub.Future.await()
+
+      opts = Distributor.default_init_opts(timeout: 5000)
+
+      # Stop one existing and one non-existing child
+      result = Distributor.compose_stop_operation(hub, [:compose_stop_mix, :nope], opts)
+
+      assert {:ok, %ProcessHub.Service.RequestManager{} = operation} = result
+      # The not_found_children should be tracked in opts
+      assert operation.handler === ProcessHub.Request.Handler.StopChildrenRequest
+    end
+  end
+
   describe "calculate_call_timeout/2" do
     test "calculates timeout based on child count with default formula" do
       # Formula: 5000ms + (1ms × child_count)

@@ -70,4 +70,20 @@ defmodule Test.Constant.StorageKeyTest do
   test "request cleanup interval" do
     assert StorageKey.rci() === :req_cleanup_interval
   end
+
+  test "storage key migration coldswap state" do
+    assert StorageKey.mcsk() === :migration_coldswap_state
+  end
+
+  test "storage key majority quorum max seen" do
+    assert StorageKey.mqms() === :majority_quorum_max_seen
+  end
+
+  test "storage key cluster event debounce" do
+    assert StorageKey.ced() === :cluster_event_debounce
+  end
+
+  test "storage key cross node request timeout" do
+    assert StorageKey.cnrt() === :cross_node_request_timeout
+  end
 end

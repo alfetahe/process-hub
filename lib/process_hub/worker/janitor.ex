@@ -24,7 +24,7 @@ defmodule ProcessHub.Worker.Janitor do
 
   @impl true
   def handle_info(:ttl_cleanup, state) do
-    purge_cache(state.misc_storage)
+    purge_expired_cache(state.misc_storage)
     purge_pending_registry(state.hub_id)
     schedule_cleanup(state.purge_interval)
 
@@ -35,7 +35,14 @@ defmodule ProcessHub.Worker.Janitor do
     Process.send_after(self(), :ttl_cleanup, purge_interval)
   end
 
-  defp purge_cache(misc_storage) do
+  @doc """
+  Purges expired TTL cache entries from the given storage table.
+
+  Scans for 3-tuple entries `{key, value, expire_timestamp}` and removes
+  any where the timestamp has passed.
+  """
+  @spec purge_expired_cache(:ets.tid()) :: :ok
+  def purge_expired_cache(misc_storage) do
     # Match only items with TTL.
     ttl_items = :ets.match(misc_storage, {:"$1", :_, :"$2"})
     curr_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
@@ -52,6 +59,8 @@ defmodule ProcessHub.Worker.Janitor do
           Storage.remove(misc_storage, cache_key)
         end
     end)
+
+    :ok
   end
 
   @doc """

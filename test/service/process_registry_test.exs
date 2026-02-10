@@ -365,6 +365,114 @@ defmodule Test.Service.ProcessRegistryTest do
     assert Enum.sort(ProcessRegistry.local_child_specs(hub_id)) === formatted_data
   end
 
+  test "get_pids returns all pids for a child", %{hub_id: hub_id} = _context do
+    child_spec = %{id: :pids_test, start: {:mod, :fun, []}}
+    child_nodes = [{:node1, :pid1}, {:node2, :pid2}, {:node3, :pid3}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    pids = ProcessRegistry.get_pids(hub_id, :pids_test)
+
+    assert length(pids) === 3
+    assert :pid1 in pids
+    assert :pid2 in pids
+    assert :pid3 in pids
+  end
+
+  test "get_pids returns empty list for non-existent child", %{hub_id: hub_id} = _context do
+    assert ProcessRegistry.get_pids(hub_id, :nonexistent_child) === []
+  end
+
+  test "get_pid returns first pid for a child", %{hub_id: hub_id} = _context do
+    child_spec = %{id: :pid_test, start: {:mod, :fun, []}}
+    child_nodes = [{:node1, :first_pid}, {:node2, :second_pid}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    pid = ProcessRegistry.get_pid(hub_id, :pid_test)
+
+    assert pid === :first_pid
+  end
+
+  test "get_pid returns nil for non-existent child", %{hub_id: hub_id} = _context do
+    assert ProcessRegistry.get_pid(hub_id, :nonexistent_pid) === nil
+  end
+
+  test "local_pid returns pid for local node", %{hub_id: hub_id} = _context do
+    local_node = node()
+    child_spec = %{id: :local_pid_test, start: {:mod, :fun, []}}
+    child_nodes = [{local_node, :local_pid_val}, {:remote_node, :remote_pid_val}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    local_pid = ProcessRegistry.local_pid(hub_id, :local_pid_test)
+
+    assert local_pid === :local_pid_val
+  end
+
+  test "local_pid returns nil when child not on local node", %{hub_id: hub_id} = _context do
+    child_spec = %{id: :remote_only_pid, start: {:mod, :fun, []}}
+    child_nodes = [{:remote_node, :remote_pid_only}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    assert ProcessRegistry.local_pid(hub_id, :remote_only_pid) === nil
+  end
+
+  test "local_pid returns nil for non-existent child", %{hub_id: hub_id} = _context do
+    assert ProcessRegistry.local_pid(hub_id, :no_such_child) === nil
+  end
+
+  test "local_children returns only children on local node", %{hub_id: hub_id} = _context do
+    local_node = node()
+
+    # Insert local children
+    ProcessRegistry.insert(hub_id, %{id: :lc1, start: {:m, :f, []}}, [{local_node, :pid1}],
+      metadata: %{tag: "local1"}
+    )
+
+    ProcessRegistry.insert(hub_id, %{id: :lc2, start: {:m, :f, []}}, [{local_node, :pid2}],
+      metadata: %{tag: "local2"}
+    )
+
+    # Insert remote-only child
+    ProcessRegistry.insert(hub_id, %{id: :lc3, start: {:m, :f, []}}, [{:remote_only, :pid3}],
+      metadata: %{tag: "remote"}
+    )
+
+    # Insert mixed child (local + remote)
+    ProcessRegistry.insert(
+      hub_id,
+      %{id: :lc4, start: {:m, :f, []}},
+      [{local_node, :pid4}, {:remote_node, :pid5}],
+      metadata: %{tag: "mixed"}
+    )
+
+    children = ProcessRegistry.local_children(hub_id)
+
+    assert is_map(children)
+    assert Map.has_key?(children, :lc1)
+    assert Map.has_key?(children, :lc2)
+    refute Map.has_key?(children, :lc3)
+    assert Map.has_key?(children, :lc4)
+
+    # Verify structure of returned data
+    {child_spec, node_pids, metadata} = children[:lc1]
+    assert child_spec.id === :lc1
+    assert Keyword.get(node_pids, local_node) === :pid1
+    assert metadata.tag === "local1"
+
+    # Mixed child should include both node entries
+    {_cs, mixed_nodes, _m} = children[:lc4]
+    assert Keyword.get(mixed_nodes, local_node) === :pid4
+    assert Keyword.get(mixed_nodes, :remote_node) === :pid5
+  end
+
+  test "local_children returns empty map when no local children", %{hub_id: hub_id} = _context do
+    # Insert only remote children
+    ProcessRegistry.insert(hub_id, %{id: :remote_lc, start: {:m, :f, []}}, [{:remote, :pid}])
+
+    children = ProcessRegistry.local_children(hub_id)
+
+    refute Map.has_key?(children, :remote_lc)
+  end
+
   test "update", %{hub_id: hub_id} = _context do
     cid = "child_update_id"
     child_spec = %{id: cid, start_link: {:mod1, :fn1, [1, 2]}}
