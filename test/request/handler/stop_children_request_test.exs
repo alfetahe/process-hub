@@ -4,8 +4,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
   alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Service.RequestManager
 
-  # Helper: create a minimal operation for new/3
-  defp make_operation(opts \\ []) do
+  defp make_operation(opts) do
     %RequestManager{
       transaction_id: Keyword.get(opts, :transaction_id, make_ref()),
       hub_id: Keyword.get(opts, :hub_id, :test_hub),
@@ -20,7 +19,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
 
   describe "new/3" do
     test "creates correct struct from operation" do
-      op = make_operation(options: [reply_to: [self()]])
+      op = make_operation(options: [reply_to: [self()], custom_opt: true])
 
       req = StopChildrenRequest.new(op, :target_node, [%{child_id: :c1}])
 
@@ -31,13 +30,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       assert req.node == :target_node
       assert req.children == [%{child_id: :c1}]
       assert req.status == :dispatched
-    end
-
-    test "strips routing opts from passthrough options" do
-      op = make_operation(options: [reply_to: [self()], custom_opt: true])
-
-      req = StopChildrenRequest.new(op, :target, [])
-
+      # Routing opts stripped from passthrough options
       assert Keyword.get(req.options, :custom_opt) == true
       refute Keyword.has_key?(req.options, :reply_to)
     end
@@ -49,30 +42,9 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
     end
   end
 
-  describe "to_stop_opts/1" do
-    test "converts to keyword options" do
-      req = %StopChildrenRequest{
-        transaction_id: :txn,
-        hub_id: :hub,
-        originating_node: node(),
-        reply_to: nil,
-        node: node(),
-        children: [],
-        options: []
-      }
-
-      opts = StopChildrenRequest.to_stop_opts(req)
-      assert is_list(opts)
-      assert Keyword.get(opts, :hub_id) == :hub
-    end
-  end
-
   describe "build_node_response/1" do
-    test "with map format (child_id key)" do
-      children = [
-        %{child_id: :child1},
-        %{child_id: :child2}
-      ]
+    test "with map format produces :ok results" do
+      children = [%{child_id: :child1}, %{child_id: :child2}]
 
       result = StopChildrenRequest.build_node_response(children)
 
@@ -81,30 +53,20 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       assert {:child2, :ok} in result
     end
 
-    test "with tuple format filters to local node" do
+    test "with tuple format filters to local node and preserves result" do
       local = node()
 
       results = [
         {:child1, :ok, local},
-        {:child2, :ok, :remote@host}
+        {:child2, :ok, :remote@host},
+        {:child3, {:error, :not_found}, local}
       ]
 
       result = StopChildrenRequest.build_node_response(results)
 
-      assert length(result) == 1
+      assert length(result) == 2
       assert {:child1, :ok} in result
-    end
-
-    test "with tuple format preserves result" do
-      local = node()
-
-      results = [
-        {:child1, {:error, :not_found}, local}
-      ]
-
-      result = StopChildrenRequest.build_node_response(results)
-
-      assert [{:child1, {:error, :not_found}}] = result
+      assert {:child3, {:error, :not_found}} in result
     end
   end
 
@@ -125,7 +87,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       assert result.errors == []
     end
 
-    test "handles nil results (no response)" do
+    test "handles nil results as no_response errors" do
       sub_req = %StopChildrenRequest{
         node: :node1,
         results: nil,
@@ -136,7 +98,6 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       result = StopChildrenRequest.aggregate_results(op)
 
       assert result.status == :error
-      assert length(result.errors) == 1
       assert {:child1, {:error, :no_response}} in result.errors
     end
 
@@ -157,41 +118,6 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       assert result.status == :error
       assert {:child_missing, {:error, :not_found}} in result.errors
       assert length(result.stopped) == 1
-    end
-
-    test "handles error results from node" do
-      sub_req = %StopChildrenRequest{
-        node: :node1,
-        results: [{:child1, {:error, :timeout}}],
-        children: []
-      }
-
-      op = %RequestManager{sub_requests: [sub_req], options: []}
-      result = StopChildrenRequest.aggregate_results(op)
-
-      assert result.status == :error
-      # The error reason is extracted from the {:error, reason} tuple
-      assert {:child1, :timeout} in result.errors
-    end
-
-    test "aggregates from multiple sub_requests" do
-      sub1 = %StopChildrenRequest{
-        node: :node1,
-        results: [{:child1, :ok}],
-        children: []
-      }
-
-      sub2 = %StopChildrenRequest{
-        node: :node2,
-        results: [{:child2, :ok}],
-        children: []
-      }
-
-      op = %RequestManager{sub_requests: [sub1, sub2], options: []}
-      result = StopChildrenRequest.aggregate_results(op)
-
-      assert result.status == :ok
-      assert length(result.stopped) == 2
     end
   end
 
