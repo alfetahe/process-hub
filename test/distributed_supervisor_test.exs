@@ -63,7 +63,8 @@ defmodule Test.Service.DistributedSupervisorTest do
     assert Enum.any?(children, fn {id, _, _, _} -> id === :term_child_test end)
 
     # Terminate the child
-    result = ProcessHub.DistributedSupervisor.terminate_child(hub.procs.dist_sup, :term_child_test)
+    result =
+      ProcessHub.DistributedSupervisor.terminate_child(hub.procs.dist_sup, :term_child_test)
 
     assert result === :ok
 

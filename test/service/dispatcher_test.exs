@@ -45,7 +45,10 @@ defmodule Test.Service.DispatcherTest do
   test "children_start dispatches start requests preserving hub_id and node", %{hub: hub} do
     :blockade.add_handler(hub.procs.event_queue, @event_requests_handle)
 
-    child_spec = %{id: :dispatch_start_child, start: {Test.Helper.TestServer, :start_link, [%{name: :dispatch_start_child}]}}
+    child_spec = %{
+      id: :dispatch_start_child,
+      start: {Test.Helper.TestServer, :start_link, [%{name: :dispatch_start_child}]}
+    }
 
     request = %ProcessHub.Request.Handler.StartChildrenRequest{
       transaction_id: :test_tx_start,

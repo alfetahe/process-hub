@@ -159,10 +159,13 @@ defmodule Test.Utility.BagTest do
       send(self(), {:test_key, 3})
 
       result =
-        Bag.receive_until(:test_key, [], fn acc, data ->
-          new_acc = [data | acc]
-          if length(new_acc) >= 3, do: {:halt, Enum.reverse(new_acc)}, else: {:cont, new_acc}
-        end, timeout: 1000)
+        Bag.receive_until(
+          :test_key,
+          [],
+          fn acc, data ->
+            new_acc = [data | acc]
+            if length(new_acc) >= 3, do: {:halt, Enum.reverse(new_acc)}, else: {:cont, new_acc}
+          end, timeout: 1000)
 
       assert result === [1, 2, 3]
     end
@@ -173,19 +176,25 @@ defmodule Test.Utility.BagTest do
       send(self(), {:sum_key, 30})
 
       result =
-        Bag.receive_until(:sum_key, 0, fn acc, data ->
-          new_acc = acc + data
-          if new_acc >= 60, do: {:halt, new_acc}, else: {:cont, new_acc}
-        end, timeout: 1000)
+        Bag.receive_until(
+          :sum_key,
+          0,
+          fn acc, data ->
+            new_acc = acc + data
+            if new_acc >= 60, do: {:halt, new_acc}, else: {:cont, new_acc}
+          end, timeout: 1000)
 
       assert result === 60
     end
 
     test "raises on timeout" do
       assert_raise RuntimeError, "receive_until timeout", fn ->
-        Bag.receive_until(:no_msg_key, :init, fn acc, _data ->
-          {:cont, acc}
-        end, timeout: 50)
+        Bag.receive_until(
+          :no_msg_key,
+          :init,
+          fn acc, _data ->
+            {:cont, acc}
+          end, timeout: 50)
       end
     end
 
@@ -194,19 +203,25 @@ defmodule Test.Utility.BagTest do
       send(self(), {:key_b, :data_b})
 
       result =
-        Bag.receive_until({:key_a, :key_b}, [], fn acc, data ->
-          new_acc = [data | acc]
-          if length(new_acc) >= 2, do: {:halt, Enum.reverse(new_acc)}, else: {:cont, new_acc}
-        end, timeout: 1000)
+        Bag.receive_until(
+          {:key_a, :key_b},
+          [],
+          fn acc, data ->
+            new_acc = [data | acc]
+            if length(new_acc) >= 2, do: {:halt, Enum.reverse(new_acc)}, else: {:cont, new_acc}
+          end, timeout: 1000)
 
       assert result === [:data_a, :data_b]
     end
 
     test "custom error message on timeout" do
       assert_raise RuntimeError, "custom timeout msg", fn ->
-        Bag.receive_until(:no_msg, :init, fn acc, _data ->
-          {:cont, acc}
-        end, timeout: 50, error_msg: "custom timeout msg")
+        Bag.receive_until(
+          :no_msg,
+          :init,
+          fn acc, _data ->
+            {:cont, acc}
+          end, timeout: 50, error_msg: "custom timeout msg")
       end
     end
   end
@@ -220,7 +235,11 @@ defmodule Test.Utility.BagTest do
       result = Bag.await_cluster_join([:node1, :node2], scope: :local, timeout: 1000)
 
       assert length(result) === 2
-      assert Enum.all?(result, fn {:ok, _data} -> true; _ -> false end)
+
+      assert Enum.all?(result, fn
+               {:ok, _data} -> true
+               _ -> false
+             end)
     end
 
     test "accepts integer count" do
@@ -324,9 +343,7 @@ defmodule Test.Utility.BagTest do
       send(self(), {:timeout_hook, %{child_ids: [:partial]}})
 
       assert_raise RuntimeError, "await_child_ids timeout", fn ->
-        Bag.await_child_ids(:timeout_hook, [:partial, :missing],
-          timeout: 100
-        )
+        Bag.await_child_ids(:timeout_hook, [:partial, :missing], timeout: 100)
       end
     end
   end
