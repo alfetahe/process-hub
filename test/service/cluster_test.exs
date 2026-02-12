@@ -189,6 +189,17 @@ defmodule Test.Service.ClusterTest do
     assert node() in Cluster.nodes(hub.storage.misc, [:include_local])
   end
 
+  test "promote_to_node returns error when node not alive", %{hub: hub} = _context do
+    # On a non-distributed node (Node.alive?() == false), promote_to_node should return error
+    # In test mode, Node.alive?() depends on whether tests run with --name flag
+    result = Cluster.promote_to_node(hub, :test_node_name)
+
+    case Node.alive?() do
+      false -> assert result == {:error, :not_alive}
+      true -> assert result == :ok
+    end
+  end
+
   test "promote to node", _context do
     hub_id = :promote_test
     new_node_name = :promote_node_new

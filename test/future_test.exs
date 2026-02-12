@@ -59,7 +59,10 @@ defmodule Test.FutureTest do
       pid =
         spawn(fn ->
           receive do
-            _ -> Process.sleep(:infinity)
+            _ ->
+              receive do
+                :stop -> :ok
+              end
           end
         end)
 

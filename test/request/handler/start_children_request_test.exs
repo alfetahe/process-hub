@@ -186,6 +186,66 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
       op_default = %RequestManager{options: []}
       assert StartChildrenRequest.post_process(op_default, start_result, %{}) == start_result
     end
+
+    test "returns result unchanged when status is :ok even with on_failure: :rollback" do
+      start_result = %ProcessHub.StartResult{
+        status: :ok,
+        started: [{:child1, [{node(), self()}]}],
+        errors: [],
+        rollback: false
+      }
+
+      op = %RequestManager{options: [on_failure: :rollback]}
+      result = StartChildrenRequest.post_process(op, start_result, %{})
+      assert result == start_result
+      assert result.rollback == false
+    end
+
+    test "performs rollback when on_failure: :rollback and status: :error", %{hub: hub} do
+      # Start a real child so rollback can terminate it
+      child_spec = %{
+        id: :rollback_child,
+        start: {Test.Helper.TestServer, :start_link, [%{name: :rollback_child}]}
+      }
+
+      {:ok, pid} = ProcessHub.DistributedSupervisor.start_child(hub.procs.dist_sup, child_spec)
+      ProcessHub.Service.ProcessRegistry.insert(hub.hub_id, child_spec, [{node(), pid}])
+
+      start_result = %ProcessHub.StartResult{
+        status: :error,
+        started: [{:rollback_child, [{node(), pid}]}],
+        errors: [{:other_child, :crash}],
+        rollback: false
+      }
+
+      op = %RequestManager{options: [on_failure: :rollback]}
+      result = StartChildrenRequest.post_process(op, start_result, hub)
+
+      assert result.rollback == true
+      assert result.status == :error
+
+      # The child should have been terminated by rollback
+      assert ProcessHub.Service.ProcessRegistry.lookup(hub.hub_id, :rollback_child) == nil
+    end
+  end
+
+  describe "to_start_opts/1" do
+    test "converts request to keyword opts" do
+      req = %StartChildrenRequest{
+        transaction_id: make_ref(),
+        hub_id: :test_hub,
+        originating_node: node(),
+        reply_to: [self()],
+        node: node(),
+        children: [],
+        options: [timeout: 5000, awaitable: true]
+      }
+
+      result = StartChildrenRequest.to_start_opts(req)
+      assert is_list(result)
+      assert Keyword.get(result, :hub_id) == :test_hub
+      assert Keyword.get(result, :originating_node) == node()
+    end
   end
 
   describe "build_request/8" do

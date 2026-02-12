@@ -69,7 +69,10 @@ defmodule Test.Service.StateTest do
       Task.async(fn ->
         {:ok, _} = Registry.register(reg_name, "dist_sup", nil)
         send(test_pid, :registered)
-        Process.sleep(:infinity)
+
+        receive do
+          :stop -> :ok
+        end
       end)
 
     assert_receive :registered, 1000

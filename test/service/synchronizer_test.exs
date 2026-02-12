@@ -54,6 +54,59 @@ defmodule Test.Service.SynchronizerTest do
     end)
   end
 
+  test "append data updates existing child with different pid", %{hub: hub} = _context do
+    pid1 =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    pid2 =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    # Insert with one pid
+    Synchronizer.append_data(hub, %{:remote@host => [{%{id: :update_test}, pid1, %{}}]})
+
+    # Verify initial state
+    {_, nodes1} = ProcessRegistry.lookup(hub.hub_id, :update_test)
+    assert Keyword.get(nodes1, :remote@host) == pid1
+
+    # Update with different pid for same node
+    Synchronizer.append_data(hub, %{:remote@host => [{%{id: :update_test}, pid2, %{}}]})
+
+    # Verify pid was updated
+    {_, nodes2} = ProcessRegistry.lookup(hub.hub_id, :update_test)
+    assert Keyword.get(nodes2, :remote@host) == pid2
+
+    Process.exit(pid1, :kill)
+    Process.exit(pid2, :kill)
+  end
+
+  test "append data skips update when pid unchanged", %{hub: hub} = _context do
+    pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    # Insert with a pid
+    Synchronizer.append_data(hub, %{:remote@host => [{%{id: :skip_test}, pid, %{}}]})
+
+    # Append same data again — should not crash or change anything
+    Synchronizer.append_data(hub, %{:remote@host => [{%{id: :skip_test}, pid, %{}}]})
+
+    {_, nodes} = ProcessRegistry.lookup(hub.hub_id, :skip_test)
+    assert Keyword.get(nodes, :remote@host) == pid
+
+    Process.exit(pid, :kill)
+  end
+
   test "detach data", %{hub: hub} = _context do
     Synchronizer.append_data(hub, %{node() => [{%{id: :test1}, :pid, %{}}]})
     Synchronizer.append_data(hub, %{node() => [{%{id: :test2}, :pid, %{}}]})
@@ -67,6 +120,56 @@ defmodule Test.Service.SynchronizerTest do
 
     registry = ProcessRegistry.dump(hub.hub_id)
     assert Map.to_list(registry) |> length() === 0
+  end
+
+  test "detach data removes node entry when child not in remote data", %{hub: hub} = _context do
+    pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    # Insert child with two nodes
+    ProcessRegistry.insert(
+      hub.hub_id,
+      %{id: :detach_partial},
+      [{:remote@host, pid}, {node(), self()}], metadata: %{})
+
+    # Detach remote@host's data, but DON'T include :detach_partial in the remote data
+    # This means the child exists locally for remote@host but remote@host no longer has it
+    Synchronizer.detach_data(hub, %{:remote@host => []})
+
+    # remote@host's entry should be removed, but local node's entry stays
+    result = ProcessRegistry.lookup(hub.hub_id, :detach_partial)
+    assert result != nil
+    {_, nodes} = result
+    refute Keyword.has_key?(nodes, :remote@host)
+    assert Keyword.has_key?(nodes, node())
+
+    Process.exit(pid, :kill)
+  end
+
+  test "detach data deletes child when last node removed", %{hub: hub} = _context do
+    pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    # Insert child with only one remote node
+    ProcessRegistry.insert(hub.hub_id, %{id: :detach_delete}, [{:remote@host, pid}],
+      metadata: %{}
+    )
+
+    # Detach remote@host's data without the child
+    Synchronizer.detach_data(hub, %{:remote@host => []})
+
+    # Child should be fully deleted since no nodes remain
+    assert ProcessRegistry.lookup(hub.hub_id, :detach_delete) == nil
+
+    Process.exit(pid, :kill)
   end
 
   test "broadcast_local_registry with empty registry", %{hub: hub} = _context do
@@ -99,6 +202,15 @@ defmodule Test.Service.SynchronizerTest do
 
     # Data should still be intact after sync (sync doesn't mutate local state)
     assert length(Synchronizer.local_sync_data(hub)) === 2
+  end
+
+  test "exec_interval_sync delegates to IntervalSyncHandle",
+       %{hub: hub, hub_id: hub_id} = _context do
+    sync_strat = ProcessHub.Service.Storage.get(hub.storage.misc, :synchronization_strategy)
+
+    # exec_interval_sync should work without error when given empty remote data
+    result = Synchronizer.exec_interval_sync(hub_id, sync_strat, [], :remote@host)
+    assert result == :ok
   end
 
   test "broadcast_local_registry with local data", %{hub: hub} = _context do

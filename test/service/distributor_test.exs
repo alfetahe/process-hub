@@ -214,11 +214,9 @@ defmodule Test.Service.DistributorTest do
         start: {Test.Helper.TestServer, :start_link, [%{name: :compose_dup_test}]}
       }
 
-      opts = Distributor.default_init_opts(timeout: 5000)
-      {:ok, _op} = Distributor.compose_start_operation(hub, [child_spec], opts)
-
-      # Wait for the child to be registered
-      Process.sleep(200)
+      # Start the child via ProcessHub so it's fully registered before checking
+      ProcessHub.start_children(hub.hub_id, [child_spec], awaitable: true, timeout: 5000)
+      |> ProcessHub.Future.await()
 
       # Try to start the same child again with check_existing: true
       opts2 = Distributor.default_init_opts(timeout: 5000, check_existing: true)

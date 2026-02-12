@@ -124,6 +124,41 @@ defmodule Test.Strategy.Distribution.GuidedTest do
     end
   end
 
+  describe "init/2" do
+    test "registers pre_children_start hook handler", %{hub: hub} do
+      strategy = %Guided{}
+      result = DistributionStrategy.init(strategy, hub)
+      assert result == strategy
+
+      handlers =
+        ProcessHub.Service.HookManager.registered_handlers(
+          hub.storage.hook,
+          ProcessHub.Constant.Hook.pre_children_start()
+        )
+
+      assert length(handlers) == 1
+      assert hd(handlers).id == :dg_pre_start_handler
+    end
+  end
+
+  describe "handle_children_start/2" do
+    test "inserts child mappings from request options", %{hub: hub} do
+      request = %{options: [child_mapping: %{child1: [node()]}]}
+      Guided.handle_children_start(hub, %{request: request})
+
+      stored = Storage.get(hub.storage.misc, StorageKey.gdc())
+      assert stored[:child1] == [node()]
+    end
+
+    test "handles empty child_mapping", %{hub: hub} do
+      request = %{options: []}
+      Guided.handle_children_start(hub, %{request: request})
+
+      stored = Storage.get(hub.storage.misc, StorageKey.gdc())
+      assert stored == %{} or stored == nil
+    end
+  end
+
   describe "children_init/4" do
     test "returns error when child_mapping is missing", %{hub: hub} do
       strategy = %Guided{}
