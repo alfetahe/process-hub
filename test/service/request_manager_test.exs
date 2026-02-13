@@ -2,7 +2,6 @@ defmodule Test.Service.RequestManagerTest do
   use ExUnit.Case, async: false
 
   alias ProcessHub.Service.RequestManager
-  alias ProcessHub.Service.State
   alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Request.Handler.PidsRegisterRequest
