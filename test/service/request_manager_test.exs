@@ -626,6 +626,169 @@ defmodule Test.Service.RequestManagerTest do
   end
 
   ##############################################################################
+  # populate_forward
+  ##############################################################################
+
+  describe "populate_forward/3" do
+    test "adds child_data to a single target node" do
+      child = %{child_id: :child1}
+      result = RequestManager.populate_forward([], [:node1], child)
+
+      assert result == [node1: [child]]
+    end
+
+    test "groups child_data across multiple target nodes" do
+      child = %{child_id: :child1}
+      result = RequestManager.populate_forward([], [:node1, :node2], child)
+
+      assert Keyword.get(result, :node1) == [child]
+      assert Keyword.get(result, :node2) == [child]
+    end
+
+    test "accumulates children for the same node" do
+      child1 = %{child_id: :child1}
+      child2 = %{child_id: :child2}
+
+      result =
+        []
+        |> RequestManager.populate_forward([:node1], child1)
+        |> RequestManager.populate_forward([:node1], child2)
+
+      assert Keyword.get(result, :node1) == [child2, child1]
+    end
+
+    test "preserves existing forward data" do
+      existing = [node1: [%{child_id: :existing}]]
+      child = %{child_id: :new}
+
+      result = RequestManager.populate_forward(existing, [:node2], child)
+
+      assert Keyword.get(result, :node1) == [%{child_id: :existing}]
+      assert Keyword.get(result, :node2) == [child]
+    end
+
+    test "returns unchanged forward data when target_nodes is empty" do
+      existing = [node1: [%{child_id: :child1}]]
+      result = RequestManager.populate_forward(existing, [], %{child_id: :child2})
+
+      assert result == existing
+    end
+  end
+
+  ##############################################################################
+  # Constructor
+  ##############################################################################
+
+  describe "new/4" do
+    test "creates operation with correct fields", %{hub: hub} do
+      nodes_data = [{node(), [%{child_id: :c1}]}]
+      op = RequestManager.new(hub, StartChildrenRequest, nodes_data, [])
+
+      assert op.hub_id == hub.hub_id
+      assert op.handler == StartChildrenRequest
+      assert op.nodes_data == nodes_data
+      assert is_reference(op.transaction_id)
+      assert op.completed_nodes == MapSet.new()
+      assert op.sub_requests == []
+      assert %ProcessHub.Future{} = op.future
+      assert op.future.action == :start
+    end
+
+    test "sets future action to :stop for StopChildrenRequest", %{hub: hub} do
+      op = RequestManager.new(hub, StopChildrenRequest, [{node(), []}], [])
+      assert op.future.action == :stop
+    end
+
+    test "respects custom request_timeout", %{hub: hub} do
+      before = System.monotonic_time(:millisecond)
+      op = RequestManager.new(hub, StartChildrenRequest, [], request_timeout: 30_000)
+      after_ms = System.monotonic_time(:millisecond)
+
+      assert op.expires_at >= before + 30_000
+      assert op.expires_at <= after_ms + 30_000
+    end
+
+    test "passes options through", %{hub: hub} do
+      op = RequestManager.new(hub, StartChildrenRequest, [], my_opt: :val)
+      assert Keyword.get(op.options, :my_opt) == :val
+    end
+  end
+
+  ##############################################################################
+  # compose_sub_requests
+  ##############################################################################
+
+  describe "compose_sub_requests/1" do
+    test "returns error for empty nodes_data" do
+      op = make_operation(nodes_data: [])
+      assert {:error, :no_children} = RequestManager.compose_sub_requests(op)
+    end
+
+    test "creates sub_requests per target node", %{hub: hub} do
+      children = [
+        %{child_id: :c1, child_spec: %{id: :c1, start: {Agent, :start_link, [fn -> nil end]}}}
+      ]
+
+      nodes_data = [{node(), children}]
+      op = RequestManager.new(hub, StartChildrenRequest, nodes_data, [])
+
+      assert {:ok, updated} = RequestManager.compose_sub_requests(op)
+      assert length(updated.sub_requests) == 1
+      [sub] = updated.sub_requests
+      assert sub.node == node()
+    end
+
+    test "creates one sub_request per node", %{hub: hub} do
+      c1 = [%{child_id: :c1}]
+      c2 = [%{child_id: :c2}]
+      nodes_data = [{:node1, c1}, {:node2, c2}]
+      op = RequestManager.new(hub, StartChildrenRequest, nodes_data, [])
+
+      assert {:ok, updated} = RequestManager.compose_sub_requests(op)
+      assert length(updated.sub_requests) == 2
+      nodes = Enum.map(updated.sub_requests, & &1.node) |> Enum.sort()
+      assert nodes == [:node1, :node2]
+    end
+  end
+
+  ##############################################################################
+  # send_response
+  ##############################################################################
+
+  describe "send_response/3" do
+    test "returns :skip when hub_id is nil" do
+      opts = [transaction_id: make_ref()]
+      assert :skip = RequestManager.send_response(:start_response, opts, [])
+    end
+
+    test "returns :skip when transaction_id is nil" do
+      opts = [hub_id: :some_hub]
+      assert :skip = RequestManager.send_response(:start_response, opts, [])
+    end
+
+    test "returns :skip when both are nil" do
+      assert :skip = RequestManager.send_response(:start_response, [], [])
+    end
+  end
+
+  ##############################################################################
+  # load_strategies
+  ##############################################################################
+
+  describe "load_strategies/1" do
+    test "loads all four strategies", %{hub: hub} do
+      strats = RequestManager.load_strategies(hub)
+
+      assert Map.has_key?(strats, :sync)
+      assert Map.has_key?(strats, :dist)
+      assert Map.has_key?(strats, :redun)
+      assert Map.has_key?(strats, :migr)
+      assert strats.dist != nil
+      assert strats.sync != nil
+    end
+  end
+
+  ##############################################################################
   # Factory functions (require real hub)
   ##############################################################################
 

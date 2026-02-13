@@ -29,7 +29,6 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.RequestManager
-  alias ProcessHub.Service.RequestManager
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
@@ -506,10 +505,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
 
   defp populate_forward(forw_data, valid_nodes, invalid_nodes, child_data) do
     new_nodes = Enum.reject(valid_nodes, &(&1 in invalid_nodes))
-
-    Enum.reduce(new_nodes, forw_data, fn node, acc ->
-      Keyword.update(acc, node, [child_data], &[child_data | &1])
-    end)
+    RequestManager.populate_forward(forw_data, new_nodes, child_data)
   end
 
   defp create_forward_requests(hub, forw, start_opts) do

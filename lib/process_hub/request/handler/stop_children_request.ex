@@ -19,10 +19,13 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
   """
 
   alias ProcessHub.Service.Distributor
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.RequestManager
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Constant.Hook
   alias ProcessHub.Hub
 
   @type t() :: %__MODULE__{
@@ -109,17 +112,26 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
     RequestManager.with_partition_check(hub, fn ->
       sync_strategy = Storage.get(hub.storage.misc, StorageKey.strsyn())
 
-      # Extract child IDs
-      cids =
-        Enum.reduce(request.children, [], fn child_data, cids ->
-          [child_data.child_id | cids]
-        end)
+      # Validate which children are local, already stopped, or need forwarding
+      {local, forward_data, already_stopped} = validate_children(request, hub)
 
-      # Terminate children
-      Distributor.children_terminate(hub, cids, sync_strategy)
+      # Terminate only local children
+      if local != [] do
+        local_cids = Enum.map(local, & &1.child_id)
+        Distributor.children_terminate(hub, local_cids, sync_strategy)
+      end
 
-      # Build and send response
-      results = build_node_response(request.children)
+      # Forward misplaced children to their actual nodes
+      if forward_data != [] do
+        stop_opts = to_stop_opts(request)
+        node_stop_requests = create_forward_requests(hub, forward_data, stop_opts)
+        Dispatcher.children_stop(hub, node_stop_requests)
+        HookManager.dispatch_hook(hub.storage.hook, Hook.forwarded_migration(), forward_data)
+      end
+
+      # Build and send response for local + already_stopped only
+      # (forwarded children are handled by their target nodes)
+      results = build_node_response(local ++ already_stopped)
       stop_opts = to_stop_opts(request)
 
       RequestManager.send_response(
@@ -244,6 +256,68 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
     |> Enum.map(fn
       # Map format - result is :ok since we're building response after successful termination
       %{child_id: cid} -> {cid, :ok}
+    end)
+  end
+
+  ##############################################################################
+  # Private helpers for child validation and forwarding
+  ##############################################################################
+
+  # Validates each child against the process registry to determine whether it
+  # should be terminated locally, forwarded to another node, or treated as
+  # already stopped.
+  @spec validate_children(t(), Hub.t()) :: {[map()], keyword(), [map()]}
+  defp validate_children(request, hub) do
+    local_node = node()
+
+    Enum.reduce(request.children, {[], [], []}, fn child_data, {local, forward, stopped} ->
+      child_id = child_data.child_id
+
+      case ProcessRegistry.lookup(hub.hub_id, child_id) do
+        nil ->
+          # Child not in registry — already gone
+          {local, forward, [child_data | stopped]}
+
+        {_child_spec, child_nodes} ->
+          actual_nodes = Enum.map(child_nodes, fn {n, _pid} -> n end)
+
+          if local_node in actual_nodes do
+            # Child is on this node — terminate locally
+            {[child_data | local], forward, stopped}
+          else
+            # Child is on a different node — forward to actual location(s),
+            # excluding nodes that already received the original stop request.
+            original_target_nodes =
+              if is_atom(request.node), do: [request.node], else: []
+
+            new_targets = actual_nodes -- original_target_nodes
+
+            {local, RequestManager.populate_forward(forward, new_targets, child_data), stopped}
+          end
+      end
+    end)
+  end
+
+  # Creates new fire-and-forget StopChildrenRequest structs per target node.
+  @spec create_forward_requests(Hub.t(), keyword(), keyword()) :: [t()]
+  defp create_forward_requests(hub, forward_data, stop_opts) do
+    transaction_id = make_ref()
+    originating_node = node()
+
+    passthrough_opts =
+      Keyword.drop(stop_opts, [:reply_to, :transaction_id, :hub_id, :originating_node])
+
+    Enum.map(forward_data, fn {target_node, children} ->
+      %__MODULE__{
+        transaction_id: transaction_id,
+        hub_id: hub.hub_id,
+        originating_node: originating_node,
+        reply_to: nil,
+        node: target_node,
+        children: children,
+        options: passthrough_opts,
+        status: :dispatched
+      }
     end)
   end
 end

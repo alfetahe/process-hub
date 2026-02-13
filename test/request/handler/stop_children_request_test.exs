@@ -3,11 +3,21 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
 
   alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.HookManager
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Utility.Bag
+
+  @hub_id :stop_req_test_hub
+
+  setup_all context do
+    Test.Helper.SetupHelper.setup_base(context, @hub_id)
+  end
 
   defp make_operation(opts) do
     %RequestManager{
       transaction_id: Keyword.get(opts, :transaction_id, make_ref()),
-      hub_id: Keyword.get(opts, :hub_id, :test_hub),
+      hub_id: Keyword.get(opts, :hub_id, @hub_id),
       handler: StopChildrenRequest,
       nodes_data: [{node(), []}],
       completed_nodes: MapSet.new(),
@@ -24,7 +34,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       req = StopChildrenRequest.new(op, :target_node, [%{child_id: :c1}])
 
       assert req.transaction_id == op.transaction_id
-      assert req.hub_id == :test_hub
+      assert req.hub_id == @hub_id
       assert req.originating_node == node()
       assert req.reply_to == [self()]
       assert req.node == :target_node
@@ -146,5 +156,152 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
 
       assert StopChildrenRequest.post_process(op, stop_result, %{}) == stop_result
     end
+  end
+
+  describe "execute/2 forwarding" do
+    test "terminates child locally when it exists on this node", %{hub: hub} do
+      child_id = :"local_stop_#{System.unique_integer([:positive])}"
+      child_spec = %{id: child_id, start: {Agent, :start_link, [fn -> :ok end]}}
+
+      # Start the child through ProcessHub and await registration
+      {:ok, future} =
+        ProcessHub.start_children(@hub_id, [child_spec], awaitable: true, timeout: 5000)
+
+      ProcessHub.Future.await(future)
+
+      request = %StopChildrenRequest{
+        transaction_id: make_ref(),
+        hub_id: @hub_id,
+        originating_node: node(),
+        reply_to: nil,
+        node: node(),
+        children: [%{child_id: child_id}],
+        options: [],
+        status: :dispatched
+      }
+
+      assert :ok = StopChildrenRequest.execute(request, hub)
+
+      # Wait for child to be removed from registry
+      assert poll_until(fn -> ProcessRegistry.lookup(@hub_id, child_id) == nil end)
+    end
+
+    test "treats child not in registry as already stopped", %{hub: hub} do
+      child_id = :"gone_child_#{System.unique_integer([:positive])}"
+
+      # Ensure child is NOT in registry
+      assert ProcessRegistry.lookup(@hub_id, child_id) == nil
+
+      request = %StopChildrenRequest{
+        transaction_id: make_ref(),
+        hub_id: @hub_id,
+        originating_node: node(),
+        reply_to: nil,
+        node: node(),
+        children: [%{child_id: child_id}],
+        options: [],
+        status: :dispatched
+      }
+
+      # Should succeed without error — already-stopped children produce :ok response
+      assert :ok = StopChildrenRequest.execute(request, hub)
+    end
+
+    test "forwards child to correct node when registry points elsewhere", %{hub: hub} do
+      child_id = :"remote_child_#{System.unique_integer([:positive])}"
+      fake_remote_node = :"fake_remote@127.0.0.1"
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      child_spec = %{id: child_id, start: {Agent, :start_link, [fn -> :ok end]}}
+
+      # Insert into registry pointing to a fake remote node (not local)
+      ProcessRegistry.insert(@hub_id, child_spec, [{fake_remote_node, fake_pid}])
+
+      # Register a hook to verify forwarding happens
+      hook_handler = Bag.recv_hook(:stop_forward_hook, self())
+      HookManager.register_handler(hub.storage.hook, Hook.forwarded_migration(), hook_handler)
+
+      request = %StopChildrenRequest{
+        transaction_id: make_ref(),
+        hub_id: @hub_id,
+        originating_node: node(),
+        reply_to: nil,
+        node: node(),
+        children: [%{child_id: child_id}],
+        options: [],
+        status: :dispatched
+      }
+
+      # Execute will try to forward to the fake remote node.
+      # The dispatch to a non-existent node may fail, but the hook should fire
+      # and execute should not crash.
+      try do
+        StopChildrenRequest.execute(request, hub)
+      catch
+        _, _ -> :ok
+      end
+
+      # Verify the forwarded_migration hook was dispatched with the forward data
+      assert_receive {:stop_forward_hook, forward_data}, 2000
+      assert is_list(forward_data)
+
+      # forward_data is a keyword list [{node, [child_data, ...]}]
+      {target_node, children} = List.first(forward_data)
+      assert target_node == fake_remote_node
+      assert Enum.any?(children, fn c -> c.child_id == child_id end)
+
+      # Cleanup
+      Process.exit(fake_pid, :kill)
+      ProcessRegistry.delete(@hub_id, child_id)
+    end
+
+    test "does not forward to nodes that already received the original request", %{hub: hub} do
+      child_id = :"no_reforward_#{System.unique_integer([:positive])}"
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      child_spec = %{id: child_id, start: {Agent, :start_link, [fn -> :ok end]}}
+
+      # Insert into registry pointing to current node (which is request.node)
+      # This means the child is "on this node" per registry — should be local
+      ProcessRegistry.insert(@hub_id, child_spec, [{node(), fake_pid}])
+
+      hook_handler = Bag.recv_hook(:no_reforward_hook, self())
+      HookManager.register_handler(hub.storage.hook, Hook.forwarded_migration(), hook_handler)
+
+      request = %StopChildrenRequest{
+        transaction_id: make_ref(),
+        hub_id: @hub_id,
+        originating_node: node(),
+        reply_to: nil,
+        node: node(),
+        children: [%{child_id: child_id}],
+        options: [],
+        status: :dispatched
+      }
+
+      StopChildrenRequest.execute(request, hub)
+
+      # No forwarding should happen — child is local
+      refute_receive {:no_reforward_hook, _}, 500
+
+      # Cleanup
+      Process.exit(fake_pid, :kill)
+      ProcessRegistry.delete(@hub_id, child_id)
+    end
+  end
+
+  defp poll_until(fun, timeout \\ 2000, interval \\ 10) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    Stream.repeatedly(fn ->
+      if fun.() do
+        :done
+      else
+        if System.monotonic_time(:millisecond) > deadline,
+          do: :timeout,
+          else: Process.sleep(interval)
+      end
+    end)
+    |> Enum.find(&(&1 != nil)) == :done
   end
 end

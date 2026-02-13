@@ -415,6 +415,20 @@ defmodule ProcessHub.Service.RequestManager do
   end
 
   ##############################################################################
+  # Forwarding utilities
+  ##############################################################################
+
+  @doc """
+  Groups children by target node into a keyword list `[{node, [child_data, ...]}, ...]`.
+  """
+  @spec populate_forward(keyword(), [node()], map()) :: keyword()
+  def populate_forward(forward_data, target_nodes, child_data) do
+    Enum.reduce(target_nodes, forward_data, fn target_node, acc ->
+      Keyword.update(acc, target_node, [child_data], &[child_data | &1])
+    end)
+  end
+
+  ##############################################################################
   # Request splitting
   ##############################################################################
 
