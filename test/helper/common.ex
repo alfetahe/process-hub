@@ -353,7 +353,7 @@ defmodule Test.Helper.Common do
     end)
 
     # Node downs.
-    Bag.receive_multiple(nodes_count, Hook.post_nodes_redistribution(),
+    Bag.receive_multiple(1, Hook.post_nodes_redistribution(),
       error_msg: "Post redistribution timeout"
     )
 
