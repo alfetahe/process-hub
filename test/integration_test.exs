@@ -325,8 +325,7 @@ defmodule Test.IntegrationTest do
   @tag partition_strategy: :div
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :local},
-         {Hook.post_cluster_leave(), :local},
-         {Hook.post_nodes_redistribution(), :local}
+         {Hook.post_cluster_leave(), :local}
        ]
   test "partition divergence test", %{hub_id: hub_id, listed_hooks: lh} = context do
     :net_kernel.monitor_nodes(true)
@@ -365,8 +364,7 @@ defmodule Test.IntegrationTest do
   @tag quorum_threshold_time: 3600
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :global},
-         {Hook.post_nodes_redistribution(), :local}
+         {Hook.post_cluster_leave(), :global}
        ]
   test "dynamic quorum with min of 70% of cluster",
        %{hub_id: hub_id, listed_hooks: lh} = context do
@@ -420,8 +418,8 @@ defmodule Test.IntegrationTest do
   @tag quorum_size: @nr_of_peers + 2
   @tag quorum_startup_confirm: true
   @tag listed_hooks: [
-         {Hook.post_cluster_leave(), :local},
-         {Hook.post_nodes_redistribution(), :local}
+         {Hook.post_cluster_join(), :local},
+         {Hook.post_cluster_leave(), :local}
        ]
   test "static quorum with min of #{@nr_of_peers + 2} nodes",
        %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
@@ -439,8 +437,8 @@ defmodule Test.IntegrationTest do
         Bootstrap.gen_hub(context)
         |> Bootstrap.start_hubs([peer_name], lh, new_nodes: true, skip_await: true)
 
-        Bag.receive_until(Hook.post_nodes_redistribution(), nil, fn _acc, data ->
-          if is_map(data) && data[:joined_node] && peer_name in List.wrap(data.joined_node),
+        Bag.receive_until(Hook.post_cluster_join(), nil, fn _acc, data ->
+          if data[:joined_node] == peer_name,
             do: {:halt, :ok},
             else: {:cont, nil}
         end)
@@ -459,8 +457,8 @@ defmodule Test.IntegrationTest do
 
     # Wait for the specific redistribution for the removed node to ensure
     # the worker_queue has fully processed the removal (including handle_locking).
-    Bag.receive_until(Hook.post_nodes_redistribution(), nil, fn _acc, data ->
-      if data[:removed_nodes] && removed_node in data.removed_nodes,
+    Bag.receive_until(Hook.post_cluster_leave(), nil, fn _acc, data ->
+      if data[:removed_node] == removed_node,
         do: {:halt, :ok},
         else: {:cont, nil}
     end)
@@ -472,13 +470,11 @@ defmodule Test.IntegrationTest do
     [{removed_node, _}] = removed_peers
     _new_peers = Enum.filter(peers, fn node -> !Enum.member?(removed_peers, node) end)
 
-    Bag.receive_until(Hook.post_nodes_redistribution(), nil, fn _acc, data ->
-      if data[:removed_nodes] && removed_node in data.removed_nodes,
+    Bag.receive_until(Hook.post_cluster_leave(), nil, fn _acc, data ->
+      if data[:removed_node] == removed_node,
         do: {:halt, :ok},
         else: {:cont, nil}
     end)
-
-    Bag.receive_multiple(2, Hook.post_cluster_leave())
 
     # Quorum not achieved
     assert ProcessHub.is_partitioned?(hub_id) === true
@@ -492,8 +488,7 @@ defmodule Test.IntegrationTest do
   @tag track_max_size: true
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :local},
-         {Hook.post_nodes_redistribution(), :local}
+         {Hook.post_cluster_leave(), :local}
        ]
   test "majority quorum with adaptive cluster sizing",
        %{hub_id: hub_id, listed_hooks: lh} = context do
@@ -508,7 +503,6 @@ defmodule Test.IntegrationTest do
     peer_names = for {peer, _pid} <- new_peers, do: peer
 
     Bootstrap.gen_hub(context) |> Bootstrap.start_hubs(peer_names, lh, new_nodes: true)
-    Bag.receive_multiple(peers_to_start, Hook.post_nodes_redistribution())
 
     # With 10 nodes, quorum = 6, we have quorum
     assert ProcessHub.is_partitioned?(hub_id) === false
@@ -520,7 +514,7 @@ defmodule Test.IntegrationTest do
     remaining_new_peers =
       Enum.filter(new_peers, fn node -> !Enum.member?(removed_peers, node) end)
 
-    Bag.receive_multiple(1, Hook.post_nodes_redistribution())
+    Bag.await_cluster_leave(1, scope: :local)
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
@@ -531,7 +525,7 @@ defmodule Test.IntegrationTest do
     remaining_new_peers =
       Enum.filter(remaining_new_peers, fn node -> !Enum.member?(removed_peers, node) end)
 
-    Bag.receive_multiple(2, Hook.post_nodes_redistribution())
+    Bag.await_cluster_leave(2, scope: :local)
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
@@ -542,7 +536,7 @@ defmodule Test.IntegrationTest do
     _remaining_new_peers =
       Enum.filter(remaining_new_peers, fn node -> !Enum.member?(removed_peers, node) end)
 
-    Bag.receive_multiple(1, Hook.post_nodes_redistribution())
+    Bag.await_cluster_leave(1, scope: :local)
 
     assert ProcessHub.is_partitioned?(hub_id) === false
 
@@ -634,7 +628,6 @@ defmodule Test.IntegrationTest do
          {Hook.post_cluster_leave(), :local},
          {Hook.registry_pid_inserted(), :local},
          {Hook.registry_pid_removed(), :local},
-         {Hook.post_nodes_redistribution(), :local},
          {Hook.migration_handled(), :global},
          {Hook.forwarded_migration(), :global},
          {Hook.handover_delivered(), :local}
@@ -652,7 +645,6 @@ defmodule Test.IntegrationTest do
          {Hook.post_cluster_leave(), :local},
          {Hook.registry_pid_inserted(), :local},
          {Hook.registry_pid_removed(), :local},
-         {Hook.post_nodes_redistribution(), :local},
          {Hook.migration_handled(), :global},
          {Hook.forwarded_migration(), :global},
          {Hook.handover_delivered(), :local}
@@ -671,7 +663,6 @@ defmodule Test.IntegrationTest do
          {Hook.post_cluster_leave(), :local},
          {Hook.registry_pid_inserted(), :global},
          {Hook.registry_pid_removed(), :global},
-         {Hook.post_nodes_redistribution(), :local},
          {Hook.migration_handled(), :global},
          {Hook.forwarded_migration(), :global}
        ]
@@ -704,13 +695,8 @@ defmodule Test.IntegrationTest do
     # Stop hubs on peer nodes.
     :erpc.call(stopped_node, ProcessHub.Initializer, :stop, [hub_id])
 
-    # Node downs
-    Bag.receive_multiple(1, Hook.post_nodes_redistribution(),
-      error_msg: "Post redistribution timeout"
-    )
-
     # Confirm that hubs are stopped.
-    Bag.receive_multiple(1, Hook.post_cluster_leave(), error_msg: "Cluster leave timeout")
+    Bag.await_cluster_leave(1, scope: :local)
 
     Bag.receive_multiple(
       migrated_children_count,
@@ -741,8 +727,7 @@ defmodule Test.IntegrationTest do
   @tag listed_hooks: [
          {Hook.post_cluster_join(), :global},
          {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global},
-         {Hook.post_nodes_redistribution(), :global}
+         {Hook.registry_pid_removed(), :global}
        ]
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)

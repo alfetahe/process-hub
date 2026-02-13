@@ -352,15 +352,8 @@ defmodule Test.Helper.Common do
       :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
     end)
 
-    # Node downs.
-    Bag.receive_multiple(1, Hook.post_nodes_redistribution(),
-      error_msg: "Post redistribution timeout"
-    )
-
     # Confirm that hubs are stopped.
-    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave(),
-      error_msg: "Cluster leave timeout"
-    )
+    Bag.await_cluster_leave(nodes_count, scope: :local)
 
     # Start children on local node.
     sync_base_test(context, child_specs, :add)
