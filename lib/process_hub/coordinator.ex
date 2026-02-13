@@ -383,7 +383,10 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(:sync_processes, state) do
-    Synchronizer.trigger_sync(state)
+    GenServer.cast(
+      state.procs.worker_queue,
+      {:handle_work, fn -> Synchronizer.trigger_sync(state) end}
+    )
 
     state.storage.misc
     |> Storage.get(StorageKey.strsyn())
