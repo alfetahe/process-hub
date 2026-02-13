@@ -274,7 +274,6 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_leave, node}, state) do
-    # Batch graceful leave events like nodedown and cluster_join.
     {:noreply, batch_event(state, :cluster_leave, node)}
   end
 
@@ -291,17 +290,15 @@ defmodule ProcessHub.Coordinator do
   def handle_info({:process_batch, :nodedown}, state) do
     {state, nodes} = take_batch(state, :nodedown)
 
-    # Validate: only process nodes that are actually disconnected
     current_connected = Node.list()
 
+    # Only process nodes that are actually disconnected.
     valid_down_nodes =
       Enum.filter(nodes, fn node ->
         not Enum.member?(current_connected, node)
       end)
 
     if length(valid_down_nodes) > 0 do
-      # Dispatch a single batch event with all validated down nodes.
-      # This ensures we calculate redistribution once based on final cluster state.
       Dispatcher.dispatch_event(
         state.procs.event_queue,
         @event_cluster_leave_batch,
@@ -351,7 +348,6 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_cluster_join, node}, state) do
-    # Batch cluster_join events similar to nodedown
     {:noreply, batch_event(state, :cluster_join, node)}
   end
 
@@ -359,7 +355,7 @@ defmodule ProcessHub.Coordinator do
   def handle_info({:process_batch, :cluster_join}, state) do
     {state, nodes} = take_batch(state, :cluster_join)
 
-    # Validate: only process nodes that are still connected
+    # Only process nodes that are still connected.
     current_connected = Node.list()
 
     valid_join_nodes =
@@ -369,7 +365,6 @@ defmodule ProcessHub.Coordinator do
 
     state =
       if length(valid_join_nodes) > 0 do
-        # Process all validated joining nodes together
         process_hub_join(state, valid_join_nodes)
       else
         state
@@ -461,14 +456,13 @@ defmodule ProcessHub.Coordinator do
     hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
     local_node = node()
 
-    # Filter to only new nodes.
     new_nodes =
       Enum.filter(nodes, fn n ->
         Cluster.new_node?(hub_nodes, n) and n !== local_node
       end)
 
     if length(new_nodes) > 0 do
-      # Broadcast local registry data to joining nodes
+      # Broadcast local registry data to joining nodes.
       Synchronizer.broadcast_local_registry(hub, new_nodes)
 
       GenServer.cast(
@@ -488,7 +482,7 @@ defmodule ProcessHub.Coordinator do
   def process_node_down_batch(hub, down_nodes) do
     hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
-    # Filter to only nodes that are actually in the hub
+    # Filter to only nodes that are actually in the hub.
     valid_down_nodes = Enum.filter(down_nodes, &Enum.member?(hub_nodes, &1))
 
     if length(valid_down_nodes) > 0 do
