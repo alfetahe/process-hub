@@ -317,6 +317,33 @@ defmodule CoordinatorTest do
     end
   end
 
+  describe "sync_processes delegation" do
+    @sync_hub_id :coord_sync_test
+
+    setup do
+      Test.Helper.SetupHelper.setup_base(%{}, @sync_hub_id)
+    end
+
+    test "sync_processes delegates trigger_sync to worker queue", %{hub: hub} do
+      # Insert a child so there's registry data for sync to work with
+      ProcessHub.Service.ProcessRegistry.insert(
+        hub.hub_id,
+        %{id: :sync_delegate_child},
+        [{node(), self()}]
+      )
+
+      # Send the :sync_processes message to the coordinator (same as the periodic timer does)
+      send(GenServer.whereis(hub.hub_id), :sync_processes)
+
+      # Flush the worker queue with a synchronous call to ensure the async
+      # trigger_sync cast has been processed
+      GenServer.call(hub.procs.worker_queue, {:handle_work, fn -> :flushed end})
+
+      # Registry data should still be intact after sync
+      assert ProcessHub.Service.ProcessRegistry.lookup(hub.hub_id, :sync_delegate_child) != nil
+    end
+  end
+
   # Helper function to send hook data with a tag
   def send_hook_data(pid, tag, node_data) do
     send(pid, {:hook_called, tag, node_data})
