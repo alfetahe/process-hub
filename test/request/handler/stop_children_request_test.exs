@@ -52,22 +52,6 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       assert {:child1, :ok} in result
       assert {:child2, :ok} in result
     end
-
-    test "with tuple format filters to local node and preserves result" do
-      local = node()
-
-      results = [
-        {:child1, :ok, local},
-        {:child2, :ok, :remote@host},
-        {:child3, {:error, :not_found}, local}
-      ]
-
-      result = StopChildrenRequest.build_node_response(results)
-
-      assert length(result) == 2
-      assert {:child1, :ok} in result
-      assert {:child3, {:error, :not_found}} in result
-    end
   end
 
   describe "aggregate_results/1" do

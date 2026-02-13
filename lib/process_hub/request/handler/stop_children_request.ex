@@ -232,27 +232,18 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
   @doc """
   Builds the response data to send back to the coordinator from post_stop_results.
 
-  This function handles multiple input formats for flexibility:
-  - List of maps with `:child_id` key (from children)
-  - List of `{child_id, result, node}` tuples (legacy format)
+  Accepts a list of maps with `:child_id` key (from children).
   """
-  @spec build_node_response([map() | {ProcessHub.child_id(), term(), node()}]) ::
-          [{ProcessHub.child_id(), term()}]
+  @spec build_node_response([map()]) :: [{ProcessHub.child_id(), term()}]
   def build_node_response(post_stop_results) do
-    local_node = node()
-
     post_stop_results
     |> Enum.filter(fn
       # Map format from children
       %{child_id: _cid} -> true
-      # Tuple format (legacy)
-      {_cid, _result, stop_node} -> stop_node === local_node
     end)
     |> Enum.map(fn
       # Map format - result is :ok since we're building response after successful termination
       %{child_id: cid} -> {cid, :ok}
-      # Tuple format (legacy)
-      {cid, result, _node} -> {cid, result}
     end)
   end
 end
