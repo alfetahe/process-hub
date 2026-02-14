@@ -36,7 +36,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
   alias ProcessHub.Hub
 
   # TTL for pending registry entries (10 minutes)
-  @pending_ttl_ms :timer.minutes(10)
+  @pending_ttl_ms :timer.minutes(5)
 
   @type t() :: %__MODULE__{
           # Routing fields
@@ -486,7 +486,6 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
 
       pending_metadata =
         Map.merge(metadata, %{
-          pending: true,
           forwarded_at: timestamp,
           target_nodes: [target_node]
         })
@@ -512,7 +511,6 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     transaction_id = make_ref()
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     request_signature = DistributionStrategy.distribution_signature(dist_strat, hub)
-    originating_node = node()
     reply_to = Keyword.get(start_opts, :reply_to)
 
     passthrough_opts =
@@ -525,7 +523,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
         hub.hub_id,
         transaction_id,
         request_signature,
-        originating_node,
+        nil,
         reply_to,
         target_node,
         updated_children,
