@@ -117,7 +117,7 @@ defmodule ProcessHub.Service.Cluster do
 
   @doc """
   Handles the node up event by dispatching hooks, adding nodes to cluster state,
-  checking partition tolerance for quorum unlock, and triggering the node up update task.
+  checking partition tolerance for quorum recovery, and triggering the node up update task.
   """
   def handle_node_up(%{joined_nodes: joined_nodes, hub: hub}) do
     # Dispatch pre hooks for all nodes
@@ -130,7 +130,7 @@ defmodule ProcessHub.Service.Cluster do
       add_hub_node(hub.storage.misc, node)
     end)
 
-    # Check if any node should trigger quorum unlock (AFTER adding)
+    # Check if any node should trigger quorum recovery (AFTER adding)
     part_strat = Storage.get(hub.storage.misc, StorageKey.strpart())
 
     unlock_status =

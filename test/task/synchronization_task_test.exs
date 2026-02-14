@@ -97,7 +97,7 @@ defmodule Test.Task.SynchronizationTaskTest do
   end
 
   describe "IntervalSyncInit.handle/1" do
-    test "when hub is not locked triggers sync", %{hub: hub} do
+    test "triggers sync on idle hub", %{hub: hub} do
       unique = :erlang.unique_integer([:positive])
 
       # Insert data so sync has something to work with

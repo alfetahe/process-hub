@@ -9,7 +9,6 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Event
-  alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Hub
@@ -48,10 +47,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
         hub.procs.event_queue,
         @event_requests_handle,
         requests,
-        %{
-          priority: Keyword.get(opts, :priority, PriorityLevel.high()),
-          members: Keyword.get(opts, :members, :global)
-        }
+        %{members: Keyword.get(opts, :members, :global)}
       )
 
       :ok

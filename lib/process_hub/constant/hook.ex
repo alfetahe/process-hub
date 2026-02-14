@@ -57,12 +57,6 @@ defmodule ProcessHub.Constant.Hook do
   def forwarded_migration(), do: :forwarded_migration_hook
 
   @doc """
-  Hook triggered when the priority level of the local event queue has been updated.
-  """
-  @spec priority_state_updated() :: atom()
-  def priority_state_updated(), do: :priority_state_updated_hook
-
-  @doc """
   Hook triggered before processes are redistributed.
   """
   @spec pre_nodes_redistribution() :: atom()

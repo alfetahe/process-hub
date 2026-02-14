@@ -160,10 +160,6 @@ defmodule ProcessHub do
   The default is `ProcessHub.Strategy.Distribution.ConsistentHashing`.
   - `:hubs_discover_interval` is optional and is used to define the interval in milliseconds
   for hubs to start the discovery process. The default is `30000` (30 seconds).
-  - `:deadlock_recovery_timeout` is optional and is used to define the timeout in milliseconds
-  to recover from a locked hub. Hub locking can happen for different reasons
-  such as updating internal data, migrating processes or handling network partitions.
-  The default is `60000` (1 minute).
   - `:storage_purge_interval` is optional and is used to define the interval in milliseconds
   for the janitor to clean up the old cache records when the TTL expires. The default is `15000` (15 seconds).
   - `:migr_base_timeout` is optional and is used to define the base timeout in milliseconds
@@ -209,7 +205,6 @@ defmodule ProcessHub do
             | ProcessHub.Strategy.Distribution.Guided.t()
             | ProcessHub.Strategy.Distribution.CentralizedLoadBalancer.t(),
           hubs_discover_interval: pos_integer(),
-          deadlock_recovery_timeout: pos_integer(),
           storage_purge_interval: pos_integer(),
           migr_base_timeout: pos_integer(),
           dsup_max_restarts: pos_integer(),
@@ -231,7 +226,6 @@ defmodule ProcessHub do
     partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
     distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
     hubs_discover_interval: 10000,
-    deadlock_recovery_timeout: 60000,
     storage_purge_interval: 15000,
     migr_base_timeout: 15000,
     dsup_max_restarts: 100,
@@ -579,7 +573,6 @@ defmodule ProcessHub do
               partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
               distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
               hubs_discover_interval: 10000,
-              deadlock_recovery_timeout: 60000,
               storage_purge_interval: 15000,
               migr_base_timeout: 15000,
               dsup_max_restarts: 100,
@@ -797,22 +790,6 @@ defmodule ProcessHub do
   defdelegate process_list(hub_id, scope), to: ProcessRegistry, as: :process_list
 
   @doc """
-  Checks if the `ProcessHub` with the given `t:hub_id/0` is locked.
-
-  A hub is considered locked if the `ProcessHub` local event queue has a priority level
-  greater than or equal to 10. This is used to throttle the hub from processing
-  any new events and preserve data integrity.
-
-  ## Example
-      iex> ProcessHub.is_locked?(:my_hub)
-      false
-  """
-  @spec is_locked?(hub_id()) :: boolean()
-  def is_locked?(hub_id) do
-    GenServer.call(hub_id, :is_locked?)
-  end
-
-  @doc """
   Checks if a `ProcessHub` instance with the given `t:hub_id/0` is currently in a network-partitioned state.
 
   A hub is considered partitioned when the configured `ProcessHub.Strategy.PartitionTolerance` strategy
@@ -827,6 +804,22 @@ defmodule ProcessHub do
   @spec is_partitioned?(hub_id()) :: boolean()
   def is_partitioned?(hub_id) do
     GenServer.call(hub_id, :is_partitioned?)
+  end
+
+  @doc """
+  Returns whether the hub has pending worker queue operations.
+
+  This is informational and does not block event processing. It indicates
+  whether the coordinator has delegated work to the worker queue that
+  has not yet completed.
+
+  ## Example
+      iex> ProcessHub.is_locked?(:my_hub)
+      false
+  """
+  @spec is_locked?(hub_id()) :: boolean()
+  def is_locked?(hub_id) do
+    GenServer.call(hub_id, :is_locked?)
   end
 
   @doc """

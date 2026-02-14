@@ -51,10 +51,6 @@ defmodule Test.Constant.StorageKeyTest do
     assert StorageKey.gct() === :gossip_node_timestamps
   end
 
-  test "storage key deadlock recovery timeout" do
-    assert StorageKey.dlrt() === :deadlock_recovery_timeout
-  end
-
   test "storage key handover data wait" do
     assert StorageKey.hodw() === :handover_data_wait
   end

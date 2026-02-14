@@ -15,13 +15,13 @@ defprotocol ProcessHub.Strategy.PartitionTolerance.Base do
   def init(strategy, hub)
 
   @doc """
-  Determines if the lock should be toggled when a node leaves the cluster.
+  Determines if a quorum failure should be triggered when a node leaves the cluster.
   """
   @spec toggle_lock?(__MODULE__.t(), Hub.t(), node()) :: boolean()
   def toggle_lock?(strategy, hub, down_node)
 
   @doc """
-  Determines if the lock should be released when a node joins the cluster.
+  Determines if a quorum recovery should be triggered when a node joins the cluster.
   """
   @spec toggle_unlock?(__MODULE__.t(), Hub.t(), node()) :: boolean()
   def toggle_unlock?(strategy, hub, down_node)

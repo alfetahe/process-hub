@@ -40,13 +40,6 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   > of each process can exist at any time across the cluster. This makes it unsuitable
   > for use cases requiring high availability through process redundancy.
 
-  ### Experimental Status
-  > #### Experimental Feature {: .warning}
-  >
-  > This distribution strategy is currently **experimental** and should not be used
-  > in production environments without thorough testing. The implementation may
-  > change in future versions.
-
   ### Single Hub Limitation
   > #### Configuration Constraint {: .warning}
   >

@@ -184,7 +184,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
 
     defp handle_locking(arg) do
       # Check partition tolerance for all removed nodes
-      # If any requires staying locked, stay locked
+      # If any requires it, trigger quorum failure
       any_lock =
         Enum.any?(arg.removed_nodes, fn node ->
           PartitionToleranceStrategy.toggle_lock?(
@@ -196,8 +196,6 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
 
       if any_lock do
         State.toggle_quorum_failure(arg.hub)
-      else
-        State.unlock_event_handler(arg.hub)
       end
 
       arg

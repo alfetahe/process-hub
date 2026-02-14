@@ -35,10 +35,6 @@ defmodule Test.Constant.HookTest do
     assert Hook.forwarded_migration() === :forwarded_migration_hook
   end
 
-  test "priority state updated" do
-    assert Hook.priority_state_updated() === :priority_state_updated_hook
-  end
-
   test "pre nodes redistribution" do
     assert Hook.pre_nodes_redistribution() === :pre_nodes_redistribution_hook
   end

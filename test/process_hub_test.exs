@@ -479,10 +479,28 @@ defmodule ProcessHubTest do
     assert ProcessHub.stop(hub_id) === :ok
   end
 
-  test "is locked?", %{hub_id: hub_id, hub: hub} = _context do
+  test "is locked?", %{hub_id: hub_id} = _context do
+    # Idle hub should not be locked.
     assert ProcessHub.is_locked?(hub_id) === false
-    ProcessHub.Service.State.lock_event_handler(hub)
+
+    # Simulate pending work by setting pending_work_count directly.
+    :sys.replace_state(hub_id, fn state -> %{state | pending_work_count: 2} end)
     assert ProcessHub.is_locked?(hub_id) === true
+
+    # Simulate :work_complete to decrement the counter.
+    send(GenServer.whereis(hub_id), :work_complete)
+    Process.sleep(50)
+    assert ProcessHub.is_locked?(hub_id) === true
+
+    # Second :work_complete brings it to 0.
+    send(GenServer.whereis(hub_id), :work_complete)
+    Process.sleep(50)
+    assert ProcessHub.is_locked?(hub_id) === false
+
+    # Extra :work_complete should clamp at 0, not go negative.
+    send(GenServer.whereis(hub_id), :work_complete)
+    Process.sleep(50)
+    assert ProcessHub.is_locked?(hub_id) === false
   end
 
   test "is partitioned?", %{hub_id: hub_id, hub: hub} = _context do

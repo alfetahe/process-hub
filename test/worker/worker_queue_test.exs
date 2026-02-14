@@ -18,6 +18,35 @@ defmodule Test.Worker.WorkerQueueTest do
     end
   end
 
+  describe "handle_cast {:tracked}" do
+    test "executes the inner message and sends :work_complete to notify_pid", %{hub: hub} do
+      wq_pid = GenServer.whereis(hub.procs.worker_queue)
+      assert is_pid(wq_pid)
+
+      test_pid = self()
+
+      GenServer.cast(
+        wq_pid,
+        {:tracked, {:handle_work, fn -> send(test_pid, :tracked_work_done) end}, test_pid}
+      )
+
+      assert_receive :tracked_work_done, 1000
+      assert_receive :work_complete, 1000
+    end
+
+    test "sends :work_complete even for non-function messages", %{hub: hub} do
+      wq_pid = GenServer.whereis(hub.procs.worker_queue)
+      test_pid = self()
+
+      GenServer.cast(
+        wq_pid,
+        {:tracked, {:handle_work, fn -> :ok end}, test_pid}
+      )
+
+      assert_receive :work_complete, 1000
+    end
+  end
+
   describe "handle_call {:handle_work}" do
     test "executes the function and returns result", %{hub: hub} do
       wq_pid = GenServer.whereis(hub.procs.worker_queue)

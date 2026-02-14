@@ -85,9 +85,7 @@ defmodule ProcessHub.Service.Dispatcher do
   """
   @spec dispatch_event(atom(), atom(), term(), %{
           optional(:discard_event) => boolean,
-          optional(:members) => :global | :local | :external | [node()],
-          optional(:priority) => integer(),
-          optional(:atomic_priority_set) => integer()
+          optional(:members) => :global | :local | :external | [node()]
         }) :: {:ok, :event_discarded | :event_dispatched | :event_queued}
   def dispatch_event(event_queue, event_id, event_data, opts \\ %{})
 

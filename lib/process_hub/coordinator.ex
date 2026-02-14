@@ -19,7 +19,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.Hook
-  alias ProcessHub.Constant.PriorityLevel
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
@@ -128,8 +127,7 @@ defmodule ProcessHub.Coordinator do
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
     Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_leave, node(), %{
-      members: :external,
-      priority: PriorityLevel.high()
+      members: :external
     })
 
     # Terminate all the running tasks before shutting down the coordinator.
@@ -233,11 +231,6 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_call(:is_locked?, _from, state) do
-    {:reply, State.is_locked?(state), state}
-  end
-
-  @impl true
   def handle_call(:is_partitioned?, _from, state) do
     {:reply, State.is_partitioned?(state), state}
   end
@@ -258,18 +251,18 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_call(:is_locked?, _from, state) do
+    {:reply, state.pending_work_count > 0, state}
+  end
+
+  @impl true
   def handle_call(:ping, _from, state) do
     {:reply, :bong, state}
   end
 
   @impl true
   def handle_info({@event_requests_handle, requests}, state) do
-    GenServer.cast(
-      state.procs.worker_queue,
-      {:handle_requests, requests, state}
-    )
-
-    {:noreply, state}
+    {:noreply, delegate_work(state, {:handle_requests, requests, state})}
   end
 
   @impl true
@@ -303,11 +296,7 @@ defmodule ProcessHub.Coordinator do
         state.procs.event_queue,
         @event_cluster_leave_batch,
         valid_down_nodes,
-        %{
-          members: :local,
-          atomic_priority_set: PriorityLevel.high(),
-          local_priority_set: true
-        }
+        %{members: :local}
       )
     end
 
@@ -325,11 +314,7 @@ defmodule ProcessHub.Coordinator do
         state.procs.event_queue,
         @event_cluster_leave_batch,
         nodes,
-        %{
-          members: :local,
-          atomic_priority_set: PriorityLevel.high(),
-          local_priority_set: true
-        }
+        %{members: :local}
       )
     end
 
@@ -383,10 +368,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(:sync_processes, state) do
-    GenServer.cast(
-      state.procs.worker_queue,
-      {:handle_work, fn -> Synchronizer.trigger_sync(state) end}
-    )
+    state = delegate_work(state, {:handle_work, fn -> Synchronizer.trigger_sync(state) end})
 
     state.storage.misc
     |> Storage.get(StorageKey.strsyn())
@@ -412,8 +394,7 @@ defmodule ProcessHub.Coordinator do
     |> schedule_hub_discovery()
 
     Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_join, node(), %{
-      members: :external,
-      priority: PriorityLevel.high()
+      members: :external
     })
 
     {:noreply, state}
@@ -442,6 +423,11 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_info(:work_complete, state) do
+    {:noreply, %{state | pending_work_count: max(0, state.pending_work_count - 1)}}
+  end
+
+  @impl true
   def handle_info(msg, state) do
     LoggerService.warning("Unhandled message: @message", %{"message" => msg},
       prefix: "Coordinator"
@@ -453,6 +439,11 @@ defmodule ProcessHub.Coordinator do
   ##############################################################################
   ### Private functions
   ##############################################################################
+
+  defp delegate_work(state, message) do
+    GenServer.cast(state.procs.worker_queue, {:tracked, message, self()})
+    %{state | pending_work_count: state.pending_work_count + 1}
+  end
 
   @doc false
   def process_hub_join(hub, nodes) do
@@ -468,17 +459,10 @@ defmodule ProcessHub.Coordinator do
       # Broadcast local registry data to joining nodes.
       Synchronizer.broadcast_local_registry(hub, new_nodes)
 
-      GenServer.cast(
-        hub.procs.worker_queue,
-        {:handle_node_up,
-         %{
-           joined_nodes: new_nodes,
-           hub: hub
-         }}
-      )
+      delegate_work(hub, {:handle_node_up, %{joined_nodes: new_nodes, hub: hub}})
+    else
+      hub
     end
-
-    hub
   end
 
   @doc false
@@ -489,17 +473,10 @@ defmodule ProcessHub.Coordinator do
     valid_down_nodes = Enum.filter(down_nodes, &Enum.member?(hub_nodes, &1))
 
     if length(valid_down_nodes) > 0 do
-      GenServer.cast(
-        hub.procs.worker_queue,
-        {:handle_node_down,
-         %{
-           removed_nodes: valid_down_nodes,
-           hub: hub
-         }}
-      )
+      delegate_work(hub, {:handle_node_down, %{removed_nodes: valid_down_nodes, hub: hub}})
+    else
+      hub
     end
-
-    hub
   end
 
   # Adds a node to the event batch and starts a timer if this is the first event.
@@ -623,7 +600,6 @@ defmodule ProcessHub.Coordinator do
     )
 
     Storage.insert(storage.misc, StorageKey.hdi(), settings.hubs_discover_interval)
-    Storage.insert(storage.misc, StorageKey.dlrt(), settings.deadlock_recovery_timeout)
     Storage.insert(storage.misc, StorageKey.mbt(), settings.migr_base_timeout)
     Storage.insert(storage.misc, StorageKey.ced(), settings.cluster_event_debounce)
     Storage.insert(storage.misc, StorageKey.cnrt(), settings.cross_node_request_timeout)

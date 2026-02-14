@@ -27,7 +27,8 @@ defmodule ProcessHub.Hub do
             nodedown: batch_state(),
             cluster_join: batch_state()
           },
-          pending_operations: %{reference() => ProcessHub.Service.RequestManager.t()}
+          pending_operations: %{reference() => ProcessHub.Service.RequestManager.t()},
+          pending_work_count: non_neg_integer()
         }
 
   @doc """
@@ -45,6 +46,7 @@ defmodule ProcessHub.Hub do
       nodedown: %{nodes: [], timer_ref: nil},
       cluster_join: %{nodes: [], timer_ref: nil}
     },
-    pending_operations: %{}
+    pending_operations: %{},
+    pending_work_count: 0
   ]
 end

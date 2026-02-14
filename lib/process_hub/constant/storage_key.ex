@@ -28,8 +28,6 @@ defmodule ProcessHub.Constant.StorageKey do
   def mqms, do: :majority_quorum_max_seen
   @spec gct() :: :gossip_node_timestamps
   def gct, do: :gossip_node_timestamps
-  @spec dlrt() :: :deadlock_recovery_timeout
-  def dlrt, do: :deadlock_recovery_timeout
   @spec hodw() :: :handover_data_wait
   def hodw, do: :handover_data_wait
   @spec mbt() :: :migration_base_timeout
