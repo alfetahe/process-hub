@@ -2,6 +2,10 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   @moduledoc """
   Provides implementation for distribution behavior using centralized load balancing.
 
+  > #### Experimental {: .warning}
+  > This strategy is experimental and may change in future releases.
+  > Use in production at your own discretion.
+
   This strategy implements a centralized approach to process distribution where a single
   leader node collects performance metrics from all nodes in the cluster and makes
   distribution decisions based on real-time load data.
