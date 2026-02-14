@@ -801,7 +801,7 @@ defmodule Test.Service.RequestManagerTest do
 
       assert %StartChildrenRequest{} = req
       assert req.hub_id == hub.hub_id
-      assert req.originating_node == node()
+      assert req.originating_node == nil
       assert req.node == :target_node
       assert length(req.children) == 1
       assert hd(req.children).child_id == :migr_child
@@ -819,7 +819,7 @@ defmodule Test.Service.RequestManagerTest do
 
       assert %StartChildrenRequest{} = req
       assert req.hub_id == hub.hub_id
-      assert req.originating_node == node()
+      assert req.originating_node == nil
       assert req.node == node()
       assert length(req.children) == 1
       assert hd(req.children).child_id == :contr_child

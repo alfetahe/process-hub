@@ -308,9 +308,9 @@ defmodule ProcessHub.Service.RequestManager do
   def send_response(response_type, opts, results) do
     hub_id = Keyword.get(opts, :hub_id)
     transaction_id = Keyword.get(opts, :transaction_id)
+    originating_node = Keyword.get(opts, :originating_node)
 
-    if hub_id && transaction_id do
-      originating_node = Keyword.get(opts, :originating_node, node())
+    if hub_id && transaction_id && originating_node do
       local_node = node()
 
       GenServer.cast(
@@ -372,7 +372,7 @@ defmodule ProcessHub.Service.RequestManager do
       transaction_id: make_ref(),
       request_signature: request_signature,
       hub_id: hub.hub_id,
-      originating_node: node(),
+      originating_node: nil,
       reply_to: nil,
       node: target_node,
       children: children,
@@ -406,7 +406,7 @@ defmodule ProcessHub.Service.RequestManager do
       transaction_id: make_ref(),
       request_signature: request_signature,
       hub_id: hub.hub_id,
-      originating_node: local_node,
+      originating_node: nil,
       reply_to: nil,
       node: local_node,
       children: children,
