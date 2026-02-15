@@ -55,6 +55,20 @@ defmodule ProcessHub.MixProject do
           not String.starts_with?(mod_str, "Elixir.Test.") and
             not String.starts_with?(mod_str, "Elixir.Mix.Tasks.")
         end,
+        nest_modules_by_prefix: [
+          ProcessHub.Strategy.Distribution,
+          ProcessHub.Strategy.Migration,
+          ProcessHub.Strategy.Synchronization,
+          ProcessHub.Strategy.Redundancy,
+          ProcessHub.Strategy.PartitionTolerance,
+          ProcessHub.Service,
+          ProcessHub.Request.Handler,
+          ProcessHub.Worker,
+          ProcessHub.Task.ClusterUpdateTask,
+          ProcessHub.Task.SynchronizationTask,
+          ProcessHub.Constant,
+          ProcessHub.Utility
+        ],
         groups_for_modules: [
           "Public API": [ProcessHub],
           Core: [
