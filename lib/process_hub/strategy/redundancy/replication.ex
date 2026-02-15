@@ -393,6 +393,27 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     # Get registry data for child_specs and current state
     registry_data = ProcessRegistry.dump(hub.hub_id)
 
+    # Fill in missing entries in calculated_cids.
+    # The migration strategy's calculated_cids may be incomplete — e.g., on a
+    # joining node, ColdSwap/HotSwap only compute belongs_to for local children
+    # (which is none on the joining node), leaving calculated_cids empty.
+    # We only compute belongs_to for child_ids NOT already in calculated_cids
+    # to avoid redundant hash ring lookups.
+    missing_cids =
+      registry_data
+      |> Map.keys()
+      |> Enum.reject(&Map.has_key?(calculated_cids, &1))
+
+    effective_cids =
+      if missing_cids != [] do
+        dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+        repl_fact = RedundancyStrategy.replication_factor(strategy)
+        computed = DistributionStrategy.belongs_to(dist_strat, hub, missing_cids, repl_fact)
+        Map.merge(computed, calculated_cids)
+      else
+        calculated_cids
+      end
+
     # Get currently running local children
     local_pids =
       hub.hub_id
@@ -401,59 +422,68 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
     local_child_ids = Map.keys(local_pids)
 
-    # Process each child for redundancy updates
-    Enum.each(registry_data, fn {child_id, {child_spec, _node_pids, meta}} ->
-      all_nodes = Map.get(calculated_cids, child_id, [])
+    # Phase 1: Classify each child into start/stop/signal lists
+    {to_start, to_stop, to_signal} =
+      Enum.reduce(registry_data, {[], [], []}, fn {child_id, {child_spec, _node_pids, meta}},
+                                                  {starts, stops, signals} ->
+        all_nodes = Map.get(effective_cids, child_id, [])
+        replica_nodes = Enum.drop(all_nodes, 1)
+        running_locally = Enum.member?(local_child_ids, child_id)
+        should_be_replica = Enum.member?(replica_nodes, local_node)
+        is_primary = List.first(all_nodes) == local_node
 
-      # Replica nodes are indices 1+ (skip primary at index 0)
-      replica_nodes = Enum.drop(all_nodes, 1)
+        cond do
+          should_be_replica and not running_locally ->
+            {[{child_spec, meta, all_nodes} | starts], stops, signals}
 
-      running_locally = Enum.member?(local_child_ids, child_id)
-      should_be_replica = Enum.member?(replica_nodes, local_node)
-      is_primary = List.first(all_nodes) == local_node
+          running_locally and not should_be_replica and not is_primary ->
+            {starts, [child_id | stops], signals}
 
-      cond do
-        # Case 1: Should be replica here but not running -> start locally
-        should_be_replica and not running_locally ->
-          start_replica_locally(hub, child_spec, meta, strategy, all_nodes)
+          running_locally and (should_be_replica or is_primary) ->
+            if Enum.any?(nodes, fn n -> Enum.member?(all_nodes, n) end) do
+              {starts, stops, [{child_id, all_nodes, Map.get(local_pids, child_id)} | signals]}
+            else
+              {starts, stops, signals}
+            end
 
-        # Case 2: Running locally as replica but shouldn't be -> stop
-        # Note: Only stop if we're not primary. ColdSwap handles primary migration.
-        running_locally and not should_be_replica and not is_primary ->
-          stop_replica_locally(hub, child_id)
+          true ->
+            {starts, stops, signals}
+        end
+      end)
 
-        # Case 3: Running locally and should stay -> send mode signal if needed
-        running_locally and (should_be_replica or is_primary) ->
-          # Check if any of the changing nodes affects this child's distribution
-          relevant_to_nodes = Enum.any?(nodes, fn n -> Enum.member?(all_nodes, n) end)
+    # Phase 2: Batch start replicas
+    if to_start != [] do
+      started =
+        Enum.flat_map(to_start, fn {child_spec, meta, all_nodes} ->
+          case DistributedSupervisor.start_child(hub.procs.dist_sup, child_spec) do
+            {:ok, pid} ->
+              [{child_spec, meta, all_nodes, pid}]
 
-          if relevant_to_nodes do
-            local_pid = Map.get(local_pids, child_id)
-            send_mode_signal_if_needed(strategy, hub, child_id, all_nodes, local_pid)
+            {:error, {:already_started, _pid}} ->
+              []
+
+            {:error, reason} ->
+              LoggerService.error(
+                "Failed to start replica for @child_id: @reason",
+                %{"child_id" => child_spec.id, "reason" => reason},
+                prefix: "Replication"
+              )
+
+              []
           end
+        end)
 
-        true ->
-          :ok
-      end
-    end)
+      if started != [] do
+        # Single bulk_insert merges with existing entries (no overwrite)
+        store_data =
+          Map.new(started, fn {cs, meta, _nodes, pid} ->
+            {cs.id, {cs, [{local_node, pid}], meta}}
+          end)
 
-    :ok
-  end
+        ProcessRegistry.bulk_insert(hub.hub_id, store_data, hook_storage: hub.storage.hook)
 
-  defp start_replica_locally(hub, child_spec, meta, strategy, all_nodes) do
-    # Start child on local DistributedSupervisor
-    result = DistributedSupervisor.start_child(hub.procs.dist_sup, child_spec)
-
-    case result do
-      {:ok, pid} ->
-        local_node = node()
-
-        # Register in ProcessRegistry
-        ProcessRegistry.insert(hub.hub_id, child_spec, [{local_node, pid}], metadata: meta)
-
-        # Propagate registration to other nodes
+        # Single propagation for all started replicas
         sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
-        store_data = %{child_spec.id => {child_spec, [{local_node, pid}], meta}}
         request = ProcessHub.Request.Handler.PidsRegisterRequest.new(store_data)
 
         SynchronizationStrategy.propagate(
@@ -463,50 +493,40 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
           members: :external
         )
 
-        # Send mode signal if needed (replicas are typically passive)
-        send_mode_signal_if_needed(strategy, hub, child_spec.id, all_nodes, pid)
+        Enum.each(started, fn {cs, _meta, all_nodes, pid} ->
+          send_mode_signal_if_needed(strategy, hub, cs.id, all_nodes, pid)
+        end)
+      end
+    end
 
-        :ok
+    # Phase 3: Batch stop replicas
+    if to_stop != [] do
+      stopped =
+        Enum.filter(to_stop, fn child_id ->
+          DistributedSupervisor.terminate_child(hub.procs.dist_sup, child_id) == :ok
+        end)
 
-      {:error, {:already_started, _pid}} ->
-        # Child already running, nothing to do
-        :ok
+      if stopped != [] do
+        removable = Enum.map(stopped, &{&1, [local_node]})
 
-      {:error, reason} ->
-        # Log error but don't crash
-        LoggerService.error(
-          "Failed to start replica for @child_id: @reason",
-          %{"child_id" => child_spec.id, "reason" => reason},
-          prefix: "Replication"
+        ProcessRegistry.bulk_delete(hub.hub_id, removable, hook_storage: hub.storage.hook)
+
+        sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
+        request = ProcessHub.Request.Handler.PidsUnregisterRequest.new(removable)
+
+        SynchronizationStrategy.propagate(
+          sync_strat,
+          hub,
+          RequestManager.split(request),
+          members: :external
         )
-
-        :error
+      end
     end
-  end
 
-  defp stop_replica_locally(hub, child_id) do
-    local_node = node()
-
-    # Terminate the child process
-    result = DistributedSupervisor.terminate_child(hub.procs.dist_sup, child_id)
-
-    if result == :ok do
-      # Remove from local registry
-      ProcessRegistry.bulk_delete(hub.hub_id, [{child_id, [local_node]}],
-        hook_storage: hub.storage.hook
-      )
-
-      # Propagate unregistration to other nodes
-      sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
-      request = ProcessHub.Request.Handler.PidsUnregisterRequest.new([{child_id, [local_node]}])
-
-      SynchronizationStrategy.propagate(
-        sync_strat,
-        hub,
-        RequestManager.split(request),
-        members: :external
-      )
-    end
+    # Phase 4: Send mode signals for processes that stayed running
+    Enum.each(to_signal, fn {child_id, all_nodes, local_pid} ->
+      send_mode_signal_if_needed(strategy, hub, child_id, all_nodes, local_pid)
+    end)
 
     :ok
   end
