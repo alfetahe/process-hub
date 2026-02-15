@@ -223,6 +223,9 @@ defmodule Test.Helper.Bootstrap do
           state_query_timeout: context[:migr_state_query_timeout] || 5000
         }
 
+      :autonomous ->
+        %ProcessHub.Strategy.Migration.Autonomous{}
+
       _ ->
         %ProcessHub.Strategy.Migration.ColdSwap{}
     end

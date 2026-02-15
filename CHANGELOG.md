@@ -12,6 +12,7 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - New `topology_signature/1` function in `ProcessHub.Service.Cluster` that computes a hash of the current cluster topology for change detection.
 - Auto-calculated GenServer.call timeout for `start_children/3` and `stop_children/3` based on child count. The timeout is now calculated as `5000ms + (1ms × child_count)`, preventing timeout errors when starting or stopping large batches (30k+) of children. A new `:call_timeout` option allows overriding the auto-calculated value (e.g., `call_timeout: :infinity` for no timeout).
 - New `:handover_delivered_hook` hook that fires after HotSwap or ColdSwap migration completes the state delivery to the new process.
+- New `ProcessHub.Strategy.Migration.Autonomous` migration strategy where each node independently reconciles its local state against the distribution ring with no inter-node communication or state handover. Experimental.
 
 ### Performance
 - Significantly improved child process startup performance when starting large batches (10k+) of children:
