@@ -49,9 +49,15 @@ defmodule ProcessHub.MixProject do
           "guides/Architecture.md"
         ],
         authors: ["Anuar Alfetahe"],
+        filter_modules: fn module, _metadata ->
+          mod_str = Atom.to_string(module)
+
+          not String.starts_with?(mod_str, "Elixir.Test.") and
+            not String.starts_with?(mod_str, "Elixir.Mix.Tasks.")
+        end,
         groups_for_modules: [
+          "Public API": [ProcessHub],
           Core: [
-            ProcessHub,
             ProcessHub.Hub,
             ProcessHub.Initializer,
             ProcessHub.Coordinator,
@@ -104,6 +110,7 @@ defmodule ProcessHub.MixProject do
             ProcessHub.Request.CrossNodeRequest,
             ProcessHub.Request.PostAction,
             ProcessHub.Request.Handler.StartChildrenRequest,
+            ProcessHub.Request.Handler.StartChildrenRequest.PostStartData,
             ProcessHub.Request.Handler.StopChildrenRequest,
             ProcessHub.Request.Handler.PidsRegisterRequest,
             ProcessHub.Request.Handler.PidsUnregisterRequest,
