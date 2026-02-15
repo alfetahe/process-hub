@@ -32,7 +32,7 @@ defmodule Test.IntegrationTest do
   test "pubsub children starting and removing centralized", %{hub: hub} = context do
     child_count = 1000
     child_specs = Bag.gen_child_specs(child_count, prefix: Atom.to_string(hub.hub_id))
-    scoreboard = ProcessHubTest.Fixture.ScoreboardFixture.scoreboard1()
+    scoreboard = Test.Fixture.ScoreboardFixture.scoreboard1()
 
     {:ok, leader_node} = :elector.get_leader()
 

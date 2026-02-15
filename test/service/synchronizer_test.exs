@@ -134,7 +134,9 @@ defmodule Test.Service.SynchronizerTest do
     ProcessRegistry.insert(
       hub.hub_id,
       %{id: :detach_partial},
-      [{:remote@host, pid}, {node(), self()}], metadata: %{})
+      [{:remote@host, pid}, {node(), self()}],
+      metadata: %{}
+    )
 
     # Detach remote@host's data, but DON'T include :detach_partial in the remote data
     # This means the child exists locally for remote@host but remote@host no longer has it

@@ -28,7 +28,7 @@ defmodule ProcessHub.MixProject do
           Test.Helper.TestNode,
           Test.Helper.Bootstrap,
           Mix.Tasks.Benchmark,
-          ProcessHubTest.Fixture.ScoreboardFixture,
+          Test.Fixture.ScoreboardFixture,
           ProcessHub.Utility.Injector
         ]
       ],
@@ -48,7 +48,95 @@ defmodule ProcessHub.MixProject do
           "guides/CustomStrategy.md",
           "guides/Architecture.md"
         ],
-        authors: ["Anuar Alfetahe"]
+        authors: ["Anuar Alfetahe"],
+        groups_for_modules: [
+          Core: [
+            ProcessHub,
+            ProcessHub.Hub,
+            ProcessHub.Initializer,
+            ProcessHub.Coordinator,
+            ProcessHub.DistributedSupervisor
+          ],
+          "Distribution Strategies": [
+            ProcessHub.Strategy.Distribution.Base,
+            ProcessHub.Strategy.Distribution.ConsistentHashing,
+            ProcessHub.Strategy.Distribution.Guided,
+            ProcessHub.Strategy.Distribution.CentralizedLoadBalancer
+          ],
+          "Migration Strategies": [
+            ProcessHub.Strategy.Migration.Base,
+            ProcessHub.Strategy.Migration.ColdSwap,
+            ProcessHub.Strategy.Migration.HotSwap,
+            ProcessHub.Strategy.Migration.SwapMigration,
+            ProcessHub.Strategy.Migration.HandoverBehaviour
+          ],
+          "Synchronization Strategies": [
+            ProcessHub.Strategy.Synchronization.Base,
+            ProcessHub.Strategy.Synchronization.PubSub,
+            ProcessHub.Strategy.Synchronization.Gossip
+          ],
+          "Redundancy Strategies": [
+            ProcessHub.Strategy.Redundancy.Base,
+            ProcessHub.Strategy.Redundancy.Singularity,
+            ProcessHub.Strategy.Redundancy.Replication
+          ],
+          "Partition Tolerance Strategies": [
+            ProcessHub.Strategy.PartitionTolerance.Base,
+            ProcessHub.Strategy.PartitionTolerance.Divergence,
+            ProcessHub.Strategy.PartitionTolerance.StaticQuorum,
+            ProcessHub.Strategy.PartitionTolerance.DynamicQuorum,
+            ProcessHub.Strategy.PartitionTolerance.MajorityQuorum
+          ],
+          Services: [
+            ProcessHub.Service.Storage,
+            ProcessHub.Service.ProcessRegistry,
+            ProcessHub.Service.Distributor,
+            ProcessHub.Service.RequestManager,
+            ProcessHub.Service.Dispatcher,
+            ProcessHub.Service.HookManager,
+            ProcessHub.Service.Synchronizer,
+            ProcessHub.Service.Cluster,
+            ProcessHub.Service.State,
+            ProcessHub.Service.Ring,
+            ProcessHub.Service.LoggerService
+          ],
+          Requests: [
+            ProcessHub.Request.CrossNodeRequest,
+            ProcessHub.Request.PostAction,
+            ProcessHub.Request.Handler.StartChildrenRequest,
+            ProcessHub.Request.Handler.StopChildrenRequest,
+            ProcessHub.Request.Handler.PidsRegisterRequest,
+            ProcessHub.Request.Handler.PidsUnregisterRequest,
+            ProcessHub.Request.Handler.PidUpdateRequest
+          ],
+          "Workers & Tasks": [
+            ProcessHub.Worker.WorkerQueue,
+            ProcessHub.Worker.BootstrapWorker,
+            ProcessHub.Worker.Janitor,
+            ProcessHub.Task.ClusterUpdateTask,
+            ProcessHub.Task.ClusterUpdateTask.NodeUp,
+            ProcessHub.Task.ClusterUpdateTask.NodeDown,
+            ProcessHub.Task.SynchronizationTask,
+            ProcessHub.Task.SynchronizationTask.IntervalSyncInit,
+            ProcessHub.Task.SynchronizationTask.IntervalSyncHandle,
+            ProcessHub.Task.SynchronizationTask.ProcessEmitHandle
+          ],
+          "Results & Futures": [
+            ProcessHub.Future,
+            ProcessHub.StartResult,
+            ProcessHub.StopResult
+          ],
+          Constants: [
+            ProcessHub.Constant.Event,
+            ProcessHub.Constant.Hook,
+            ProcessHub.Constant.StorageKey
+          ],
+          Utilities: [
+            ProcessHub.Utility.Bag,
+            ProcessHub.Utility.Extractor,
+            ProcessHub.Utility.Injector
+          ]
+        ]
       ]
     ]
   end
