@@ -489,17 +489,14 @@ defmodule ProcessHubTest do
 
     # Simulate :work_complete to decrement the counter.
     send(GenServer.whereis(hub_id), :work_complete)
-    Process.sleep(50)
     assert ProcessHub.is_locked?(hub_id) === true
 
     # Second :work_complete brings it to 0.
     send(GenServer.whereis(hub_id), :work_complete)
-    Process.sleep(50)
     assert ProcessHub.is_locked?(hub_id) === false
 
     # Extra :work_complete should clamp at 0, not go negative.
     send(GenServer.whereis(hub_id), :work_complete)
-    Process.sleep(50)
     assert ProcessHub.is_locked?(hub_id) === false
   end
 
