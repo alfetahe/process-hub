@@ -89,7 +89,7 @@ defmodule ProcessHub.Task.SynchronizationTask do
     defstruct @enforce_keys
 
     def handle(%__MODULE__{} = args) do
-      local_data = ProcessRegistry.dump(args.hub.hub_id)
+      local_data = ProcessRegistry.dump_all(args.hub.hub_id)
 
       # Add all new processes to the local process table or update their nodes list.
       updated_data =

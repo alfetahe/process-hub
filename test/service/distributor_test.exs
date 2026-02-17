@@ -296,18 +296,20 @@ defmodule Test.Service.DistributorTest do
     end
   end
 
-  test "compose_stop_operation returns error when children have empty node_pids",
+  test "compose_stop_operation treats children with empty node_pids as not found",
        %{hub: hub} do
     # Insert a child into the process registry with empty node_pids.
-    # This means the child exists but is assigned to no nodes, so both
-    # nodes_data and not_found will be [] after the reduce.
+    # Since lookup filters out entries with empty nodes, the child
+    # is treated as "not found" by compose_stop_operation.
     child_spec = %{id: :empty_pids_child, start: {Agent, :start_link, [fn -> nil end]}}
     ProcessRegistry.insert(hub.hub_id, child_spec, [])
 
     opts = Distributor.default_init_opts([])
 
-    assert {:error, :no_children} =
+    assert {:ok, %ProcessHub.Service.RequestManager{} = operation} =
              Distributor.compose_stop_operation(hub, [:empty_pids_child], opts)
+
+    assert :empty_pids_child in Keyword.get(operation.options, :not_found_children, [])
   end
 
   test "compose_start_operation returns error when distribution assigns no nodes",

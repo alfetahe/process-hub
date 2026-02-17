@@ -179,7 +179,7 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   def handle_contraction(hub, handler) do
     local_node = node()
     cid_node_map = Map.get(handler, :calculated_cids, %{})
-    registry_data = ProcessRegistry.dump(hub.hub_id)
+    registry_data = ProcessRegistry.dump_all(hub.hub_id)
 
     # Find children that should be started locally as PRIMARY.
     children_to_start =

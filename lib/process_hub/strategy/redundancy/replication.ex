@@ -396,7 +396,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     local_node = node()
 
     # Get registry data for child_specs and current state
-    registry_data = ProcessRegistry.dump(hub.hub_id)
+    registry_data = ProcessRegistry.dump_all(hub.hub_id)
 
     # Fill in missing entries in calculated_cids.
     # The migration strategy's calculated_cids may be incomplete — e.g., on a

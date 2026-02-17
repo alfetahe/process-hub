@@ -187,18 +187,22 @@ defmodule Test.JanitorTest do
     end
   end
 
-  describe "dump/1 with TTL entries" do
-    test "dump includes pending entries with TTL", %{hub_id: hub_id} do
+  describe "dump_all/1 with TTL entries" do
+    test "dump_all includes pending entries with TTL", %{hub_id: hub_id} do
       # Insert a pending entry with TTL
       child_spec = %{id: :dump_pending, start: {TestModule, :start_link, []}}
       metadata = %{pending: true, forwarded_at: 1_234_567_890, target_nodes: [:node1]}
 
       ProcessRegistry.insert(hub_id, child_spec, [], metadata: metadata, ttl: 600_000)
 
-      # Verify dump returns the entry (without TTL in the result)
-      dump = ProcessRegistry.dump(hub_id)
+      # dump_all returns entries including those with empty nodes
+      dump = ProcessRegistry.dump_all(hub_id)
       assert Map.has_key?(dump, :dump_pending)
       assert dump[:dump_pending] == {child_spec, [], metadata}
+
+      # dump (filtered) excludes entries with empty nodes
+      filtered_dump = ProcessRegistry.dump(hub_id)
+      refute Map.has_key?(filtered_dump, :dump_pending)
 
       # Cleanup
       ProcessRegistry.delete(hub_id, :dump_pending)

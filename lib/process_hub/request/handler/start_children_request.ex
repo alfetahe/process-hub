@@ -477,7 +477,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
 
     for {target_node, children_list} <- forw_data,
         child_data <- children_list,
-        ProcessRegistry.lookup(hub.hub_id, child_data.child_spec.id) == nil do
+        not ProcessRegistry.entry_exists?(hub.hub_id, child_data.child_spec.id) do
       child_spec = child_data.child_spec
       metadata = Map.get(child_data, :metadata, %{})
 

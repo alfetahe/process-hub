@@ -112,7 +112,7 @@ defmodule ProcessHub.Service.Synchronizer do
   """
   @spec detach_data(Hub.t(), %{node() => [{ProcessHub.child_spec(), pid()}]}) :: :ok
   def detach_data(hub, remote_children) do
-    local_registry = ProcessRegistry.dump(hub.hub_id)
+    local_registry = ProcessRegistry.dump_all(hub.hub_id)
 
     Enum.each(local_registry, fn {child_id, {child_spec, child_nodes, metadata}} ->
       opts = [metadata: metadata, hook_storage: hub.storage.hook]

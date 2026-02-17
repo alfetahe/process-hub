@@ -551,8 +551,11 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     end
 
     defp sync_join_locally_node(misc_storage, hub, node, data, timestamp) do
-      # For node join, we only append data (don't detach since this is fresh data)
       Synchronizer.append_data(hub, %{node => data})
+      # Also detach stale entries that no longer exist on the remote node.
+      # Without this, entries from previous connections (before disconnect/reconnect)
+      # are never cleaned up, causing registry divergence to compound across cycles.
+      Synchronizer.detach_data(hub, %{node => data})
 
       update_node_timestamps(misc_storage, node, timestamp)
     end

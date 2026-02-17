@@ -233,7 +233,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
       # Get registry data once and calculate belongs_to for all cids upfront.
       # This avoids expensive repeated hash ring calculations.
       repl_fact = RedundancyStrategy.replication_factor(arg.redun_strat)
-      registry_data = ProcessRegistry.dump(arg.hub.hub_id)
+      registry_data = ProcessRegistry.dump_all(arg.hub.hub_id)
       cids = Enum.map(registry_data, fn {cid, _} -> cid end)
 
       cid_node_map =

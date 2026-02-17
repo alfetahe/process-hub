@@ -75,6 +75,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec registry(ProcessHub.hub_id()) :: registry()
   def registry(hub_id) do
     Storage.foldl(hub_id, %{}, fn
+      {_child_id, {_child_spec, [], _metadata}}, acc ->
+        acc
+
+      {_child_id, {_child_spec, [], _metadata}, _ttl}, acc ->
+        acc
+
       {child_id, {child_spec, nodes, _metadata}}, acc ->
         Map.put(acc, child_id, {child_spec, nodes})
 
@@ -87,9 +93,28 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Dumps the whole registry.
 
   Returns all information about all registered processes including metadata.
+  Entries with empty node lists are excluded.
   """
   @spec dump(ProcessHub.hub_id()) :: registry_dump()
   def dump(hub_id) do
+    hub_id
+    |> Storage.export_all()
+    |> Enum.reduce(%{}, fn
+      {_key, {_spec, [], _meta}}, acc -> acc
+      {_key, {_spec, [], _meta}, _ttl}, acc -> acc
+      {key, values}, acc -> Map.put(acc, key, values)
+      {key, values, _ttl}, acc -> Map.put(acc, key, values)
+    end)
+  end
+
+  @doc """
+  Dumps the whole registry including entries with empty node lists.
+
+  Unlike `dump/1`, this includes all entries regardless of their node list,
+  such as pending forwarding entries and TTL tombstone entries.
+  """
+  @spec dump_all(ProcessHub.hub_id()) :: registry_dump()
+  def dump_all(hub_id) do
     hub_id
     |> Storage.export_all()
     |> Enum.map(fn
@@ -104,11 +129,14 @@ defmodule ProcessHub.Service.ProcessRegistry do
         ]
   def process_list(hub_id, :global) do
     Storage.foldl(hub_id, [], fn
-      {child_id, {_child_spec, nodes, _metadata}}, acc ->
+      {child_id, {_child_spec, nodes, _metadata}}, acc when nodes != [] ->
         [{child_id, nodes} | acc]
 
-      {child_id, {_child_spec, nodes, _metadata}, _ttl}, acc ->
+      {child_id, {_child_spec, nodes, _metadata}, _ttl}, acc when nodes != [] ->
         [{child_id, nodes} | acc]
+
+      _, acc ->
+        acc
     end)
   end
 
@@ -128,6 +156,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
     child_id_set = MapSet.new(child_ids)
 
     Storage.foldl(hub_id, [], fn
+      {_child_id, {_spec, [], _meta}}, acc ->
+        acc
+
+      {_child_id, {_spec, [], _meta}, _ttl}, acc ->
+        acc
+
       {child_id, _}, acc ->
         if MapSet.member?(child_id_set, child_id), do: [child_id | acc], else: acc
 
@@ -223,6 +257,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end)
   end
 
+  @doc """
+  Checks whether an entry exists in the registry for the given child_id.
+
+  Unlike `lookup/2`, this returns `true` even for entries with empty node lists
+  (e.g., pending forwarding entries or TTL tombstone entries).
+  """
+  @spec entry_exists?(ProcessHub.hub_id(), ProcessHub.child_id()) :: boolean()
+  def entry_exists?(hub_id, child_id) do
+    Storage.get(hub_id, child_id) != nil
+  end
+
   @doc "Return the child_spec, nodes, and pids for the given child_id."
   @spec lookup(
           ProcessHub.hub_id(),
@@ -238,6 +283,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
     case Storage.get(table, child_id) do
       nil ->
+        nil
+
+      {_child_spec, [], _metadata} ->
         nil
 
       {child_spec, child_nodes, metadata} ->
@@ -468,7 +516,18 @@ defmodule ProcessHub.Service.ProcessRegistry do
                 metadata: metadata
               )
             else
-              handle_delete(hub_id, child_id, [])
+              # Keep the entry alive with a TTL instead of deleting immediately.
+              # This prevents a race condition where bulk_delete wipes the entry
+              # before an incoming PidsRegisterRequest can re-populate it with
+              # the new node's data. The TTL ensures cleanup if no re-population
+              # occurs.
+              handle_insert(
+                hub_id,
+                child_spec,
+                [],
+                metadata: metadata,
+                ttl: 30_000
+              )
             end
 
             {Hook.child_unregistered(), %{child_id: child_id}}

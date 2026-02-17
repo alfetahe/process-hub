@@ -473,6 +473,68 @@ defmodule Test.Service.ProcessRegistryTest do
     refute Map.has_key?(children, :remote_lc)
   end
 
+  test "entry_exists? returns true for entries with nodes", %{hub_id: hub_id} do
+    child_spec = %{id: :exists_test, start: {:m, :f, []}}
+    ProcessRegistry.insert(hub_id, child_spec, [{:node1, :pid1}])
+
+    assert ProcessRegistry.entry_exists?(hub_id, :exists_test)
+    refute ProcessRegistry.entry_exists?(hub_id, :nonexistent)
+  end
+
+  test "entry_exists? returns true for entries with empty nodes", %{hub_id: hub_id} do
+    child_spec = %{id: :exists_empty, start: {:m, :f, []}}
+    ProcessRegistry.insert(hub_id, child_spec, [], metadata: %{pending: true}, ttl: 60_000)
+
+    # entry_exists? sees entries regardless of node list
+    assert ProcessRegistry.entry_exists?(hub_id, :exists_empty)
+
+    # lookup filters out empty nodes
+    assert ProcessRegistry.lookup(hub_id, :exists_empty) == nil
+  end
+
+  test "dump filters out entries with empty nodes", %{hub_id: hub_id} do
+    spec_active = %{id: :dump_active, start: {:m, :f, []}}
+    spec_empty = %{id: :dump_empty, start: {:m, :f, []}}
+
+    ProcessRegistry.insert(hub_id, spec_active, [{:node1, :pid1}])
+    ProcessRegistry.insert(hub_id, spec_empty, [], ttl: 30_000)
+
+    dump = ProcessRegistry.dump(hub_id)
+    assert Map.has_key?(dump, :dump_active)
+    refute Map.has_key?(dump, :dump_empty)
+
+    dump_all = ProcessRegistry.dump_all(hub_id)
+    assert Map.has_key?(dump_all, :dump_active)
+    assert Map.has_key?(dump_all, :dump_empty)
+  end
+
+  test "contains_children filters out entries with empty nodes", %{hub_id: hub_id} do
+    spec_active = %{id: :cc_active, start: {:m, :f, []}}
+    spec_empty = %{id: :cc_empty, start: {:m, :f, []}}
+
+    ProcessRegistry.insert(hub_id, spec_active, [{:node1, :pid1}])
+    ProcessRegistry.insert(hub_id, spec_empty, [], ttl: 30_000)
+
+    result = ProcessRegistry.contains_children(hub_id, [:cc_active, :cc_empty, :cc_missing])
+    assert :cc_active in result
+    refute :cc_empty in result
+    refute :cc_missing in result
+  end
+
+  test "process_list filters out entries with empty nodes", %{hub_id: hub_id} do
+    spec_active = %{id: :pl_active, start: {:m, :f, []}}
+    spec_empty = %{id: :pl_empty, start: {:m, :f, []}}
+
+    ProcessRegistry.insert(hub_id, spec_active, [{:node1, :pid1}])
+    ProcessRegistry.insert(hub_id, spec_empty, [], ttl: 30_000)
+
+    global = ProcessRegistry.process_list(hub_id, :global)
+    child_ids = Enum.map(global, fn {cid, _} -> cid end)
+
+    assert :pl_active in child_ids
+    refute :pl_empty in child_ids
+  end
+
   test "update", %{hub_id: hub_id} = _context do
     cid = "child_update_id"
     child_spec = %{id: cid, start_link: {:mod1, :fn1, [1, 2]}}
