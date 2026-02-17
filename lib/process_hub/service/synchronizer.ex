@@ -12,7 +12,6 @@ defmodule ProcessHub.Service.Synchronizer do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Hub
 
-  # TODO: add tests
   @doc """
   Helper function to trigger interval synchronization.
 
@@ -32,7 +31,6 @@ defmodule ProcessHub.Service.Synchronizer do
     |> Task.await()
   end
 
-  # TODO: add tests
   def exec_interval_sync(hub_id, strategy, sync_data, remote_node) do
     hub = Coordinator.get_hub(hub_id)
 
@@ -52,7 +50,6 @@ defmodule ProcessHub.Service.Synchronizer do
     |> Task.await()
   end
 
-  # TODO: add tests.
   @doc "Returns local node's process registry data used for synchronization."
   @spec local_sync_data(Hub.t()) :: [
           {ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}
