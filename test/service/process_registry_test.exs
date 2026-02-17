@@ -3,7 +3,6 @@ defmodule Test.Service.ProcessRegistryTest do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
-  alias ProcessHub.Service.Storage
 
   use ExUnit.Case
 
@@ -41,7 +40,7 @@ defmodule Test.Service.ProcessRegistryTest do
   end
 
   test "bulk insert", %{hub_id: hub_id, hub: hub} = _context do
-    Storage.clear_all(hub_id)
+    ProcessRegistry.clear_all(hub_id)
 
     hook = %HookManager{
       id: :process_registry_test_bulk_insert,
@@ -50,7 +49,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :bulk_insert_test]
     }
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_inserted(), hook)
+    HookManager.register_handler(hub.storage.hook, Hook.child_registered(), hook)
 
     assert ProcessRegistry.dump(hub_id) === %{}
 
@@ -78,7 +77,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :bulk_delete]
     }
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_removed(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.child_unregistered(), handler)
 
     assert ProcessRegistry.dump(hub_id) === %{}
 
@@ -92,7 +91,6 @@ defmodule Test.Service.ProcessRegistryTest do
       Enum.map(insert_data, fn {child_id, {_, child_nodes, _}} ->
         {child_id, Enum.map(child_nodes, fn {node, _pid} -> node end)}
       end)
-      |> Map.new()
 
     ProcessRegistry.bulk_insert(hub_id, Map.new(insert_data))
     ProcessRegistry.bulk_delete(hub_id, del_data, hook_storage: hub.storage.hook)
@@ -127,7 +125,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :insert_test]
     }
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_inserted(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.child_registered(), handler)
 
     children = %{
       1 =>
@@ -169,7 +167,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :delete_test]
     }
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_removed(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.child_unregistered(), handler)
 
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},
@@ -273,7 +271,7 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes)
     end)
 
-    assert ProcessRegistry.process_list(hub_id, :local) === [{2, "pid3"}, {3, :pid5}]
+    assert Enum.sort(ProcessRegistry.process_list(hub_id, :local)) === [{2, "pid3"}, {3, :pid5}]
   end
 
   test "process list global", %{hub_id: hub_id} = _context do
@@ -290,7 +288,8 @@ defmodule Test.Service.ProcessRegistryTest do
 
     children_formatted = Enum.map(children, fn {child_id, {_cs, nodes}} -> {child_id, nodes} end)
 
-    assert ProcessRegistry.process_list(hub_id, :global) === children_formatted
+    assert Enum.sort(ProcessRegistry.process_list(hub_id, :global)) ===
+             Enum.sort(children_formatted)
   end
 
   test "local data", %{hub_id: hub_id} = _context do
@@ -364,6 +363,114 @@ defmodule Test.Service.ProcessRegistryTest do
       |> Enum.sort()
 
     assert Enum.sort(ProcessRegistry.local_child_specs(hub_id)) === formatted_data
+  end
+
+  test "get_pids returns all pids for a child", %{hub_id: hub_id} = _context do
+    child_spec = %{id: :pids_test, start: {:mod, :fun, []}}
+    child_nodes = [{:node1, :pid1}, {:node2, :pid2}, {:node3, :pid3}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    pids = ProcessRegistry.get_pids(hub_id, :pids_test)
+
+    assert length(pids) === 3
+    assert :pid1 in pids
+    assert :pid2 in pids
+    assert :pid3 in pids
+  end
+
+  test "get_pids returns empty list for non-existent child", %{hub_id: hub_id} = _context do
+    assert ProcessRegistry.get_pids(hub_id, :nonexistent_child) === []
+  end
+
+  test "get_pid returns first pid for a child", %{hub_id: hub_id} = _context do
+    child_spec = %{id: :pid_test, start: {:mod, :fun, []}}
+    child_nodes = [{:node1, :first_pid}, {:node2, :second_pid}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    pid = ProcessRegistry.get_pid(hub_id, :pid_test)
+
+    assert pid === :first_pid
+  end
+
+  test "get_pid returns nil for non-existent child", %{hub_id: hub_id} = _context do
+    assert ProcessRegistry.get_pid(hub_id, :nonexistent_pid) === nil
+  end
+
+  test "local_pid returns pid for local node", %{hub_id: hub_id} = _context do
+    local_node = node()
+    child_spec = %{id: :local_pid_test, start: {:mod, :fun, []}}
+    child_nodes = [{local_node, :local_pid_val}, {:remote_node, :remote_pid_val}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    local_pid = ProcessRegistry.local_pid(hub_id, :local_pid_test)
+
+    assert local_pid === :local_pid_val
+  end
+
+  test "local_pid returns nil when child not on local node", %{hub_id: hub_id} = _context do
+    child_spec = %{id: :remote_only_pid, start: {:mod, :fun, []}}
+    child_nodes = [{:remote_node, :remote_pid_only}]
+    ProcessRegistry.insert(hub_id, child_spec, child_nodes)
+
+    assert ProcessRegistry.local_pid(hub_id, :remote_only_pid) === nil
+  end
+
+  test "local_pid returns nil for non-existent child", %{hub_id: hub_id} = _context do
+    assert ProcessRegistry.local_pid(hub_id, :no_such_child) === nil
+  end
+
+  test "local_children returns only children on local node", %{hub_id: hub_id} = _context do
+    local_node = node()
+
+    # Insert local children
+    ProcessRegistry.insert(hub_id, %{id: :lc1, start: {:m, :f, []}}, [{local_node, :pid1}],
+      metadata: %{tag: "local1"}
+    )
+
+    ProcessRegistry.insert(hub_id, %{id: :lc2, start: {:m, :f, []}}, [{local_node, :pid2}],
+      metadata: %{tag: "local2"}
+    )
+
+    # Insert remote-only child
+    ProcessRegistry.insert(hub_id, %{id: :lc3, start: {:m, :f, []}}, [{:remote_only, :pid3}],
+      metadata: %{tag: "remote"}
+    )
+
+    # Insert mixed child (local + remote)
+    ProcessRegistry.insert(
+      hub_id,
+      %{id: :lc4, start: {:m, :f, []}},
+      [{local_node, :pid4}, {:remote_node, :pid5}],
+      metadata: %{tag: "mixed"}
+    )
+
+    children = ProcessRegistry.local_children(hub_id)
+
+    assert is_map(children)
+    assert Map.has_key?(children, :lc1)
+    assert Map.has_key?(children, :lc2)
+    refute Map.has_key?(children, :lc3)
+    assert Map.has_key?(children, :lc4)
+
+    # Verify structure of returned data
+    {child_spec, node_pids, metadata} = children[:lc1]
+    assert child_spec.id === :lc1
+    assert Keyword.get(node_pids, local_node) === :pid1
+    assert metadata.tag === "local1"
+
+    # Mixed child should include both node entries
+    {_cs, mixed_nodes, _m} = children[:lc4]
+    assert Keyword.get(mixed_nodes, local_node) === :pid4
+    assert Keyword.get(mixed_nodes, :remote_node) === :pid5
+  end
+
+  test "local_children returns empty map when no local children", %{hub_id: hub_id} = _context do
+    # Insert only remote children
+    ProcessRegistry.insert(hub_id, %{id: :remote_lc, start: {:m, :f, []}}, [{:remote, :pid}])
+
+    children = ProcessRegistry.local_children(hub_id)
+
+    refute Map.has_key?(children, :remote_lc)
   end
 
   test "update", %{hub_id: hub_id} = _context do

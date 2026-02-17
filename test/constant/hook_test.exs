@@ -3,48 +3,44 @@ defmodule Test.Constant.HookTest do
 
   alias ProcessHub.Constant.Hook
 
-  test "pre_cluster_join" do
-    assert Hook.pre_cluster_join() === :pre_cluster_join_hook
+  test "pre_node_join" do
+    assert Hook.pre_node_join() === :pre_node_join_hook
   end
 
-  test "post_cluster_join" do
-    assert Hook.post_cluster_join() === :post_cluster_join_hook
+  test "post_node_join" do
+    assert Hook.post_node_join() === :post_node_join_hook
   end
 
-  test "pre_cluster_leave" do
-    assert Hook.pre_cluster_leave() === :pre_cluster_leave_hook
+  test "pre_node_leave" do
+    assert Hook.pre_node_leave() === :pre_node_leave_hook
   end
 
-  test "post_cluster_leave" do
-    assert Hook.post_cluster_leave() === :post_cluster_leave_hook
+  test "post_node_leave" do
+    assert Hook.post_node_leave() === :post_node_leave_hook
   end
 
-  test "registry pid inserted" do
-    assert Hook.registry_pid_inserted() === :registry_pid_insert_hook
+  test "child registered" do
+    assert Hook.child_registered() === :child_registered_hook
   end
 
-  test "registry pid removed" do
-    assert Hook.registry_pid_removed() === :registry_pid_remove_hook
+  test "child unregistered" do
+    assert Hook.child_unregistered() === :child_unregistered_hook
   end
 
-  test "children migrated" do
-    assert Hook.children_migrated() === :children_migrated_hook
+  test "migration completed" do
+    assert Hook.migration_completed() === :migration_completed_hook
   end
 
-  test "migration forwarded" do
-    assert Hook.forwarded_migration() === :forwarded_migration_hook
+  test "children forwarded" do
+    assert Hook.children_forwarded() === :children_forwarded_hook
   end
 
-  test "priority state updated" do
-    assert Hook.priority_state_updated() === :priority_state_updated_hook
+  test "pre redistribution" do
+    assert Hook.pre_redistribution() === :pre_redistribution_hook
   end
 
-  test "pre nodes redistribution" do
-    assert Hook.pre_nodes_redistribution() === :pre_nodes_redistribution_hook
-  end
-
-  test "post nodes redistribution" do
-    assert Hook.post_nodes_redistribution() === :post_nodes_redistribution_hook
+  test "post redistribution" do
+    assert Hook.post_redistribution() === :post_redistribution_hook
   end
 
   test "pre children start" do
@@ -63,15 +59,19 @@ defmodule Test.Constant.HookTest do
     assert Hook.coordinator_shutdown() === :coordinator_shutdown_hook
   end
 
-  test "process startups" do
-    assert Hook.process_startups() === :process_startups_hook
-  end
-
-  test "process restart pid update" do
-    assert Hook.child_process_pid_update() === :child_process_pid_update_hook
+  test "child pid updated" do
+    assert Hook.child_pid_updated() === :child_pid_updated_hook
   end
 
   test "child data alter" do
     assert Hook.child_data_alter() === :child_data_alter_hook
+  end
+
+  test "handover delivered" do
+    assert Hook.handover_delivered() === :handover_delivered_hook
+  end
+
+  test "scoreboard updated" do
+    assert Hook.scoreboard_updated() === :scoreboard_updated_hook
   end
 end

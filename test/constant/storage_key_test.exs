@@ -51,10 +51,6 @@ defmodule Test.Constant.StorageKeyTest do
     assert StorageKey.gct() === :gossip_node_timestamps
   end
 
-  test "storage key deadlock recovery timeout" do
-    assert StorageKey.dlrt() === :deadlock_recovery_timeout
-  end
-
   test "storage key handover data wait" do
     assert StorageKey.hodw() === :handover_data_wait
   end
@@ -65,5 +61,25 @@ defmodule Test.Constant.StorageKeyTest do
 
   test "migration base timeout" do
     assert StorageKey.mbt() === :migration_base_timeout
+  end
+
+  test "request cleanup interval" do
+    assert StorageKey.rci() === :req_cleanup_interval
+  end
+
+  test "storage key migration coldswap state" do
+    assert StorageKey.mcsk() === :migration_coldswap_state
+  end
+
+  test "storage key majority quorum max seen" do
+    assert StorageKey.mqms() === :majority_quorum_max_seen
+  end
+
+  test "storage key cluster event debounce" do
+    assert StorageKey.ced() === :cluster_event_debounce
+  end
+
+  test "storage key cross node request timeout" do
+    assert StorageKey.cnrt() === :cross_node_request_timeout
   end
 end

@@ -3,7 +3,12 @@ defmodule ProcessHub.Service.Dispatcher do
   The dispatcher service provides API functions for dispatching events.
   """
 
-  alias ProcessHub.Constant.PriorityLevel
+  alias ProcessHub.Request.Handler.StartChildrenRequest
+  alias ProcessHub.Request.Handler.StopChildrenRequest
+  alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias :blockade, as: Blockade
 
   use ProcessHub.Constant.Event
@@ -19,61 +24,72 @@ defmodule ProcessHub.Service.Dispatcher do
   end
 
   @doc """
-  Sends the coordinator process a message to start the child processes passed in.
+  Sends StartChildrenRequest structs to their target coordinator processes.
 
-  @TODO: should use the underlying PubSub or Gossip.
+  Each StartChildrenRequest contains all routing information needed by the
+  remote node to process the request and send responses back.
   """
-  @spec children_start(ProcessHub.hub_id(), [{node(), [map()]}], keyword()) :: :ok
-  def children_start(hub_id, children_nodes, opts) do
-    Enum.each(children_nodes, fn {child_node, children_data} ->
-      GenServer.cast({hub_id, child_node}, {:start_children, children_data, opts})
+  @spec children_start(ProcessHub.Hub.t(), [StartChildrenRequest.t()]) :: :ok
+  def children_start(hub, node_start_requests) when is_list(node_start_requests) do
+    node_start_requests
+    |> Enum.group_by(fn %StartChildrenRequest{node: node} -> node end)
+    |> Enum.each(fn {target_node, requests} ->
+      split_requests = Enum.flat_map(requests, &RequestManager.split/1)
+
+      Blockade.dispatch_sync(hub.procs.event_queue, @event_requests_handle, split_requests, %{
+        members: [target_node]
+      })
     end)
   end
 
   @doc """
-  Sends the coordinator process a message to start the child processes passed in.
+  Sends StopChildrenRequest structs to their target coordinator processes.
+
+  Each StopChildrenRequest contains all routing information needed by the
+  remote node to process the request and send responses back.
   """
-  @spec children_migrate(reference(), [{node(), [map()]}], keyword()) :: :ok
-  def children_migrate(event_queue, children_nodes, opts) do
-    Enum.each(children_nodes, fn {child_node, children_data} ->
-      Blockade.dispatch_sync(
-        event_queue,
-        @event_migration_add,
-        {children_data, opts},
-        %{
-          members: [child_node],
-          priority: PriorityLevel.locked()
-        }
-      )
-    end)
+  @spec children_stop(ProcessHub.Hub.t(), [StopChildrenRequest.t()]) :: :ok
+  def children_stop(hub, node_stop_requests) when is_list(node_stop_requests) do
+    node_stop_requests
+    |> Enum.group_by(fn %StopChildrenRequest{node: node} -> node end)
+    |> Enum.each(fn {target_node, requests} ->
+      split_requests = Enum.flat_map(requests, &RequestManager.split/1)
 
-    :ok
-  end
-
-  @doc """
-  Sends the coordinator process a message to stop the child processes passed in.
-  """
-  @spec children_stop(ProcessHub.hub_id(), [{node(), [ProcessHub.child_id()]}], keyword()) :: :ok
-  def children_stop(hub_id, children_nodes, stop_opts) do
-    coordinator = hub_id
-
-    Enum.each(children_nodes, fn {child_node, children} ->
-      GenServer.cast({coordinator, child_node}, {:stop_children, children, stop_opts})
+      Blockade.dispatch_sync(hub.procs.event_queue, @event_requests_handle, split_requests, %{
+        members: [target_node]
+      })
     end)
   end
 
   @doc """
-  Propagates the event to the event queue.
+  Propagates a request to cluster members via the synchronization strategy.
+
+  ## Options
+    - `:members` - Target members (`:global`, `:local`, `:external`, or `[node()]`). Defaults to `:global`.
   """
-  @spec propagate_event(atom(), atom(), term(), %{
+  @spec propagate_event(ProcessHub.Hub.t(), struct(), keyword()) :: :ok
+  def propagate_event(hub, request, opts \\ []) do
+    sync_strategy = Storage.get(hub.storage.misc, StorageKey.strsyn())
+    members = Keyword.get(opts, :members, :global)
+
+    SynchronizationStrategy.propagate(
+      sync_strategy,
+      hub,
+      RequestManager.split(request),
+      members: members
+    )
+  end
+
+  @doc """
+  Dispatches an event to the event queue.
+  """
+  @spec dispatch_event(atom(), atom(), term(), %{
           optional(:discard_event) => boolean,
-          optional(:members) => :global | :local | :external | [node()],
-          optional(:priority) => integer(),
-          optional(:atomic_priority_set) => integer()
+          optional(:members) => :global | :local | :external | [node()]
         }) :: {:ok, :event_discarded | :event_dispatched | :event_queued}
-  def propagate_event(event_queue, event_id, event_data, opts \\ %{})
+  def dispatch_event(event_queue, event_id, event_data, opts \\ %{})
 
-  def propagate_event(event_queue, event_id, event_data, opts) do
+  def dispatch_event(event_queue, event_id, event_data, opts) do
     Blockade.dispatch_sync(
       event_queue,
       event_id,

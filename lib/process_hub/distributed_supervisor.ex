@@ -7,16 +7,19 @@ defmodule ProcessHub.DistributedSupervisor do
   child processes.
   """
 
-  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Constant.PriorityLevel
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Coordinator
+  alias ProcessHub.Request.Handler.PidsUnregisterRequest
+  alias ProcessHub.Request.Handler.PidUpdateRequest
 
   use ProcessHub.Constant.Event
 
-  use ProcessHub.Injector,
+  use ProcessHub.Utility.Injector,
     override: [:init, :start_link, :terminate_child, :start_child],
     base_module: :supervisor
+
+  @pd_cid_to_pid :ph_cid_to_pid
 
   @doc """
   Starts the distributed supervisor with the given arguments.
@@ -46,8 +49,14 @@ defmodule ProcessHub.DistributedSupervisor do
   def init(args) do
     # Store hub_id in process dictionary for later retrieval
     Process.put(:hub_id, args.hub_id)
+    Process.put(@pd_cid_to_pid, %{})
 
-    Supervisor.init(children(args.hub_id),
+    children =
+      args.hub_id
+      |> children()
+      |> Enum.map(&wrap_child_spec/1)
+
+    Supervisor.init(children,
       strategy: :one_for_one,
       auto_shutdown: :never,
       max_restarts: args.max_restarts,
@@ -57,7 +66,7 @@ defmodule ProcessHub.DistributedSupervisor do
 
   @doc "Starts a child process on local node."
   def start_child(distributed_sup, child_spec) do
-    Supervisor.start_child(distributed_sup, child_spec)
+    Supervisor.start_child(distributed_sup, wrap_child_spec(child_spec))
   end
 
   @doc """
@@ -69,37 +78,48 @@ defmodule ProcessHub.DistributedSupervisor do
     Supervisor.delete_child(distributed_sup, child_id)
   end
 
-  @doc "Returns `true` if the child process is running on local node."
-  def has_child?(distributed_sup, child_id) do
-    Supervisor.which_children(distributed_sup)
-    |> Enum.map(&elem(&1, 0))
-    |> Enum.member?(child_id)
-  end
-
-  @doc "Returns the child process pid if it is running on local node."
-  def local_pid(distributed_sup, child_id) do
-    Supervisor.which_children(distributed_sup)
-    |> Enum.find({nil, nil}, &(elem(&1, 0) === child_id))
-    |> elem(1)
-  end
-
-  @doc "Returns a list of processe pairs in the form of `{child_id, pid}`
-  that are running on local node."
-  def local_children(distributed_sup) do
-    Supervisor.which_children(distributed_sup)
-    |> Enum.map(fn {child_id, pid, _, _} -> {child_id, pid} end)
-    |> Map.new()
-  end
-
-  @spec local_child_ids(atom() | pid() | {atom(), any()} | {:via, atom(), any()}) :: list()
-  @doc "Returns the child process ids that are running on local node."
-  def local_child_ids(distributed_sup) do
-    Supervisor.which_children(distributed_sup)
-    |> Enum.map(fn {child_id, _, _, _} -> child_id end)
-  end
+  # @doc """
+  # Returns only the child IDs that are currently running (have a valid PID).
+  # This filters out children that are :undefined or {:restarting, _}.
+  # """
+  # @spec running_child_ids(supervisor :: GenServer.server()) :: [term()]
+  # def running_child_ids(supervisor) do
+  #   GenServer.call(supervisor, :running_child_ids)
+  # end
 
   defp children(hub_id) do
     ProcessRegistry.local_child_specs(hub_id)
+  end
+
+  defp wrap_child_spec(child_spec) do
+    spec = Supervisor.child_spec(child_spec, [])
+    {mod, fun, args} = spec.start
+    modules = Map.get(spec, :modules, [mod])
+
+    spec
+    |> Map.put(:modules, modules)
+    |> Map.put(:start, {__MODULE__, :start_proxy, [spec.id, {mod, fun, args}]})
+  end
+
+  @doc false
+  def start_proxy(child_id, {mod, fun, args}) do
+    case apply(mod, fun, args) do
+      {:ok, pid} ->
+        register_child_pid(child_id, pid)
+        {:ok, pid}
+
+      {:ok, pid, info} ->
+        register_child_pid(child_id, pid)
+        {:ok, pid, info}
+
+      error ->
+        error
+    end
+  end
+
+  defp register_child_pid(child_id, pid) do
+    cid_to_pid = Process.get(@pd_cid_to_pid, %{})
+    Process.put(@pd_cid_to_pid, Map.put(cid_to_pid, child_id, pid))
   end
 
   @doc """
@@ -110,19 +130,24 @@ defmodule ProcessHub.DistributedSupervisor do
   about the child process failure.
   """
   def handle_info({:EXIT, pid, _reason} = request, state) do
-    case :supervisor.handle_info(request, state) do
-      {:noreply, new_state} ->
-        handle_child_exit(state, new_state, pid)
-        {:noreply, new_state}
+    # Look up child_id from pid via reverse scan (only on EXIT)
+    cid_to_pid = Process.get(@pd_cid_to_pid, %{})
+    child_id = Enum.find_value(cid_to_pid, fn {cid, p} -> if p === pid, do: cid end)
 
-      {:noreply, new_state, timeout} ->
-        handle_child_exit(state, new_state, pid)
-        {:noreply, new_state, timeout}
-
-      {:stop, reason, new_state} ->
-        handle_child_exit(state, new_state, pid)
-        {:stop, reason, new_state}
+    # Remove old mapping
+    if child_id do
+      Process.put(@pd_cid_to_pid, Map.delete(cid_to_pid, child_id))
     end
+
+    # Delegate to supervisor (may trigger restart → start_proxy updates map)
+    result = :supervisor.handle_info(request, state)
+
+    # Check outcome via map
+    if child_id do
+      handle_child_exit(child_id, pid)
+    end
+
+    result
   end
 
   # Asynchronous function to handle the child specification removal.
@@ -136,10 +161,9 @@ defmodule ProcessHub.DistributedSupervisor do
     end
   end
 
-  defp handle_child_exit(old_state, new_state, pid) do
+  defp handle_child_exit(child_id, old_pid) do
     hub_id = Process.get(:hub_id)
 
-    # Get hub state, but handle case where coordinator is shutting down
     hub =
       try do
         Coordinator.get_hub(hub_id)
@@ -147,22 +171,15 @@ defmodule ProcessHub.DistributedSupervisor do
         :exit, _ -> nil
       end
 
-    # If coordinator is unavailable, skip handling (system is shutting down)
-    if hub == nil do
-      :ok
-    else
-      cid = find_cid_from_pid(old_state, pid)
-      old_pid = find_pid_from_cid(old_state, cid)
-      new_pid = find_pid_from_cid(new_state, cid)
+    if hub do
+      new_pid = Process.get(@pd_cid_to_pid, %{}) |> Map.get(child_id)
 
       cond do
-        # No new pid found, the child process has been terminated.
-        new_pid === :undefined ->
-          handle_child_removal(hub.procs.event_queue, cid)
+        is_pid(new_pid) and new_pid !== old_pid ->
+          handle_child_restart(hub, child_id, new_pid)
 
-        # The child process has been restarted with a new pid.
-        is_pid(new_pid) and old_pid !== new_pid ->
-          handle_child_restart(hub.procs.event_queue, cid, new_pid)
+        is_nil(new_pid) ->
+          handle_child_removal(hub, child_id)
 
         true ->
           nil
@@ -170,58 +187,17 @@ defmodule ProcessHub.DistributedSupervisor do
     end
   end
 
-  defp handle_child_removal(event_queue, child_id) do
-    node = node()
+  defp handle_child_removal(hub, child_id) do
+    request = PidsUnregisterRequest.new([{child_id, [node()]}])
 
-    Dispatcher.propagate_event(
-      event_queue,
-      @event_children_unregistration,
-      {[{child_id, :self_exit, node}], node, []},
-      %{
-        members: :global,
-        priority: PriorityLevel.locked()
-      }
-    )
+    Dispatcher.propagate_event(hub, request, members: :global)
 
-    # Deletes the child specification from the supervisor by sending an asynchrounous request
-    # to the Supervisor process itself.
     Process.send(self(), {:delete_child_spec, child_id}, [])
   end
 
-  defp handle_child_restart(event_queue, child_id, new_pid) do
-    Dispatcher.propagate_event(
-      event_queue,
-      @event_child_process_pid_update,
-      {child_id, {node(), new_pid}},
-      %{
-        members: :global,
-        priority: PriorityLevel.locked()
-      }
-    )
-  end
+  defp handle_child_restart(hub, child_id, new_pid) do
+    request = PidUpdateRequest.new(child_id, node(), new_pid)
 
-  defp find_cid_from_pid(state, compare_pid) do
-    state
-    |> elem(3)
-    |> elem(1)
-    |> Enum.find(fn {_key, child_info} ->
-      pid_from_state = elem(child_info, 1)
-      pid_from_state === compare_pid
-    end)
-    |> elem(0)
-  end
-
-  defp find_pid_from_cid(state, compare_cid) do
-    # Format of the state is defined as a staterecord in the `:supervisor` module.
-    # {_, _, _, {_, %{^child_id =>  {_, pid, _cid, _, _, _, _, _, _}}}, _, _, _, _, _, _, _, _} = state
-
-    state
-    |> elem(3)
-    |> elem(1)
-    |> Enum.find(fn {state_cid, _} ->
-      state_cid === compare_cid
-    end)
-    |> elem(1)
-    |> elem(1)
+    Dispatcher.propagate_event(hub, request, members: :global)
   end
 end

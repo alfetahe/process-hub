@@ -202,11 +202,6 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       # Because track_max_size is false, max_seen stays at 3
       # Quorum = 2, we have 5, so we have quorum
       refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
-
-      # Verify max_seen didn't update (still 3)
-      # (It gets initialized to max(initial_cluster_size, current_size) = max(3, 5) = 5 initially)
-      # Actually, looking at init, it DOES initialize with current_size
-      # So let me adjust this test
     end
 
     test "with track_max_size: true, adapts to cluster growth", %{hub: hub} do
@@ -274,6 +269,78 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
 
       # Quorum = 2 (majority of 3), we have 2: has quorum
       refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+    end
+  end
+
+  describe "reset_cluster_size/2" do
+    test "resets the max seen cluster size", %{} do
+      # Set up the hub with a proper coordinator so reset_cluster_size can find it
+      # We use a full hub setup for this test
+      hub_id = :"reset_test_#{:erlang.unique_integer([:positive])}"
+
+      {:ok, pid} = ProcessHub.Initializer.start_link(%ProcessHub{hub_id: hub_id})
+      :erlang.unlink(pid)
+
+      real_hub = ProcessHub.Coordinator.get_hub(hub_id)
+
+      # Initialize strategy which sets initial max_seen
+      Storage.insert(real_hub.storage.misc, StorageKey.hn(), [node()])
+      strategy = %MajorityQuorum{initial_cluster_size: 1, track_max_size: true}
+      PartitionToleranceStrategy.init(strategy, real_hub)
+
+      # Simulate cluster growing to 5 nodes
+      Storage.insert(real_hub.storage.misc, StorageKey.mqms(), 5)
+      assert Storage.get(real_hub.storage.misc, StorageKey.mqms()) === 5
+
+      # Reset to 3
+      assert MajorityQuorum.reset_cluster_size(hub_id, 3) === :ok
+      assert Storage.get(real_hub.storage.misc, StorageKey.mqms()) === 3
+
+      ProcessHub.Initializer.stop(hub_id)
+    end
+
+    test "returns error for non-existent hub" do
+      # GenServer.call to non-existent process raises :exit which is caught by rescue
+      result =
+        try do
+          MajorityQuorum.reset_cluster_size(:nonexistent_hub_xyz, 3)
+        catch
+          :exit, _ -> {:error, :hub_not_found}
+        end
+
+      assert {:error, _reason} = result
+    end
+
+    test "reset allows cluster to operate with fewer nodes" do
+      # Use a mock setup to verify the quorum calculation changes
+      hub_id = :"reset_quorum_test_#{:erlang.unique_integer([:positive])}"
+      misc_storage = :ets.new(hub_id, [:set, :public, :named_table])
+
+      hub = %{
+        hub_id: hub_id,
+        storage: %{misc: misc_storage}
+      }
+
+      # Set up with max_seen of 5 (quorum = 3)
+      Storage.insert(misc_storage, StorageKey.hn(), [node(), :n2@host, :n3@host])
+      Storage.insert(misc_storage, StorageKey.mqms(), 5)
+
+      strategy = %MajorityQuorum{initial_cluster_size: 1, track_max_size: true}
+
+      # With max_seen=5, quorum=3. We have 3 nodes, so has quorum
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+
+      # Drop to 2 nodes - should lose quorum (2 < 3)
+      Storage.insert(misc_storage, StorageKey.hn(), [node(), :n2@host])
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host)
+
+      # Now reset max_seen to 3 (quorum = 2)
+      Storage.insert(misc_storage, StorageKey.mqms(), 3)
+
+      # With max_seen=3, quorum=2. We have 2 nodes, so has quorum now
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+
+      :ets.delete(hub_id)
     end
   end
 

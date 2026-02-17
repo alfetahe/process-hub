@@ -5,9 +5,11 @@ defmodule ProcessHub.Service.Synchronizer do
   """
 
   alias ProcessHub.Coordinator
-  alias ProcessHub.Handler.Synchronization
-  alias ProcessHub.DistributedSupervisor
+  alias ProcessHub.Task.SynchronizationTask
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Hub
 
   # TODO: add tests
@@ -19,10 +21,10 @@ defmodule ProcessHub.Service.Synchronizer do
   def trigger_sync(hub) do
     Task.Supervisor.async(
       hub.procs.task_sup,
-      Synchronization.IntervalSyncInit,
+      SynchronizationTask.IntervalSyncInit,
       :handle,
       [
-        %Synchronization.IntervalSyncInit{
+        %SynchronizationTask.IntervalSyncInit{
           hub: hub
         }
       ]
@@ -36,10 +38,10 @@ defmodule ProcessHub.Service.Synchronizer do
 
     Task.Supervisor.async_nolink(
       hub.procs.task_sup,
-      Synchronization.IntervalSyncHandle,
+      SynchronizationTask.IntervalSyncHandle,
       :handle,
       [
-        %Synchronization.IntervalSyncHandle{
+        %SynchronizationTask.IntervalSyncHandle{
           hub: hub,
           sync_strat: strategy,
           sync_data: sync_data,
@@ -50,13 +52,17 @@ defmodule ProcessHub.Service.Synchronizer do
     |> Task.await()
   end
 
+  # TODO: add tests.
   @doc "Returns local node's process registry data used for synchronization."
   @spec local_sync_data(Hub.t()) :: [
           {ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}
         ]
   def local_sync_data(hub) do
-    ProcessRegistry.dump(hub.hub_id)
-    |> filter_local_data(hub.procs.dist_sup)
+    ProcessRegistry.local_children(hub.hub_id)
+    |> Enum.map(fn {_child_id, {child_spec, child_nodes, metadata}} ->
+      child_pid = child_nodes[node()]
+      {child_spec, child_pid, metadata}
+    end)
   end
 
   @doc """
@@ -82,19 +88,20 @@ defmodule ProcessHub.Service.Synchronizer do
             )
 
           {_, local_child_nodes} ->
-            {_current, updated} =
-              Keyword.get_and_update(local_child_nodes, remote_node, fn current_value ->
-                {current_value, remote_pid}
-              end)
+            # Check if the pid associated with the remote node is different than
+            # what we have locally.
+            if Keyword.get(local_child_nodes, remote_node, nil) !== remote_pid do
+              updated = Keyword.put(local_child_nodes, remote_node, remote_pid)
 
-            # We have data locally, update the pid that is associated with the remote node.
-            ProcessRegistry.insert(
-              hub.hub_id,
-              remote_cs,
-              updated,
-              hook_storage: hub.storage.hook,
-              metadata: remote_meta
-            )
+              # We have data locally, update the pid that is associated with the remote node.
+              ProcessRegistry.insert(
+                hub.hub_id,
+                remote_cs,
+                updated,
+                hook_storage: hub.storage.hook,
+                metadata: remote_meta
+              )
+            end
         end
       end)
     end)
@@ -129,34 +136,21 @@ defmodule ProcessHub.Service.Synchronizer do
     end)
   end
 
-  defp filter_local_data(process_registry, dist_sup) do
-    # Make sure we're not in partition mode and the distributed supervisor is
-    # alive before querying its child processes.
-    supervisor_child_ids =
-      case GenServer.whereis(dist_sup) do
-        nil ->
-          []
+  @doc """
+  Broadcasts local registry data to the specified target nodes.
 
-        pid when is_pid(pid) ->
-          if Process.alive?(pid) do
-            DistributedSupervisor.local_child_ids(dist_sup)
-          else
-            []
-          end
+  Called when new nodes join the cluster to share local process information.
+  """
+  @spec broadcast_local_registry(Hub.t(), [node()]) :: :ok
+  def broadcast_local_registry(state, target_nodes) do
+    sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
+    local_data = local_sync_data(state)
 
-        _ ->
-          []
-      end
-
-    node = node()
-
-    Enum.filter(process_registry, fn {child_id, _} ->
-      Enum.member?(supervisor_child_ids, child_id)
-    end)
-    |> Enum.map(fn {_child_id, {child_spec, nodes, metadata}} ->
-      child_pid = nodes[node]
-
-      {child_spec, child_pid, metadata}
-    end)
+    SynchronizationStrategy.broadcast_local_data(
+      sync_strategy,
+      state,
+      local_data,
+      target_nodes
+    )
   end
 end

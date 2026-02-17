@@ -2,10 +2,13 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
   @moduledoc """
   The majority quorum strategy provides automatic partition tolerance that adapts to cluster size.
 
+  > #### Experimental {: .warning}
+  > This strategy is experimental and may change in future releases.
+  > Use in production at your own discretion.
+
   This strategy is ideal for clusters that:
   - Start with a single node (development or initial deployment)
   - Scale up over time
-  - Need proper split-brain protection once established
   - Want to avoid manual quorum configuration
 
   ## How It Works
@@ -47,11 +50,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
   > For automatic adaptation to gradual scale-down, consider using
   > `ProcessHub.Strategy.PartitionTolerance.DynamicQuorum` instead.
 
-  If you intentionally downsize your cluster (e.g., from 5 nodes to 3 nodes), you'll need
-  to reset the expected cluster size, otherwise the cluster will require 3 nodes (majority of 5)
-  to operate.
-
-  You can reset the expected cluster size using:
+  To reset the expected cluster size after an intentional downsize:
 
       ProcessHub.Strategy.PartitionTolerance.MajorityQuorum.reset_cluster_size(:my_hub, 3)
 

@@ -6,8 +6,13 @@ defmodule ProcessHub.Service.Cluster do
 
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.HookManager
+  alias ProcessHub.Service.State
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
+  alias ProcessHub.Task.ClusterUpdateTask
   alias ProcessHub.Hub
 
   use Event
@@ -83,5 +88,63 @@ defmodule ProcessHub.Service.Cluster do
 
         :ok
     end
+  end
+
+  @doc """
+  Handles the node down event by dispatching hooks, removing nodes from cluster state,
+  and triggering the node down update task.
+  """
+  def handle_node_down(%{removed_nodes: removed_nodes, hub: hub}) do
+    # Dispatch pre hooks for all nodes
+    Enum.each(removed_nodes, fn n ->
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_leave(), %{node: n})
+    end)
+
+    # Remove nodes from cluster state first (serialized here in worker)
+    Enum.each(removed_nodes, fn node ->
+      rem_hub_node(hub.storage.misc, node)
+    end)
+
+    # Get updated hub_nodes AFTER removal
+    updated_hub_nodes = nodes(hub.storage.misc, [:include_local])
+
+    ClusterUpdateTask.NodeDown.handle(%ClusterUpdateTask.NodeDown{
+      removed_nodes: removed_nodes,
+      hub_nodes: updated_hub_nodes,
+      hub: hub
+    })
+  end
+
+  @doc """
+  Handles the node up event by dispatching hooks, adding nodes to cluster state,
+  checking partition tolerance for quorum recovery, and triggering the node up update task.
+  """
+  def handle_node_up(%{joined_nodes: joined_nodes, hub: hub}) do
+    # Dispatch pre hooks for all nodes
+    Enum.each(joined_nodes, fn n ->
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_join(), %{node: n})
+    end)
+
+    # Add nodes to cluster state FIRST (consistent with handle_node_down)
+    Enum.each(joined_nodes, fn node ->
+      add_hub_node(hub.storage.misc, node)
+    end)
+
+    # Check if any node should trigger quorum recovery (AFTER adding)
+    part_strat = Storage.get(hub.storage.misc, StorageKey.strpart())
+
+    unlock_status =
+      Enum.any?(joined_nodes, fn n ->
+        PartitionToleranceStrategy.toggle_unlock?(part_strat, hub, n)
+      end)
+
+    if unlock_status do
+      State.toggle_quorum_success(hub)
+    end
+
+    ClusterUpdateTask.NodeUp.handle(%ClusterUpdateTask.NodeUp{
+      joined_nodes: joined_nodes,
+      hub: hub
+    })
   end
 end

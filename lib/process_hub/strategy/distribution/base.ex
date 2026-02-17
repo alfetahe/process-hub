@@ -15,9 +15,9 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   def init(strategy, hub)
 
   @doc """
-  Returns the list of nodes where the child process belongs to.
+  Returns a map of child_id to list of nodes where the child process belongs to.
 
-  The list of nodes is used to determine where the child process should be started
+  The map is used to determine where the child process should be started
   or migrated to.
   """
   @spec belongs_to(
@@ -25,7 +25,7 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
           hub :: Hub.t(),
           child_ids :: [ProcessHub.child_id()],
           replication_factor :: pos_integer()
-        ) :: [{ProcessHub.child_id(), [node()]}]
+        ) :: %{ProcessHub.child_id() => [node()]}
   def belongs_to(strategy, hub, child_ids, replication_factor)
 
   @doc """
@@ -33,4 +33,34 @@ defprotocol ProcessHub.Strategy.Distribution.Base do
   """
   @spec children_init(struct(), Hub.t(), [map()], keyword()) :: :ok | {:error, any()}
   def children_init(strategy, hub, child_specs, opts)
+
+  @doc """
+  Returns whether this distribution strategy produces deterministic results
+  based solely on the node topology.
+
+  Deterministic strategies (like ConsistentHashing) always produce the same
+  distribution for the same set of nodes. Non-deterministic strategies
+  (like CentralizedLoadBalancer) may produce different distributions based
+  on runtime factors like node load.
+
+  This is used to optimize child validation - deterministic strategies can
+  skip revalidation when topology signature matches.
+  """
+  @spec deterministic?(struct()) :: boolean()
+  def deterministic?(strategy)
+
+  @doc """
+  Computes a distribution signature based on the current state that affects distribution.
+
+  For deterministic strategies (like ConsistentHashing), this is typically based on
+  the sorted list of cluster nodes. For non-deterministic strategies (like
+  CentralizedLoadBalancer), this may include additional state like load scores.
+
+  Used to detect if distribution-relevant state has changed between request creation
+  and execution.
+
+  Returns an integer hash that uniquely identifies the current distribution state.
+  """
+  @spec distribution_signature(struct(), Hub.t()) :: non_neg_integer()
+  def distribution_signature(strategy, hub)
 end

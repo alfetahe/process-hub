@@ -10,8 +10,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
   If the calculated quorum size is less than the `quorum_size` defined in the configuration,
   the `ProcessHub` will be considered to be in a network partition.
   In such a case, the `ProcessHub` will terminate its distributed supervisor process,
-  `ProcessHub.DistributedSupervisor`, and all its children. Also, the local event queue will be
-  locked by increasing the priority level.
+  `ProcessHub.DistributedSupervisor`, and all its children.
 
   The quorum size is calculated by the following formula:
 

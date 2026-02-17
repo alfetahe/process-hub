@@ -12,10 +12,42 @@ defmodule ProcessHub.Initializer do
   @doc "Starts a `ProcessHub` instance with all its children."
   @spec start_link(ProcessHub.t()) :: {:ok, pid()} | {:error, term()}
   def start_link(%ProcessHub{} = hub_settings) do
-    Supervisor.start_link(__MODULE__, hub_settings)
+    case validate_config(hub_settings) do
+      :ok -> Supervisor.start_link(__MODULE__, hub_settings)
+      {:error, _} = err -> err
+    end
   end
 
   def start_link(_), do: {:error, :expected_hub_settings}
+
+  @doc false
+  @spec validate_config(ProcessHub.t()) :: :ok | {:error, {:invalid_config, atom()}}
+  defp validate_config(%ProcessHub{} = hub) do
+    with :ok <- validate_handover_replication(hub) do
+      :ok
+    end
+  end
+
+  defp validate_handover_replication(%ProcessHub{
+         migration_strategy: migration_strat,
+         redundancy_strategy: redun_strat
+       }) do
+    handover_enabled =
+      case migration_strat do
+        %ProcessHub.Strategy.Migration.ColdSwap{handover: true} -> true
+        %ProcessHub.Strategy.Migration.HotSwap{handover: true} -> true
+        _ -> false
+      end
+
+    replication_enabled =
+      match?(%ProcessHub.Strategy.Redundancy.Replication{}, redun_strat)
+
+    if handover_enabled and replication_enabled do
+      {:error, {:invalid_config, :handover_with_replication_not_supported}}
+    else
+      :ok
+    end
+  end
 
   @doc "Starts a `ProcessHub` instance with all its children."
   @spec stop(atom()) :: :ok | {:error, :not_alive}
@@ -36,12 +68,14 @@ defmodule ProcessHub.Initializer do
     children =
       [
         {Registry, keys: :unique, name: procs.system_registry},
+        {ProcessHub.Service.ProcessRegistry, {hub_id, procs.process_registry}},
         {Blockade, %{name: procs.event_queue, priority_sync: false}},
         dist_sup(hub_conf, procs),
         {Task.Supervisor, name: procs.task_sup},
         {ProcessHub.Coordinator, {hub_conf, procs, storage}},
-        {ProcessHub.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
-        {ProcessHub.Janitor,
+        {ProcessHub.Worker.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
+        {ProcessHub.Worker.BootstrapWorker, {hub_id, procs.bootstrap_worker, storage.misc}},
+        {ProcessHub.Worker.Janitor,
          {
            hub_id,
            procs.janitor,
@@ -71,8 +105,6 @@ defmodule ProcessHub.Initializer do
   end
 
   defp setup_storage(hub_id) do
-    :ets.new(hub_id, [:set, :public, :named_table])
-
     hook_registry = :ets.new(hub_id, [:set, :public])
     misc_storage = :ets.new(hub_id, [:set, :public])
 
@@ -89,9 +121,11 @@ defmodule ProcessHub.Initializer do
       initializer: self(),
       system_registry: system_registry,
       event_queue: :"hub.#{hub_id}.event_queue",
+      process_registry: {:via, Registry, {system_registry, "process_registry"}},
       dist_sup: {:via, Registry, {system_registry, "dist_sup"}},
       task_sup: {:via, Registry, {system_registry, "task_sup"}},
       worker_queue: {:via, Registry, {system_registry, "worker_queue"}},
+      bootstrap_worker: {:via, Registry, {system_registry, "bootstrap_worker"}},
       janitor: {:via, Registry, {system_registry, "janitor"}}
     }
   end

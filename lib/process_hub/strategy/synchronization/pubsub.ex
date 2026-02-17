@@ -7,20 +7,33 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
 
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Service.Synchronizer
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Event
-  alias ProcessHub.Constant.PriorityLevel
+  alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Utility.Bag
   alias ProcessHub.Hub
   alias :blockade, as: Blockade
 
   @typedoc """
   The PubSub synchronization strategy options.
 
-  - `sync_interval` - the periodic synchronization interval in milliseconds. Defaults to `15000`.
+  - `sync_interval` - the periodic synchronization interval in milliseconds. Defaults to `30000`.
   """
   @type t :: %__MODULE__{
           sync_interval: pos_integer()
         }
-  defstruct sync_interval: 15000
+  defstruct sync_interval: 30000
+
+  @doc false
+  def remote_sync_cast(worker_queue, hub_id, strategy, sync_data, from_node) do
+    GenServer.cast(
+      worker_queue,
+      {:handle_work,
+       fn ->
+         Synchronizer.exec_interval_sync(hub_id, strategy, sync_data, from_node)
+       end}
+    )
+  end
 
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.PubSub do
     use Event
@@ -29,29 +42,12 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     def init(strategy, _hub_id), do: strategy
 
     @impl SynchronizationStrategy
-    def propagate(_strategy, %Hub{} = hub, children, node, :add, opts) do
+    def propagate(_strategy, %Hub{} = hub, requests, opts) when is_list(requests) do
       Blockade.dispatch_sync(
         hub.procs.event_queue,
-        @event_children_registration,
-        {children, node, opts},
-        %{
-          priority: PriorityLevel.locked(),
-          members: Keyword.get(opts, :members, :global)
-        }
-      )
-
-      :ok
-    end
-
-    def propagate(_strategy, %Hub{} = hub, children, node, :rem, opts) do
-      Blockade.dispatch_sync(
-        hub.procs.event_queue,
-        @event_children_unregistration,
-        {children, node, opts},
-        %{
-          priority: PriorityLevel.locked(),
-          members: Keyword.get(opts, :members, :global)
-        }
+        @event_requests_handle,
+        requests,
+        %{members: Keyword.get(opts, :members, :global)}
       )
 
       :ok
@@ -66,17 +62,12 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       cluster_nodes
       |> Enum.filter(&(&1 !== local_node))
       |> Enum.each(fn node ->
-        Node.spawn(node, fn ->
-          GenServer.cast(
-            hub.procs.worker_queue,
-            {
-              :handle_work,
-              fn ->
-                Synchronizer.exec_interval_sync(hub.hub_id, strategy, local_data, local_node)
-              end
-            }
-          )
-        end)
+        Node.spawn(
+          node,
+          ProcessHub.Strategy.Synchronization.PubSub,
+          :remote_sync_cast,
+          [hub.procs.worker_queue, hub.hub_id, strategy, local_data, local_node]
+        )
       end)
 
       :ok
@@ -86,6 +77,41 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
     def handle_synchronization(_strategy, hub, remote_data, remote_node) do
       Synchronizer.append_data(hub, %{remote_node => remote_data})
       Synchronizer.detach_data(hub, %{remote_node => remote_data})
+
+      :ok
+    end
+
+    @impl SynchronizationStrategy
+    def broadcast_local_data(_strategy, hub, local_data, target_nodes) do
+      local_node = node()
+      timestamp = Bag.timestamp(:microsecond)
+      sync_data = {local_data, timestamp}
+
+      Blockade.dispatch_sync(
+        hub.procs.event_queue,
+        @event_node_registry_broadcast,
+        {sync_data, local_node},
+        %{
+          members: target_nodes
+        }
+      )
+
+      :ok
+    end
+
+    @impl SynchronizationStrategy
+    def handle_node_join_data(_strategy, hub, {remote_data, timestamp}, remote_node) do
+      # Check timestamp against stored timestamp for this node
+      node_timestamps = Storage.get(hub.storage.misc, StorageKey.gct()) || %{}
+      stored_timestamp = Map.get(node_timestamps, remote_node)
+
+      if stored_timestamp == nil or timestamp > stored_timestamp do
+        Synchronizer.append_data(hub, %{remote_node => remote_data})
+
+        # Update timestamp
+        updated_timestamps = Map.put(node_timestamps, remote_node, timestamp)
+        Storage.insert(hub.storage.misc, StorageKey.gct(), updated_timestamps)
+      end
 
       :ok
     end

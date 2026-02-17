@@ -66,9 +66,9 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
             Hub.t(),
             [ProcessHub.child_id()],
             pos_integer()
-          ) :: [atom]
+          ) :: %{ProcessHub.child_id() => [node()]}
     def belongs_to(_strategy, hub = %Hub{}, child_ids, replication_factor) do
-      Enum.map(child_ids, fn child_id ->
+      Map.new(child_ids, fn child_id ->
         child_nodes =
           with %{^child_id => child_nodes} <-
                  Storage.get(hub.storage.misc, StorageKey.gdc()),
@@ -139,6 +139,16 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
         true -> {:ok, Keyword.get(opts, :child_mapping, %{})}
       end
     end
+
+    @impl true
+    def deterministic?(_strategy), do: true
+
+    @impl true
+    def distribution_signature(_strategy, hub) do
+      ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
+      |> Enum.sort()
+      |> :erlang.phash2()
+    end
   end
 
   @spec handle_children_start(Hub.t(), %{
@@ -146,8 +156,8 @@ defmodule ProcessHub.Strategy.Distribution.Guided do
           optional(any()) => any()
         }) ::
           :ok
-  def handle_children_start(hub, %{start_opts: start_opts}) do
-    insert_child_mappings(hub, Keyword.get(start_opts, :child_mapping, %{}))
+  def handle_children_start(hub, %{request: request}) do
+    insert_child_mappings(hub, Keyword.get(request.options, :child_mapping, %{}))
   end
 
   @spec insert_child_mappings(Hub.t(), any()) :: :ok

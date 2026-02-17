@@ -1,6 +1,10 @@
 defmodule Test.Helper.TestServer do
   use GenServer
+
+  # Use both HotSwap and ColdSwap macros for testing.
+  # The first one declares the behaviour, the second one skips it to avoid duplicates.
   use ProcessHub.Strategy.Migration.HotSwap
+  use ProcessHub.Strategy.Migration.ColdSwap, declare_behaviour: false
 
   def test() do
     :test_ok
@@ -24,6 +28,7 @@ defmodule Test.Helper.TestServer do
     {:error, :start_link_err}
   end
 
+  @impl GenServer
   def init(args) do
     # Process.flag(:trap_exit, true)
 
@@ -34,44 +39,55 @@ defmodule Test.Helper.TestServer do
   #   :ok
   # end
 
+  @impl GenServer
   def handle_call({:exec, func}, _from, state) do
     res = func.()
 
     {:reply, res, state}
   end
 
+  @impl GenServer
   def handle_call(:get_state, _from, state) do
     {:reply, state, state}
   end
 
+  @impl GenServer
   def handle_call({:get_value, key}, _from, state) do
     {:reply, Map.get(state, key, nil), state}
   end
 
+  @impl GenServer
   def handle_call({:set_value, key, value}, _from, state) do
     {:reply, :ok, Map.put(state, key, value)}
   end
 
+  @impl GenServer
   def handle_call({:stop, reason}, _from, state) do
     {:stop, reason, state}
   end
 
+  @impl GenServer
   def handle_call(:ping, _from, state) do
     {:reply, :pong, state}
   end
 
+  @impl GenServer
   def handle_cast({:stop, reason}, state) do
     {:stop, reason, state}
   end
 
+  @impl GenServer
   def handle_cast(:throw, _state) do
     throw("intentional throw")
   end
 
+  @impl GenServer
   def handle_cast(:raise, _state) do
     raise("intentional raise")
   end
 
+  # Redundancy signal handler
+  @impl GenServer
   def handle_info({:process_hub, :redundancy_signal, mode}, state) do
     # IO.puts("redundancy_signal: #{inspect(mode)} on node #{node()} for state #{inspect(state)}")
 

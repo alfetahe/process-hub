@@ -21,17 +21,21 @@ defmodule ProcessHub.Constant.StorageKey do
   @spec gdc() :: :guided_distribution_cache
   def gdc, do: :guided_distribution_cache
   def msk, do: :migration_hotswap_state
+  @spec mcsk() :: :migration_coldswap_state
+  def mcsk, do: :migration_coldswap_state
   @spec dqdn() :: :dynamic_quorum_down_nodes
   def dqdn, do: :dynamic_quorum_down_nodes
   def mqms, do: :majority_quorum_max_seen
   @spec gct() :: :gossip_node_timestamps
   def gct, do: :gossip_node_timestamps
-  @spec dlrt() :: :deadlock_recovery_timeout
-  def dlrt, do: :deadlock_recovery_timeout
   @spec hodw() :: :handover_data_wait
   def hodw, do: :handover_data_wait
   @spec mbt() :: :migration_base_timeout
   def mbt, do: :migration_base_timeout
-  @spec ebd() :: :event_batch_delay
-  def ebd, do: :event_batch_delay
+  @spec ced() :: :cluster_event_debounce
+  def ced, do: :cluster_event_debounce
+  @spec cnrt() :: :cross_node_request_timeout
+  def cnrt, do: :cross_node_request_timeout
+  @spec rci() :: :req_cleanup_interval
+  def rci, do: :req_cleanup_interval
 end

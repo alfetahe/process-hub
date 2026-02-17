@@ -3,17 +3,17 @@ defmodule ProcessHub.Service.Distributor do
   The distributor service provides API functions for distributing child processes.
   """
 
-  alias ProcessHub.StartResult
-  alias ProcessHub.Future
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.RequestManager
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Service.Mailbox
+  alias ProcessHub.Service.RequestManager
+  alias ProcessHub.Request.Handler.PidsUnregisterRequest
+  alias ProcessHub.Request.Handler.StartChildrenRequest
+  alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
-  alias ProcessHub.Handler.ChildrenRem.StopHandle
-  alias ProcessHub.Utility.Bag
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
@@ -22,84 +22,143 @@ defmodule ProcessHub.Service.Distributor do
   # 10 seconds
   @default_init_timeout 10000
 
-  @doc "Initiates process redistribution."
-  @spec children_redist_init(
-          Hub.t(),
-          node(),
-          [{ProcessHub.child_spec(), ProcessHub.child_metadata()}],
-          keyword() | nil
-        ) ::
-          {:ok, :redistribution_initiated} | {:ok, :no_children_to_redistribute}
-  def children_redist_init(hub, node, children_data, opts \\ []) do
-    # Migration expects the `:migration_add` true flag otherwise the
-    # remote node wont release the lock.
-    opts = Keyword.put(opts, :migration_add, true)
+  # Default timeout values for GenServer.call in bulk operations
+  @base_call_timeout 5000
+  @timeout_per_child 1
 
-    redist_children =
-      Enum.map(children_data, fn {child_spec, metadata} ->
-        init_data([node], hub.hub_id, child_spec, metadata)
-        |> Map.merge(Map.new(opts))
-      end)
+  @doc """
+  Calculates the GenServer.call timeout based on child count.
 
-    case length(redist_children) > 0 do
-      true ->
-        Dispatcher.children_migrate(hub.procs.event_queue, [{node, redist_children}], opts)
+  The timeout is calculated as `@base_call_timeout + (child_count * @timeout_per_child)`,
+  which equals `5000ms + (1ms × child_count)`.
 
-        {:ok, :redistribution_initiated}
+  Allows user override via `:call_timeout` option.
 
-      false ->
-        {:ok, :no_children_to_redistribute}
+  ## Examples
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(100, [])
+      5100
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(10000, [])
+      15000
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(30000, [])
+      35000
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(100, call_timeout: :infinity)
+      :infinity
+
+      iex> ProcessHub.Service.Distributor.calculate_call_timeout(100, call_timeout: 60000)
+      60000
+
+  """
+  @spec calculate_call_timeout(non_neg_integer(), keyword()) :: timeout()
+  def calculate_call_timeout(child_count, opts) do
+    case Keyword.get(opts, :call_timeout) do
+      nil -> @base_call_timeout + child_count * @timeout_per_child
+      timeout -> timeout
     end
   end
 
-  @doc "Initiates processes startup."
-  @spec init_children(ProcessHub.Hub.t(), [ProcessHub.child_spec()], keyword()) ::
-          {:ok, :start_initiated}
-          | (-> {:ok, list})
+  @doc "Composes and dispatches a start children operation."
+  @spec compose_start_operation(Hub.t(), [ProcessHub.child_spec()], keyword()) ::
+          {:ok, RequestManager.t()}
           | {:error,
-             :child_start_timeout
-             | :no_children
+             :no_children
              | {:already_started, [ProcessHub.child_id()]}
              | any()}
-  def init_children(_hub, [], _opts), do: {:error, :no_children}
+  def compose_start_operation(_hub, [], _opts), do: {:error, :no_children}
 
-  def init_children(hub, child_specs, opts) do
+  def compose_start_operation(hub, child_specs, opts) do
     with {:ok, strategies} <- init_strategies(hub),
          :ok <- init_distribution(hub, child_specs, opts, strategies),
          :ok <- init_registry_check(hub, child_specs, opts),
-         {:ok, children_nodes} <- init_attach_nodes(hub, child_specs, strategies),
-         {:ok, composed_data} <- init_compose_data(hub, children_nodes, opts) do
-      pre_start_children(hub, composed_data, opts)
-    else
-      err -> err
+         {:ok, mappings} <- init_attach_nodes(hub, child_specs, strategies),
+         {:ok, nodes_data} <- init_compose_data(hub, mappings, opts) do
+      build_and_dispatch_start(hub, nodes_data, opts)
     end
   end
 
-  @doc "Initiates processes shutdown."
-  @spec stop_children(Hub.t(), [ProcessHub.child_id()], keyword()) ::
-          (-> {:error, list} | {:ok, list}) | {:ok, :stop_initiated}
-  def stop_children(hub, child_ids, opts) do
-    Enum.reduce(child_ids, [], fn child_id, acc ->
-      registry_result = ProcessRegistry.lookup(hub.hub_id, child_id)
+  # Builds and dispatches the start operation
+  defp build_and_dispatch_start(hub, nodes_data, opts) do
+    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
+    signature = DistributionStrategy.distribution_signature(dist_strat, hub)
+    opts = Keyword.put(opts, :request_signature, signature)
 
-      child_nodes =
+    operation = RequestManager.new(hub, StartChildrenRequest, nodes_data, opts)
+    dispatch_operation(hub, operation)
+  end
+
+  @doc "Composes and dispatches a stop children operation."
+  @spec compose_stop_operation(Hub.t(), [ProcessHub.child_id()], keyword()) ::
+          {:ok, RequestManager.t()} | {:error, :no_children}
+  def compose_stop_operation(_hub, [], _opts), do: {:error, :no_children}
+
+  def compose_stop_operation(hub, child_ids, opts) do
+    # Group children by the nodes where they exist
+    # Also track children that were not found
+    {nodes_data, not_found} =
+      Enum.reduce(child_ids, {[], []}, fn child_id, {acc, not_found_acc} ->
+        registry_result = ProcessRegistry.lookup(hub.hub_id, child_id)
+
         case registry_result do
-          nil -> []
-          {_, node_pids} -> Keyword.keys(node_pids)
+          nil ->
+            # Child not found in registry
+            {acc, [child_id | not_found_acc]}
+
+          {_, node_pids} ->
+            child_nodes = Keyword.keys(node_pids)
+            child_data = %{nodes: child_nodes, child_id: child_id}
+
+            append_items =
+              Enum.map(child_nodes, fn child_node ->
+                existing_children = acc[child_node] || []
+                {child_node, [child_data | existing_children]}
+              end)
+
+            {Keyword.merge(acc, append_items), not_found_acc}
+        end
+      end)
+
+    case {nodes_data, not_found} do
+      {[], []} ->
+        # No children specified
+        {:error, :no_children}
+
+      {[], not_found_children} ->
+        # All children were not found - still create an operation so awaitable works
+        # The operation will have empty nodes_data and complete immediately with errors
+        opts_with_not_found = Keyword.put(opts, :not_found_children, not_found_children)
+        operation = RequestManager.new(hub, StopChildrenRequest, [], opts_with_not_found)
+        {:ok, operation}
+
+      _ ->
+        # Some children exist - proceed with normal stop
+        # Pass not_found to include them as errors in the result
+        opts_with_not_found = Keyword.put(opts, :not_found_children, not_found)
+        operation = RequestManager.new(hub, StopChildrenRequest, nodes_data, opts_with_not_found)
+        dispatch_operation(hub, operation)
+    end
+  end
+
+  # Dispatches an operation's sub-requests to target nodes
+  defp dispatch_operation(hub, %RequestManager{} = operation) do
+    case RequestManager.compose_sub_requests(operation) do
+      {:ok, updated_operation} ->
+        # Dispatch sub-requests based on handler type
+        case updated_operation.handler do
+          StartChildrenRequest ->
+            Dispatcher.children_start(hub, updated_operation.sub_requests)
+
+          StopChildrenRequest ->
+            Dispatcher.children_stop(hub, updated_operation.sub_requests)
         end
 
-      child_data = %{nodes: child_nodes, child_id: child_id}
+        {:ok, updated_operation}
 
-      append_items =
-        Enum.map(child_nodes, fn child_node ->
-          existing_children = acc[child_node] || []
-
-          {child_node, [child_data | existing_children]}
-        end)
-
-      Keyword.merge(acc, append_items)
-    end)
-    |> pre_stop_children(hub, opts)
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   @doc """
@@ -109,28 +168,42 @@ defmodule ProcessHub.Service.Distributor do
   @spec children_terminate(
           Hub.t(),
           [ProcessHub.child_id()],
-          ProcessHub.Strategy.Synchronization.Base,
-          keyword()
-        ) :: [StopHandle.t()]
-  def children_terminate(hub, child_ids, sync_strategy, stop_opts \\ []) do
+          ProcessHub.Strategy.Synchronization.Base
+        ) :: [{ProcessHub.child_id(), term(), node()}]
+  def children_terminate(hub, child_ids, sync_strategy) do
     dist_sup = hub.procs.dist_sup
 
-    shutdown_results =
+    stop_results =
       Enum.map(child_ids, fn child_id ->
         result = DistributedSupervisor.terminate_child(dist_sup, child_id)
         {child_id, result, node()}
       end)
 
+    filtered_stop_results =
+      stop_results
+      |> Enum.filter(fn {_child_id, result, _node} -> result == :ok end)
+      |> Enum.map(fn {child_id, _result, node} ->
+        {child_id, [node]}
+      end)
+
+    # Locally clear registry entries.
+    if !Enum.empty?(filtered_stop_results) do
+      ProcessRegistry.bulk_delete(hub.hub_id, filtered_stop_results,
+        hook_storage: hub.storage.hook
+      )
+    end
+
+    # Propagate unregister to all external nodes.
+    request = PidsUnregisterRequest.new(filtered_stop_results)
+
     SynchronizationStrategy.propagate(
       sync_strategy,
       hub,
-      shutdown_results,
-      node(),
-      :rem,
-      stop_opts
+      RequestManager.split(request),
+      members: :external
     )
 
-    shutdown_results
+    stop_results
   end
 
   @doc """
@@ -204,238 +277,6 @@ defmodule ProcessHub.Service.Distributor do
     |> Keyword.put_new(:init_cids, [])
   end
 
-  defp pre_start_children(hub, startup_children, opts) do
-    # For backward compatibility we need to handle the old options.
-    case Keyword.get(opts, :on_failure, :continue) do
-      :continue ->
-        case Keyword.get(opts, :async_wait, false) do
-          true ->
-            future = async_wait_startup(hub, startup_children, opts)
-            {:ok, future}
-
-          false ->
-            case Keyword.get(opts, :awaitable, false) do
-              true ->
-                future = async_wait_startup(hub, startup_children, opts)
-                {:ok, future}
-
-              false ->
-                Dispatcher.children_start(hub.hub_id, startup_children, opts)
-                {:ok, :start_initiated}
-            end
-        end
-
-      :rollback ->
-        spawn_failure_handler(hub, startup_children, opts)
-    end
-  end
-
-  defp pre_stop_children(stop_children, hub, opts) do
-    # For backward compatibility we need to handle the old options.
-    case Keyword.get(opts, :async_wait, false) do
-      false ->
-        case Keyword.get(opts, :awaitable, false) do
-          true ->
-            {receiver_pid, _, await_promise} = spawn_collector(hub, :stop, opts)
-            opts = Keyword.put(opts, :reply_to, [receiver_pid])
-            Dispatcher.children_stop(hub.hub_id, stop_children, opts)
-            {:ok, await_promise}
-
-          false ->
-            Dispatcher.children_stop(hub.hub_id, stop_children, opts)
-            {:ok, :stop_initiated}
-        end
-
-      true ->
-        {receiver_pid, _, await_promise} = spawn_collector(hub, :stop, opts)
-        opts = Keyword.put(opts, :reply_to, [receiver_pid])
-        Dispatcher.children_stop(hub.hub_id, stop_children, opts)
-        {:ok, await_promise}
-    end
-  end
-
-  defp async_wait_startup(hub, startup_children, opts) do
-    {collect_from, required_cids} =
-      Enum.reduce(startup_children, {[], []}, fn {node, children}, {cf, rc} ->
-        {[node | cf], rc ++ Enum.map(children, &Map.get(&1, :child_id))}
-      end)
-
-    opts =
-      opts
-      |> Keyword.put(:collect_from, Enum.uniq(collect_from))
-      |> Keyword.put(:required_cids, Enum.uniq(required_cids))
-
-    {receiver_pid, _, awaitable_future} = spawn_collector(hub, :start, opts)
-
-    Dispatcher.children_start(
-      hub.hub_id,
-      startup_children,
-      Keyword.put(opts, :reply_to, [receiver_pid])
-    )
-
-    awaitable_future
-  end
-
-  defp spawn_failure_handler(hub, startup_children, opts) do
-    ref = make_ref()
-
-    collector_pid =
-      spawn(fn ->
-        Process.send_after(
-          self(),
-          {:process_hub, :auto_shutdown},
-          Keyword.get(opts, :await_timeout, 60_000)
-        )
-
-        awaitable_future = async_wait_startup(hub, startup_children, opts)
-        results = handle_failures(hub.hub_id, Future.await(awaitable_future))
-
-        # For backward compatibility we need to handle the old options.
-        case Keyword.get(opts, :async_wait, false) do
-          true ->
-            receive do
-              {:process_hub, :auto_shutdown} ->
-                nil
-
-              {:process_hub, :collect_results, from, ^ref} ->
-                # TODO: backward compatibility for :async_wait
-                results =
-                  case(Keyword.get(opts, :return_first, false)) do
-                    true ->
-                      case StartResult.format(results) do
-                        {:ok, formatted} -> {:ok, List.first(formatted)}
-                        {:error, _} -> {:error, results}
-                      end
-
-                    false ->
-                      results
-                  end
-
-                send(from, {:process_hub, :async_results, ref, results})
-            end
-
-          false ->
-            case Keyword.get(opts, :awaitable, false) do
-              false ->
-                nil
-
-              true ->
-                receive do
-                  {:process_hub, :auto_shutdown} ->
-                    nil
-
-                  {:process_hub, :collect_results, from, ^ref} ->
-                    send(from, {:process_hub, :async_results, ref, results})
-                end
-            end
-        end
-      end)
-
-    awaitable_future = %ProcessHub.Future{
-      future_resolver: collector_pid,
-      timeout: Keyword.get(opts, :timeout),
-      ref: ref
-    }
-
-    case Keyword.get(opts, :async_wait, false) do
-      true ->
-        {:ok, awaitable_future}
-
-      false ->
-        case Keyword.get(opts, :awaitable, false) do
-          true ->
-            {:ok, awaitable_future}
-
-          false ->
-            {:ok, :start_initiated}
-        end
-    end
-  end
-
-  defp handle_failures(hub_id, startup_results) do
-    case startup_results.status do
-      :ok ->
-        startup_results
-
-      :error ->
-        success_cids = Enum.map(startup_results.started, fn {cid, _} -> cid end)
-
-        # Stop the children that were started successfully.
-        ProcessHub.stop_children(hub_id, success_cids, awaitable: true)
-        |> Future.await()
-
-        %StartResult{
-          status: :error,
-          started: startup_results.started,
-          errors: startup_results.errors,
-          rollback: true
-        }
-    end
-  end
-
-  defp spawn_collector(hub, start_or_stop, opts) do
-    ref = make_ref()
-
-    pid =
-      spawn(fn ->
-        Process.send_after(
-          self(),
-          {:process_hub, :auto_shutdown},
-          Keyword.get(opts, :await_timeout, 60_000)
-        )
-
-        # TODO: backward compatibility for :async_wait
-        result_module =
-          case start_or_stop do
-            :start -> ProcessHub.StartResult
-            :stop -> ProcessHub.StopResult
-          end
-
-        results =
-          case start_or_stop do
-            :start -> Mailbox.collect_start_results(hub, opts)
-            :stop -> Mailbox.collect_stop_results(hub, opts)
-          end
-
-        # TODO: backward compatibility for :async_wait
-        results =
-          case Keyword.get(opts, :async_wait, false) do
-            true ->
-              formatted_res = apply(result_module, :format, [results])
-
-              case Keyword.get(opts, :return_first, false) do
-                false ->
-                  formatted_res
-
-                true ->
-                  case formatted_res do
-                    {:ok, formatted} -> {:ok, List.first(formatted)}
-                    {:error, {errs, succ}} -> {:error, {List.first(errs), succ}}
-                  end
-              end
-
-            false ->
-              results
-          end
-
-        receive do
-          {:process_hub, :auto_shutdown} ->
-            nil
-
-          {:process_hub, :collect_results, from, ^ref} ->
-            send(from, {:process_hub, :async_results, ref, results})
-        end
-      end)
-
-    await_promise = %ProcessHub.Future{
-      future_resolver: pid,
-      timeout: Keyword.get(opts, :timeout),
-      ref: ref
-    }
-
-    {pid, ref, await_promise}
-  end
-
   defp init_distribution(hub, child_specs, opts, %{distribution: strategy}) do
     DistributionStrategy.children_init(strategy, hub, child_specs, opts)
   end
@@ -458,15 +299,26 @@ defmodule ProcessHub.Service.Distributor do
     }
   end
 
-  defp init_compose_data(%Hub{hub_id: hub_id}, children, opts) do
+  defp init_compose_data(
+         %Hub{hub_id: hub_id, storage: %{misc: misc_storage}} = hub,
+         children,
+         opts
+       ) do
     global_metadata = Keyword.get(opts, :metadata, %{})
     child_metadata_map = Keyword.get(opts, :child_metadata, %{})
+
+    # Compute distribution signature once for all children
+    dist_strat = Storage.get(misc_storage, StorageKey.strdist())
+    topology_sig = DistributionStrategy.distribution_signature(dist_strat, hub)
 
     {:ok,
      Enum.reduce(children, [], fn {child_spec, child_nodes}, acc ->
        # Use per-child metadata if available, otherwise fall back to global metadata
        metadata = Map.get(child_metadata_map, child_spec.id, global_metadata)
-       child_data = init_data(child_nodes, hub_id, child_spec, metadata)
+
+       child_data =
+         init_data(child_nodes, hub_id, child_spec, metadata)
+         |> Map.put(:topology_signature, topology_sig)
 
        append_items =
          Enum.map(child_nodes, fn child_node ->
@@ -482,14 +334,14 @@ defmodule ProcessHub.Service.Distributor do
   defp init_attach_nodes(hub, child_specs, %{distribution: dist, redundancy: redun}) do
     repl_fact = RedundancyStrategy.replication_factor(redun)
     cids = Enum.map(child_specs, & &1.id)
-    cid_node_pids = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
+    cid_nodes_map = DistributionStrategy.belongs_to(dist, hub, cids, repl_fact)
 
     {
       :ok,
       Enum.map(child_specs, fn child_spec ->
         {
           child_spec,
-          Bag.get_by_key(cid_node_pids, child_spec.id, [])
+          Map.get(cid_nodes_map, child_spec.id, [])
         }
       end)
     }

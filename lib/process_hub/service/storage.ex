@@ -107,4 +107,15 @@ defmodule ProcessHub.Service.Storage do
   def export_all(table) do
     ETS.tab2list(table)
   end
+
+  @doc """
+  Folds over all objects in the ETS table with a function.
+
+  More memory efficient than export_all + filter for large tables
+  as it doesn't create an intermediate copy of the entire table.
+  """
+  @spec foldl(table_id(), acc, (term(), acc -> acc)) :: acc when acc: term()
+  def foldl(table, acc, fun) do
+    ETS.foldl(fun, acc, table)
+  end
 end

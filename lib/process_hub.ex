@@ -10,6 +10,7 @@ defmodule ProcessHub do
 
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.Distributor
   alias ProcessHub.Future
 
   @typedoc """
@@ -75,6 +76,10 @@ defmodule ProcessHub do
   - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
   After this time, the collector process will be terminated and attempts to collect the results using `ProcessHub.await/1` will fail.
   The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
+  - `:call_timeout` - is optional and is used to override the auto-calculated GenServer.call timeout
+  for the initial request to the coordinator. This timeout applies to bulk operations such as starting children,
+  stopping children, and migrations. By default, the timeout is calculated as `5000ms + (1ms × child_count)`,
+  e.g., 10k children = 15s, 30k children = 35s. Set to `:infinity` for no timeout, or a specific integer in milliseconds.
   """
   @type init_opts() :: [
           awaitable: boolean(),
@@ -85,7 +90,8 @@ defmodule ProcessHub do
           metadata: child_metadata(),
           child_metadata: child_metadata_map(),
           disable_logging: boolean(),
-          await_timeout: non_neg_integer()
+          await_timeout: non_neg_integer(),
+          call_timeout: timeout()
         ]
 
   @typedoc """
@@ -100,12 +106,17 @@ defmodule ProcessHub do
   - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
   After this time, the collector process will be terminated and attempts to collect the results using `ProcessHub.await/1` will fail.
   The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
+  - `:call_timeout` - is optional and is used to override the auto-calculated GenServer.call timeout
+  for the initial request to the coordinator. This timeout applies to bulk operations such as starting children,
+  stopping children, and migrations. By default, the timeout is calculated as `5000ms + (1ms × child_count)`,
+  e.g., 10k children = 15s, 30k children = 35s. Set to `:infinity` for no timeout, or a specific integer in milliseconds.
   """
   @type stop_opts() :: [
           awaitable: boolean(),
           async_wait: boolean(),
           timeout: non_neg_integer(),
-          await_timeout: non_neg_integer()
+          await_timeout: non_neg_integer(),
+          call_timeout: timeout()
         ]
 
   @typedoc """
@@ -149,10 +160,6 @@ defmodule ProcessHub do
   The default is `ProcessHub.Strategy.Distribution.ConsistentHashing`.
   - `:hubs_discover_interval` is optional and is used to define the interval in milliseconds
   for hubs to start the discovery process. The default is `30000` (30 seconds).
-  - `:deadlock_recovery_timeout` is optional and is used to define the timeout in milliseconds
-  to recover from a locked hub. Hub locking can happen for different reasons
-  such as updating internal data, migrating processes or handling network partitions.
-  The default is `60000` (1 minute).
   - `:storage_purge_interval` is optional and is used to define the interval in milliseconds
   for the janitor to clean up the old cache records when the TTL expires. The default is `15000` (15 seconds).
   - `:migr_base_timeout` is optional and is used to define the base timeout in milliseconds
@@ -167,9 +174,14 @@ defmodule ProcessHub do
   - `:dsup_shutdown_timeout` is optional and is used to define the timeout in milliseconds
   for the distributed supervisor to wait before forcefully terminating itself
   when receiving a shutdown signal.
-  - `:event_batch_delay` is optional and is used to define the delay in milliseconds
-  for batching cluster events (nodedown, cluster_join). When multiple events occur within
-  this window, they are processed together in a single batch. The default is `500` (0.5 seconds).
+  - `:cluster_event_debounce` is optional and defines the debounce delay in milliseconds
+  for cluster events (nodedown, cluster_join). Each new event resets the timer, and events
+  are processed only after no new events arrive for this duration. Events are validated
+  against `Node.list()` before processing to filter stale events. The default is `500` (0.5 seconds).
+  - `:cross_node_request_timeout` is optional and defines the timeout in milliseconds
+  for each cross-node request in the batch. The default is `5000` (5 seconds).
+  - `:req_cleanup_interval` is optional and defines the interval in milliseconds
+  for cleaning up expired pending requests. The default is `60000` (1 minute).
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -193,13 +205,14 @@ defmodule ProcessHub do
             | ProcessHub.Strategy.Distribution.Guided.t()
             | ProcessHub.Strategy.Distribution.CentralizedLoadBalancer.t(),
           hubs_discover_interval: pos_integer(),
-          deadlock_recovery_timeout: pos_integer(),
           storage_purge_interval: pos_integer(),
           migr_base_timeout: pos_integer(),
           dsup_max_restarts: pos_integer(),
           dsup_max_seconds: pos_integer(),
           dsup_shutdown_timeout: pos_integer(),
-          event_batch_delay: pos_integer()
+          cluster_event_debounce: pos_integer(),
+          cross_node_request_timeout: pos_integer(),
+          req_cleanup_interval: pos_integer()
         }
 
   @enforce_keys [:hub_id]
@@ -213,13 +226,14 @@ defmodule ProcessHub do
     partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
     distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
     hubs_discover_interval: 10000,
-    deadlock_recovery_timeout: 60000,
     storage_purge_interval: 15000,
     migr_base_timeout: 15000,
     dsup_max_restarts: 100,
     dsup_max_seconds: 4,
     dsup_shutdown_timeout: 60000,
-    event_batch_delay: 500
+    cluster_event_debounce: 500,
+    cross_node_request_timeout: 5000,
+    req_cleanup_interval: 60000
   ]
 
   @doc """
@@ -382,7 +396,8 @@ defmodule ProcessHub do
              | {:error, :children_not_list}
              | {:already_started, [atom | binary, ...]}}
   def start_children(hub_id, child_specs, opts \\ []) when is_list(child_specs) do
-    GenServer.call(hub_id, {:init_children_start, child_specs, opts})
+    call_timeout = Distributor.calculate_call_timeout(length(child_specs), opts)
+    GenServer.call(hub_id, {:init_children_start, child_specs, opts}, call_timeout)
   end
 
   @doc """
@@ -448,7 +463,8 @@ defmodule ProcessHub do
           | {:ok, Future.t()}
           | {:error, list()}
   def stop_children(hub_id, child_ids, opts \\ []) do
-    GenServer.call(hub_id, {:init_children_stop, child_ids, opts})
+    call_timeout = Distributor.calculate_call_timeout(length(child_ids), opts)
+    GenServer.call(hub_id, {:init_children_stop, child_ids, opts}, call_timeout)
   end
 
   @doc """
@@ -557,7 +573,6 @@ defmodule ProcessHub do
               partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
               distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
               hubs_discover_interval: 10000,
-              deadlock_recovery_timeout: 60000,
               storage_purge_interval: 15000,
               migr_base_timeout: 15000,
               dsup_max_restarts: 100,
@@ -775,22 +790,6 @@ defmodule ProcessHub do
   defdelegate process_list(hub_id, scope), to: ProcessRegistry, as: :process_list
 
   @doc """
-  Checks if the `ProcessHub` with the given `t:hub_id/0` is locked.
-
-  A hub is considered locked if the `ProcessHub` local event queue has a priority level
-  greater than or equal to 10. This is used to throttle the hub from processing
-  any new events and preserve data integrity.
-
-  ## Example
-      iex> ProcessHub.is_locked?(:my_hub)
-      false
-  """
-  @spec is_locked?(hub_id()) :: boolean()
-  def is_locked?(hub_id) do
-    GenServer.call(hub_id, :is_locked?)
-  end
-
-  @doc """
   Checks if a `ProcessHub` instance with the given `t:hub_id/0` is currently in a network-partitioned state.
 
   A hub is considered partitioned when the configured `ProcessHub.Strategy.PartitionTolerance` strategy
@@ -805,6 +804,22 @@ defmodule ProcessHub do
   @spec is_partitioned?(hub_id()) :: boolean()
   def is_partitioned?(hub_id) do
     GenServer.call(hub_id, :is_partitioned?)
+  end
+
+  @doc """
+  Returns whether the hub has pending worker queue operations.
+
+  This is informational and does not block event processing. It indicates
+  whether the coordinator has delegated work to the worker queue that
+  has not yet completed.
+
+  ## Example
+      iex> ProcessHub.is_locked?(:my_hub)
+      false
+  """
+  @spec is_locked?(hub_id()) :: boolean()
+  def is_locked?(hub_id) do
+    GenServer.call(hub_id, :is_locked?)
   end
 
   @doc """
@@ -860,7 +875,7 @@ defmodule ProcessHub do
   ## Examples
       iex> ProcessHub.register_hook_handlers(
       iex>   :my_hub,
-      iex>   ProcessHub.Constant.Hook.pre_cluster_join(),
+      iex>   ProcessHub.Constant.Hook.pre_node_join(),
       iex>   [
       iex>     %ProcessHub.Service.HookManager{
       iex>       id: :my_hook_id,
@@ -902,7 +917,7 @@ defmodule ProcessHub do
   ## Examples
       iex> ProcessHub.cancel_hook_handlers(
       iex>   :my_hub,
-      iex>   ProcessHub.Constant.Hook.pre_cluster_join(),
+      iex>   ProcessHub.Constant.Hook.pre_node_join(),
       iex>   [:my_hook_id, :another_hook_id]
       iex> )
       :ok

@@ -20,6 +20,18 @@ defmodule ProcessHub.MixProject do
           "Changelog" => "https://github.com/alfetahe/process-hub/blob/master/CHANGELOG.md"
         }
       ],
+      test_coverage: [
+        ignore_modules: [
+          Test.Helper.Common,
+          Test.Helper.SetupHelper,
+          Test.Helper.TestServer,
+          Test.Helper.TestNode,
+          Test.Helper.Bootstrap,
+          Mix.Tasks.Benchmark,
+          Test.Fixture.ScoreboardFixture,
+          ProcessHub.Utility.Injector
+        ]
+      ],
       aliases: aliases(),
       docs: [
         main: "readme",
@@ -36,7 +48,116 @@ defmodule ProcessHub.MixProject do
           "guides/CustomStrategy.md",
           "guides/Architecture.md"
         ],
-        authors: ["Anuar Alfetahe"]
+        authors: ["Anuar Alfetahe"],
+        filter_modules: fn module, _metadata ->
+          mod_str = Atom.to_string(module)
+
+          not String.starts_with?(mod_str, "Elixir.Test.") and
+            not String.starts_with?(mod_str, "Elixir.Mix.Tasks.")
+        end,
+        nest_modules_by_prefix: [
+          ProcessHub.Strategy.Distribution,
+          ProcessHub.Strategy.Migration,
+          ProcessHub.Strategy.Synchronization,
+          ProcessHub.Strategy.Redundancy,
+          ProcessHub.Strategy.PartitionTolerance,
+          ProcessHub.Service,
+          ProcessHub.Request.Handler,
+          ProcessHub.Worker,
+          ProcessHub.Task.ClusterUpdateTask,
+          ProcessHub.Task.SynchronizationTask,
+          ProcessHub.Constant,
+          ProcessHub.Utility
+        ],
+        groups_for_modules: [
+          "Public API": [ProcessHub],
+          Core: [
+            ProcessHub.Hub,
+            ProcessHub.Initializer,
+            ProcessHub.Coordinator,
+            ProcessHub.DistributedSupervisor
+          ],
+          "Distribution Strategies": [
+            ProcessHub.Strategy.Distribution.Base,
+            ProcessHub.Strategy.Distribution.ConsistentHashing,
+            ProcessHub.Strategy.Distribution.Guided,
+            ProcessHub.Strategy.Distribution.CentralizedLoadBalancer
+          ],
+          "Migration Strategies": [
+            ProcessHub.Strategy.Migration.Base,
+            ProcessHub.Strategy.Migration.ColdSwap,
+            ProcessHub.Strategy.Migration.HotSwap,
+            ProcessHub.Strategy.Migration.SwapMigration,
+            ProcessHub.Strategy.Migration.HandoverBehaviour
+          ],
+          "Synchronization Strategies": [
+            ProcessHub.Strategy.Synchronization.Base,
+            ProcessHub.Strategy.Synchronization.PubSub,
+            ProcessHub.Strategy.Synchronization.Gossip
+          ],
+          "Redundancy Strategies": [
+            ProcessHub.Strategy.Redundancy.Base,
+            ProcessHub.Strategy.Redundancy.Singularity,
+            ProcessHub.Strategy.Redundancy.Replication
+          ],
+          "Partition Tolerance Strategies": [
+            ProcessHub.Strategy.PartitionTolerance.Base,
+            ProcessHub.Strategy.PartitionTolerance.Divergence,
+            ProcessHub.Strategy.PartitionTolerance.StaticQuorum,
+            ProcessHub.Strategy.PartitionTolerance.DynamicQuorum,
+            ProcessHub.Strategy.PartitionTolerance.MajorityQuorum
+          ],
+          Services: [
+            ProcessHub.Service.Storage,
+            ProcessHub.Service.ProcessRegistry,
+            ProcessHub.Service.Distributor,
+            ProcessHub.Service.RequestManager,
+            ProcessHub.Service.Dispatcher,
+            ProcessHub.Service.HookManager,
+            ProcessHub.Service.Synchronizer,
+            ProcessHub.Service.Cluster,
+            ProcessHub.Service.State,
+            ProcessHub.Service.Ring,
+            ProcessHub.Service.LoggerService
+          ],
+          Requests: [
+            ProcessHub.Request.CrossNodeRequest,
+            ProcessHub.Request.PostAction,
+            ProcessHub.Request.Handler.StartChildrenRequest,
+            ProcessHub.Request.Handler.StartChildrenRequest.PostStartData,
+            ProcessHub.Request.Handler.StopChildrenRequest,
+            ProcessHub.Request.Handler.PidsRegisterRequest,
+            ProcessHub.Request.Handler.PidsUnregisterRequest,
+            ProcessHub.Request.Handler.PidUpdateRequest
+          ],
+          "Workers & Tasks": [
+            ProcessHub.Worker.WorkerQueue,
+            ProcessHub.Worker.BootstrapWorker,
+            ProcessHub.Worker.Janitor,
+            ProcessHub.Task.ClusterUpdateTask,
+            ProcessHub.Task.ClusterUpdateTask.NodeUp,
+            ProcessHub.Task.ClusterUpdateTask.NodeDown,
+            ProcessHub.Task.SynchronizationTask,
+            ProcessHub.Task.SynchronizationTask.IntervalSyncInit,
+            ProcessHub.Task.SynchronizationTask.IntervalSyncHandle,
+            ProcessHub.Task.SynchronizationTask.ProcessEmitHandle
+          ],
+          "Results & Futures": [
+            ProcessHub.Future,
+            ProcessHub.StartResult,
+            ProcessHub.StopResult
+          ],
+          Constants: [
+            ProcessHub.Constant.Event,
+            ProcessHub.Constant.Hook,
+            ProcessHub.Constant.StorageKey
+          ],
+          Utilities: [
+            ProcessHub.Utility.Bag,
+            ProcessHub.Utility.Extractor,
+            ProcessHub.Utility.Injector
+          ]
+        ]
       ]
     ]
   end
@@ -55,7 +176,7 @@ defmodule ProcessHub.MixProject do
       {:hash_ring, "~> 0.4.2"},
       {:elector, "~> 0.3.2", runtime: false},
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
-      {:benchee, "~> 1.2", only: [:dev, :test]}
+      {:benchee, "~> 1.5", only: [:dev, :test]}
     ]
   end
 

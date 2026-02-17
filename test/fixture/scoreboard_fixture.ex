@@ -1,4 +1,4 @@
-defmodule ProcessHubTest.Fixture.ScoreboardFixture do
+defmodule Test.Fixture.ScoreboardFixture do
   def scoreboard1 do
     %{
       "process_hub@127.0.0.1": %{

@@ -36,7 +36,6 @@ defmodule Mix.Tasks.Benchmark do
     child_specs = ProcessHub.Utility.Bag.gen_child_specs(nr_of_processes)
     cids = Enum.map(child_specs, fn %{id: id} -> id end)
 
-    # TODO: Need to fix them. Running very long with timeouts.
     Benchee.run(
       %{
         "start_&_stop_processes" => fn ->
@@ -56,7 +55,7 @@ defmodule Mix.Tasks.Benchmark do
     Test.Helper.TestNode.start_local_node()
 
     listed_hooks = [
-      {Hook.post_cluster_join(), :local}
+      {Hook.post_node_join(), :local}
     ]
 
     peer_nodes = Test.Helper.TestNode.start_nodes(nr_of_peers)
@@ -69,11 +68,7 @@ defmodule Mix.Tasks.Benchmark do
 
     hub = Test.Helper.Bootstrap.gen_hub(settings)
 
-    # Make sure the local nodes is already running a hub.
-    Test.Helper.Bootstrap.start_hubs(hub, [node()], listed_hooks, [msg_count: 0])
-
-    # TODO: Fix by removing the sleeps.
-    Test.Helper.Bootstrap.start_hubs(hub, Node.list(), listed_hooks, [new_nodes: true])
+    Test.Helper.Bootstrap.start_hubs(hub, [node() | Node.list()], listed_hooks)
   end
 
   defp start_stop_processes(hub_id, child_specs, cids) do

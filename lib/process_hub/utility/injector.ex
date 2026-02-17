@@ -1,10 +1,10 @@
-defmodule ProcessHub.Injector do
+defmodule ProcessHub.Utility.Injector do
   defmacro __using__(opts) do
     quote do
       Module.put_attribute(__MODULE__, :base_module, unquote(opts[:base_module]))
       Module.put_attribute(__MODULE__, :overrides, unquote(opts[:override]))
 
-      @before_compile ProcessHub.Injector
+      @before_compile ProcessHub.Utility.Injector
     end
   end
 

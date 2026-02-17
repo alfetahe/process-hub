@@ -2,6 +2,10 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   @moduledoc """
   Provides implementation for distribution behavior using centralized load balancing.
 
+  > #### Experimental {: .warning}
+  > This strategy is experimental and may change in future releases.
+  > Use in production at your own discretion.
+
   This strategy implements a centralized approach to process distribution where a single
   leader node collects performance metrics from all nodes in the cluster and makes
   distribution decisions based on real-time load data.
@@ -35,13 +39,6 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   > This strategy **does not support process replication**. Only a single instance
   > of each process can exist at any time across the cluster. This makes it unsuitable
   > for use cases requiring high availability through process redundancy.
-
-  ### Experimental Status
-  > #### Experimental Feature {: .warning}
-  >
-  > This distribution strategy is currently **experimental** and should not be used
-  > in production environments without thorough testing. The implementation may
-  > change in future versions.
 
   ### Single Hub Limitation
   > #### Configuration Constraint {: .warning}
@@ -99,11 +96,12 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.HookManager
+  alias ProcessHub.Service.LoggerService
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Constant.Hook
   alias :elector, as: Elector
 
   use GenServer
-  require Logger
 
   @type node_metrics() :: %{
           scheduler_utilization: float(),
@@ -134,6 +132,38 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
             weight_decay_factor: 0.9,
             push_interval: 10_000,
             nodeup_redistribution: false
+
+  @doc false
+  def remote_belongs_to_impl(hub_id, child_ids, caller_pid) do
+    nhub = ProcessHub.Coordinator.get_hub(hub_id)
+
+    dist_strat =
+      Storage.get(
+        nhub.storage.misc,
+        StorageKey.strdist()
+      )
+
+    assignments =
+      DistributionStrategy.belongs_to(dist_strat, nhub, child_ids, 1)
+
+    send(caller_pid, {:child_assignments, assignments})
+  end
+
+  @doc false
+  def remote_calculate_score(hub_id, node, local_stats) do
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+
+    dist_strat =
+      Storage.get(
+        hub.storage.misc,
+        StorageKey.strdist()
+      )
+
+    GenServer.cast(
+      dist_strat.calculator_pid,
+      {:calculate_score, node, local_stats}
+    )
+  end
 
   defimpl DistributionStrategy, for: ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     alias ProcessHub.Strategy.Distribution.CentralizedLoadBalancer
@@ -190,7 +220,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
       case strategy.scoreboard do
         scoreboard when map_size(scoreboard) == 0 ->
           # Fallback to current node selection if no scoreboard data
-          Enum.map(child_ids, fn child_id ->
+          Map.new(child_ids, fn child_id ->
             {child_id, [node()]}
           end)
 
@@ -202,30 +232,22 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     defp remote_belongs_to(hub_id, leader_node, child_ids) do
       self = self()
 
-      Node.spawn(leader_node, fn ->
-        nhub = ProcessHub.Coordinator.get_hub(hub_id)
-
-        dist_strat =
-          Storage.get(
-            nhub.storage.misc,
-            StorageKey.strdist()
-          )
-
-        assignments =
-          DistributionStrategy.belongs_to(dist_strat, nhub, child_ids, 1)
-
-        send(self, {:child_assignments, assignments})
-      end)
+      Node.spawn(
+        leader_node,
+        CentralizedLoadBalancer,
+        :remote_belongs_to_impl,
+        [hub_id, child_ids, self]
+      )
 
       receive do
         {:child_assignments, assignments} -> assignments
       after
         10_000 ->
-          Logger.error(
-            "[ProcessHub][CentralizedLoadBalancer] Timeout waiting for leader node response."
+          LoggerService.error("Timeout waiting for leader node response", %{},
+            prefix: "CentralizedLoadBalancer"
           )
 
-          []
+          %{}
       end
     end
 
@@ -293,7 +315,24 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
       # Zip children with assigned nodes
       child_ids
       |> Enum.zip(final_node_list)
-      |> Enum.map(fn {child_id, node} -> {child_id, [node]} end)
+      |> Map.new(fn {child_id, node} -> {child_id, [node]} end)
+    end
+
+    @impl true
+    def deterministic?(_strategy), do: false
+
+    @impl true
+    def distribution_signature(strategy, hub) do
+      nodes =
+        ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
+        |> Enum.sort()
+
+      scoreboard_data =
+        strategy.scoreboard
+        |> Enum.map(fn {node, score_data} -> {node, score_data.current_score} end)
+        |> Enum.sort_by(fn {node, _} -> node end)
+
+      :erlang.phash2({nodes, scoreboard_data})
     end
   end
 
@@ -340,24 +379,16 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
             {:calculate_score, node, local_stats}
           )
         else
-          Node.spawn(leader_node, fn ->
-            hub = ProcessHub.Coordinator.get_hub(state.hub.hub_id)
-
-            dist_strat =
-              Storage.get(
-                hub.storage.misc,
-                StorageKey.strdist()
-              )
-
-            GenServer.cast(
-              dist_strat.calculator_pid,
-              {:calculate_score, node, local_stats}
-            )
-          end)
+          Node.spawn(
+            leader_node,
+            __MODULE__,
+            :remote_calculate_score,
+            [state.hub.hub_id, node, local_stats]
+          )
         end
 
       _ ->
-        Logger.error("[ProcessHub][CentralizedLoadBalancer] Failed to get leader node.")
+        LoggerService.error("Failed to get leader node", %{}, prefix: "CentralizedLoadBalancer")
     end
 
     # Reschedule the next calculation.
@@ -386,8 +417,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
         # Dispatch hook event.
         HookManager.dispatch_hook(
           state.hub.storage.hook,
-          :scoreboard_updated,
-          {strategy.scoreboard, node}
+          Hook.scoreboard_updated(),
+          %{scoreboard: strategy.scoreboard, node: node}
         )
 
         # Persist updated strategy.

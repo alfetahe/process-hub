@@ -8,11 +8,41 @@ This release introduces per-child metadata support for `start_children/3`, allow
 - New `:child_metadata` option for `ProcessHub.start_children/3` that allows specifying metadata on a per-child basis. The option accepts a map where keys are `child_id` values and values are metadata maps. When both `:metadata` (global) and `:child_metadata` (per-child) options are provided, children specified in `:child_metadata` will use their specific metadata, while other children will fall back to the global `:metadata` value. This enhancement makes it easier to categorize and tag different processes individually when starting multiple children at once.
 - New type `ProcessHub.child_metadata_map()` to represent per-child metadata configuration.
 - Documentation and examples for per-child metadata usage in the main API module and ProcessRegistry guide.
+- New `deterministic?/1` protocol function in `ProcessHub.Strategy.Distribution.Base` that indicates whether a distribution strategy produces deterministic results based solely on node topology. This is used internally to optimize child validation during process startup.
+- New `topology_signature/1` function in `ProcessHub.Service.Cluster` that computes a hash of the current cluster topology for change detection.
+- Auto-calculated GenServer.call timeout for `start_children/3` and `stop_children/3` based on child count. The timeout is now calculated as `5000ms + (1ms × child_count)`, preventing timeout errors when starting or stopping large batches (30k+) of children. A new `:call_timeout` option allows overriding the auto-calculated value (e.g., `call_timeout: :infinity` for no timeout).
+- New `:handover_delivered_hook` hook that fires after HotSwap or ColdSwap migration completes the state delivery to the new process.
+- New `ProcessHub.Strategy.Migration.Autonomous` migration strategy where each node independently reconciles its local state against the distribution ring with no inter-node communication or state handover. Experimental.
+
+### Performance
+- Significantly improved child process startup performance when starting large batches (10k+) of children:
+  - Batched `belongs_to()` calls in `Replication.handle_post_start/3` - reduced from O(n) individual hash ring lookups to a single batch operation.
+  - Added topology signature optimization to skip redundant `belongs_to()` revalidation when cluster topology hasn't changed between request creation and execution. This optimization only applies to deterministic distribution strategies (ConsistentHashing, Guided) and is automatically disabled for dynamic strategies (CentralizedLoadBalancer).
+- Improved cluster topology change handling (node join/leave) performance:
+  - Changed `belongs_to/4` return type from list of tuples to a Map, enabling O(1) lookups instead of O(n) linear searches when processing large numbers of children during redistribution.
+  - Migration, redundancy, and cluster update handlers now use Map-based lookups for child-to-node resolution, significantly reducing CPU time during topology changes with 10k+ processes.
+
+### Breaking changes
+- Removed event queue locking mechanism: `lock_event_handler/2`, `unlock_event_handler/1`, `PriorityLevel` module, `priority_state_updated` hook, `deadlock_recovery_timeout` configuration option. Partition tolerance now only controls the distributed supervisor lifecycle. Use `ProcessHub.is_partitioned?/1` to check hub partition state. `ProcessHub.is_locked?/1` is retained but reimplemented — it now tracks pending worker queue operations (counter-based) instead of Blockade priority-based locking.
+- Configuration validation in `ProcessHub.Initializer` now detects incompatible strategy combinations at startup. Using state handover (`:handover` option in `ColdSwap` or `HotSwap` migration strategies) with the `Replication` redundancy strategy is no longer allowed, as this combination has undefined semantics. Attempting to start a hub with this configuration will return `{:error, {:invalid_config, :handover_with_replication_not_supported}}` instead of silently proceeding with undefined behavior.
+- **Distribution strategy `belongs_to/4` return type changed**: Custom distribution strategies must update their `belongs_to/4` implementation to return a `%{child_id => [node()]}` Map instead of a `[{child_id, [node()]}]` list. This change enables O(1) lookups during redistribution operations.
+- **HotSwap migration strategy reimplemented** with simplified configuration matching ColdSwap's pattern:
+  - Removed options: `:retention`, `:confirm_handover`, `:handover_data_wait`, `:child_migration_timeout`
+  - New options: `:state_ttl` (default: 30000ms), `:state_query_timeout` (default: 5000ms)
+  - Migration now uses ETS-based state storage with `registry_pid_inserted` hook for delivery (same pattern as ColdSwap)
+  - Old process is terminated immediately after state delivery (no retention period)
+  - New `hotswap_handover_delivered` hook fires after migration completes (state delivered + old process terminated)
+- Renamed `:children_migrated_hook` to `:migration_handled_hook`. The previous name implied that children were fully migrated, but the hook only signals that the migration handler has finished processing. The migration itself may or may not be completed at the time of dispatch.
+- **Major hook system refactor**: Hook names, data formats, and dispatch points have been overhauled. All hook data is now dispatched as maps (previously a mix of atoms, tuples, and maps). Key renames: `:pre_cluster_join_hook` → `:pre_node_join_hook`, `:post_cluster_join_hook` → `:post_node_join_hook`, `:pre_cluster_leave_hook` → `:pre_node_leave_hook`, `:post_cluster_leave_hook` → `:post_node_leave_hook`, `:registry_pid_insert_hook` → `:child_registered_hook`, `:registry_pid_remove_hook` → `:child_unregistered_hook`, `:migration_handled_hook` → `:migration_completed_hook`, `:forwarded_migration_hook` → `:children_forwarded_hook`, `:pre_nodes_redistribution_hook` → `:pre_redistribution_hook`, `:post_nodes_redistribution_hook` → `:post_redistribution_hook`, `:child_process_pid_update_hook` → `:child_pid_updated_hook`. The `:process_startups_hook` has been removed and consolidated into `:post_children_start_hook`. New hook added: `:scoreboard_updated_hook`. If you use any hooks, review the updated `Hooks` guide and `ProcessHub.Constant.Hook` module for new names and data formats.
 
 ### Fixed
+- **Fixed registry overwrite in replication strategy**: `start_replica_locally` used `ProcessRegistry.insert` (a full ETS replace) to register newly started replicas, which overwrote existing node-pid entries. For example, when node2 joined and node1's broadcast had already placed `[{node1, pid1}]` in node2's registry, starting the local replica would overwrite it with `[{node2, pid2}]` instead of merging to `[{node1, pid1}, {node2, pid2}]`. The fix restructures `do_handle_redundancy` into a classify-then-execute pattern that batches registry updates via `ProcessRegistry.bulk_insert` (which merges entries) and batches sync propagation, reducing both network round-trips and individual ETS operations.
+- **Process registry write operations are now synchronous**: All write/delete operations (`insert`, `delete`, `bulk_insert`, `bulk_delete`, `update`, `clear_all`) in `ProcessRegistry` are now routed through the GenServer process. This fixes a race condition where concurrent write operations from different processes could interleave and cause inconsistent registry state. The public API remains unchanged.
+- Optimized interval synchronization to avoid unnecessary process registry updates when the local PID already matches the remote PID. Previously, the synchronizer would always write to the registry during sync even when data was unchanged, causing redundant operations.
 - Fixed under-replication during rapid node scale-down by implementing batched nodedown handling. When multiple nodes fail within a short window, their failures are now processed together, ensuring consistent redistribution calculations across all remaining nodes.
 - Added `NodeDownBatch` handler that processes multiple node failures in a single pass to prevent duplicate redistributions.
 - Batching window is configurable via `:nodedown_batch_window_ms` application env (default: 500ms).
+- Replaced internal OTP supervisor state introspection in `DistributedSupervisor` with a start-MFA proxy that maintains a process dictionary child_id→pid cache. The previous approach accessed the Erlang `:supervisor` internal state record via `elem/2`, which could break if a future OTP version changes the record layout. This improves OTP forward-compatibility and simplifies crash/restart detection logic.
 
 ## v0.4.1-beta - 2025-11-02
 This release introduces a new adaptive partition tolerance strategy, `MajorityQuorum`, which automatically adjusts to the cluster size. This strategy is ideal for clusters that start with a single node and scale up over time, providing proper split-brain protection without manual quorum configuration.
@@ -134,7 +164,7 @@ Performance improvements, bugfixes and other minor improvements including one ne
 ### Fixed
 - `ProcessHub.Strategy.Redundancy.Replication` was not properly updating the redundancy_signal value on some occasions
 due to race condition.
-- Fixed issue with `ProcessHub.Janitor` not purging the cache properly when using Gossip protocol.
+- Fixed issue with `ProcessHub.Worker.Janitor` not purging the cache properly when using Gossip protocol.
 - State passing on hotswap migration with graceful shutdown fixed.
 - Timeout option was not properly used in some cases.
 

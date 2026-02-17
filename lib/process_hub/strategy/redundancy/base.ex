@@ -28,4 +28,28 @@ defprotocol ProcessHub.Strategy.Redundancy.Base do
   """
   @spec master_node(struct(), Hub.t(), ProcessHub.child_id(), [node()]) :: node()
   def master_node(strategy, hub, child_id, child_nodes)
+
+  @doc """
+  Handles redundancy when nodes join or leave the cluster.
+
+  For Replication strategy:
+  - Starts/stops replicas locally (indices 1+ from calculated_cids)
+  - Sends mode signals (active/passive transitions)
+
+  Note: Primary process starting/stopping is handled by migration strategy.
+
+  ## Parameters
+  - `strategy` - the redundancy strategy struct
+  - `hub` - the hub state
+  - `calculated_cids` - map of child_id => [node()] from migration strategy.
+                        Index 0 = primary, indices 1+ = replicas
+  - `nodes` - list of nodes that triggered redistribution
+  """
+  @spec handle_redundancy(
+          struct(),
+          Hub.t(),
+          calculated_cids :: %{ProcessHub.child_id() => [node()]},
+          nodes :: [node()]
+        ) :: :ok
+  def handle_redundancy(strategy, hub, calculated_cids, nodes)
 end

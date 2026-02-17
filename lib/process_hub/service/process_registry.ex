@@ -3,6 +3,14 @@ defmodule ProcessHub.Service.ProcessRegistry do
   The process registry service provides API functions for managing the process registry.
   """
 
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.HookManager
+  alias ProcessHub.Service.Storage
+
+  use GenServer
+
+  @default_timeout 10_000
+
   @type registry() :: %{
           ProcessHub.child_id() => {
             ProcessHub.child_spec(),
@@ -22,20 +30,57 @@ defmodule ProcessHub.Service.ProcessRegistry do
           tag: String.t()
         }
 
-  alias ProcessHub.Constant.Hook
-  alias ProcessHub.Service.HookManager
-  alias ProcessHub.Service.Storage
+  def start_link({hub_id, via_tuple}) do
+    GenServer.start_link(__MODULE__, hub_id, name: via_tuple)
+  end
+
+  @impl GenServer
+  def init(hub_id) do
+    tab = :ets.new(hub_id, [:set, :protected, :named_table])
+
+    {:ok, tab}
+  end
+
+  @impl GenServer
+  def handle_call({:insert, hub_id, child_spec, child_nodes, opts}, _from, state) do
+    {:reply, handle_insert(hub_id, child_spec, child_nodes, opts), state}
+  end
+
+  @impl GenServer
+  def handle_call({:delete, hub_id, child_id, opts}, _from, state) do
+    {:reply, handle_delete(hub_id, child_id, opts), state}
+  end
+
+  @impl GenServer
+  def handle_call({:bulk_insert, hub_id, children, opts}, _from, state) do
+    {:reply, handle_bulk_insert(hub_id, children, opts), state}
+  end
+
+  @impl GenServer
+  def handle_call({:bulk_delete, hub_id, children, opts}, _from, state) do
+    {:reply, handle_bulk_delete(hub_id, children, opts), state}
+  end
+
+  @impl GenServer
+  def handle_call({:update, hub_id, child_id, update_fn}, _from, state) do
+    {:reply, handle_update(hub_id, child_id, update_fn), state}
+  end
+
+  @impl GenServer
+  def handle_call({:clear_all, hub_id}, _from, state) do
+    {:reply, handle_clear_all(hub_id), state}
+  end
 
   @doc "Returns information about all registered processes. Will be deprecated in the future."
   @spec registry(ProcessHub.hub_id()) :: registry()
   def registry(hub_id) do
-    hub_id
-    |> Storage.export_all()
-    |> Enum.map(fn
-      {key, {c, n, _m}} -> {key, {c, n}}
-      {key, {c, n, _m}, _ttl} -> {key, {c, n}}
+    Storage.foldl(hub_id, %{}, fn
+      {child_id, {child_spec, nodes, _metadata}}, acc ->
+        Map.put(acc, child_id, {child_spec, nodes})
+
+      {child_id, {child_spec, nodes, _metadata}, _ttl}, acc ->
+        Map.put(acc, child_id, {child_spec, nodes})
     end)
-    |> Map.new()
   end
 
   @doc """
@@ -49,6 +94,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
     |> Storage.export_all()
     |> Enum.map(fn
       {key, values} -> {key, values}
+      {key, values, _ttl} -> {key, values}
     end)
     |> Map.new()
   end
@@ -57,9 +103,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
           {ProcessHub.child_id(), [{node(), pid()}] | pid()}
         ]
   def process_list(hub_id, :global) do
-    dump(hub_id)
-    |> Enum.map(fn {child_id, {_child_spec, nodes, _metadata}} ->
-      {child_id, nodes}
+    Storage.foldl(hub_id, [], fn
+      {child_id, {_child_spec, nodes, _metadata}}, acc ->
+        [{child_id, nodes} | acc]
+
+      {child_id, {_child_spec, nodes, _metadata}, _ttl}, acc ->
+        [{child_id, nodes} | acc]
     end)
   end
 
@@ -76,11 +125,14 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec contains_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
   @doc "Returns a list of child_ids that match the given `child_ids` variable."
   def contains_children(hub_id, child_ids) do
-    Enum.reduce(dump(hub_id), [], fn {child_id, _}, acc ->
-      case Enum.member?(child_ids, child_id) do
-        true -> [child_id | acc]
-        false -> acc
-      end
+    child_id_set = MapSet.new(child_ids)
+
+    Storage.foldl(hub_id, [], fn
+      {child_id, _}, acc ->
+        if MapSet.member?(child_id_set, child_id), do: [child_id | acc], else: acc
+
+      {child_id, _, _ttl}, acc ->
+        if MapSet.member?(child_id_set, child_id), do: [child_id | acc], else: acc
     end)
     |> Enum.reverse()
   end
@@ -98,7 +150,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @doc "Deletes all objects from the process registry."
   @spec clear_all(ProcessHub.hub_id()) :: boolean()
   def clear_all(hub_id) do
-    Storage.clear_all(hub_id)
+    GenServer.call(via(hub_id), {:clear_all, hub_id})
   end
 
   @doc "Returns information on all processes that are running on the local node."
@@ -108,9 +160,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def local_data(hub_id) do
     local_node = node()
 
-    dump(hub_id)
-    |> Enum.filter(fn {_, {_, nodes, _}} ->
-      Enum.member?(Keyword.keys(nodes), local_node)
+    Storage.foldl(hub_id, [], fn
+      {child_id, {_, nodes, _} = value}, acc ->
+        if Keyword.has_key?(nodes, local_node), do: [{child_id, value} | acc], else: acc
+
+      {child_id, {_, nodes, _} = value, _ttl}, acc ->
+        if Keyword.has_key?(nodes, local_node), do: [{child_id, value} | acc], else: acc
     end)
   end
 
@@ -138,6 +193,36 @@ defmodule ProcessHub.Service.ProcessRegistry do
     get_pids(hub_id, child_id) |> List.first()
   end
 
+  @doc "Returns the local pid for the given child_id, or nil if not found on local node."
+  @spec local_pid(ProcessHub.hub_id(), ProcessHub.child_id()) :: pid() | nil
+  def local_pid(hub_id, child_id) do
+    case lookup(hub_id, child_id) do
+      nil -> nil
+      {_child_spec, node_pids} -> Keyword.get(node_pids, node())
+    end
+  end
+
+  @doc """
+  Returns all children that are running on the local node.
+
+  Returns a map of child_id to {child_spec, node_pids, metadata} tuples
+  for all children where the local node has a running process.
+  """
+  @spec local_children(ProcessHub.hub_id()) :: %{
+          ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}], metadata()}
+        }
+  def local_children(hub_id) do
+    local_node = node()
+
+    Storage.foldl(hub_id, %{}, fn
+      {child_id, {_, nodes, _} = value}, acc ->
+        if Keyword.has_key?(nodes, local_node), do: Map.put(acc, child_id, value), else: acc
+
+      {child_id, {_, nodes, _} = value, _ttl}, acc ->
+        if Keyword.has_key?(nodes, local_node), do: Map.put(acc, child_id, value), else: acc
+    end)
+  end
+
   @doc "Return the child_spec, nodes, and pids for the given child_id."
   @spec lookup(
           ProcessHub.hub_id(),
@@ -147,7 +232,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           {ProcessHub.child_spec(), [{node(), pid()}]}
           | {ProcessHub.child_spec(), [{node(), pid()}], ProcessHub.child_metadata()}
           | nil
-  def lookup(hub_id, child_id, opts) do
+  def lookup(hub_id, child_id, opts \\ []) do
     table = Keyword.get(opts, :table, hub_id)
     with_metadata = Keyword.get(opts, :with_metadata, false)
 
@@ -166,15 +251,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end
   end
 
-  def lookup(hub_id, child_id) do
-    lookup(hub_id, child_id, table: hub_id)
-  end
-
   @doc """
   Inserts information about a child process into the registry.
 
   ## Hook Behavior
-  This function will dispatch the `:registry_pid_insert_hook` hook if the `:hook_storage`
+  This function will dispatch the `:child_registered_hook` hook if the `:hook_storage`
   option is provided. If `:hook_storage` is `nil` or not provided, no hooks will be fired.
 
   ## Options
@@ -185,29 +266,14 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec insert(ProcessHub.hub_id(), ProcessHub.child_spec(), [{node(), pid()}], keyword() | nil) ::
           :ok
   def insert(hub_id, child_spec, child_nodes, opts \\ []) do
-    metadata = Keyword.get(opts, :metadata, %{})
-
-    Keyword.get(opts, :table, hub_id)
-    |> Storage.insert(child_spec.id, {child_spec, child_nodes, metadata}, opts)
-
-    hook_storage = Keyword.get(opts, :hook_storage, nil)
-
-    if hook_storage do
-      HookManager.dispatch_hook(
-        hook_storage,
-        Hook.registry_pid_inserted(),
-        {child_spec.id, child_nodes}
-      )
-    end
-
-    :ok
+    GenServer.call(via(hub_id), {:insert, hub_id, child_spec, child_nodes, opts})
   end
 
   @doc """
   Deletes information about a child process from the registry.
 
   ## Hook Behavior
-  This function will dispatch the `:registry_pid_remove_hook` hook if the `:hook_storage`
+  This function will dispatch the `:child_unregistered_hook` hook if the `:hook_storage`
   option is provided. If `:hook_storage` is `nil` or not provided, no hooks will be fired.
 
   ## Options
@@ -215,27 +281,20 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
   @spec delete(ProcessHub.hub_id(), ProcessHub.child_id(), keyword() | nil) :: :ok
   def delete(hub_id, child_id, opts \\ []) do
-    Storage.remove(hub_id, child_id)
-
-    hook_storage = Keyword.get(opts, :hook_storage, nil)
-
-    if hook_storage do
-      HookManager.dispatch_hook(hook_storage, Hook.registry_pid_removed(), child_id)
-    end
-
-    :ok
+    GenServer.call(via(hub_id), {:delete, hub_id, child_id, opts})
   end
 
   @doc """
   Inserts information about multiple child processes into the registry.
 
   ## Hook Behavior
-  This function will dispatch the `:registry_pid_insert_hook` hook for each child process
+  This function will dispatch the `:child_registered_hook` hook for each child process
   if the `:hook_storage` option is provided. If `:hook_storage` is `nil` or not provided,
   no hooks will be fired.
 
   ## Options
   - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
+  - `:timeout` - GenServer call timeout in milliseconds (default: `10_000`)
 
   ## Parameters
   - `hub_id` - The hub identifier
@@ -250,104 +309,37 @@ defmodule ProcessHub.Service.ProcessRegistry do
           keyword()
         ) :: :ok
   def bulk_insert(hub_id, children, opts \\ []) do
-    hook_storage = Keyword.get(opts, :hook_storage, nil)
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
 
-    hooks =
-      Enum.map(children, fn {child_id, {child_spec, child_nodes, metadata}} ->
-        diff =
-          case lookup(hub_id, child_id) do
-            nil ->
-              insert(
-                hub_id,
-                child_spec,
-                child_nodes,
-                metadata: metadata
-              )
-
-              child_nodes
-
-            {_child_spec, existing_nodes} ->
-              merge_insert(
-                child_nodes,
-                existing_nodes,
-                hub_id,
-                child_spec,
-                metadata: metadata
-              )
-          end
-
-        if is_list(diff) && length(diff) > 0 do
-          {Hook.registry_pid_inserted(), {child_spec.id, diff}}
-        end
-      end)
-      |> Enum.filter(&is_tuple/1)
-
-    if hook_storage do
-      HookManager.dispatch_hooks(hook_storage, hooks)
-    end
-
-    :ok
+    GenServer.call(via(hub_id), {:bulk_insert, hub_id, children, opts}, timeout)
   end
 
   @doc """
   Deletes information about multiple child processes from the registry.
 
   ## Hook Behavior
-  This function will dispatch the `:registry_pid_remove_hook` hook for each child process
+  This function will dispatch the `:child_unregistered_hook` hook for each child process
   if the `:hook_storage` option is provided. If `:hook_storage` is `nil` or not provided,
   no hooks will be fired.
 
   ## Options
   - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
+  - `:timeout` - GenServer call timeout in milliseconds (default: `10_000`)
 
   ## Parameters
   - `hub_id` - The hub identifier
-  - `children` - Map of child_id to list of nodes to remove
+  - `children` - List of child_id with nodes to remove
   - `opts` - Options keyword list
   """
   @spec bulk_delete(
           ProcessHub.hub_id(),
-          %{
-            ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}]}
-          },
+          [{ProcessHub.child_id(), [node()]}],
           keyword()
         ) :: :ok
   def bulk_delete(hub_id, children, opts \\ []) do
-    hooks =
-      Enum.map(children, fn {child_id, rem_nodes} ->
-        case lookup(hub_id, child_id, with_metadata: true) do
-          nil ->
-            nil
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
 
-          {child_spec, nodes, metadata} ->
-            new_nodes =
-              Enum.filter(nodes, fn {node, _pid} ->
-                !Enum.member?(rem_nodes, node)
-              end)
-
-            if length(new_nodes) > 0 do
-              insert(
-                hub_id,
-                child_spec,
-                new_nodes,
-                metadata: metadata
-              )
-            else
-              delete(hub_id, child_id)
-            end
-
-            {Hook.registry_pid_removed(), {child_id, rem_nodes}}
-        end
-      end)
-      |> Enum.reject(&is_nil/1)
-
-    hook_storage = Keyword.get(opts, :hook_storage, nil)
-
-    if hook_storage do
-      HookManager.dispatch_hooks(hook_storage, hooks)
-    end
-
-    :ok
+    GenServer.call(via(hub_id), {:bulk_delete, hub_id, children, opts}, timeout)
   end
 
   @doc """
@@ -377,8 +369,125 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @spec update(ProcessHub.hub_id(), ProcessHub.child_id(), function()) ::
           :ok | {:error, String.t()}
   def update(hub_id, child_id, update_fn) do
+    GenServer.call(via(hub_id), {:update, hub_id, child_id, update_fn})
+  end
+
+  defp handle_insert(hub_id, child_spec, child_nodes, opts) do
+    metadata = Keyword.get(opts, :metadata, %{})
+
+    Keyword.get(opts, :table, hub_id)
+    |> Storage.insert(child_spec.id, {child_spec, child_nodes, metadata}, opts)
+
+    hook_storage = Keyword.get(opts, :hook_storage, nil)
+
+    if hook_storage do
+      HookManager.dispatch_hook(
+        hook_storage,
+        Hook.child_registered(),
+        %{child_id: child_spec.id, node_pids: child_nodes}
+      )
+    end
+
+    :ok
+  end
+
+  defp handle_clear_all(hub_id) do
+    Storage.clear_all(hub_id)
+  end
+
+  defp handle_delete(hub_id, child_id, opts) do
+    Storage.remove(hub_id, child_id)
+
+    hook_storage = Keyword.get(opts, :hook_storage, nil)
+
+    if hook_storage do
+      HookManager.dispatch_hook(hook_storage, Hook.child_unregistered(), %{child_id: child_id})
+    end
+
+    :ok
+  end
+
+  defp handle_bulk_insert(hub_id, children, opts) do
+    hook_storage = Keyword.get(opts, :hook_storage, nil)
+
+    hooks =
+      Enum.map(children, fn {child_id, {child_spec, child_nodes, metadata}} ->
+        diff =
+          case lookup(hub_id, child_id) do
+            nil ->
+              handle_insert(
+                hub_id,
+                child_spec,
+                child_nodes,
+                metadata: metadata
+              )
+
+              child_nodes
+
+            {_child_spec, existing_nodes} ->
+              merge_insert(
+                child_nodes,
+                existing_nodes,
+                hub_id,
+                child_spec,
+                metadata: metadata
+              )
+          end
+
+        if is_list(diff) && length(diff) > 0 do
+          {Hook.child_registered(), %{child_id: child_spec.id, node_pids: diff}}
+        end
+      end)
+      |> Enum.filter(&is_tuple/1)
+
+    if hook_storage do
+      HookManager.dispatch_hooks(hook_storage, hooks)
+    end
+
+    :ok
+  end
+
+  defp handle_bulk_delete(hub_id, children, opts) do
+    hooks =
+      Enum.map(children, fn {child_id, rem_nodes} ->
+        case lookup(hub_id, child_id, with_metadata: true) do
+          nil ->
+            nil
+
+          {child_spec, nodes, metadata} ->
+            new_nodes =
+              Enum.filter(nodes, fn {node, _pid} ->
+                !Enum.member?(rem_nodes, node)
+              end)
+
+            if length(new_nodes) > 0 do
+              handle_insert(
+                hub_id,
+                child_spec,
+                new_nodes,
+                metadata: metadata
+              )
+            else
+              handle_delete(hub_id, child_id, [])
+            end
+
+            {Hook.child_unregistered(), %{child_id: child_id}}
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    hook_storage = Keyword.get(opts, :hook_storage, nil)
+
+    if hook_storage do
+      HookManager.dispatch_hooks(hook_storage, hooks)
+    end
+
+    :ok
+  end
+
+  defp handle_update(hub_id, child_id, update_fn) do
     table = hub_id
-    opts = [table: table, with_metadata: true, skip_hooks: true]
+    opts = [table: table, with_metadata: true, hook_storage: nil]
 
     case lookup(hub_id, child_id, opts) do
       nil ->
@@ -386,7 +495,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
       {child_spec, node_pids, metadata} ->
         {cs, cn, m} = update_fn.(child_spec, node_pids, metadata)
-        insert(hub_id, cs, cn, [{:metadata, m} | opts])
+        handle_insert(hub_id, cs, cn, [{:metadata, m} | opts])
 
         :ok
 
@@ -400,7 +509,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
       Enum.sort(nodes_new) !== Enum.sort(nodes_existing) ->
         merged_data = Keyword.merge(nodes_existing, nodes_new)
 
-        insert(
+        handle_insert(
           hub_id,
           child_spec,
           merged_data,
@@ -428,5 +537,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
           end
       end
     end)
+  end
+
+  defp via(hub_id) do
+    {:via, Registry, {:"hub.#{hub_id}.system_registry", "process_registry"}}
   end
 end

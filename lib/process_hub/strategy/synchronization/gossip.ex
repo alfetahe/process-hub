@@ -56,10 +56,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   @spec handle_propagation(
           ProcessHub.Strategy.Synchronization.Gossip.t(),
           Hub.t(),
-          term(),
-          :add | :rem
+          term()
         ) :: :ok
-  def handle_propagation(strategy, hub, {ref, acks, child_data, update_node}, type) do
+  def handle_propagation(strategy, hub, {ref, acks, requests}) do
     misc_storage = hub.storage.misc
 
     cached_acks =
@@ -83,7 +82,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
         acks =
           if Enum.member?(unacked_nodes, node()) do
-            handle_propagation_type(hub.hub_id, child_data, update_node, type)
+            handle_request_propagation(hub.hub_id, requests)
 
             [node() | acks]
           else
@@ -93,7 +92,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         Storage.insert(misc_storage, ref, acks, ttl: strategy.sync_interval)
 
         recipients_select(unacked_nodes, strategy)
-        |> propagate_data(hub, strategy, {ref, acks, child_data, update_node}, type)
+        |> propagate_data(hub, strategy, {ref, acks, requests})
     end
 
     :ok
@@ -112,20 +111,22 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
           [node()],
           Hub.t(),
           ProcessHub.Strategy.Synchronization.Gossip.t(),
-          term(),
-          :add | :rem
+          term()
         ) :: :ok
-  def propagate_data(nodes, hub, strategy, data, type) do
+  def propagate_data(nodes, hub, strategy, data) do
     Enum.each(nodes, fn node ->
-      Node.spawn(node, fn ->
-        local_hub = Coordinator.get_hub(hub.hub_id)
-
-        GenServer.cast(
-          local_hub.procs.worker_queue,
-          {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data, type) end}
-        )
-      end)
+      Node.spawn(node, __MODULE__, :remote_propagate_cast, [hub.hub_id, strategy, data])
     end)
+  end
+
+  @doc false
+  def remote_propagate_cast(hub_id, strategy, data) do
+    local_hub = Coordinator.get_hub(hub_id)
+
+    GenServer.cast(
+      local_hub.procs.worker_queue,
+      {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data) end}
+    )
   end
 
   @spec recipients_select([node()], ProcessHub.Strategy.Synchronization.Gossip.t()) :: [node()]
@@ -133,23 +134,13 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     Enum.take_random(nodes, strategy.recipients)
   end
 
-  @spec handle_propagation_type(
+  @spec handle_request_propagation(
           ProcessHub.hub_id(),
-          [term()],
-          node(),
-          :add | :rem
+          [struct()]
         ) :: :ok
-  def handle_propagation_type(hub_id, children, updated_node, :add) do
+  def handle_request_propagation(hub_id, requests) when is_list(requests) do
     try do
-      send(hub_id, {@event_children_registration, {children, updated_node, []}})
-    catch
-      _, _ -> :ok
-    end
-  end
-
-  def handle_propagation_type(hub_id, children, updated_node, :rem) do
-    try do
-      send(hub_id, {@event_children_unregistration, {children, updated_node, []}})
+      send(hub_id, {@event_requests_handle, requests})
     catch
       _, _ -> :ok
     end
@@ -161,8 +152,22 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     |> Enum.filter(fn node -> !Enum.member?(sync_acks, node) end)
   end
 
+  @doc false
+  def remote_sync_cast(worker_queue, hub_id, strategy, sync_data, from_node) do
+    GenServer.cast(
+      worker_queue,
+      {:handle_work,
+       fn ->
+         Synchronizer.exec_interval_sync(hub_id, strategy, sync_data, from_node)
+       end}
+    )
+  end
+
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.Gossip do
     alias ProcessHub.Strategy.Synchronization.Gossip
+    alias ProcessHub.Service.Cluster
+
+    use Event
 
     @impl true
     def init(strategy, _hub), do: strategy
@@ -171,18 +176,16 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     @spec propagate(
             ProcessHub.Strategy.Synchronization.Gossip.t(),
             Hub.t(),
-            [term()],
-            node(),
-            :add | :rem,
+            [struct()],
             keyword()
           ) :: :ok
-    def propagate(strategy, hub, children, update_node, type, _opts) do
+    def propagate(strategy, hub, requests, _opts) when is_list(requests) do
       ref = make_ref()
-      Gossip.handle_propagation_type(hub.hub_id, children, update_node, type)
+      Gossip.handle_request_propagation(hub.hub_id, requests)
 
       Cluster.nodes(hub.storage.misc)
       |> Gossip.recipients_select(strategy)
-      |> Gossip.propagate_data(hub, strategy, {ref, [node()], children, update_node}, type)
+      |> Gossip.propagate_data(hub, strategy, {ref, [node()], requests})
 
       :ok
     end
@@ -236,6 +239,43 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
         {sync_data, sync_acks} ->
           handle_sync_data(strategy, hub, ref, sync_data, sync_acks)
+      end
+
+      :ok
+    end
+
+    @impl true
+    def broadcast_local_data(strategy, hub, local_data, target_nodes) do
+      ref = make_ref()
+      timestamp = Bag.timestamp(:microsecond)
+
+      # Initialize with local node's data
+      nodes_data = %{node() => {local_data, timestamp}}
+
+      Storage.insert(hub.storage.misc, ref, {nodes_data, []}, ttl: strategy.sync_interval)
+
+      # Start gossip to target nodes
+      target_nodes
+      |> Gossip.recipients_select(strategy)
+      |> forward_join_data(strategy, hub, %{
+        ref: ref,
+        nodes_data: nodes_data,
+        sync_acks: []
+      })
+
+      :ok
+    end
+
+    @impl true
+    def handle_node_join_data(strategy, hub, sync_data, _remote_node) do
+      %{ref: ref, nodes_data: nodes_data, sync_acks: sync_acks} = sync_data
+
+      case merge_join_data(hub.storage.misc, hub, ref, nodes_data, sync_acks) do
+        :invalidated ->
+          :ok
+
+        {merged_data, merged_acks} ->
+          handle_join_sync_data(strategy, hub, ref, merged_data, merged_acks)
       end
 
       :ok
@@ -398,16 +438,123 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       local_node = node()
 
       Enum.each(recipients, fn recipient ->
-        Node.spawn(recipient, fn ->
-          GenServer.cast(
-            hub.procs.worker_queue,
-            {:handle_work,
-             fn ->
-               Synchronizer.exec_interval_sync(hub.hub_id, strategy, sync_data, local_node)
-             end}
-          )
-        end)
+        Node.spawn(
+          recipient,
+          ProcessHub.Strategy.Synchronization.Gossip,
+          :remote_sync_cast,
+          [hub.procs.worker_queue, hub.hub_id, strategy, sync_data, local_node]
+        )
       end)
+    end
+
+    # Node join specific helper functions
+
+    defp forward_join_data(recipients, _strategy, hub, sync_data) do
+      local_node = node()
+
+      Enum.each(recipients, fn recipient ->
+        send({hub.hub_id, recipient}, {@event_node_registry_broadcast, {sync_data, local_node}})
+      end)
+    end
+
+    defp merge_join_data(misc_storage, hub, ref, nodes_data, sync_acks) do
+      local_timestamp = Bag.timestamp(:microsecond)
+      local_data = Synchronizer.local_sync_data(hub)
+      nodes_data = Map.put(nodes_data, node(), {local_data, local_timestamp})
+
+      case Storage.get(misc_storage, ref) do
+        nil ->
+          {nodes_data, []}
+
+        :invalidated ->
+          :invalidated
+
+        {cached_data, cached_acks} ->
+          merged_data =
+            Map.merge(nodes_data, cached_data, fn _node_key, {ld, lt}, {rd, rt} ->
+              cond do
+                lt > rt -> {ld, lt}
+                true -> {rd, rt}
+              end
+            end)
+
+          {merged_data, Enum.uniq(cached_acks ++ sync_acks)}
+      end
+    end
+
+    defp handle_join_sync_data(strategy, %Hub{} = hub, ref, sync_data, sync_acks) do
+      Storage.insert(hub.storage.misc, ref, {sync_data, sync_acks}, ttl: strategy.sync_interval)
+
+      missing_nodes = missing_nodes(sync_data, hub.storage.misc)
+
+      cond do
+        length(missing_nodes) === 0 ->
+          unacked_nodes = Gossip.unacked_nodes(sync_acks, hub.storage.misc)
+
+          sync_acks = sync_join_acks(hub, unacked_nodes, sync_acks, sync_data)
+
+          if length(unacked_nodes) === 0 do
+            Gossip.invalidate_ref(strategy, hub.storage.misc, ref)
+          else
+            forward_join_data(unacked_nodes, strategy, hub, %{
+              ref: ref,
+              nodes_data: sync_data,
+              sync_acks: sync_acks
+            })
+          end
+
+        length(missing_nodes) > 0 ->
+          forward_join_data(missing_nodes, strategy, hub, %{
+            ref: ref,
+            nodes_data: sync_data,
+            sync_acks: sync_acks
+          })
+
+        true ->
+          throw("Invalid state")
+      end
+    end
+
+    defp sync_join_acks(hub, unacked_nodes, sync_acks, sync_data) do
+      if Enum.member?(unacked_nodes, node()) do
+        sync_join_locally(hub.storage.misc, hub, sync_data)
+
+        [node() | sync_acks]
+      else
+        sync_acks
+      end
+    end
+
+    defp sync_join_locally(misc_storage, hub, nodes_data) do
+      node_timestamps =
+        case Storage.get(misc_storage, StorageKey.gct()) do
+          nil -> %{}
+          node_timestamps -> node_timestamps
+        end
+
+      Map.delete(nodes_data, node())
+      |> Enum.each(fn {node, {data, timestamp}} ->
+        # Make sure that we don't process data that is older than what we already have.
+        node_timestamp = Map.get(node_timestamps, node, nil)
+
+        cond do
+          node_timestamp === nil ->
+            sync_join_locally_node(misc_storage, hub, node, data, timestamp)
+
+          node_timestamp < timestamp ->
+            sync_join_locally_node(misc_storage, hub, node, data, timestamp)
+
+          true ->
+            :ok
+        end
+      end)
+    end
+
+    defp sync_join_locally_node(misc_storage, hub, node, data, timestamp) do
+      # For node join, we only append data (don't detach since this is fresh data)
+      Synchronizer.append_data(hub, %{node => data})
+
+      update_node_timestamps(misc_storage, node, timestamp)
     end
   end
 end

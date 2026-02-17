@@ -7,7 +7,9 @@ defmodule Test.Service.HookManagerTest do
     Test.Helper.SetupHelper.setup_base(%{}, :hook_manager_test)
   end
 
-  test "register handler", %{hub_id: hub_id} = _context do
+  test "register handler", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handler = %HookManager{
       id: :hook_manager_test_register_handler,
       m: :m,
@@ -15,12 +17,14 @@ defmodule Test.Service.HookManagerTest do
       a: []
     }
 
-    HookManager.register_handler(hub_id, :test, handler)
+    HookManager.register_handler(hook_table, :test, handler)
 
-    assert HookManager.registered_handlers(hub_id, :test) === [handler]
+    assert HookManager.registered_handlers(hook_table, :test) === [handler]
   end
 
-  test "register handler string id", %{hub_id: hub_id} = _context do
+  test "register handler string id", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handler = %HookManager{
       id: "hook_manager_test_register_handler",
       m: :m,
@@ -28,12 +32,14 @@ defmodule Test.Service.HookManagerTest do
       a: []
     }
 
-    HookManager.register_handler(hub_id, :test, handler)
+    HookManager.register_handler(hook_table, :test, handler)
 
-    assert HookManager.registered_handlers(hub_id, :test) === [handler]
+    assert HookManager.registered_handlers(hook_table, :test) === [handler]
   end
 
-  test "register handler duplicate", %{hub_id: hub_id} = _context do
+  test "register handler duplicate", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handler = %HookManager{
       id: :hook_manager_test_register_handler,
       m: :m,
@@ -41,15 +47,17 @@ defmodule Test.Service.HookManagerTest do
       a: []
     }
 
-    HookManager.register_handler(hub_id, :test, handler)
+    HookManager.register_handler(hook_table, :test, handler)
 
-    assert HookManager.registered_handlers(hub_id, :test) === [handler]
+    assert HookManager.registered_handlers(hook_table, :test) === [handler]
 
-    assert HookManager.register_handler(hub_id, :test, handler) ===
+    assert HookManager.register_handler(hook_table, :test, handler) ===
              {:error, :handler_id_not_unique}
   end
 
-  test "register handlers", %{hub_id: hub_id} = _context do
+  test "register handlers", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handlers = [
       %HookManager{
         id: :hook_manager_test_register_handlers_1,
@@ -67,12 +75,14 @@ defmodule Test.Service.HookManagerTest do
       }
     ]
 
-    HookManager.register_handlers(hub_id, :test, handlers)
+    HookManager.register_handlers(hook_table, :test, handlers)
 
-    assert HookManager.registered_handlers(hub_id, :test) === handlers |> Enum.reverse()
+    assert HookManager.registered_handlers(hook_table, :test) === handlers |> Enum.reverse()
   end
 
-  test "register handlers duplicates", %{hub_id: hub_id} = _context do
+  test "register handlers duplicates", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handlers = [
       %HookManager{
         id: :hook_manager_test_register_handlers_1,
@@ -90,11 +100,11 @@ defmodule Test.Service.HookManagerTest do
       }
     ]
 
-    HookManager.register_handlers(hub_id, :test, handlers)
+    HookManager.register_handlers(hook_table, :test, handlers)
 
-    assert HookManager.registered_handlers(hub_id, :test) === handlers
+    assert HookManager.registered_handlers(hook_table, :test) === handlers
 
-    assert HookManager.register_handlers(hub_id, :test, handlers) ===
+    assert HookManager.register_handlers(hook_table, :test, handlers) ===
              {:error,
               {:handler_id_not_unique,
                [
@@ -103,7 +113,14 @@ defmodule Test.Service.HookManagerTest do
                ]}}
   end
 
-  test "dispatch hooks", %{hub_id: hub_id} = _context do
+  test "dispatch hooks with empty map returns ok", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+    assert :ok == HookManager.dispatch_hooks(hook_table, %{})
+  end
+
+  test "dispatch hooks", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handler = %HookManager{
       id: :hook_manager_test_dispatch_hooks,
       m: :erlang,
@@ -111,7 +128,7 @@ defmodule Test.Service.HookManagerTest do
       a: [self(), :dispatch_hooks_test_1]
     }
 
-    HookManager.register_handler(hub_id, :test_1, handler)
+    HookManager.register_handler(hook_table, :test_1, handler)
 
     handler2 = %HookManager{
       id: :hook_manager_test_dispatch_hooks2,
@@ -120,15 +137,20 @@ defmodule Test.Service.HookManagerTest do
       a: [self(), :_]
     }
 
-    HookManager.register_handler(hub_id, :test_2, handler2)
+    HookManager.register_handler(hook_table, :test_2, handler2)
 
-    HookManager.dispatch_hooks(hub_id, [{:test_1, :hook_data}, {:test_2, :dispatch_hooks_test_2}])
+    HookManager.dispatch_hooks(hook_table, [
+      {:test_1, :hook_data},
+      {:test_2, :dispatch_hooks_test_2}
+    ])
 
     assert_receive :dispatch_hooks_test_1
     assert_receive :dispatch_hooks_test_2
   end
 
-  test "dispatch hook", %{hub_id: hub_id} = _context do
+  test "dispatch hook", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handler = %HookManager{
       id: :hook_manager_test_dispatch_hook,
       m: :erlang,
@@ -136,9 +158,9 @@ defmodule Test.Service.HookManagerTest do
       a: [self(), :dispatch_hook_test_1]
     }
 
-    HookManager.register_handlers(hub_id, :test_1, [handler])
+    HookManager.register_handlers(hook_table, :test_1, [handler])
 
-    HookManager.dispatch_hook(hub_id, :test_1, :hook_data)
+    HookManager.dispatch_hook(hook_table, :test_1, :hook_data)
 
     handler2 = %HookManager{
       id: :hook_manager_test_dispatch_hook,
@@ -148,14 +170,16 @@ defmodule Test.Service.HookManagerTest do
     }
 
     # Dispatching to separate key thats why we should not receive duplicate error.
-    HookManager.register_handlers(hub_id, :test_2, [handler2])
-    :ok = HookManager.dispatch_hook(hub_id, :test_2, :dispatch_hook_test_2)
+    HookManager.register_handlers(hook_table, :test_2, [handler2])
+    :ok = HookManager.dispatch_hook(hook_table, :test_2, :dispatch_hook_test_2)
 
     assert_receive :dispatch_hook_test_1
     assert_receive :dispatch_hook_test_2
   end
 
-  test "dispatch alter hook", %{hub_id: hub_id} = _context do
+  test "dispatch alter hook", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handler = %HookManager{
       id: :hook_manager_test_dispatch_hook,
       m: Enum,
@@ -163,14 +187,16 @@ defmodule Test.Service.HookManagerTest do
       a: [:_]
     }
 
-    HookManager.register_handlers(hub_id, :test_alter, [handler])
+    HookManager.register_handlers(hook_table, :test_alter, [handler])
 
-    altered_data = HookManager.dispatch_alter_hook(hub_id, :test_alter, [1, 2, 3])
+    altered_data = HookManager.dispatch_alter_hook(hook_table, :test_alter, [1, 2, 3])
 
     assert altered_data == 6
   end
 
-  test "cancel handler", %{hub_id: hub_id} = _context do
+  test "cancel handler", %{hub: hub} = _context do
+    hook_table = hub.storage.hook
+
     handler = %HookManager{
       id: :hook_manager_test_cancel_handler,
       m: :erlang,
@@ -185,10 +211,10 @@ defmodule Test.Service.HookManagerTest do
       a: [self(), :cancel_handler_test2]
     }
 
-    HookManager.register_handlers(hub_id, :test, [handler, handler2])
+    HookManager.register_handlers(hook_table, :test, [handler, handler2])
 
-    HookManager.cancel_handler(hub_id, :test, :hook_manager_test_cancel_handler)
+    HookManager.cancel_handler(hook_table, :test, :hook_manager_test_cancel_handler)
 
-    assert HookManager.registered_handlers(hub_id, :test) === [handler2]
+    assert HookManager.registered_handlers(hook_table, :test) === [handler2]
   end
 end

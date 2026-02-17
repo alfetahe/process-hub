@@ -1,0 +1,328 @@
+defmodule Test.Request.Handler.StartChildrenRequestTest do
+  use ExUnit.Case, async: false
+
+  alias ProcessHub.Request.Handler.StartChildrenRequest
+  alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
+  alias ProcessHub.Service.RequestManager
+
+  @hub_id :scr_test_hub
+
+  setup_all do
+    Test.Helper.SetupHelper.setup_base(%{}, @hub_id)
+  end
+
+  defp make_operation(opts) do
+    %RequestManager{
+      transaction_id: Keyword.get(opts, :transaction_id, make_ref()),
+      hub_id: Keyword.get(opts, :hub_id, :test_hub),
+      handler: StartChildrenRequest,
+      nodes_data: [{node(), []}],
+      completed_nodes: MapSet.new(),
+      expires_at: System.monotonic_time(:millisecond) + 60_000,
+      sub_requests: [],
+      options: Keyword.get(opts, :options, [])
+    }
+  end
+
+  describe "new/3" do
+    test "creates correct struct from operation" do
+      op = make_operation(options: [request_signature: 42, reply_to: [self()]])
+
+      req = StartChildrenRequest.new(op, :target_node, [%{child_id: :c1}])
+
+      assert req.transaction_id == op.transaction_id
+      assert req.hub_id == :test_hub
+      assert req.originating_node == node()
+      assert req.reply_to == [self()]
+      assert req.node == :target_node
+      assert req.children == [%{child_id: :c1}]
+      assert req.request_signature == 42
+      assert req.status == :dispatched
+      # Routing opts stripped from passthrough options
+      refute Keyword.has_key?(req.options, :reply_to)
+    end
+  end
+
+  describe "response_type/0" do
+    test "returns :operation_response" do
+      assert StartChildrenRequest.response_type() == :operation_response
+    end
+  end
+
+  describe "store_format/1" do
+    test "converts PostStartData list to registry map" do
+      pid = self()
+
+      post_data = [
+        %PostStartData{
+          cid: :child1,
+          pid: pid,
+          child_spec: %{id: :child1},
+          result: {:ok, pid},
+          child_nodes: [{node(), pid}],
+          nodes: [node()],
+          has_errors: false,
+          metadata: %{key: "val"}
+        }
+      ]
+
+      result = StartChildrenRequest.store_format(post_data)
+
+      assert is_map(result)
+      {cs, cn, m} = result[:child1]
+      assert cs == %{id: :child1}
+      assert cn == [{node(), pid}]
+      assert m == %{key: "val"}
+    end
+
+    test "filters out entries with errors" do
+      post_data = [
+        %PostStartData{
+          cid: :child_ok,
+          child_spec: %{id: :child_ok},
+          child_nodes: [],
+          metadata: %{},
+          has_errors: false
+        },
+        %PostStartData{
+          cid: :child_err,
+          child_spec: %{id: :child_err},
+          child_nodes: [],
+          metadata: %{},
+          has_errors: true
+        }
+      ]
+
+      result = StartChildrenRequest.store_format(post_data)
+
+      assert Map.has_key?(result, :child_ok)
+      refute Map.has_key?(result, :child_err)
+    end
+  end
+
+  describe "build_node_response/1" do
+    test "builds response tuples for local node only" do
+      pid = self()
+      local = node()
+
+      post_data = [
+        %PostStartData{cid: :local_child, result: {:ok, pid}, for_node: local},
+        %PostStartData{cid: :remote_child, result: {:ok, pid}, for_node: :remote@host}
+      ]
+
+      result = StartChildrenRequest.build_node_response(post_data)
+
+      assert length(result) == 1
+      assert {:local_child, {:ok, ^pid}} = hd(result)
+    end
+  end
+
+  describe "aggregate_results/1" do
+    test "aggregates successful results" do
+      pid = self()
+
+      sub_req = %StartChildrenRequest{
+        node: :node1,
+        results: [{:child1, {:ok, pid}}],
+        children: []
+      }
+
+      op = %RequestManager{sub_requests: [sub_req], options: []}
+      result = StartChildrenRequest.aggregate_results(op)
+
+      assert %ProcessHub.StartResult{} = result
+      assert result.status == :ok
+      assert length(result.started) == 1
+      assert result.errors == []
+      assert result.rollback == false
+    end
+
+    test "handles nil results as no_response errors" do
+      sub_req = %StartChildrenRequest{
+        node: :node1,
+        results: nil,
+        children: [%{child_id: :child1}]
+      }
+
+      op = %RequestManager{sub_requests: [sub_req], options: []}
+      result = StartChildrenRequest.aggregate_results(op)
+
+      assert result.status == :error
+      assert [{:child1, {:error, :no_response}}] = result.errors
+    end
+
+    test "aggregates mixed success and error" do
+      pid = self()
+
+      sub_req = %StartChildrenRequest{
+        node: :node1,
+        results: [{:child1, {:ok, pid}}, {:child2, {:error, :crash}}],
+        children: []
+      }
+
+      op = %RequestManager{sub_requests: [sub_req], options: []}
+      result = StartChildrenRequest.aggregate_results(op)
+
+      assert result.status == :error
+      assert length(result.started) == 1
+      assert length(result.errors) == 1
+    end
+  end
+
+  describe "post_process/3" do
+    test "returns result unchanged for :continue and default on_failure" do
+      start_result = %ProcessHub.StartResult{
+        status: :error,
+        started: [],
+        errors: [{:child1, :crash}],
+        rollback: false
+      }
+
+      # Explicit :continue
+      op_continue = %RequestManager{options: [on_failure: :continue]}
+      assert StartChildrenRequest.post_process(op_continue, start_result, %{}) == start_result
+
+      # Default (no on_failure option)
+      op_default = %RequestManager{options: []}
+      assert StartChildrenRequest.post_process(op_default, start_result, %{}) == start_result
+    end
+
+    test "returns result unchanged when status is :ok even with on_failure: :rollback" do
+      start_result = %ProcessHub.StartResult{
+        status: :ok,
+        started: [{:child1, [{node(), self()}]}],
+        errors: [],
+        rollback: false
+      }
+
+      op = %RequestManager{options: [on_failure: :rollback]}
+      result = StartChildrenRequest.post_process(op, start_result, %{})
+      assert result == start_result
+      assert result.rollback == false
+    end
+
+    test "performs rollback when on_failure: :rollback and status: :error", %{hub: hub} do
+      # Start a real child so rollback can terminate it
+      child_spec = %{
+        id: :rollback_child,
+        start: {Test.Helper.TestServer, :start_link, [%{name: :rollback_child}]}
+      }
+
+      {:ok, pid} = ProcessHub.DistributedSupervisor.start_child(hub.procs.dist_sup, child_spec)
+      ProcessHub.Service.ProcessRegistry.insert(hub.hub_id, child_spec, [{node(), pid}])
+
+      start_result = %ProcessHub.StartResult{
+        status: :error,
+        started: [{:rollback_child, [{node(), pid}]}],
+        errors: [{:other_child, :crash}],
+        rollback: false
+      }
+
+      op = %RequestManager{options: [on_failure: :rollback]}
+      result = StartChildrenRequest.post_process(op, start_result, hub)
+
+      assert result.rollback == true
+      assert result.status == :error
+
+      # The child should have been terminated by rollback
+      assert ProcessHub.Service.ProcessRegistry.lookup(hub.hub_id, :rollback_child) == nil
+    end
+  end
+
+  describe "to_start_opts/1" do
+    test "converts request to keyword opts" do
+      req = %StartChildrenRequest{
+        transaction_id: make_ref(),
+        hub_id: :test_hub,
+        originating_node: node(),
+        reply_to: [self()],
+        node: node(),
+        children: [],
+        options: [timeout: 5000, awaitable: true]
+      }
+
+      result = StartChildrenRequest.to_start_opts(req)
+      assert is_list(result)
+      assert Keyword.get(result, :hub_id) == :test_hub
+      assert Keyword.get(result, :originating_node) == node()
+    end
+  end
+
+  describe "build_request/8" do
+    test "builds correct struct" do
+      txn_id = make_ref()
+
+      req =
+        StartChildrenRequest.build_request(
+          :hub1,
+          txn_id,
+          42,
+          :node1,
+          [self()],
+          :target,
+          [%{child_id: :c1}],
+          opt: true
+        )
+
+      assert %StartChildrenRequest{} = req
+      assert req.hub_id == :hub1
+      assert req.transaction_id == txn_id
+      assert req.request_signature == 42
+      assert req.originating_node == :node1
+      assert req.reply_to == [self()]
+      assert req.node == :target
+      assert req.children == [%{child_id: :c1}]
+      assert req.options == [opt: true]
+      assert req.status == :dispatched
+    end
+  end
+
+  describe "aggregate_results/1 with raw pid" do
+    test "handles raw pid results" do
+      pid = self()
+
+      sub_req = %StartChildrenRequest{
+        node: :node1,
+        results: [{:child1, pid}],
+        children: []
+      }
+
+      op = %RequestManager{sub_requests: [sub_req], options: []}
+      result = StartChildrenRequest.aggregate_results(op)
+
+      assert result.status == :ok
+      assert length(result.started) == 1
+      assert {:child1, [{:node1, ^pid}]} = hd(result.started)
+    end
+  end
+
+  describe "for_migration/4" do
+    test "creates migration request", %{hub: hub} do
+      child_spec = %{id: :migr_child, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+      children_data = [{child_spec, %{some: :meta}}]
+
+      req = StartChildrenRequest.for_migration(hub, :target_node, children_data)
+
+      assert %StartChildrenRequest{} = req
+      assert req.hub_id == hub.hub_id
+      assert req.node == :target_node
+      assert length(req.children) == 1
+      assert hd(req.children).migration == true
+    end
+  end
+
+  describe "for_contraction/2" do
+    test "creates contraction request", %{hub: hub} do
+      child_spec = %{id: :contr_child, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+      children_data = [{child_spec, %{some: :meta}}]
+
+      req = StartChildrenRequest.for_contraction(hub, children_data)
+
+      assert %StartChildrenRequest{} = req
+      assert req.hub_id == hub.hub_id
+      assert req.node == node()
+      assert length(req.children) == 1
+      assert hd(req.children).migration == true
+    end
+  end
+end

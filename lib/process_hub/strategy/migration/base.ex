@@ -14,21 +14,50 @@ defprotocol ProcessHub.Strategy.Migration.Base do
   def init(strategy, hub)
 
   @doc """
-  Migrates processes from the local to the remote node.
+  Handles migration when nodes join the cluster (topology expansion).
 
-  Process migration happens when a new node joins the `ProcessHub` cluster, and some of the
-  local processes are moved to the newly connected node. This also requires the processes
-  to be terminated on the local node.
+  Called from NodeUp handler to redistribute processes to newly joined nodes.
+  Each strategy implementation handles its own logic for migrating processes
+  that should now be on the new nodes.
 
-  The redundancy strategy will deal with scenarios where processes are not terminated locally
-  and are duplicated on the new node.
+  ## Parameters
+  - `struct` - the strategy struct
+  - `hub` - the hub state
+  - `nodes` - list of nodes that have joined the cluster
+  - `handler` - the NodeUp handler struct
+
+  ## Returns
+  Updated handler struct with any additional data computed during processing.
   """
-  @spec handle_migration(
-          __MODULE__.t(),
-          Hub.t(),
-          [{ProcessHub.child_spec(), map()}],
-          node(),
-          ProcessHub.Strategy.Synchronization.Base.t()
-        ) :: :ok
-  def handle_migration(struct, hub, children_data, added_node, sync_strategy)
+  @spec handle_topology_expansion(
+          struct :: __MODULE__.t(),
+          hub :: Hub.t(),
+          nodes :: [node()],
+          handler :: ProcessHub.Task.ClusterUpdateTask.NodeUp.t()
+        ) :: ProcessHub.Task.ClusterUpdateTask.NodeUp.t()
+  def handle_topology_expansion(struct, hub, nodes, handler)
+
+  @doc """
+  Handles migration when nodes leave the cluster (topology contraction).
+
+  Called from NodeDown handler to redistribute processes from removed nodes.
+  Each strategy implementation handles its own logic for starting processes
+  that should now be on the local node.
+
+  ## Parameters
+  - `struct` - the strategy struct
+  - `hub` - the hub state
+  - `removed_nodes` - list of nodes that have left the cluster
+  - `handler` - the NodeDown handler struct
+
+  ## Returns
+  Updated handler struct with any additional data computed during processing.
+  """
+  @spec handle_topology_contraction(
+          struct :: __MODULE__.t(),
+          hub :: Hub.t(),
+          removed_nodes :: [node()],
+          handler :: ProcessHub.Task.ClusterUpdateTask.NodeDown.t()
+        ) :: ProcessHub.Task.ClusterUpdateTask.NodeDown.t()
+  def handle_topology_contraction(struct, hub, removed_nodes, handler)
 end

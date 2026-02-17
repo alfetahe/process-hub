@@ -1,4 +1,4 @@
-defmodule ProcessHub.Handler.Synchronization do
+defmodule ProcessHub.Task.SynchronizationTask do
   @moduledoc false
 
   alias ProcessHub.Constant.StorageKey
@@ -29,7 +29,7 @@ defmodule ProcessHub.Handler.Synchronization do
     def handle(%__MODULE__{hub: hub} = arg) do
       sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
 
-      unless State.is_locked?(arg.hub) do
+      unless State.is_partitioned?(arg.hub) do
         hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
         SynchronizationStrategy.init_sync(sync_strat, hub, hub_nodes)
@@ -127,6 +127,7 @@ defmodule ProcessHub.Handler.Synchronization do
 
       if local_nodes !== remote_nodes do
         combined_nodes = (local_nodes ++ remote_nodes) |> Enum.uniq()
+
         [{child_id, {child_spec, combined_nodes, metadata}} | data_list]
       else
         data_list

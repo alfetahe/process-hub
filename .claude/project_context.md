@@ -150,8 +150,15 @@ ProcessHub uses **Protocol-based strategies**. Each strategy type has:
 
 **Protocol Interface**:
 ```elixir
-@spec init(struct(), Hub.t()) :: struct()
-@spec handle_migration(struct(), Hub.t(), node(), [child_spec()], keyword()) :: :ok
+@spec handle_migrate(
+        __MODULE__.t(),
+        Hub.t(),
+        registry_data :: list(),
+        nodes :: [node()],
+        replication_factor :: pos_integer(),
+        ProcessHub.Strategy.Synchronization.Base.t()
+      ) :: :ok
+def handle_migrate(struct, hub, registry_data, nodes, replication_factor, sync_strategy)
 ```
 
 **Implementations**:
