@@ -79,8 +79,8 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
         p: 100
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), join_handler)
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), leave_handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_join(), join_handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), leave_handler)
 
       HookManager.register_handler(
         hub.storage.hook,
@@ -125,8 +125,8 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   @doc """
   Adds a new node to the hash ring.
   """
-  @spec handle_node_join(Hub.t(), node()) :: boolean()
-  def handle_node_join(hub, node) do
+  @spec handle_node_join(Hub.t(), %{node: node()}) :: boolean()
+  def handle_node_join(hub, %{node: node}) do
     hash_ring = Storage.get(hub.storage.misc, StorageKey.hr()) |> Ring.add_node(node)
 
     Storage.insert(hub.storage.misc, StorageKey.hr(), hash_ring)
@@ -135,8 +135,8 @@ defmodule ProcessHub.Strategy.Distribution.ConsistentHashing do
   @doc """
   Removes the node from the hash ring.
   """
-  @spec handle_node_leave(Hub.t(), node()) :: boolean()
-  def handle_node_leave(hub, node) do
+  @spec handle_node_leave(Hub.t(), %{node: node()}) :: boolean()
+  def handle_node_leave(hub, %{node: node}) do
     hash_ring = Storage.get(hub.storage.misc, StorageKey.hr()) |> Ring.remove_node(node)
 
     Storage.insert(hub.storage.misc, StorageKey.hr(), hash_ring)

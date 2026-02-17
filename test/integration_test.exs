@@ -25,9 +25,9 @@ defmodule Test.IntegrationTest do
   @tag dist_strategy: :centralized_load_balancer
   @tag validate_metadata: true
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "pubsub children starting and removing centralized", %{hub: hub} = context do
     child_count = 1000
@@ -62,9 +62,9 @@ defmodule Test.IntegrationTest do
   @tag sync_strategy: :pubsub
   @tag validate_metadata: true
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "pubsub children starting and removing", %{hub_id: hub_id} = context do
     child_count = 1000
@@ -93,9 +93,9 @@ defmodule Test.IntegrationTest do
   @tag sync_strategy: :pubsub
   @tag dist_strategy: :guided
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "guided pubsub children starting and removing", %{hub_id: hub_id} = context do
     child_count = 1
@@ -141,9 +141,9 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :pubsub_interval_test
   @tag sync_strategy: :pubsub
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "pubsub interval sync test", %{hub_id: hub_id} = context do
     child_count = 1000
@@ -172,9 +172,9 @@ defmodule Test.IntegrationTest do
   @tag sync_strategy: :gossip
   @tag validate_metadata: true
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "gossip children starting and removing", %{hub_id: hub_id} = context do
     child_count = 1000
@@ -202,9 +202,9 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :gossip_interval_test
   @tag sync_strategy: :gossip
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "gossip interval sync test", %{hub_id: hub_id} = context do
     child_count = 1000
@@ -231,10 +231,10 @@ defmodule Test.IntegrationTest do
 
   @tag hub_id: :child_process_pid_update_test
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global},
-         {Hook.child_process_pid_update(), :local}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global},
+         {Hook.child_pid_updated(), :local}
        ]
   test "process failure restarting", %{hub_id: hub_id} = context do
     child_count = 100
@@ -254,7 +254,7 @@ defmodule Test.IntegrationTest do
       Process.exit(pid, :error)
     end)
 
-    Bag.receive_multiple(length(child_specs), Hook.child_process_pid_update())
+    Bag.receive_multiple(length(child_specs), Hook.child_pid_updated())
 
     new_pids =
       Enum.map(child_specs, fn child_spec ->
@@ -271,9 +271,9 @@ defmodule Test.IntegrationTest do
   @tag replication_factor: :cluster_size
   @tag replication_model: :active_active
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "replication cluster size with mode active active",
        %{hub_id: hub_id, hub_conf: hc} = context do
@@ -301,8 +301,8 @@ defmodule Test.IntegrationTest do
   @tag redun_strategy: :singularity
   @tag hub_id: :redunc_singulary_test
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :local}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :local}
        ]
   test "redundancy with singularity", %{hub_id: hub_id} = context do
     child_count = 1000
@@ -324,8 +324,8 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :divergence_test
   @tag partition_strategy: :div
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :local},
-         {Hook.post_cluster_leave(), :local}
+         {Hook.post_node_join(), :local},
+         {Hook.post_node_leave(), :local}
        ]
   test "partition divergence test", %{hub_id: hub_id, listed_hooks: lh} = context do
     :net_kernel.monitor_nodes(true)
@@ -363,8 +363,8 @@ defmodule Test.IntegrationTest do
   # 1 hour
   @tag quorum_threshold_time: 3600
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.post_node_leave(), :global}
        ]
   test "dynamic quorum with min of 70% of cluster",
        %{hub_id: hub_id, listed_hooks: lh} = context do
@@ -418,8 +418,8 @@ defmodule Test.IntegrationTest do
   @tag quorum_size: @nr_of_peers + 2
   @tag quorum_startup_confirm: true
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :local},
-         {Hook.post_cluster_leave(), :local}
+         {Hook.post_node_join(), :local},
+         {Hook.post_node_leave(), :local}
        ]
   test "static quorum with min of #{@nr_of_peers + 2} nodes",
        %{hub_id: hub_id, peer_nodes: peers, listed_hooks: lh} = context do
@@ -437,8 +437,8 @@ defmodule Test.IntegrationTest do
         Bootstrap.gen_hub(context)
         |> Bootstrap.start_hubs([peer_name], lh, new_nodes: true, skip_await: true)
 
-        Bag.receive_until(Hook.post_cluster_join(), nil, fn _acc, data ->
-          if data[:joined_node] == peer_name,
+        Bag.receive_until(Hook.post_node_join(), nil, fn _acc, data ->
+          if data[:node] == peer_name,
             do: {:halt, :ok},
             else: {:cont, nil}
         end)
@@ -457,8 +457,8 @@ defmodule Test.IntegrationTest do
 
     # Wait for the specific redistribution for the removed node to ensure
     # the worker_queue has fully processed the removal (including handle_locking).
-    Bag.receive_until(Hook.post_cluster_leave(), nil, fn _acc, data ->
-      if data[:removed_node] == removed_node,
+    Bag.receive_until(Hook.post_node_leave(), nil, fn _acc, data ->
+      if data[:node] == removed_node,
         do: {:halt, :ok},
         else: {:cont, nil}
     end)
@@ -470,8 +470,8 @@ defmodule Test.IntegrationTest do
     [{removed_node, _}] = removed_peers
     _new_peers = Enum.filter(peers, fn node -> !Enum.member?(removed_peers, node) end)
 
-    Bag.receive_until(Hook.post_cluster_leave(), nil, fn _acc, data ->
-      if data[:removed_node] == removed_node,
+    Bag.receive_until(Hook.post_node_leave(), nil, fn _acc, data ->
+      if data[:node] == removed_node,
         do: {:halt, :ok},
         else: {:cont, nil}
     end)
@@ -487,8 +487,8 @@ defmodule Test.IntegrationTest do
   @tag initial_cluster_size: 1
   @tag track_max_size: true
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :local}
+         {Hook.post_node_join(), :global},
+         {Hook.post_node_leave(), :local}
        ]
   test "majority quorum with adaptive cluster sizing",
        %{hub_id: hub_id, listed_hooks: lh} = context do
@@ -555,10 +555,10 @@ defmodule Test.IntegrationTest do
   @tag redun_strategy: :replication
   @tag replication_factor: 4
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :local},
-         {Hook.post_cluster_leave(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.migration_handled(), :global}
+         {Hook.post_node_join(), :local},
+         {Hook.post_node_leave(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.migration_completed(), :global}
        ]
   test "coldswap migration with replication",
        %{hub_id: hub_id, replication_factor: rf, listed_hooks: lh, hub: _hub} = context do
@@ -572,7 +572,7 @@ defmodule Test.IntegrationTest do
     end)
 
     # Confirm that hubs are stopped.
-    Bag.receive_multiple(nodes_count, Hook.post_cluster_leave())
+    Bag.receive_multiple(nodes_count, Hook.post_node_leave())
 
     # Starts children.
     Common.sync_base_test(context, child_specs, :add)
@@ -606,14 +606,14 @@ defmodule Test.IntegrationTest do
     # Confirm that all migrated children have been updated.
     Bag.receive_multiple(
       length(migrated_children),
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       error_msg: "Child added timeout",
       timeout: 10_000
     )
 
     Bag.receive_multiple(
       length(migrated_children) * rf,
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       error_msg: "Child added timeout",
       timeout: 10_000
     )
@@ -624,12 +624,12 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :migration_hotswap_test
   @tag migr_handover: true
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :local},
-         {Hook.registry_pid_inserted(), :local},
-         {Hook.registry_pid_removed(), :local},
-         {Hook.migration_handled(), :global},
-         {Hook.forwarded_migration(), :global},
+         {Hook.post_node_join(), :global},
+         {Hook.post_node_leave(), :local},
+         {Hook.child_registered(), :local},
+         {Hook.child_unregistered(), :local},
+         {Hook.migration_completed(), :global},
+         {Hook.children_forwarded(), :global},
          {Hook.handover_delivered(), :local}
        ]
   test "hotswap migration with handoff", context do
@@ -641,12 +641,12 @@ defmodule Test.IntegrationTest do
   @tag hub_id: :migration_coldswap_test
   @tag migr_handover: true
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :local},
-         {Hook.registry_pid_inserted(), :local},
-         {Hook.registry_pid_removed(), :local},
-         {Hook.migration_handled(), :global},
-         {Hook.forwarded_migration(), :global},
+         {Hook.post_node_join(), :global},
+         {Hook.post_node_leave(), :local},
+         {Hook.child_registered(), :local},
+         {Hook.child_unregistered(), :local},
+         {Hook.migration_completed(), :global},
+         {Hook.children_forwarded(), :global},
          {Hook.handover_delivered(), :local}
        ]
   test "coldswap migration with handoff", context do
@@ -659,12 +659,12 @@ defmodule Test.IntegrationTest do
   @tag validate_metadata: true
   @tag handover_confirmation: true
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :local},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global},
-         {Hook.migration_handled(), :global},
-         {Hook.forwarded_migration(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.post_node_leave(), :local},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global},
+         {Hook.migration_completed(), :global},
+         {Hook.children_forwarded(), :global}
        ]
   test "migration hotswap shutdown", %{hub_id: hub_id} = context do
     child_count = 1000
@@ -700,7 +700,7 @@ defmodule Test.IntegrationTest do
 
     Bag.receive_multiple(
       migrated_children_count,
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       error_msg: "Children migration timeout"
     )
 
@@ -725,9 +725,9 @@ defmodule Test.IntegrationTest do
   @tag replication_factor: 3
   @tag cluster_event_debounce: 1000
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "replication factor and mode", %{hub_id: hub_id, replication_factor: rf} = context do
     :net_kernel.monitor_nodes(true)
@@ -777,10 +777,10 @@ defmodule Test.IntegrationTest do
   @tag migr_strategy: :autonomous
   @tag dist_strategy: :consistent_hashing
   @tag listed_hooks: [
-         {Hook.post_cluster_join(), :global},
-         {Hook.post_cluster_leave(), :local},
-         {Hook.registry_pid_inserted(), :global},
-         {Hook.registry_pid_removed(), :global}
+         {Hook.post_node_join(), :global},
+         {Hook.post_node_leave(), :local},
+         {Hook.child_registered(), :global},
+         {Hook.child_unregistered(), :global}
        ]
   test "migration autonomous contraction", %{hub_id: hub_id} = context do
     child_count = 1000
@@ -809,7 +809,7 @@ defmodule Test.IntegrationTest do
 
     Bag.receive_multiple(
       migrated_children_count,
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       error_msg: "Children migration timeout"
     )
 

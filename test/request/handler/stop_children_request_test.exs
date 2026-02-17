@@ -219,7 +219,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
 
       # Register a hook to verify forwarding happens
       hook_handler = Bag.recv_hook(:stop_forward_hook, self())
-      HookManager.register_handler(hub.storage.hook, Hook.forwarded_migration(), hook_handler)
+      HookManager.register_handler(hub.storage.hook, Hook.children_forwarded(), hook_handler)
 
       request = %StopChildrenRequest{
         transaction_id: make_ref(),
@@ -241,8 +241,8 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
         _, _ -> :ok
       end
 
-      # Verify the forwarded_migration hook was dispatched with the forward data
-      assert_receive {:stop_forward_hook, forward_data}, 2000
+      # Verify the children_forwarded hook was dispatched with the forward data
+      assert_receive {:stop_forward_hook, %{forwards: forward_data}}, 2000
       assert is_list(forward_data)
 
       # forward_data is a keyword list [{node, [child_data, ...]}]
@@ -266,7 +266,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       ProcessRegistry.insert(@hub_id, child_spec, [{node(), fake_pid}])
 
       hook_handler = Bag.recv_hook(:no_reforward_hook, self())
-      HookManager.register_handler(hub.storage.hook, Hook.forwarded_migration(), hook_handler)
+      HookManager.register_handler(hub.storage.hook, Hook.children_forwarded(), hook_handler)
 
       request = %StopChildrenRequest{
         transaction_id: make_ref(),

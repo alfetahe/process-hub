@@ -55,7 +55,7 @@ defmodule Mix.Tasks.Benchmark do
     Test.Helper.TestNode.start_local_node()
 
     listed_hooks = [
-      {Hook.post_cluster_join(), :local}
+      {Hook.post_node_join(), :local}
     ]
 
     peer_nodes = Test.Helper.TestNode.start_nodes(nr_of_peers)

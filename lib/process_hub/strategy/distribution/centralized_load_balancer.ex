@@ -98,6 +98,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Constant.Hook
   alias :elector, as: Elector
 
   use GenServer
@@ -416,8 +417,8 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
         # Dispatch hook event.
         HookManager.dispatch_hook(
           state.hub.storage.hook,
-          :scoreboard_updated,
-          {strategy.scoreboard, node}
+          Hook.scoreboard_updated(),
+          %{scoreboard: strategy.scoreboard, node: node}
         )
 
         # Persist updated strategy.

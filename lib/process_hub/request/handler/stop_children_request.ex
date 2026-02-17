@@ -126,7 +126,10 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
         stop_opts = to_stop_opts(request)
         node_stop_requests = create_forward_requests(hub, forward_data, stop_opts)
         Dispatcher.children_stop(hub, node_stop_requests)
-        HookManager.dispatch_hook(hub.storage.hook, Hook.forwarded_migration(), forward_data)
+
+        HookManager.dispatch_hook(hub.storage.hook, Hook.children_forwarded(), %{
+          forwards: forward_data
+        })
       end
 
       # Build and send response for local + already_stopped only

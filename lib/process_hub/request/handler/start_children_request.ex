@@ -196,9 +196,6 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       # Dispatch post-start hook
       dispatch_post_start_hook(hub, post_start_results)
 
-      # Dispatch process startups hook
-      HookManager.dispatch_hook(hub.storage.hook, Hook.process_startups(), post_start_results)
-
       # Update local registry and send response
       update_registry(hub, post_start_results)
 
@@ -469,7 +466,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       insert_pending_entries(hub, forw)
       node_start_requests = create_forward_requests(hub, forw, start_opts)
       Dispatcher.children_start(hub, node_start_requests)
-      HookManager.dispatch_hook(hub.storage.hook, Hook.forwarded_migration(), forw)
+      HookManager.dispatch_hook(hub.storage.hook, Hook.children_forwarded(), %{forwards: forw})
     end
 
     valid
@@ -580,11 +577,18 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
 
   defp dispatch_post_start_hook(hub, post_start_results) do
     post_data =
-      Enum.map(post_start_results, fn %PostStartData{cid: cid, result: rs, pid: pid, nodes: n} ->
-        {cid, rs, pid, n}
+      Enum.map(post_start_results, fn %PostStartData{
+                                        cid: cid,
+                                        result: rs,
+                                        pid: pid,
+                                        nodes: n,
+                                        child_spec: spec,
+                                        metadata: meta
+                                      } ->
+        %{child_id: cid, pid: pid, result: rs, nodes: n, child_spec: spec, metadata: meta}
       end)
 
-    HookManager.dispatch_hook(hub.storage.hook, Hook.post_children_start(), post_data)
+    HookManager.dispatch_hook(hub.storage.hook, Hook.post_children_start(), %{children: post_data})
   end
 
   defp update_registry(hub, post_start_results) do

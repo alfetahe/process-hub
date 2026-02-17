@@ -160,7 +160,9 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
           end
         end)
 
-      post_start_data = [{:child1, :ok, child_pid, [node()]}]
+      post_start_data = %{
+        children: [%{child_id: :child1, result: :ok, pid: child_pid, nodes: [node()]}]
+      }
 
       Replication.handle_post_start(strategy, hub, post_start_data)
 
@@ -203,7 +205,9 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
           end
         end)
 
-      post_start_data = [{:child_match, :ok, child_pid, [node()]}]
+      post_start_data = %{
+        children: [%{child_id: :child_match, result: :ok, pid: child_pid, nodes: [node()]}]
+      }
 
       Replication.handle_post_start(strategy, hub, post_start_data)
 
@@ -244,7 +248,9 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
           end
         end)
 
-      post_start_data = [{:child_nomatch, :ok, child_pid, [node()]}]
+      post_start_data = %{
+        children: [%{child_id: :child_nomatch, result: :ok, pid: child_pid, nodes: [node()]}]
+      }
 
       Replication.handle_post_start(strategy, hub, post_start_data)
 
@@ -285,9 +291,16 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
         end)
 
       # :already_started result should NOT trigger signal sending
-      post_start_data = [
-        {:child_as, {:error, {:already_started, child_pid}}, child_pid, [node()]}
-      ]
+      post_start_data = %{
+        children: [
+          %{
+            child_id: :child_as,
+            result: {:error, {:already_started, child_pid}},
+            pid: child_pid,
+            nodes: [node()]
+          }
+        ]
+      }
 
       Replication.handle_post_start(strategy, hub, post_start_data)
 
@@ -311,7 +324,7 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
       Storage.insert(misc_storage, StorageKey.strdist(), %ConsistentHashing{})
 
       strategy = %Replication{redundancy_signal: :all}
-      assert Replication.handle_post_start(strategy, hub, []) == :ok
+      assert Replication.handle_post_start(strategy, hub, %{children: []}) == :ok
 
       :ets.delete(hub_id)
       :ets.delete(hook_storage)
@@ -321,17 +334,32 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
   describe "handle_post_update/3" do
     test "with redundancy_signal: :none returns :ok" do
       strategy = %Replication{redundancy_signal: :none}
-      assert Replication.handle_post_update(strategy, %{}, {[], {:up, :some_node}}) == :ok
+
+      assert Replication.handle_post_update(strategy, %{}, %{
+               children: [],
+               event: :node_join,
+               node: :some_node
+             }) == :ok
     end
 
     test "with non-active_passive model returns :ok" do
       strategy = %Replication{redundancy_signal: :all, replication_model: :active_active}
-      assert Replication.handle_post_update(strategy, %{}, {[], {:up, :some_node}}) == :ok
+
+      assert Replication.handle_post_update(strategy, %{}, %{
+               children: [],
+               event: :node_join,
+               node: :some_node
+             }) == :ok
     end
 
     test "with active_passive model and empty processes_data returns :ok" do
       strategy = %Replication{redundancy_signal: :all, replication_model: :active_passive}
-      assert Replication.handle_post_update(strategy, %{}, {[], {:up, :some_node}}) == :ok
+
+      assert Replication.handle_post_update(strategy, %{}, %{
+               children: [],
+               event: :node_join,
+               node: :some_node
+             }) == :ok
     end
 
     test "with active_passive model sends mode signal on :down event" do
@@ -367,7 +395,11 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
          [pid: child_pid]}
       ]
 
-      Replication.handle_post_update(strategy, hub, {processes_data, {:down, :leaving@host}})
+      Replication.handle_post_update(strategy, hub, %{
+        children: processes_data,
+        event: :node_leave,
+        node: :leaving@host
+      })
 
       # Should receive a redundancy signal (either :active or :passive)
       assert_receive {:got_mode, {:process_hub, :redundancy_signal, mode}}
@@ -411,7 +443,11 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
          [pid: child_pid]}
       ]
 
-      Replication.handle_post_update(strategy, hub, {processes_data, {:up, :joining@host}})
+      Replication.handle_post_update(strategy, hub, %{
+        children: processes_data,
+        event: :node_join,
+        node: :joining@host
+      })
 
       # The :up event may or may not send a signal depending on master calculation
       # If master changed, a signal is sent; if not, no signal
@@ -441,7 +477,11 @@ defmodule Test.Strategy.Redundancy.ReplicationTest do
         {:child_ap_skip, [:remote1@host, :remote2@host], [:remote1@host, :remote2@host], []}
       ]
 
-      Replication.handle_post_update(strategy, hub, {processes_data, {:down, :remote2@host}})
+      Replication.handle_post_update(strategy, hub, %{
+        children: processes_data,
+        event: :node_leave,
+        node: :remote2@host
+      })
 
       # No signal should be sent since local node wasn't in old_nodes
       refute_receive {:process_hub, :redundancy_signal, _}

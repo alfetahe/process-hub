@@ -257,8 +257,8 @@ defmodule Test.Utility.BagTest do
   describe "await_cluster_join/2" do
     test "receives join messages for local scope" do
       # Simulate hook messages for 2 joining nodes
-      send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :node1}})
-      send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :node2}})
+      send(self(), {ProcessHub.Constant.Hook.post_node_join(), %{node: :node1}})
+      send(self(), {ProcessHub.Constant.Hook.post_node_join(), %{node: :node2}})
 
       result = Bag.await_cluster_join([:node1, :node2], scope: :local, timeout: 1000)
 
@@ -271,8 +271,8 @@ defmodule Test.Utility.BagTest do
     end
 
     test "accepts integer count" do
-      send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :node1}})
-      send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :node2}})
+      send(self(), {ProcessHub.Constant.Hook.post_node_join(), %{node: :node1}})
+      send(self(), {ProcessHub.Constant.Hook.post_node_join(), %{node: :node2}})
 
       result = Bag.await_cluster_join(2, scope: :local, timeout: 1000)
 
@@ -288,7 +288,7 @@ defmodule Test.Utility.BagTest do
       # For global scope with 1 joining node and cluster_size 2:
       # count = 1 * (2 + 1) = 3 messages
       for _ <- 1..3 do
-        send(self(), {ProcessHub.Constant.Hook.post_cluster_join(), %{joined_node: :new_node}})
+        send(self(), {ProcessHub.Constant.Hook.post_node_join(), %{node: :new_node}})
       end
 
       result = Bag.await_cluster_join(1, scope: :global, cluster_size: 2, timeout: 1000)
@@ -298,12 +298,12 @@ defmodule Test.Utility.BagTest do
 
   describe "await_cluster_leave/2" do
     test "receives leave messages for local scope" do
-      send(self(), {ProcessHub.Constant.Hook.post_cluster_leave(), %{removed_node: :node1}})
+      send(self(), {ProcessHub.Constant.Hook.post_node_leave(), %{node: :node1}})
 
       result = Bag.await_cluster_leave([:node1], scope: :local, timeout: 1000)
 
       assert length(result) === 1
-      assert [{:ok, %{removed_node: :node1}}] = result
+      assert [{:ok, %{node: :node1}}] = result
     end
 
     test "returns empty list for 0 leaving nodes" do
@@ -315,7 +315,7 @@ defmodule Test.Utility.BagTest do
       # For global scope with 1 leaving node and cluster_size 3:
       # count = 1 * (3 - 1) = 2 messages
       for _ <- 1..2 do
-        send(self(), {ProcessHub.Constant.Hook.post_cluster_leave(), %{removed_node: :gone_node}})
+        send(self(), {ProcessHub.Constant.Hook.post_node_leave(), %{node: :gone_node}})
       end
 
       result = Bag.await_cluster_leave(1, scope: :global, cluster_size: 3, timeout: 1000)

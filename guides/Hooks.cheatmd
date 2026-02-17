@@ -19,10 +19,10 @@ using the `t:ProcessHub.t/0` configuration struct.
 
 Example:
 ```elixir
-# Register a hook handler for the `:pre_cluster_join_hook` event with a wildcard argument.
+# Register a hook handler for the `:pre_node_join_hook` event with a wildcard argument.
 defmodule MyApp.Application do
   alias ProcessHub.Service.HookManager
-  alias alias ProcessHub.Constant.Hook
+  alias ProcessHub.Constant.Hook
 
   use Application
 
@@ -31,7 +31,7 @@ defmodule MyApp.Application do
       ProcessHub.child_spec(%ProcessHub{
         hub_id: :my_hub,
         hooks: %{
-          Hook.pre_cluster_join() => [
+          Hook.pre_node_join() => [
             %HookManager{
               id: :hook_id_1,
               m: MyModule,
@@ -45,7 +45,7 @@ defmodule MyApp.Application do
               a: [:some_data]
             }
           ],
-          Hook.post_cluster_join() => [
+          Hook.post_node_join() => [
             %HookManager{
               id: :hook_id_3,
               m: MyModule,
@@ -71,12 +71,12 @@ Example:
 alias ProcessHub.Service.HookManager
 alias ProcessHub.Constant.Hook
 
-# Register a hook handler for the `:cluster_join` event with a wildcard argument.
+# Register a hook handler for the `:post_node_join_hook` event with a wildcard argument.
 ProcessHub.register_hook_handlers(
-  :my_hub, 
-  Hook.post_cluster_join(),
+  :my_hub,
+  Hook.post_node_join(),
   %HookManager{
-    id: :hook_id_30, 
+    id: :hook_id_30,
     m: MyModule,
     f: :my_function,
     a: [:some_data, :_]
@@ -102,7 +102,7 @@ block the process that is starting the child process. Instead, we can use hooks 
 `:pre_children_start` event asynchronously.
 
 Example:
-```elixir 
+```elixir
 # Register hook handler
 alias ProcessHub.Service.HookManager
 alias ProcessHub.Constant.Hook
@@ -124,12 +124,12 @@ hook_handler2 = %HookManager{
 }
 
 # We're triggering the hook when child process has been registered under the process registry.
-ProcessHub.register_hook_handlers(:my_hub, Hook.registry_pid_inserted(), [hook_handler1, hook_handler2])
+ProcessHub.register_hook_handlers(:my_hub, Hook.child_registered(), [hook_handler1, hook_handler2])
 ...
 
 # The hook handlers
 defmodule MyModule do
-  def my_first_func(hub_id, {child_id, node_pids}) do
+  def my_first_func(%{child_id: child_id, node_pids: node_pids}) do
     # Send message to all started child processes.
     Enum.each(node_pids, fn {_node, pid} ->
       Process.send(pid, :hello_world, [])
@@ -143,16 +143,17 @@ end
 ```
 
 ## Internally registered hook handlers
-ProcessHub is using hooks internally to depending on the active configuration.
+ProcessHub uses hooks internally depending on the active configuration.
 These hook handlers should never be removed or modified.
-The list of internally registered hooks ids are: 
+The list of internally registered hook handler IDs:
 - `:ch_join`
 - `:ch_leave`
 - `:ch_shutdown`
 - `:mhs_shutdown`
 - `:mhs_process_startups`
+- `:mcs_shutdown`
+- `:mcs_process_startups`
 - `:rr_post_start`
-- `:rr_post_stop`
 - `:rr_post_update`
 - `:dg_pre_start_handler`
 
@@ -161,7 +162,7 @@ The list of internally registered hooks ids are:
 Hooks can be used in custom strategy implementations to trigger events on specific actions and
 extend the functionality of the strategy.
 
-Here's an example of ProcessHub using hooks internally in the 
+Here's an example of ProcessHub using hooks internally in the
 `ProcessHub.Strategy.Distribution.ConsistentHashing` strategy implementation:
 ```elixir
 alias ProcessHub.Constant.StorageKey
@@ -182,7 +183,7 @@ def init(_strategy, hub) do
   }
 
   leave_handler = %HookManager{
-    id: :ch_join,
+    id: :ch_leave,
     m: ProcessHub.Strategy.Distribution.ConsistentHashing,
     f: :handle_node_leave,
     a: [hub, :_]
@@ -196,20 +197,21 @@ def init(_strategy, hub) do
     p: 100
   }
 
-  HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), join_handler)
-  HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), leave_handler)
+  HookManager.register_handler(hub.storage.hook, Hook.pre_node_join(), join_handler)
+  HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), leave_handler)
   HookManager.register_handler(hub.storage.hook, Hook.coordinator_shutdown(), shutdown_handler)
 end
 
 
 # Handler functions that will be called when the hooks are triggered.
-def handle_node_join(hub, node) do
+# Hook data is now a map: %{node: node}
+def handle_node_join(hub, %{node: node}) do
   hash_ring = Ring.get_ring(hub.storage.misc) |> Ring.add_node(node)
 
   Storage.insert(hub.storage.misc, StorageKey.hr, hash_ring)
 end
 
-def handle_node_leave(hub, node) do
+def handle_node_leave(hub, %{node: node}) do
   hash_ring = Ring.get_ring(hub.storage.misc) |> Ring.remove_node(node)
 
   Storage.insert(hub.storage.misc, StorageKey.hr, hash_ring)
@@ -217,7 +219,7 @@ end
 ```
 
 ## Hook handler priority
-ProcessHub by default does not guarantee the order of hook handler execution unless 
+ProcessHub by default does not guarantee the order of hook handler execution unless
 the hook handler specifies a **priority level**. The priority level is an integer value that
 determines the order of execution of the hook handlers. The higher the priority level, the
 earlier the hook handler will be executed. By default all hooks have a priority level of `0`.
@@ -237,15 +239,17 @@ hook_handler = %HookManager{
   p: 15 # here we set the priority level to 15.
 }
 
-ProcessHub.register_hook_handlers(:my_hub, Hook.pre_cluster_leave(), hook_handler)
+ProcessHub.register_hook_handlers(:my_hub, Hook.pre_node_leave(), hook_handler)
 ```
 
 ## Hook handler arguments
-The hook handler expects a arguments which is a list of values. 
+The hook handler expects arguments which is a list of values.
 These values will then be passed to the hook handler function in the same order.
-Some hooks dispatchers will pass additional data to the hook handler function which
+Some hook dispatchers will pass additional data to the hook handler function which
 then can be accessed using the wildcard argument in the handler function.
 These are called wildcard arguments and are represented by the `:_` symbol.
+
+All hook data is dispatched as maps for consistency.
 
 Example:
 ```elixir
@@ -259,12 +263,12 @@ hook_handler = %HookManager{
   a: [:_, :some, :something_else] # here the first argument will be the wildcard argument.
 }
 
-ProcessHub.register_hook_handlers(:my_hub, Hook.pre_cluster_join(), hook_handler)
+ProcessHub.register_hook_handlers(:my_hub, Hook.pre_node_join(), hook_handler)
 
 # Here the handler function receives the wildcard argument as the first argument.
 defmodule MyModule do
   def handle_child_start(wild_card_value, :some, :something_else) do
-    # Because we used the `:pre_cluster_join_hook` hook event the wild_card_value will be a `node()`
+    # Because we used the `:pre_node_join_hook` hook event the wild_card_value will be `%{node: node()}`
   end
 end
 ```
@@ -272,14 +276,14 @@ end
 You can familiarize yourself with the available hooks and their data in the last section of this guide.
 
 ## Listing hook handlers
-You can list all registered hook handlers for a specific hook event by calling 
+You can list all registered hook handlers for a specific hook event by calling
 the `registered_handlers/2` function from the `ProcessHub.Service.HookManager` module.
 
 Example:
 ```elixir
 iex> alias ProcessHub.Service.HookManager
-iex> alias ProcessHub.Constant.Hook 
-iex> HookManager.registered_handlers :my_hub, Hook.registry_pid_inserted()  
+iex> alias ProcessHub.Constant.Hook
+iex> HookManager.registered_handlers :my_hub, Hook.child_registered()
 [
   %ProcessHub.Service.HookManager{
     id: :handler_id_2,
@@ -297,8 +301,8 @@ You can remove a specific hook handler by calling the `cancel_handler/3` functio
 Example:
 ```elixir
 iex> alias ProcessHub.Service.HookManager
-iex> alias ProcessHub.Constant.Hook 
-iex> HookManager.cancel_handler(:my_hub, Hook.registry_pid_inserted(), :handler_id_1)
+iex> alias ProcessHub.Constant.Hook
+iex> HookManager.cancel_handler(:my_hub, Hook.child_registered(), :handler_id_1)
 :ok
 ```
 
@@ -306,29 +310,37 @@ It's also possible to dispatch hooks manually by calling the `dispatch_hook/3` o
 `dispatch_hooks/3` functions from the `ProcessHub.Service.HookManager` module.
 Although, it's not recommended to dispatch hooks manually as it can lead to unexpected behavior.
 
+## Child start flow dispatch order
+
+When children are started, hooks fire in this order:
+1. `:pre_children_start_hook` - before any children are started
+2. `:child_data_alter_hook` - for each child, to modify child data before start (alter hook)
+3. `:post_children_start_hook` - after all children are started (includes child details)
+4. `:child_registered_hook` - for each child registered in the process registry
+
 
 ## Available hooks
 {: .width-100}
 
 | Event Key                           | Trigger                                     | Data                                               |
 | ----------------------------------- | ------------------------------------------- | -------------------------------------------------- |
-| `:pre_cluster_join_hook`            | Node joins hub cluster, not handled         | `node()`                                           |
-| `:post_cluster_join_hook`           | Node joins hub cluster, handled             | `node()`                                           |
-| `:pre_cluster_leave_hook`           | Node leaves hub cluster, not handled        | `node()`                                           |
-| `:post_cluster_leave_hook`          | Node leaves hub cluster, handled            | `node()`                                           |
-| `:registry_pid_insert_hook`         | Process registered                          | `{child_id(), [{node(), pid()}]}`                  |
-| `:registry_pid_remove_hook`         | Process unregistered                        | `child_id()`                                       |
-| `:migration_handled_hook`           | Migration handler finished                  | `{node(), [child_spec()], map()}`                  |
-| `:priority_state_updated_hook`      | Priority state updated                      | `{priority_level(), list()}`                       |
-| `:pre_nodes_redistribution_hook`    | Nodes redistribution start                  | `{:nodeup or :nodedown, node()}`                   |
-| `:post_nodes_redistribution_hook`   | Nodes redistribution end                    | `{:nodeup or :nodedown, node()}`                   |
-| `:forwarded_migration_hook`         | Migration was forwarded and handled         | `[{node(), [children_start_data()]}]`              |
-| `:pre_children_start_hook`          | Before child process is started             | `ProcessHub.Handler.ChildrenAdd.StartHandle.t()`   |
-| `:post_children_start_hook`         | After child process is started              | `[{child_id(), result(), pid(), [node()]}]`        |
-| `:pre_children_redistribution_hook` | Before redistribution of children is called | `[{child_id(), node(), {:pid, pid()}}]`            |
-| `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `any()`                                            |
-| `:process_startups_hook`            | Processes have been started                 | `[%{cid: child_id, pid: pid()}]`                   |
-| `:child_process_pid_update_hook`    | Child process restarted with new pid        | `{node(), child_id()}`                             |
+| `:pre_node_join_hook`               | Node joins hub cluster, before handling     | `%{node: node()}`                                  |
+| `:post_node_join_hook`              | Node joins hub cluster, after handling      | `%{node: node()}`                                  |
+| `:pre_node_leave_hook`              | Node leaves hub cluster, before handling    | `%{node: node()}`                                  |
+| `:post_node_leave_hook`             | Node leaves hub cluster, after handling     | `%{node: node()}`                                  |
+| `:child_registered_hook`            | Process registered                          | `%{child_id: child_id(), node_pids: [{node(), pid()}]}` |
+| `:child_unregistered_hook`          | Process unregistered                        | `%{child_id: child_id()}`                          |
+| `:migration_completed_hook`         | Migration handler finished                  | `%{nodes: [node()], child_specs: [child_spec()]}`  |
+| `:pre_redistribution_hook`          | Nodes redistribution start                  | `%{event: :node_join \| :node_leave, nodes: [node()]}` |
+| `:post_redistribution_hook`         | Nodes redistribution end                    | `%{event: :node_join \| :node_leave, nodes: [node()]}` |
+| `:children_forwarded_hook`          | Children forwarded to other nodes           | `%{forwards: [{node(), [map()]}]}`                 |
+| `:pre_children_start_hook`          | Before child process is started             | `%{request: request, hub: hub}`                    |
+| `:post_children_start_hook`         | After child processes are started           | `%{children: [%{child_id: cid, pid: pid, result: result, nodes: [node()], child_spec: spec, metadata: map()}]}` |
+| `:pre_children_redistribution_hook` | Before redistribution of children is called | `%{children: list(), event: :node_leave, node: node()}` |
+| `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `%{reason: any()}`                                 |
+| `:child_pid_updated_hook`           | Child process restarted with new pid        | `%{node: node(), pid: pid()}`                      |
+| `:handover_delivered_hook`          | Handover states delivered to migrated procs | `%{child_ids: [child_id()], target_node: node()}`  |
+| `:scoreboard_updated_hook`          | Load balancer scoreboard updated            | `%{scoreboard: term(), node: node()}`              |
 
 
 ## Alter hooks
@@ -341,7 +353,7 @@ Registering an alter hook is exactly the same as registering a normal hook.
 
 Alter hooks **must return** the modified data in the same format as the original data.
 
-> ⚠️ **Warning**
+> **Warning**
 > Alter hooks should be used with caution as they can lead to unexpected behavior if not used properly.
 > For example, if you modify the hook data in an alter hook, it will be passed to the next hook handler
 > and can cause unexpected behavior if the next hook handler or the code is not expecting the modified data.

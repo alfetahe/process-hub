@@ -52,8 +52,8 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
         # Dispatch the nodes pre redistribution event.
         HookManager.dispatch_hook(
           hub.storage.hook,
-          Hook.pre_nodes_redistribution(),
-          {:nodeup, nodes}
+          Hook.pre_redistribution(),
+          %{event: :node_join, nodes: nodes}
         )
 
         # Handle the redistribution of processes.
@@ -73,15 +73,15 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
            hub: %Hub{storage: %{hook: hook_storage}}
          }) do
       Enum.each(nodes, fn node ->
-        HookManager.dispatch_hook(hook_storage, Hook.post_cluster_join(), %{
-          joined_node: node
+        HookManager.dispatch_hook(hook_storage, Hook.post_node_join(), %{
+          node: node
         })
       end)
 
       HookManager.dispatch_hook(
         hook_storage,
-        Hook.post_nodes_redistribution(),
-        %{joined_node: nodes}
+        Hook.post_redistribution(),
+        %{event: :node_join, nodes: nodes}
       )
     end
 
@@ -170,15 +170,15 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
 
     defp dispatch_post_hooks(%__MODULE__{hub: %Hub{storage: %{hook: hook_storage}}} = arg) do
       Enum.each(arg.removed_nodes, fn node ->
-        HookManager.dispatch_hook(hook_storage, Hook.post_cluster_leave(), %{
-          removed_node: node
+        HookManager.dispatch_hook(hook_storage, Hook.post_node_leave(), %{
+          node: node
         })
       end)
 
       HookManager.dispatch_hook(
         hook_storage,
-        Hook.post_nodes_redistribution(),
-        %{removed_nodes: arg.removed_nodes}
+        Hook.post_redistribution(),
+        %{event: :node_leave, nodes: arg.removed_nodes}
       )
     end
 
@@ -205,8 +205,8 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
       Enum.each(arg.removed_nodes, fn node ->
         HookManager.dispatch_hook(
           arg.hub.storage.hook,
-          Hook.pre_nodes_redistribution(),
-          {:nodedown, node}
+          Hook.pre_redistribution(),
+          %{event: :node_leave, nodes: [node]}
         )
       end)
 
@@ -291,7 +291,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
       HookManager.dispatch_hook(
         arg.hub.storage.hook,
         Hook.pre_children_redistribution(),
-        {children, {:down, first_node}}
+        %{children: children, event: :node_leave, node: first_node}
       )
     end
 

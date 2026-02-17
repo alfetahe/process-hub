@@ -255,7 +255,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Inserts information about a child process into the registry.
 
   ## Hook Behavior
-  This function will dispatch the `:registry_pid_insert_hook` hook if the `:hook_storage`
+  This function will dispatch the `:child_registered_hook` hook if the `:hook_storage`
   option is provided. If `:hook_storage` is `nil` or not provided, no hooks will be fired.
 
   ## Options
@@ -273,7 +273,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Deletes information about a child process from the registry.
 
   ## Hook Behavior
-  This function will dispatch the `:registry_pid_remove_hook` hook if the `:hook_storage`
+  This function will dispatch the `:child_unregistered_hook` hook if the `:hook_storage`
   option is provided. If `:hook_storage` is `nil` or not provided, no hooks will be fired.
 
   ## Options
@@ -288,7 +288,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Inserts information about multiple child processes into the registry.
 
   ## Hook Behavior
-  This function will dispatch the `:registry_pid_insert_hook` hook for each child process
+  This function will dispatch the `:child_registered_hook` hook for each child process
   if the `:hook_storage` option is provided. If `:hook_storage` is `nil` or not provided,
   no hooks will be fired.
 
@@ -318,7 +318,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Deletes information about multiple child processes from the registry.
 
   ## Hook Behavior
-  This function will dispatch the `:registry_pid_remove_hook` hook for each child process
+  This function will dispatch the `:child_unregistered_hook` hook for each child process
   if the `:hook_storage` option is provided. If `:hook_storage` is `nil` or not provided,
   no hooks will be fired.
 
@@ -383,8 +383,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
     if hook_storage do
       HookManager.dispatch_hook(
         hook_storage,
-        Hook.registry_pid_inserted(),
-        {child_spec.id, child_nodes}
+        Hook.child_registered(),
+        %{child_id: child_spec.id, node_pids: child_nodes}
       )
     end
 
@@ -401,7 +401,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
     if hook_storage do
-      HookManager.dispatch_hook(hook_storage, Hook.registry_pid_removed(), child_id)
+      HookManager.dispatch_hook(hook_storage, Hook.child_unregistered(), %{child_id: child_id})
     end
 
     :ok
@@ -435,7 +435,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
           end
 
         if is_list(diff) && length(diff) > 0 do
-          {Hook.registry_pid_inserted(), {child_spec.id, diff}}
+          {Hook.child_registered(), %{child_id: child_spec.id, node_pids: diff}}
         end
       end)
       |> Enum.filter(&is_tuple/1)
@@ -471,7 +471,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
               handle_delete(hub_id, child_id, [])
             end
 
-            {Hook.registry_pid_removed(), {child_id, rem_nodes}}
+            {Hook.child_unregistered(), %{child_id: child_id}}
         end
       end)
       |> Enum.reject(&is_nil/1)

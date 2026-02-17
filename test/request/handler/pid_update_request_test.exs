@@ -37,7 +37,7 @@ defmodule Test.Request.Handler.PidUpdateRequestTest do
         a: [self(), :pid_updated]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.child_process_pid_update(), hook)
+      HookManager.register_handler(hub.storage.hook, Hook.child_pid_updated(), hook)
 
       # Pre-insert a child
       child_spec = %{id: :update_child, start: {:mod, :fun, []}}

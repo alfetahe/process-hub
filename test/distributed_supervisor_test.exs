@@ -13,9 +13,9 @@ defmodule Test.Service.DistributedSupervisorTest do
   end
 
   test "process self shutdown", %{hub: hub} do
-    handler = Bag.recv_hook(Hook.registry_pid_removed(), self())
+    handler = Bag.recv_hook(Hook.child_unregistered(), self())
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_removed(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.child_unregistered(), handler)
 
     child_spec1 = %{
       id: :self_shutdown_1,
@@ -38,7 +38,7 @@ defmodule Test.Service.DistributedSupervisorTest do
     GenServer.cast(:self_shutdown_1, {:stop, :normal})
     GenServer.cast(:self_shutdown_2, {:stop, :shutdown})
 
-    Bag.receive_multiple(2, Hook.registry_pid_removed())
+    Bag.receive_multiple(2, Hook.child_unregistered())
 
     # Make sure the child has been removed from registry
     assert ProcessHub.process_list(@hub_id, :global) === []

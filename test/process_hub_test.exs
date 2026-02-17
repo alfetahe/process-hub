@@ -627,7 +627,7 @@ defmodule ProcessHubTest do
     result1 =
       ProcessHub.register_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.pre_cluster_join(),
+        ProcessHub.Constant.Hook.pre_node_join(),
         [handler1]
       )
 
@@ -653,7 +653,7 @@ defmodule ProcessHubTest do
     result2 =
       ProcessHub.register_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.post_cluster_join(),
+        ProcessHub.Constant.Hook.post_node_join(),
         [handler2, handler3]
       )
 
@@ -663,7 +663,7 @@ defmodule ProcessHubTest do
     duplicate_result =
       ProcessHub.register_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.pre_cluster_join(),
+        ProcessHub.Constant.Hook.pre_node_join(),
         [handler1]
       )
 
@@ -673,7 +673,7 @@ defmodule ProcessHubTest do
     duplicate_multiple_result =
       ProcessHub.register_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.post_cluster_join(),
+        ProcessHub.Constant.Hook.post_node_join(),
         [handler2, handler3]
       )
 
@@ -709,7 +709,7 @@ defmodule ProcessHubTest do
 
     ProcessHub.register_hook_handlers(
       hub_id,
-      ProcessHub.Constant.Hook.registry_pid_inserted(),
+      ProcessHub.Constant.Hook.child_registered(),
       [handler1, handler2, handler3]
     )
 
@@ -717,7 +717,7 @@ defmodule ProcessHubTest do
     result1 =
       ProcessHub.cancel_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        ProcessHub.Constant.Hook.child_registered(),
         [:cancel_test_hook_1]
       )
 
@@ -727,7 +727,7 @@ defmodule ProcessHubTest do
     result2 =
       ProcessHub.cancel_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        ProcessHub.Constant.Hook.child_registered(),
         [:cancel_test_hook_2, :cancel_test_hook_3]
       )
 
@@ -737,7 +737,7 @@ defmodule ProcessHubTest do
     result3 =
       ProcessHub.cancel_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        ProcessHub.Constant.Hook.child_registered(),
         [:non_existing_handler]
       )
 
@@ -747,7 +747,7 @@ defmodule ProcessHubTest do
     result4 =
       ProcessHub.cancel_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.registry_pid_removed(),
+        ProcessHub.Constant.Hook.child_unregistered(),
         [:some_handler]
       )
 
@@ -770,7 +770,7 @@ defmodule ProcessHubTest do
     :ok =
       ProcessHub.register_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        ProcessHub.Constant.Hook.child_registered(),
         [handler]
       )
 
@@ -787,7 +787,7 @@ defmodule ProcessHubTest do
     :ok =
       ProcessHub.cancel_hook_handlers(
         hub_id,
-        ProcessHub.Constant.Hook.registry_pid_inserted(),
+        ProcessHub.Constant.Hook.child_registered(),
         [:integration_test_hook]
       )
 

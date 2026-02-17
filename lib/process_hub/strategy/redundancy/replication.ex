@@ -154,12 +154,10 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     end
   end
 
-  @spec handle_post_start(struct(), Hub.t(), [
-          {ProcessHub.child_id(), pid(), [node()]}
-        ]) :: :ok
+  @spec handle_post_start(struct(), Hub.t(), %{children: list()}) :: :ok
   def handle_post_start(%__MODULE__{redundancy_signal: :none}, _, _), do: :ok
 
-  def handle_post_start(strategy, hub, post_start_data) do
+  def handle_post_start(strategy, hub, %{children: post_start_data}) do
     # Fetch canonical node list from distribution strategy to ensure consistent mode calculation
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     repl_fact = RedundancyStrategy.replication_factor(strategy)
@@ -167,12 +165,12 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
     # Batch belongs_to() call for all children upfront instead of
     # calling it individually inside the loop.
-    all_child_ids = Enum.map(post_start_data, &elem(&1, 0))
+    all_child_ids = Enum.map(post_start_data, & &1.child_id)
 
     canonical_nodes_map =
       DistributionStrategy.belongs_to(dist_strat, hub, all_child_ids, repl_fact)
 
-    Enum.each(post_start_data, fn {child_id, res, child_pid, _child_nodes} ->
+    Enum.each(post_start_data, fn %{child_id: child_id, result: res, pid: child_pid} ->
       # Only process if:
       # 1. child_pid is a local pid
       # 2. The process was actually newly started (result is :ok), not already_started
@@ -205,15 +203,22 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
   @spec handle_post_update(
           struct(),
           Hub.t(),
-          {[{ProcessHub.child_id(), [node()], keyword()}], {:up | :down, node()}}
+          %{children: list(), event: atom(), node: node()}
         ) :: :ok
   def handle_post_update(%__MODULE__{redundancy_signal: :none}, _, _), do: :ok
 
   def handle_post_update(
         %__MODULE__{replication_model: :active_passive} = strategy,
         hub,
-        {processes_data, {node_action, node}}
+        %{children: processes_data, event: event, node: node}
       ) do
+    node_action =
+      case event do
+        :node_leave -> :down
+        :node_join -> :up
+        other -> other
+      end
+
     # Process both UP and DOWN events
     # For UP events: use curr_master_on_stable (excludes joining node) for mode decisions
     # For DOWN events: use curr_master_new (remaining nodes)

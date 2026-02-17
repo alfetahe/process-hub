@@ -185,11 +185,11 @@ defmodule Test.Helper.Common do
 
     case type do
       :add ->
-        [{:start_children, Hook.registry_pid_inserted(), "Child add timeout.", child_specs}]
+        [{:start_children, Hook.child_registered(), "Child add timeout.", child_specs}]
 
       :rem ->
         child_ids = Enum.map(child_specs, & &1.id)
-        [{:stop_children, Hook.registry_pid_removed(), "Child remove timeout.", child_ids}]
+        [{:stop_children, Hook.child_unregistered(), "Child remove timeout.", child_ids}]
     end
     |> sync_type_exec(hub_id, opts)
   end
@@ -260,7 +260,7 @@ defmodule Test.Helper.Common do
 
     Bag.receive_multiple(
       length(Node.list()) * length(child_specs),
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       error_msg: "Child add timeout."
     )
   end
@@ -274,7 +274,7 @@ defmodule Test.Helper.Common do
 
     Bag.receive_multiple(
       length(Node.list()) * length(child_specs),
-      Hook.registry_pid_removed(),
+      Hook.child_unregistered(),
       error_msg: "Child remove timeout."
     )
   end
@@ -293,7 +293,7 @@ defmodule Test.Helper.Common do
 
     Bag.receive_multiple(
       length(child_specs),
-      Hook.registry_pid_removed(),
+      Hook.child_unregistered(),
       error_msg: "Child remove timeout."
     )
   end
@@ -320,7 +320,7 @@ defmodule Test.Helper.Common do
 
     Bag.receive_multiple(
       length(child_specs),
-      Hook.registry_pid_inserted(),
+      Hook.child_registered(),
       error_msg: "Child add timeout."
     )
   end
@@ -535,7 +535,7 @@ defmodule Test.Helper.Common do
       end
 
       receive do
-        {key, _data} when key in [:registry_pid_insert_hook, :registry_pid_remove_hook] ->
+        {key, _data} when key in [:child_registered_hook, :child_unregistered_hook] ->
           await_registry_stable_loop(hub_id, child_specs, rf, deadline)
 
         _other ->

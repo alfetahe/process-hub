@@ -122,7 +122,7 @@ defmodule ProcessHub.Coordinator do
     HookManager.dispatch_hook(
       state.storage.hook,
       Hook.coordinator_shutdown(),
-      reason
+      %{reason: reason}
     )
 
     # Notify all the nodes in the cluster that this node is leaving the hub.

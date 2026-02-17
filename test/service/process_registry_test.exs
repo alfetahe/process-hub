@@ -49,7 +49,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :bulk_insert_test]
     }
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_inserted(), hook)
+    HookManager.register_handler(hub.storage.hook, Hook.child_registered(), hook)
 
     assert ProcessRegistry.dump(hub_id) === %{}
 
@@ -77,7 +77,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :bulk_delete]
     }
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_removed(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.child_unregistered(), handler)
 
     assert ProcessRegistry.dump(hub_id) === %{}
 
@@ -125,7 +125,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :insert_test]
     }
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_inserted(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.child_registered(), handler)
 
     children = %{
       1 =>
@@ -167,7 +167,7 @@ defmodule Test.Service.ProcessRegistryTest do
       a: [self(), :delete_test]
     }
 
-    HookManager.register_handler(hub.storage.hook, Hook.registry_pid_removed(), handler)
+    HookManager.register_handler(hub.storage.hook, Hook.child_unregistered(), handler)
 
     children = %{
       1 => {%{id: 1, start: {:firstmod, :firstfunc, [1, 2]}}, [{:node1, :pid1}, {:node2, :pid2}]},

@@ -183,11 +183,12 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   def handle_shutdown(_struct, _hub), do: :ok
 
   @doc false
-  def handle_process_startups(%__MODULE__{handover: true} = _struct, hub, cpids) do
+  def handle_process_startups(%__MODULE__{handover: true} = _struct, hub, %{children: children}) do
+    cpids = Enum.map(children, fn %{child_id: cid, pid: pid} -> %{cid: cid, pid: pid} end)
     SwapMigration.handle_process_startups(hub, cpids, StorageKey.mcsk(), :coldswap_handover)
   end
 
-  def handle_process_startups(_struct, _hub, _pids), do: nil
+  def handle_process_startups(_struct, _hub, _data), do: nil
 
   @doc false
   def handle_storage_update(hub, data) do
@@ -214,7 +215,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         shutdown_handler
       )
 
-      # Register for process startups (graceful shutdown handover delivery)
+      # Register for post children start (graceful shutdown handover delivery)
       process_startups_handler = %HookManager{
         id: :mcs_process_startups,
         m: ColdSwap,
@@ -225,7 +226,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
       HookManager.register_handler(
         hub.storage.hook,
-        Hook.process_startups(),
+        Hook.post_children_start(),
         process_startups_handler
       )
 

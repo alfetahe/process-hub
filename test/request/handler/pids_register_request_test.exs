@@ -35,7 +35,7 @@ defmodule Test.Request.Handler.PidsRegisterRequestTest do
         a: [self(), :pid_registered]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.registry_pid_inserted(), hook)
+      HookManager.register_handler(hub.storage.hook, Hook.child_registered(), hook)
 
       assert ProcessRegistry.dump(hub_id) == %{}
 

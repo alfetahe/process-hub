@@ -49,7 +49,7 @@ defmodule Test.Strategy.Migration.AutonomousTest do
       MigrationStrategy.init(strategy, hub)
 
       assert HookManager.registered_handlers(hub.storage.hook, Hook.coordinator_shutdown()) == []
-      assert HookManager.registered_handlers(hub.storage.hook, Hook.process_startups()) == []
+      assert HookManager.registered_handlers(hub.storage.hook, Hook.post_children_start()) == []
     end
   end
 

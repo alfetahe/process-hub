@@ -134,7 +134,7 @@ defmodule Test.Strategy.Distribution.ConsistentHashingTest do
       hash_ring = Ring.create_ring(nodes)
       Storage.insert(hub.storage.misc, StorageKey.hr(), hash_ring)
 
-      ConsistentHashing.handle_node_join(hub, :new_node@host)
+      ConsistentHashing.handle_node_join(hub, %{node: :new_node@host})
 
       updated_ring = Storage.get(hub.storage.misc, StorageKey.hr())
       # Verify the new node is in the ring by checking it can be assigned
@@ -149,7 +149,7 @@ defmodule Test.Strategy.Distribution.ConsistentHashingTest do
       hash_ring = Ring.create_ring(nodes)
       Storage.insert(hub.storage.misc, StorageKey.hr(), hash_ring)
 
-      ConsistentHashing.handle_node_leave(hub, :leaving@host)
+      ConsistentHashing.handle_node_leave(hub, %{node: :leaving@host})
 
       updated_ring = Storage.get(hub.storage.misc, StorageKey.hr())
       # Verify the node is no longer in the ring

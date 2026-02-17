@@ -35,7 +35,7 @@ defmodule Test.Request.Handler.PidsUnregisterRequestTest do
         a: [self(), :pid_unregistered]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.registry_pid_removed(), hook)
+      HookManager.register_handler(hub.storage.hook, Hook.child_unregistered(), hook)
 
       # Pre-insert 3 children
       insert_data = %{

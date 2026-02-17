@@ -97,7 +97,7 @@ defmodule ProcessHub.Service.Cluster do
   def handle_node_down(%{removed_nodes: removed_nodes, hub: hub}) do
     # Dispatch pre hooks for all nodes
     Enum.each(removed_nodes, fn n ->
-      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_cluster_leave(), n)
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_leave(), %{node: n})
     end)
 
     # Remove nodes from cluster state first (serialized here in worker)
@@ -122,7 +122,7 @@ defmodule ProcessHub.Service.Cluster do
   def handle_node_up(%{joined_nodes: joined_nodes, hub: hub}) do
     # Dispatch pre hooks for all nodes
     Enum.each(joined_nodes, fn n ->
-      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_cluster_join(), n)
+      HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_join(), %{node: n})
     end)
 
     # Add nodes to cluster state FIRST (consistent with handle_node_down)

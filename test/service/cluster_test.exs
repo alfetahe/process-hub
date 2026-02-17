@@ -67,7 +67,7 @@ defmodule Test.Service.ClusterTest do
   test "handle_node_down removes nodes and dispatches hooks", %{hub: hub} = _context do
     test_pid = self()
 
-    # Register hook to capture pre_cluster_leave dispatches
+    # Register hook to capture pre_node_leave dispatches
     pre_leave_handler = %ProcessHub.Service.HookManager{
       id: :cluster_test_node_down_pre,
       m: ProcessHub.Utility.Bag,
@@ -84,13 +84,13 @@ defmodule Test.Service.ClusterTest do
 
     ProcessHub.Service.HookManager.register_handler(
       hub.storage.hook,
-      ProcessHub.Constant.Hook.pre_cluster_leave(),
+      ProcessHub.Constant.Hook.pre_node_leave(),
       pre_leave_handler
     )
 
     ProcessHub.Service.HookManager.register_handler(
       hub.storage.hook,
-      ProcessHub.Constant.Hook.post_cluster_leave(),
+      ProcessHub.Constant.Hook.post_node_leave(),
       post_leave_handler
     )
 
@@ -111,13 +111,13 @@ defmodule Test.Service.ClusterTest do
     refute :down_node1 in nodes_after
     refute :down_node2 in nodes_after
 
-    # Verify pre_cluster_leave hooks were dispatched for each removed node
-    assert_receive {:pre_leave_hook, :down_node1}, 1000
-    assert_receive {:pre_leave_hook, :down_node2}, 1000
+    # Verify pre_node_leave hooks were dispatched for each removed node
+    assert_receive {:pre_leave_hook, %{node: :down_node1}}, 1000
+    assert_receive {:pre_leave_hook, %{node: :down_node2}}, 1000
 
-    # Verify post_cluster_leave hooks were dispatched
-    assert_receive {:post_leave_hook, %{removed_node: :down_node1}}, 1000
-    assert_receive {:post_leave_hook, %{removed_node: :down_node2}}, 1000
+    # Verify post_node_leave hooks were dispatched
+    assert_receive {:post_leave_hook, %{node: :down_node1}}, 1000
+    assert_receive {:post_leave_hook, %{node: :down_node2}}, 1000
   end
 
   test "handle_node_up adds nodes and dispatches hooks", %{hub: hub} = _context do
@@ -140,13 +140,13 @@ defmodule Test.Service.ClusterTest do
 
     ProcessHub.Service.HookManager.register_handler(
       hub.storage.hook,
-      ProcessHub.Constant.Hook.pre_cluster_join(),
+      ProcessHub.Constant.Hook.pre_node_join(),
       pre_join_handler
     )
 
     ProcessHub.Service.HookManager.register_handler(
       hub.storage.hook,
-      ProcessHub.Constant.Hook.post_cluster_join(),
+      ProcessHub.Constant.Hook.post_node_join(),
       post_join_handler
     )
 
@@ -162,13 +162,13 @@ defmodule Test.Service.ClusterTest do
     assert :up_node1 in nodes_after
     assert :up_node2 in nodes_after
 
-    # Verify pre_cluster_join hooks were dispatched for each joining node
-    assert_receive {:pre_join_hook, :up_node1}, 1000
-    assert_receive {:pre_join_hook, :up_node2}, 1000
+    # Verify pre_node_join hooks were dispatched for each joining node
+    assert_receive {:pre_join_hook, %{node: :up_node1}}, 1000
+    assert_receive {:pre_join_hook, %{node: :up_node2}}, 1000
 
-    # Verify post_cluster_join hooks were dispatched
-    assert_receive {:post_join_hook, %{joined_node: :up_node1}}, 1000
-    assert_receive {:post_join_hook, %{joined_node: :up_node2}}, 1000
+    # Verify post_node_join hooks were dispatched
+    assert_receive {:post_join_hook, %{node: :up_node1}}, 1000
+    assert_receive {:post_join_hook, %{node: :up_node2}}, 1000
   end
 
   test "handle_node_down with single node", %{hub: hub} = _context do

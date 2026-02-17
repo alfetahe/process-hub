@@ -875,7 +875,7 @@ defmodule ProcessHub do
   ## Examples
       iex> ProcessHub.register_hook_handlers(
       iex>   :my_hub,
-      iex>   ProcessHub.Constant.Hook.pre_cluster_join(),
+      iex>   ProcessHub.Constant.Hook.pre_node_join(),
       iex>   [
       iex>     %ProcessHub.Service.HookManager{
       iex>       id: :my_hook_id,
@@ -917,7 +917,7 @@ defmodule ProcessHub do
   ## Examples
       iex> ProcessHub.cancel_hook_handlers(
       iex>   :my_hub,
-      iex>   ProcessHub.Constant.Hook.pre_cluster_join(),
+      iex>   ProcessHub.Constant.Hook.pre_node_join(),
       iex>   [:my_hook_id, :another_hook_id]
       iex> )
       :ok

@@ -43,8 +43,8 @@ defmodule ProcessHub.Request.Handler.PidUpdateRequest do
 
           HookManager.dispatch_hook(
             hub.storage.hook,
-            Hook.child_process_pid_update(),
-            {node, pid}
+            Hook.child_pid_updated(),
+            %{node: node, pid: pid}
           )
       end
     end

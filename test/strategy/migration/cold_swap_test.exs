@@ -39,7 +39,7 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
 
       # Verify NO hooks were registered
       assert HookManager.registered_handlers(hub.storage.hook, Hook.coordinator_shutdown()) == []
-      assert HookManager.registered_handlers(hub.storage.hook, Hook.process_startups()) == []
+      assert HookManager.registered_handlers(hub.storage.hook, Hook.post_children_start()) == []
     end
 
     test "with handover: true registers hook handlers", %{hub: hub} do
@@ -51,7 +51,7 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
         HookManager.registered_handlers(hub.storage.hook, Hook.coordinator_shutdown())
 
       startups_handlers =
-        HookManager.registered_handlers(hub.storage.hook, Hook.process_startups())
+        HookManager.registered_handlers(hub.storage.hook, Hook.post_children_start())
 
       assert length(shutdown_handlers) == 1
       assert hd(shutdown_handlers).id == :mcs_shutdown
@@ -71,7 +71,7 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
   describe "handle_process_startups/3" do
     test "with handover: false returns nil" do
       strategy = %ColdSwap{handover: false}
-      assert ColdSwap.handle_process_startups(strategy, %{}, []) == nil
+      assert ColdSwap.handle_process_startups(strategy, %{}, %{children: []}) == nil
     end
   end
 
@@ -193,8 +193,8 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
       # Store some handover state data
       Storage.insert(hub.storage.misc, storage_key, [{:child1, :state_data}])
 
-      cpids = [%{cid: :child1, pid: self()}]
-      ColdSwap.handle_process_startups(strategy, hub, cpids)
+      children_data = %{children: [%{child_id: :child1, pid: self()}]}
+      ColdSwap.handle_process_startups(strategy, hub, children_data)
 
       assert_receive {:process_hub, :coldswap_handover, :child1, :state_data}
 
@@ -208,8 +208,8 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
 
       Storage.insert(hub.storage.misc, storage_key, [{:other_child, :state}])
 
-      cpids = [%{cid: :unknown, pid: self()}]
-      ColdSwap.handle_process_startups(strategy, hub, cpids)
+      children_data = %{children: [%{child_id: :unknown, pid: self()}]}
+      ColdSwap.handle_process_startups(strategy, hub, children_data)
 
       refute_receive {:process_hub, :coldswap_handover, _, _}
     end

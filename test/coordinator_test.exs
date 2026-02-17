@@ -145,15 +145,15 @@ defmodule CoordinatorTest do
         a: [test_pid, :hub_join, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_join(), handler)
 
       # Add multiple new nodes
       Coordinator.process_hub_join(hub, [:new_node1, :new_node2, :new_node3])
 
       # Verify hook is called with each specific node name
-      assert_receive {:hook_called, :hub_join, :new_node1}, 1000
-      assert_receive {:hook_called, :hub_join, :new_node2}, 1000
-      assert_receive {:hook_called, :hub_join, :new_node3}, 1000
+      assert_receive {:hook_called, :hub_join, %{node: :new_node1}}, 1000
+      assert_receive {:hook_called, :hub_join, %{node: :new_node2}}, 1000
+      assert_receive {:hook_called, :hub_join, %{node: :new_node3}}, 1000
 
       # Verify no extra hook calls
       refute_receive {:hook_called, :hub_join, _}, 100
@@ -170,7 +170,7 @@ defmodule CoordinatorTest do
         a: [test_pid, :hub_join_filter, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_join(), handler)
 
       # Add a node to simulate existing node
       Cluster.add_hub_node(hub.storage.misc, :existing_node)
@@ -182,7 +182,7 @@ defmodule CoordinatorTest do
       assert result.hub_id === hub.hub_id
 
       # Only the truly new node should trigger hook
-      assert_receive {:hook_called, :hub_join_filter, :truly_new_node}, 1000
+      assert_receive {:hook_called, :hub_join_filter, %{node: :truly_new_node}}, 1000
 
       # Verify only one hook call (no extra calls for filtered nodes)
       refute_receive {:hook_called, :hub_join_filter, _}, 100
@@ -198,7 +198,7 @@ defmodule CoordinatorTest do
         a: [test_pid, :node_down, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Add the node first so it can be "removed"
       Cluster.add_hub_node(hub.storage.misc, :node_to_remove)
@@ -209,7 +209,7 @@ defmodule CoordinatorTest do
       assert result.hub_id === hub.hub_id
 
       # Verify the exact node passed to hook matches expected
-      assert_receive {:hook_called, :node_down, :node_to_remove}, 1000
+      assert_receive {:hook_called, :node_down, %{node: :node_to_remove}}, 1000
     end
 
     test "process_node_down_batch ignores nodes not in hub", %{hub: hub} = _context do
@@ -222,7 +222,7 @@ defmodule CoordinatorTest do
         a: [test_pid, :node_down_ignore, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Try to remove a node that doesn't exist in the hub
       result = Coordinator.process_node_down_batch(hub, [:non_existent_node])
@@ -242,7 +242,7 @@ defmodule CoordinatorTest do
         a: [test_pid, :batch_down, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Add multiple nodes
       Cluster.add_hub_node(hub.storage.misc, :batch_node1)
@@ -256,8 +256,8 @@ defmodule CoordinatorTest do
       assert result.hub_id === hub.hub_id
 
       # Verify each valid node receives its own hook call with correct data
-      assert_receive {:hook_called, :batch_down, :batch_node1}, 1000
-      assert_receive {:hook_called, :batch_down, :batch_node2}, 1000
+      assert_receive {:hook_called, :batch_down, %{node: :batch_node1}}, 1000
+      assert_receive {:hook_called, :batch_down, %{node: :batch_node2}}, 1000
 
       # Invalid nodes don't trigger hooks
       refute_receive {:hook_called, :batch_down, :non_existent}, 100
@@ -273,7 +273,7 @@ defmodule CoordinatorTest do
         a: [test_pid, :batch_all, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Add multiple nodes
       Cluster.add_hub_node(hub.storage.misc, :all_node1)
@@ -288,10 +288,10 @@ defmodule CoordinatorTest do
       assert result.hub_id === hub.hub_id
 
       # Verify all hooks dispatched with correct node names
-      assert_receive {:hook_called, :batch_all, :all_node1}, 1000
-      assert_receive {:hook_called, :batch_all, :all_node2}, 1000
-      assert_receive {:hook_called, :batch_all, :all_node3}, 1000
-      assert_receive {:hook_called, :batch_all, :all_node4}, 1000
+      assert_receive {:hook_called, :batch_all, %{node: :all_node1}}, 1000
+      assert_receive {:hook_called, :batch_all, %{node: :all_node2}}, 1000
+      assert_receive {:hook_called, :batch_all, %{node: :all_node3}}, 1000
+      assert_receive {:hook_called, :batch_all, %{node: :all_node4}}, 1000
 
       # Verify no extra hook calls
       refute_receive {:hook_called, :batch_all, _}, 100
@@ -307,7 +307,7 @@ defmodule CoordinatorTest do
         a: [test_pid, :batch_empty, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_leave(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Try to remove nodes that don't exist
       result = Coordinator.process_node_down_batch(hub, [:non_existent1, :non_existent2])

@@ -220,7 +220,7 @@ defmodule Test.Strategy.Migration.SwapMigrationTest do
 
       HookManager.register_handler(
         hub.storage.hook,
-        Hook.migration_handled(),
+        Hook.migration_completed(),
         %HookManager{
           id: :test_migration_hook,
           m: :erlang,

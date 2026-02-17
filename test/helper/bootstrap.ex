@@ -148,19 +148,19 @@ defmodule Test.Helper.Bootstrap do
     end)
 
     # Wait for cluster to stabilize after starting hubs.
-    # Only await if post_cluster_join hook is registered
+    # Only await if post_node_join hook is registered
     has_join_hook =
       Enum.any?(listed_hooks, fn {hook, _s} ->
-        hook == Hook.post_cluster_join()
+        hook == Hook.post_node_join()
       end)
 
     skip_await = Keyword.get(opts, :skip_await, false)
 
     if has_join_hook and not skip_await do
-      # Determine scope based on whether post_cluster_join is in listed_hooks as :global
+      # Determine scope based on whether post_node_join is in listed_hooks as :global
       scope =
         if Enum.any?(listed_hooks, fn {hook, s} ->
-             hook == Hook.post_cluster_join() and s == :global
+             hook == Hook.post_node_join() and s == :global
            end) do
           :global
         else

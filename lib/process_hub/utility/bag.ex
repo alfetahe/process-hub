@@ -138,7 +138,7 @@ defmodule ProcessHub.Utility.Bag do
     count = calculate_join_message_count(joining_count, cluster_size, scope)
 
     if count > 0 do
-      receive_multiple(count, Hook.post_cluster_join(), timeout: timeout)
+      receive_multiple(count, Hook.post_node_join(), timeout: timeout)
     else
       []
     end
@@ -174,7 +174,7 @@ defmodule ProcessHub.Utility.Bag do
     count = calculate_leave_message_count(leaving_count, cluster_size, scope)
 
     if count > 0 do
-      receive_multiple(count, Hook.post_cluster_leave(), timeout: timeout)
+      receive_multiple(count, Hook.post_node_leave(), timeout: timeout)
     else
       []
     end
