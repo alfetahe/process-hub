@@ -10,5 +10,15 @@ defmodule Test.Constant.EventTest do
     assert @event_cluster_leave === :cluster_leave_event
   end
 
-  # TODO: Add other event tests.
+  test "event cluster leave batch" do
+    assert @event_cluster_leave_batch === :cluster_leave_batch_event
+  end
+
+  test "event node registry broadcast" do
+    assert @event_node_registry_broadcast === :node_registry_broadcast_event
+  end
+
+  test "event requests handle" do
+    assert @event_requests_handle === :requests_handle_event
+  end
 end

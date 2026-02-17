@@ -6,7 +6,6 @@ defmodule ProcessHub.Utility.Extractor do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
 
-  # TODO: add tests. Maybe remove.
   @doc """
   Extracts child_ids with their PIDs of the local nodes.
   """
@@ -25,7 +24,9 @@ defmodule ProcessHub.Utility.Extractor do
     end)
   end
 
-  # TODO: add tests.
+  @doc """
+  Extracts child_ids with their child_spec, node_pids, and metadata for local nodes or empty node_pids.
+  """
   @spec local_and_empty_children(ProcessHub.hub_id()) :: %{
           ProcessHub.child_id() =>
             {ProcessHub.child_spec(), [{node(), pid()}], ProcessRegistry.metadata()}

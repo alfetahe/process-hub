@@ -215,6 +215,116 @@ defmodule Test.Service.SynchronizerTest do
     assert result == :ok
   end
 
+  test "detach data preserves child when present in remote data", %{hub: hub} = _context do
+    pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    # Insert child associated with a remote node
+    ProcessRegistry.insert(hub.hub_id, %{id: :keep_me}, [{:remote@host, pid}], metadata: %{})
+
+    # Detach with remote data that INCLUDES the child — it should be preserved
+    Synchronizer.detach_data(hub, %{:remote@host => [{%{id: :keep_me}, pid, %{}}]})
+
+    assert ProcessRegistry.lookup(hub.hub_id, :keep_me) != nil
+
+    Process.exit(pid, :kill)
+  end
+
+  test "detach data mixed: removes absent children, preserves present ones",
+       %{hub: hub} = _context do
+    pid1 =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    pid2 =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    # Insert two children for the same remote node
+    ProcessRegistry.insert(hub.hub_id, %{id: :keep}, [{:remote@host, pid1}], metadata: %{})
+    ProcessRegistry.insert(hub.hub_id, %{id: :remove}, [{:remote@host, pid2}], metadata: %{})
+
+    # Remote data only contains :keep — :remove should be detached
+    Synchronizer.detach_data(hub, %{:remote@host => [{%{id: :keep}, pid1, %{}}]})
+
+    assert ProcessRegistry.lookup(hub.hub_id, :keep) != nil
+    assert ProcessRegistry.lookup(hub.hub_id, :remove) == nil
+
+    Process.exit(pid1, :kill)
+    Process.exit(pid2, :kill)
+  end
+
+  test "append data with multiple remote nodes in one call", %{hub: hub} = _context do
+    pid1 =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    pid2 =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    # Append the same child from two different remote nodes in a single call
+    Synchronizer.append_data(hub, %{
+      :node1@host => [{%{id: :multi_node}, pid1, %{tag: "n1"}}],
+      :node2@host => [{%{id: :multi_node}, pid2, %{tag: "n2"}}]
+    })
+
+    {_, nodes} = ProcessRegistry.lookup(hub.hub_id, :multi_node)
+    assert Keyword.get(nodes, :node1@host) == pid1
+    assert Keyword.get(nodes, :node2@host) == pid2
+
+    Process.exit(pid1, :kill)
+    Process.exit(pid2, :kill)
+  end
+
+  test "append data updates metadata when pid changes", %{hub: hub} = _context do
+    pid1 =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    pid2 =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    # Insert with initial metadata
+    Synchronizer.append_data(hub, %{
+      :remote@host => [{%{id: :meta_update}, pid1, %{version: 1}}]
+    })
+
+    # Update with different pid and new metadata
+    Synchronizer.append_data(hub, %{
+      :remote@host => [{%{id: :meta_update}, pid2, %{version: 2}}]
+    })
+
+    {_, nodes} = ProcessRegistry.lookup(hub.hub_id, :meta_update)
+    assert Keyword.get(nodes, :remote@host) == pid2
+
+    Process.exit(pid1, :kill)
+    Process.exit(pid2, :kill)
+  end
+
   test "broadcast_local_registry with local data", %{hub: hub} = _context do
     # Insert some local registry data first
     ProcessRegistry.insert(hub.hub_id, %{id: :broadcast_test1}, [{node(), self()}],
