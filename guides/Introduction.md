@@ -16,7 +16,7 @@ supervision tree.
     ```elixir
     def deps do
         [
-            {:process_hub, "~> 0.4.1-beta"}
+            {:process_hub, "~> 0.5.0-beta"}
         ]
     end
     ```

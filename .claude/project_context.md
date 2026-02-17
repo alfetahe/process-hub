@@ -794,7 +794,7 @@ node_count = length(cluster_nodes)
 
 ## 8. Recent Changes Summary
 
-### v0.4.1-beta (In Progress)
+### v0.5.0-beta (In Progress)
 
 **Added**:
 - `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum` - Adaptive quorum strategy
