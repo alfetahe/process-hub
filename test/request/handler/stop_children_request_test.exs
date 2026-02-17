@@ -182,8 +182,8 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
 
       assert :ok = StopChildrenRequest.execute(request, hub)
 
-      # Wait for child to be removed from registry
-      assert poll_until(fn -> ProcessRegistry.lookup(@hub_id, child_id) == nil end)
+      # Registry entry is already deleted — execute/2 is synchronous
+      assert ProcessRegistry.lookup(@hub_id, child_id) == nil
     end
 
     test "treats child not in registry as already stopped", %{hub: hub} do
@@ -288,20 +288,5 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       Process.exit(fake_pid, :kill)
       ProcessRegistry.delete(@hub_id, child_id)
     end
-  end
-
-  defp poll_until(fun, timeout \\ 2000, interval \\ 10) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    Stream.repeatedly(fn ->
-      if fun.() do
-        :done
-      else
-        if System.monotonic_time(:millisecond) > deadline,
-          do: :timeout,
-          else: Process.sleep(interval)
-      end
-    end)
-    |> Enum.find(&(&1 != nil)) == :done
   end
 end
