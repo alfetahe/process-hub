@@ -10,12 +10,23 @@ All notable changes to this project will be documented in this file.
 - New `:registry_backend` field on `%ProcessHub{}` (default `:ets`). Accepts `:ets`, `{:dets, opts}`, or `{Module, opts}` for a custom backend implementing the new behaviour.
 - Telemetry events (additive): `[:process_hub, :registry, :backend_opened]`, `[:process_hub, :registry, :backend_corrupt]`, `[:process_hub, :registry, :insert]`, `[:process_hub, :registry, :remove]`. Existing telemetry is unchanged.
 - New guide `guides/Persistence.md` covering the opt-in DETS backend, default file location, recovery semantics on corruption, telemetry events, and the operational profile.
+- Opt-in three-state coordinator boot lifecycle (`:recovery_pending → :recovering | :normal`) with a configurable peer-handshake window. Enabled via the new `:auto_recovery` field on `%ProcessHub{}` (default `false`). Accepts `false`, `true`, or `[recovery_window_ms: integer(), replay_timeout_ms: integer()]`.
+- New module `ProcessHub.Service.Recovery` housing the recovery state-machine, peer-mode exchange helpers, replay orchestration, and a synchronous-blocking hook variant for `pre_recovery_replay`.
+- New constant module `ProcessHub.Constant.RecoveryState` with the three state-name atoms.
+- New events `@event_recovery_state_announce` and `@event_recovery_state_query` on `ProcessHub.Constant.Event`. Used by the peer-mode exchange protocol; old ProcessHub versions silently drop them (graceful degradation in mixed-version clusters).
+- New hook keys on `ProcessHub.Constant.Hook`: `recovery_state_changed/0` (async, every transition), `pre_recovery_replay/0` (**synchronous** — coordinator awaits each handler; per-handler timeout derived from `:replay_timeout_ms`), and `post_recovery_replay/0` (async).
+- New public API on `ProcessHub`: `recovery_state/1` and `await_normal/2`. Both work for any hub regardless of opt-in (return `:normal` / `:ok` for non-opted-in hubs).
+- New telemetry events (additive): `[:process_hub, :coordinator, :recovery_replay_started]` and `[:process_hub, :coordinator, :recovery_replay_completed]`.
+- "Coordinator recovery" section added to `guides/Persistence.md` describing the three states, peer handshake, configuration, hooks, public API, and the recommended pairing with `registry_backend: {:dets, _}`.
 
 ### Backward compatibility
 - All existing `%ProcessHub{}` configurations continue to work without modification. The `:registry_backend` default of `:ets` matches all pre-existing behaviour.
 - `ProcessHub.Service.Storage`'s public API is unchanged.
 - `ProcessHub.Service.ProcessRegistry`'s public API is unchanged.
 - No new required runtime dependency: `:telemetry` is declared as optional in `mix.exs`; backend telemetry calls are silently no-ops when it is not loaded.
+- The `:auto_recovery` field defaults to `false`. Existing hubs see no behavioural change: `:recovery_state` is set to `:normal` at `init/1` and never transitions; the new hooks are not invoked; the new events are dispatched only when the lifecycle is active.
+- New events `@event_recovery_state_*` are silently dropped by pre-change ProcessHub versions (no handler registered) — mixed-version clusters function correctly.
+- New public functions (`recovery_state/1`, `await_normal/2`) are safe to call on any hub including hubs without opt-in.
 
 ## v0.5.0-beta - 2026-02-17
 This release adds per-child metadata support, an experimental autonomous migration strategy, and major performance optimizations for large-scale operations.

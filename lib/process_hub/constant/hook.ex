@@ -165,4 +165,37 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec scoreboard_updated() :: atom()
   def scoreboard_updated(), do: :scoreboard_updated_hook
+
+  @doc """
+  Hook dispatched on every coordinator `:recovery_state` transition when the
+  hub has opted into `:auto_recovery`.
+
+  Data: `%{from: atom(), to: atom(), reason: atom(), peers: %{node() => atom()}}`
+  """
+  @spec recovery_state_changed() :: atom()
+  def recovery_state_changed(), do: :recovery_state_changed_hook
+
+  @doc """
+  Hook dispatched once when the coordinator enters `:recovering`, before any
+  `start_children` is dispatched. This hook is dispatched **synchronously** —
+  the coordinator awaits each registered handler's reply before proceeding,
+  so handlers may block on prerequisite-service readiness.
+
+  Handlers should return quickly. Long blocks risk forcing the
+  `:replay_timeout_ms` safety path. Crashes inside handlers are caught and
+  logged; replay proceeds regardless.
+
+  Data: `%{hub_id: atom(), child_count: non_neg_integer()}`
+  """
+  @spec pre_recovery_replay() :: atom()
+  def pre_recovery_replay(), do: :pre_recovery_replay_hook
+
+  @doc """
+  Hook dispatched once when the coordinator leaves `:recovering` (whether via
+  completion or via the `:replay_timeout_ms` safety path). Async.
+
+  Data: `%{hub_id: atom(), child_count: non_neg_integer(), succeeded: non_neg_integer(), failed: non_neg_integer(), reason: atom()}`
+  """
+  @spec post_recovery_replay() :: atom()
+  def post_recovery_replay(), do: :post_recovery_replay_hook
 end

@@ -195,6 +195,22 @@ defmodule ProcessHub do
 
     See `guides/Persistence.md` for the recovery semantics, telemetry
     events, and operational profile.
+  - `:auto_recovery` is optional and enables a three-state coordinator
+    boot lifecycle (`:recovery_pending → :recovering | :normal`) with a
+    configurable peer-handshake window. The default is `false`, which
+    preserves all pre-existing behaviour. Accepted shapes:
+    - `false` — disabled (default).
+    - `true` — enabled with default options.
+    - `keyword()` — explicit options:
+      - `:recovery_window_ms` — window length in ms before falling back
+        to local replay if no peer reports `:normal`. Default `10_000`.
+        Range `[1_000, 600_000]`.
+      - `:replay_timeout_ms` — safety timeout on the `:recovering` state.
+        Default `60_000`. Range `[1_000, 3_600_000]`.
+
+    See `guides/Persistence.md` for the full state-machine, the peer
+    handshake, the new hooks, and the recommended pairing with
+    `registry_backend: {:dets, _}` for full restart-survival.
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -226,7 +242,8 @@ defmodule ProcessHub do
           cluster_event_debounce: pos_integer(),
           cross_node_request_timeout: pos_integer(),
           req_cleanup_interval: pos_integer(),
-          registry_backend: :ets | {:dets, keyword()} | {module(), keyword()}
+          registry_backend: :ets | {:dets, keyword()} | {module(), keyword()},
+          auto_recovery: false | true | keyword()
         }
 
   @enforce_keys [:hub_id]
@@ -248,7 +265,8 @@ defmodule ProcessHub do
     cluster_event_debounce: 500,
     cross_node_request_timeout: 5000,
     req_cleanup_interval: 60000,
-    registry_backend: :ets
+    registry_backend: :ets,
+    auto_recovery: false
   ]
 
   @doc """
@@ -872,6 +890,72 @@ defmodule ProcessHub do
   @spec promote_to_node(hub_id()) :: :ok | {:error, :not_alive}
   def promote_to_node(hub_id, node_name \\ node()) do
     GenServer.call(hub_id, {:promote_to_node, node_name})
+  end
+
+  @doc """
+  Returns the current `:recovery_state` of the hub's coordinator.
+
+  When the hub was started without `:auto_recovery` (or with
+  `auto_recovery: false`), this function always returns `:normal`.
+
+  When the hub does not exist, returns `:normal` (default-handle).
+
+  ## Example
+      iex> ProcessHub.recovery_state(:my_hub)
+      :normal
+  """
+  @spec recovery_state(hub_id()) :: :recovery_pending | :recovering | :normal
+  def recovery_state(hub_id) do
+    case Process.whereis(hub_id) do
+      nil ->
+        :normal
+
+      _pid ->
+        try do
+          GenServer.call(hub_id, :get_recovery_state)
+        catch
+          :exit, _ -> :normal
+        end
+    end
+  end
+
+  @doc """
+  Blocks until the hub's `recovery_state` reaches `:normal` or the timeout
+  elapses.
+
+  When the hub was started without `:auto_recovery`, returns `:ok`
+  immediately.
+
+  Returns `:ok` when the coordinator reaches `:normal` within the timeout
+  and `{:error, :timeout}` otherwise.
+
+  ## Example
+      iex> ProcessHub.await_normal(:my_hub, 30_000)
+      :ok
+  """
+  @spec await_normal(hub_id(), non_neg_integer()) :: :ok | {:error, :timeout}
+  def await_normal(hub_id, timeout_ms \\ 60_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_await_normal(hub_id, deadline)
+  end
+
+  defp do_await_normal(hub_id, deadline) do
+    case recovery_state(hub_id) do
+      :normal ->
+        :ok
+
+      _other ->
+        remaining = deadline - System.monotonic_time(:millisecond)
+
+        cond do
+          remaining <= 0 ->
+            {:error, :timeout}
+
+          true ->
+            Process.sleep(min(remaining, 50))
+            do_await_normal(hub_id, deadline)
+        end
+    end
   end
 
   @doc """

@@ -54,6 +54,13 @@ exposes:
   for the per-coordinator process registry. Accepts `:ets`,
   `{:dets, opts}`, or `{Module, opts}` (custom). See
   [guides/Persistence.md](guides/Persistence.md).
+- `:auto_recovery` *(default: `false`)* — opts into a three-state
+  coordinator boot lifecycle (`:recovery_pending → :recovering | :normal`)
+  with a configurable peer-handshake window. Accepts `false`, `true`, or
+  `[recovery_window_ms: integer(), replay_timeout_ms: integer()]`. Most
+  useful with `registry_backend: {:dets, _}` for full restart-survival.
+  See the "Coordinator recovery" section in
+  [guides/Persistence.md](guides/Persistence.md).
 
 For the full set of options and strategy documentation, see
 [guides/Configuration.md](guides/Configuration.md).

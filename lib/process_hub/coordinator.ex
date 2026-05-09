@@ -33,6 +33,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.RequestManager
   alias ProcessHub.Service.LoggerService
+  alias ProcessHub.Service.Recovery
   alias ProcessHub.Hub
 
   use Event
@@ -51,7 +52,8 @@ defmodule ProcessHub.Coordinator do
   ##############################################################################
 
   @impl true
-  @spec init({ProcessHub.t(), map(), map()}) :: {:ok, Hub.t(), {:continue, :additional_setup}}
+  @spec init({ProcessHub.t(), map(), map()}) ::
+          {:ok, Hub.t(), {:continue, :additional_setup}} | {:stop, term()}
   def init({hub_conf, procs, storage}) do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
@@ -63,10 +65,31 @@ defmodule ProcessHub.Coordinator do
       get_hub_nodes(storage.misc)
     )
 
+    case Recovery.parse_config(Map.get(hub_conf, :auto_recovery, false)) do
+      {:ok, recovery_config} ->
+        do_init(hub_conf, procs, storage, recovery_config)
+
+      {:error, {:invalid_auto_recovery, _} = reason} ->
+        {:stop, reason}
+
+      {:error, :invalid_auto_recovery} ->
+        LoggerService.warning(
+          "Invalid :auto_recovery config — falling back to disabled",
+          %{},
+          prefix: "Coordinator"
+        )
+
+        do_init(hub_conf, procs, storage, Recovery.disabled_config())
+    end
+  end
+
+  defp do_init(hub_conf, procs, storage, recovery_config) do
     state = %Hub{
       hub_id: hub_conf.hub_id,
       procs: procs,
-      storage: storage
+      storage: storage,
+      recovery_config: recovery_config,
+      recovery_state: initial_recovery_state(recovery_config)
     }
 
     hub_conf = init_strategies(state, hub_conf)
@@ -99,8 +122,22 @@ defmodule ProcessHub.Coordinator do
       |> elem(1)
       |> join_handlers(state)
 
+    state = maybe_start_recovery_window(state)
+
     {:ok, state, {:continue, :additional_setup}}
   end
+
+  defp initial_recovery_state(%{enabled?: true}), do: :recovery_pending
+  defp initial_recovery_state(_), do: :normal
+
+  defp maybe_start_recovery_window(%Hub{recovery_state: :recovery_pending} = state) do
+    timer =
+      Process.send_after(self(), :recovery_window_elapsed, state.recovery_config.recovery_window_ms)
+
+    %{state | recovery_window_timer: timer}
+  end
+
+  defp maybe_start_recovery_window(state), do: state
 
   @impl true
   def handle_continue(:additional_setup, state) do
@@ -271,6 +308,11 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_call(:get_recovery_state, _from, state) do
+    {:reply, state.recovery_state, state}
+  end
+
+  @impl true
   def handle_info({@event_requests_handle, requests}, state) do
     {:noreply, delegate_work(state, {:handle_requests, requests, state})}
   end
@@ -360,11 +402,69 @@ defmodule ProcessHub.Coordinator do
 
     state =
       if length(valid_join_nodes) > 0 do
+        # While in :recovery_pending, ask the joining peer for its current
+        # recovery state so we can decide whether to defer or replay.
+        if state.recovery_state == :recovery_pending do
+          Recovery.dispatch_query(state, valid_join_nodes)
+        end
+
+        # Always announce our own current recovery state to the joining
+        # peer(s) so peers in :recovery_pending see it.
+        if state.recovery_config.enabled? do
+          Recovery.dispatch_announce(state, valid_join_nodes)
+        end
+
         process_hub_join(state, valid_join_nodes)
       else
         state
       end
 
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({@event_recovery_state_query, from_node}, state) do
+    # Respond directly to the asking node with our current recovery state.
+    Recovery.dispatch_announce(state, [from_node])
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({@event_recovery_state_announce, {peer_node, peer_state}}, state)
+      when peer_node !== node() do
+    state = put_in(state.recovery_peers[peer_node], peer_state)
+
+    case Recovery.compute_transition(state.recovery_state, peer_state) do
+      {:transition, :normal, reason} ->
+        {:noreply, transition_to_normal_from_pending(state, reason)}
+
+      :no_change ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({@event_recovery_state_announce, _payload}, state) do
+    # Ignore announces from ourselves.
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:recovery_window_elapsed, %Hub{recovery_state: :recovery_pending} = state) do
+    state = %{state | recovery_window_timer: nil}
+
+    if Recovery.any_peer_normal?(state.recovery_peers) do
+      # A peer-normal announce was already processed but we still got here
+      # (race). Skip replay, transition directly.
+      {:noreply, transition_to_normal_from_pending(state, :peer_normal)}
+    else
+      {:noreply, run_replay_and_transition(state)}
+    end
+  end
+
+  @impl true
+  def handle_info(:recovery_window_elapsed, state) do
+    # Timer fired but state already moved on. No-op.
     {:noreply, state}
   end
 
@@ -453,6 +553,46 @@ defmodule ProcessHub.Coordinator do
   defp delegate_work(state, message) do
     GenServer.cast(state.procs.worker_queue, {:tracked, message, self()})
     %{state | pending_work_count: state.pending_work_count + 1}
+  end
+
+  # ---- Recovery transition helpers ------------------------------------------
+
+  defp transition_to_normal_from_pending(%Hub{} = state, reason) do
+    if state.recovery_window_timer do
+      Process.cancel_timer(state.recovery_window_timer)
+    end
+
+    state = %{state | recovery_state: :normal, recovery_window_timer: nil}
+
+    Recovery.dispatch_state_changed_hook(state, :recovery_pending, :normal, reason)
+
+    if state.recovery_config.enabled? do
+      Recovery.dispatch_announce(state, :external)
+    end
+
+    state
+  end
+
+  defp run_replay_and_transition(%Hub{} = state) do
+    # :recovery_pending → :recovering
+    state = %{state | recovery_state: :recovering}
+    Recovery.dispatch_state_changed_hook(state, :recovery_pending, :recovering, :window_elapsed)
+
+    if state.recovery_config.enabled? do
+      Recovery.dispatch_announce(state, :external)
+    end
+
+    result = Recovery.replay(state, state.recovery_config)
+
+    # :recovering → :normal
+    state = %{state | recovery_state: :normal}
+    Recovery.dispatch_state_changed_hook(state, :recovering, :normal, result.reason)
+
+    if state.recovery_config.enabled? do
+      Recovery.dispatch_announce(state, :external)
+    end
+
+    state
   end
 
   @doc false
@@ -622,6 +762,8 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_cluster_leave_batch)
     Blockade.add_handler(eq, @event_node_registry_broadcast)
     Blockade.add_handler(eq, @event_requests_handle)
+    Blockade.add_handler(eq, @event_recovery_state_announce)
+    Blockade.add_handler(eq, @event_recovery_state_query)
   end
 
   defp register_handlers(hook_storage, hooks) when is_map(hooks) do
