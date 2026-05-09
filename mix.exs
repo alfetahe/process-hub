@@ -41,6 +41,7 @@ defmodule ProcessHub.MixProject do
           "guides/ProcessRegistry.md",
           "guides/StartStop.md",
           "guides/Configuration.md",
+          "guides/Persistence.md",
           "guides/StateHandover.md",
           "guides/Hooks.cheatmd",
           "guides/ManualDistribution.md",
@@ -109,6 +110,9 @@ defmodule ProcessHub.MixProject do
           ],
           Services: [
             ProcessHub.Service.Storage,
+            ProcessHub.Service.Storage.Behaviour,
+            ProcessHub.Service.Storage.Ets,
+            ProcessHub.Service.Storage.Dets,
             ProcessHub.Service.ProcessRegistry,
             ProcessHub.Service.Distributor,
             ProcessHub.Service.RequestManager,
@@ -175,6 +179,7 @@ defmodule ProcessHub.MixProject do
       {:blockade, "~> 0.2.2"},
       {:hash_ring, "~> 0.4.2"},
       {:elector, "~> 0.3.2", runtime: false},
+      {:telemetry, "~> 1.0", optional: true},
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
       {:benchee, "~> 1.5", only: [:dev, :test]}
     ]
@@ -189,5 +194,5 @@ defmodule ProcessHub.MixProject do
   end
 
   defp elixirc_paths(:prod), do: ["lib"]
-  defp elixirc_paths(_), do: ["lib", "test/helper", "test/fixture", "priv/mix/tasks"]
+  defp elixirc_paths(_), do: ["lib", "test/helper", "test/fixture", "test/support", "priv/mix/tasks"]
 end

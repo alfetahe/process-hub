@@ -137,6 +137,16 @@ defmodule ProcessHub.Coordinator do
     |> Enum.each(fn pid ->
       Task.Supervisor.terminate_child(task_sup, pid)
     end)
+
+    # Close the registry backend after the rest of teardown completed.
+    case Map.get(state.storage, :registry_backend) do
+      {module, ref} ->
+        Storage.unregister_backend(state.hub_id)
+        module.close(ref)
+
+      _ ->
+        :ok
+    end
   end
 
   @impl true

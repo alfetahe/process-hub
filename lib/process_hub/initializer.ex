@@ -62,7 +62,7 @@ defmodule ProcessHub.Initializer do
 
   @impl true
   def init(%ProcessHub{hub_id: hub_id} = hub_conf) do
-    storage = setup_storage(hub_id)
+    storage = setup_storage(hub_id, hub_conf)
     procs = setup_procs(hub_id)
 
     children =
@@ -104,15 +104,26 @@ defmodule ProcessHub.Initializer do
     }
   end
 
-  defp setup_storage(hub_id) do
+  defp setup_storage(hub_id, hub_conf) do
     hook_registry = :ets.new(hub_id, [:set, :public])
     misc_storage = :ets.new(hub_id, [:set, :public])
 
+    {backend_module, backend_opts} = resolve_registry_backend(hub_conf.registry_backend)
+    {:ok, backend_ref} = backend_module.open(hub_id, backend_opts)
+    ProcessHub.Service.Storage.register_backend(hub_id, backend_module, backend_ref)
+
     %{
       hook: hook_registry,
-      misc: misc_storage
+      misc: misc_storage,
+      registry_backend: {backend_module, backend_ref}
     }
   end
+
+  defp resolve_registry_backend(:ets), do: {ProcessHub.Service.Storage.Ets, []}
+  defp resolve_registry_backend(nil), do: {ProcessHub.Service.Storage.Ets, []}
+  defp resolve_registry_backend({:dets, opts}) when is_list(opts), do: {ProcessHub.Service.Storage.Dets, opts}
+  defp resolve_registry_backend({module, opts}) when is_atom(module) and is_list(opts), do: {module, opts}
+  defp resolve_registry_backend(module) when is_atom(module), do: {module, []}
 
   defp setup_procs(hub_id) do
     system_registry = :"hub.#{hub_id}.system_registry"

@@ -36,9 +36,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   @impl GenServer
   def init(hub_id) do
-    tab = :ets.new(hub_id, [:set, :protected, :named_table])
-
-    {:ok, tab}
+    # The registry table is opened by the Coordinator (via the
+    # configured Storage.Behaviour backend). This GenServer exists to
+    # serialise mutations through `handle_call/3`; it does not own the
+    # underlying storage handle.
+    {:ok, hub_id}
   end
 
   @impl GenServer

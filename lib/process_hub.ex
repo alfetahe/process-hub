@@ -182,6 +182,19 @@ defmodule ProcessHub do
   for each cross-node request in the batch. The default is `5000` (5 seconds).
   - `:req_cleanup_interval` is optional and defines the interval in milliseconds
   for cleaning up expired pending requests. The default is `60000` (1 minute).
+  - `:registry_backend` is optional and selects the storage backend for the
+  process registry table. The default is `:ets` (in-memory; matches all
+  pre-existing behaviour). Accepted shapes:
+    - `:ets` — in-memory only. Registry contents are lost when the
+      coordinator restarts.
+    - `{:dets, opts}` — on-disk persistence via `ProcessHub.Service.Storage.Dets`.
+      Recognised opts: `path: String.t()` (file path; defaults to
+      `priv/process_hub/<hub_id>/registry.dets`).
+    - `{Module, opts}` — a custom module implementing
+      `ProcessHub.Service.Storage.Behaviour`.
+
+    See `guides/Persistence.md` for the recovery semantics, telemetry
+    events, and operational profile.
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -212,7 +225,8 @@ defmodule ProcessHub do
           dsup_shutdown_timeout: pos_integer(),
           cluster_event_debounce: pos_integer(),
           cross_node_request_timeout: pos_integer(),
-          req_cleanup_interval: pos_integer()
+          req_cleanup_interval: pos_integer(),
+          registry_backend: :ets | {:dets, keyword()} | {module(), keyword()}
         }
 
   @enforce_keys [:hub_id]
@@ -233,7 +247,8 @@ defmodule ProcessHub do
     dsup_shutdown_timeout: 60000,
     cluster_event_debounce: 500,
     cross_node_request_timeout: 5000,
-    req_cleanup_interval: 60000
+    req_cleanup_interval: 60000,
+    registry_backend: :ets
   ]
 
   @doc """

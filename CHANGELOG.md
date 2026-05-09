@@ -1,6 +1,22 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+- Pluggable registry storage backend behaviour `ProcessHub.Service.Storage.Behaviour`. Registry-table operations (`open/2`, `close/1`, `insert/3`, `insert/4`, `get/2`, `exists?/2`, `remove/2`, `export_all/1`, `foldl/3`, `match/2`, `clear_all/1`) are now routed through a configurable backend module.
+- `ProcessHub.Service.Storage.Ets` — default in-memory backend. Bit-for-bit identical observable behaviour to the prior `Storage` module.
+- `ProcessHub.Service.Storage.Dets` — opt-in on-disk persistence backend. Sync-after-write durability, `repair: true` on open, and corruption rotation (`<file>.corrupt-<monotonic>` + telemetry).
+- New `:registry_backend` field on `%ProcessHub{}` (default `:ets`). Accepts `:ets`, `{:dets, opts}`, or `{Module, opts}` for a custom backend implementing the new behaviour.
+- Telemetry events (additive): `[:process_hub, :registry, :backend_opened]`, `[:process_hub, :registry, :backend_corrupt]`, `[:process_hub, :registry, :insert]`, `[:process_hub, :registry, :remove]`. Existing telemetry is unchanged.
+- New guide `guides/Persistence.md` covering the opt-in DETS backend, default file location, recovery semantics on corruption, telemetry events, and the operational profile.
+
+### Backward compatibility
+- All existing `%ProcessHub{}` configurations continue to work without modification. The `:registry_backend` default of `:ets` matches all pre-existing behaviour.
+- `ProcessHub.Service.Storage`'s public API is unchanged.
+- `ProcessHub.Service.ProcessRegistry`'s public API is unchanged.
+- No new required runtime dependency: `:telemetry` is declared as optional in `mix.exs`; backend telemetry calls are silently no-ops when it is not loaded.
+
 ## v0.5.0-beta - 2026-02-17
 This release adds per-child metadata support, an experimental autonomous migration strategy, and major performance optimizations for large-scale operations.
 It also includes a complete hook system overhaul with consistent naming and map-based data formats, a reimplemented HotSwap migration matching ColdSwap's pattern, and removal of the event queue locking mechanism.

@@ -20,6 +20,7 @@ defmodule ProcessHub.Hub do
             event_queue: atom()
           },
           storage: %{
+            optional(:registry_backend) => {module(), term()},
             misc: :ets.tid(),
             hook: :ets.tid()
           },

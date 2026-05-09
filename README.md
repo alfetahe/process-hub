@@ -40,6 +40,23 @@ Main features include:
 - Hooks for triggering events on specific actions and extend the functionality.
 - Automatic hub cluster forming and healing when nodes join or leave the cluster.
 - Customizable and extendable to alter the default behavior of the system by implementing custom hook handlers and strategies.
+- Optional disk-backed (DETS) registry that survives coordinator restart on a single node — opt in via `:registry_backend`. See [Persistence](guides/Persistence.md).
+
+## Configuration
+
+ProcessHub configuration is controlled through the `%ProcessHub{}` struct
+(see `t:ProcessHub.t/0`). In addition to the strategy fields
+(`:redundancy_strategy`, `:migration_strategy`, `:synchronization_strategy`,
+`:partition_tolerance_strategy`, `:distribution_strategy`), the struct
+exposes:
+
+- `:registry_backend` *(default: `:ets`)* — selects the storage backend
+  for the per-coordinator process registry. Accepts `:ets`,
+  `{:dets, opts}`, or `{Module, opts}` (custom). See
+  [guides/Persistence.md](guides/Persistence.md).
+
+For the full set of options and strategy documentation, see
+[guides/Configuration.md](guides/Configuration.md).
 
 ## Installation
 

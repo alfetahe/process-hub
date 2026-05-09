@@ -72,17 +72,17 @@ defmodule ProcessHub.Worker.Janitor do
   @spec purge_pending_registry(ProcessHub.hub_id()) :: :ok
   def purge_pending_registry(hub_id) do
     # Match items with TTL in registry table (3-tuple format: {key, value, expire})
-    ttl_items = :ets.match(hub_id, {:"$1", :"$2", :"$3"})
+    ttl_items = Storage.match(hub_id, {:"$1", :"$2", :"$3"})
     curr_timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
     Enum.each(ttl_items, fn
       nil ->
         nil
 
-      [] ->
-        []
+      {} ->
+        nil
 
-      [child_id, {child_spec, _nodes, metadata}, ttl_expire] ->
+      {child_id, {child_spec, _nodes, metadata}, ttl_expire} ->
         if curr_timestamp > ttl_expire do
           log_pending_expiry(hub_id, child_id, child_spec, metadata)
           ProcessRegistry.delete(hub_id, child_id)

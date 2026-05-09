@@ -280,3 +280,11 @@ iex> ProcessHub.child_lookup(:my_hub, :regular_worker, [with_metadata: true])
   %{tag: "default"}
 }
 ```
+## Persistent registries
+
+By default the registry lives in an in-memory ETS table and is rebuilt
+from peers on coordinator restart via the synchronization strategy.
+For workloads that need restart-survival on a single node, ProcessHub
+ships an opt-in DETS-backed registry. See [Persistence](Persistence.md)
+for the configuration field, file layout, recovery semantics on
+corruption, and the telemetry events emitted by the backend.
