@@ -1,6 +1,6 @@
 defmodule ProcessHub.Service.Storage.Dets do
   @moduledoc """
-  DETS-backed registry storage. Opt-in via
+  DETS-backed registry storage. Selected via
   `registry_backend: {:dets, opts}` on `ProcessHub.t()`.
 
   ### Durability

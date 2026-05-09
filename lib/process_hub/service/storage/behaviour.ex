@@ -4,9 +4,9 @@ defmodule ProcessHub.Service.Storage.Behaviour do
 
   A backend module implements the registry-table operations used by
   `ProcessHub.Service.ProcessRegistry`. The default backend is
-  `ProcessHub.Service.Storage.Ets` (in-memory ETS). The opt-in DETS
-  backend (`ProcessHub.Service.Storage.Dets`) provides on-disk
-  persistence so the registry survives a coordinator restart.
+  `ProcessHub.Service.Storage.Ets` (in-memory ETS). The DETS backend
+  (`ProcessHub.Service.Storage.Dets`) provides on-disk persistence so
+  the registry survives a coordinator restart.
 
   All mutating callbacks return `:ok | {:error, term()}` rather than
   booleans so a backend that may fail synchronously (timeout, no quorum,

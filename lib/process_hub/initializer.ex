@@ -122,6 +122,7 @@ defmodule ProcessHub.Initializer do
   defp resolve_registry_backend(:ets), do: {ProcessHub.Service.Storage.Ets, []}
   defp resolve_registry_backend(nil), do: {ProcessHub.Service.Storage.Ets, []}
   defp resolve_registry_backend({:dets, opts}) when is_list(opts), do: {ProcessHub.Service.Storage.Dets, opts}
+  defp resolve_registry_backend({:durable_ets, opts}) when is_list(opts), do: {ProcessHub.Service.Storage.DurableEts, opts}
   defp resolve_registry_backend({module, opts}) when is_atom(module) and is_list(opts), do: {module, opts}
   defp resolve_registry_backend(module) when is_atom(module), do: {module, []}
 

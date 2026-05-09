@@ -51,8 +51,10 @@ ProcessHub configuration is controlled through the `%ProcessHub{}` struct
 exposes:
 
 - `:registry_backend` *(default: `:ets`)* — selects the storage backend
-  for the per-coordinator process registry. Accepts `:ets`,
-  `{:dets, opts}`, or `{Module, opts}` (custom). See
+  for the per-coordinator process registry. Accepts `:ets` (in-memory),
+  `{:dets, opts}` (on-disk; reads from disk),
+  `{:durable_ets, opts}` (hybrid — in-memory reads, write-through to a
+  DETS file for restart-survival), or `{Module, opts}` (custom). See
   [guides/Persistence.md](guides/Persistence.md).
 - `:auto_recovery` *(default: `false`)* — opts into a three-state
   coordinator boot lifecycle (`:recovery_pending → :recovering | :normal`)

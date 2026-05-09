@@ -215,3 +215,77 @@ inator transitions through `:recovering` with zero rows to replay and
 immediately reaches `:normal`. The combination is permitted but does
 not provide restart-survival; documentation calls this out so opera-
 tors do not assume otherwise.
+
+## Hybrid backend (`:durable_ets`)
+
+The `{:durable_ets, opts}` backend keeps an in-memory ETS table as the
+source-of-truth for both reads and writes, and mirrors every mutation
+synchronously to a DETS file for restart-survival. On open, the DETS
+file is replayed into ETS so reads are immediately authoritative.
+
+```elixir
+%ProcessHub{
+  hub_id: :my_hub,
+  registry_backend: {:durable_ets, path: "/var/lib/myapp/hub.dets"}
+}
+```
+
+`:path` defaults to `priv/process_hub/<hub_id>/registry.dets` — the
+same default as `{:dets, _}`. The file format on disk is a plain DETS
+file, so an operator can switch a hub between `{:dets, _}` and
+`{:durable_ets, _}` against the same path and pick up the existing
+rows.
+
+### Read path
+
+`get/2`, `exists?/2`, `foldl/3`, `match/2`, and `export_all/1` dispatch
+exclusively to the ETS table — equivalent to the in-memory `:ets`
+backend. Hot-path callers (`ProcessHub.child_lookup/2`,
+`process_list/2`, the `start_children` `check_existing` lookup, etc.)
+do not pay the DETS read cost.
+
+### Write path
+
+`insert/3`, `insert/4`, `remove/2`, and `clear_all/1` write to ETS
+first, then DETS, then call `:dets.sync/1` before returning. Once
+`:ok` is observed by the caller, the row is durable on disk —
+identical to the `{:dets, _}` backend's contract.
+
+If the DETS write fails (e.g. the underlying volume becomes
+read-only), the in-memory ETS write is rolled back so observers see
+consistent state and the call returns `{:error, reason}`.
+
+### Crash semantics
+
+Between the ETS write and the `:dets.sync/1` return, a row is in
+memory but not yet durable. On restart, ETS is rebuilt from DETS — an
+inflight write is lost. Identical to the `{:dets, _}` backend's
+existing crash window.
+
+### Telemetry
+
+The same events as the `{:dets, _}` backend, with the `:backend`
+metadata set to `ProcessHub.Service.Storage.DurableEts`:
+
+  * `[:process_hub, :registry, :backend_opened]`
+  * `[:process_hub, :registry, :backend_corrupt]`
+  * `[:process_hub, :registry, :insert]`
+  * `[:process_hub, :registry, :remove]`
+
+Dashboards built for the `{:dets, _}` backend continue to work; filter
+by the `:backend` metadata field if you want to distinguish the two.
+
+### Trade-offs
+
+| Concern | `:ets` | `{:dets, _}` | `{:durable_ets, _}` |
+| --- | --- | --- | --- |
+| Read latency | ETS | DETS (slower) | ETS |
+| Write latency | ETS | DETS + `fsync` | ETS + DETS + `fsync` |
+| Restart-survival | no | yes | yes |
+| RAM footprint | rows in RAM | metadata only | rows in RAM |
+| Disk footprint | none | rows on disk | rows on disk |
+
+Pick `{:durable_ets, _}` when reads dominate the workload and
+restart-survival matters. Pick `{:dets, _}` when writes dominate and
+RAM is constrained. Pick `:ets` when neither restart-survival nor
+disk durability is required.

@@ -1,9 +1,11 @@
 defmodule ProcessHub.Service.Recovery do
   @moduledoc """
-  State-machine logic for the opt-in coordinator boot-recovery lifecycle.
+  State-machine logic for the coordinator boot-recovery lifecycle.
 
   When `:auto_recovery` is enabled, the coordinator transitions through
   three states (`:recovery_pending → :recovering | :normal`) on start-up.
+  Replay only produces work when paired with a persistent
+  `:registry_backend` (e.g. `{:dets, _}`); with `:ets` the dump is empty.
   This module owns the pure helpers used by the coordinator to drive that
   lifecycle:
 

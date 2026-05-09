@@ -28,6 +28,17 @@ All notable changes to this project will be documented in this file.
 - New events `@event_recovery_state_*` are silently dropped by pre-change ProcessHub versions (no handler registered) — mixed-version clusters function correctly.
 - New public functions (`recovery_state/1`, `await_normal/2`) are safe to call on any hub including hubs without opt-in.
 
+### Added (`:durable_ets` registry backend)
+- New backend `ProcessHub.Service.Storage.DurableEts` selectable via `registry_backend: {:durable_ets, opts}`. Reads serve from an in-memory ETS table; mutations are mirrored synchronously to a DETS file (`:dets.sync/1` per write) for restart-survival. The DETS file is replayed into ETS on open, so reads are immediately authoritative.
+- The `:path` opt mirrors the `{:dets, _}` backend (same default `priv/process_hub/<hub_id>/registry.dets`); the on-disk format is a plain DETS file, so a hub can be switched between the two backends against the same path and keep its rows.
+- DETS-write errors during a mutation cause the in-memory ETS row to be rolled back so observers see consistent state and the call returns `{:error, reason}`.
+- Telemetry events match the `{:dets, _}` backend (`[:process_hub, :registry, :backend_opened | :backend_corrupt | :insert | :remove]`) with `backend: ProcessHub.Service.Storage.DurableEts` in metadata.
+- "Hybrid backend (`:durable_ets`)" section added to `guides/Persistence.md` with a side-by-side trade-off table.
+
+### Backward compatibility (`:durable_ets`)
+- Purely additive. Existing `:ets` and `{:dets, _}` configurations are untouched. The new option is opt-in.
+- No new dependency.
+
 ## v0.5.0-beta - 2026-02-17
 This release adds per-child metadata support, an experimental autonomous migration strategy, and major performance optimizations for large-scale operations.
 It also includes a complete hook system overhaul with consistent naming and map-based data formats, a reimplemented HotSwap migration matching ColdSwap's pattern, and removal of the event queue locking mechanism.

@@ -183,13 +183,22 @@ defmodule ProcessHub do
   - `:req_cleanup_interval` is optional and defines the interval in milliseconds
   for cleaning up expired pending requests. The default is `60000` (1 minute).
   - `:registry_backend` is optional and selects the storage backend for the
-  process registry table. The default is `:ets` (in-memory; matches all
-  pre-existing behaviour). Accepted shapes:
+  process registry table. The default is `:ets`. Accepted shapes:
     - `:ets` — in-memory only. Registry contents are lost when the
       coordinator restarts.
     - `{:dets, opts}` — on-disk persistence via `ProcessHub.Service.Storage.Dets`.
       Recognised opts: `path: String.t()` (file path; defaults to
-      `priv/process_hub/<hub_id>/registry.dets`).
+      `priv/process_hub/<hub_id>/registry.dets`). Reads are served from
+      DETS (slower than ETS).
+    - `{:durable_ets, opts}` — hybrid backend via
+      `ProcessHub.Service.Storage.DurableEts`. Reads are served from an
+      in-memory ETS table; mutations are mirrored synchronously to a
+      DETS file (`:dets.sync/1` per write) for restart-survival. The DETS
+      file is replayed into ETS on open, so reads are immediately
+      authoritative. Same `:path` opt and default location as `{:dets, _}`;
+      switching a hub between the two against the same path picks up the
+      existing rows. Recommended for read-heavy workloads that also need
+      durability.
     - `{Module, opts}` — a custom module implementing
       `ProcessHub.Service.Storage.Behaviour`.
 
@@ -197,8 +206,10 @@ defmodule ProcessHub do
     events, and operational profile.
   - `:auto_recovery` is optional and enables a three-state coordinator
     boot lifecycle (`:recovery_pending → :recovering | :normal`) with a
-    configurable peer-handshake window. The default is `false`, which
-    preserves all pre-existing behaviour. Accepted shapes:
+    configurable peer-handshake window. The default is `false`. Requires a
+    persistent `:registry_backend` (e.g. `{:dets, _}`) to be useful; with the
+    default `:ets` backend the replay step finds an empty registry. Accepted
+    shapes:
     - `false` — disabled (default).
     - `true` — enabled with default options.
     - `keyword()` — explicit options:
@@ -209,7 +220,7 @@ defmodule ProcessHub do
         Default `60_000`. Range `[1_000, 3_600_000]`.
 
     See `guides/Persistence.md` for the full state-machine, the peer
-    handshake, the new hooks, and the recommended pairing with
+    handshake, the hooks, and the recommended pairing with
     `registry_backend: {:dets, _}` for full restart-survival.
   """
   @type t() :: %__MODULE__{
@@ -242,7 +253,11 @@ defmodule ProcessHub do
           cluster_event_debounce: pos_integer(),
           cross_node_request_timeout: pos_integer(),
           req_cleanup_interval: pos_integer(),
-          registry_backend: :ets | {:dets, keyword()} | {module(), keyword()},
+          registry_backend:
+            :ets
+            | {:dets, keyword()}
+            | {:durable_ets, keyword()}
+            | {module(), keyword()},
           auto_recovery: false | true | keyword()
         }
 
