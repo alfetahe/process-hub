@@ -39,3 +39,9 @@ ccc-*.tar
 
 # Temporary in the gitignore until we have some benchmarks
 /lib/process_hub/benchmark
+
+# AI tooling
+.claude
+.github/prompts
+.github/skills
+openspec/changes
