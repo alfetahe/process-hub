@@ -179,3 +179,72 @@ Specifically:
 
 - **WHEN** any pre-existing call to `ProcessHub.Service.Storage.insert/3`, `Storage.get/2`, `Storage.exists?/2`, `Storage.update/3`, `Storage.remove/2`, `Storage.export_all/1`, `Storage.foldl/3`, `Storage.match/2`, or `Storage.clear_all/1` is made
 - **THEN** the function signature, return value, and side effects are identical to pre-change behaviour
+
+### Requirement: Hybrid ETS-backed durable registry backend (`:durable_ets`)
+
+ProcessHub SHALL provide an additional registry backend module `ProcessHub.Service.Storage.DurableEts` implementing `ProcessHub.Service.Storage.Behaviour`. The backend SHALL be selectable via `registry_backend: {:durable_ets, opts}` on `ProcessHub.t()`.
+
+The backend SHALL combine ETS source-of-truth read/write semantics with DETS-mirrored durability:
+
+- On `open/2`: open both an ETS table (`:set, :public`) and a DETS file (file-path resolution and corruption-rotation behaviour identical to the `:dets` backend), and replay all non-expired DETS entries into the ETS table before returning. On a corrupt DETS file the corrupt file SHALL be rotated to `<path>.corrupt-<monotonic>`, telemetry `[:process_hub, :registry, :backend_corrupt]` SHALL fire, and a fresh empty DETS file SHALL be opened. The ETS table SHALL be empty in the corrupt-rotation case (the rows were not loadable).
+- On `close/1`: close the ETS table and the DETS file.
+- All read callbacks (`get/2`, `exists?/2`, `foldl/3`, `match/2`, `export_all/1`) SHALL dispatch exclusively to ETS. The DETS file SHALL NOT be consulted on the read path.
+- All mutating callbacks (`insert/3`, `insert/4`, `remove/2`, `clear_all/1`) SHALL write to ETS first, then DETS, then call `:dets.sync/1` before returning. On DETS error the backend SHALL roll back the ETS write so observers see a consistent failed state, and SHALL return `{:error, reason}`.
+- TTL'd rows SHALL be stored as `{key, value, expire_ms}` in both ETS and DETS, matching the existing layout. Expired entries SHALL be filtered on read.
+- Telemetry events SHALL match the `:dets` backend's event names — `[:process_hub, :registry, :backend_opened | :backend_corrupt | :insert | :remove]` — with `backend: ProcessHub.Service.Storage.DurableEts` in the event metadata. Existing `:dets`-backend dashboards SHALL continue to work.
+
+The accepted `opts` SHALL match the `:dets` backend (`:path` keyword; default `priv/process_hub/<hub_id>/registry.dets`).
+
+`ProcessHub.Initializer.resolve_registry_backend/1` SHALL accept `{:durable_ets, opts}` and return `{ProcessHub.Service.Storage.DurableEts, opts}`.
+
+#### Scenario: Reads come from ETS
+
+- **GIVEN** a hub configured with `registry_backend: {:durable_ets, []}`
+- **AND** the registry contains at least one child
+- **WHEN** `ProcessHub.child_lookup/2` is called
+- **THEN** the lookup is served from ETS without calling `:dets.lookup/2`
+
+#### Scenario: Writes are durable across coordinator restart
+
+- **GIVEN** a hub configured with `registry_backend: {:durable_ets, path: "/tmp/x.dets"}`
+- **WHEN** a child is registered (`ProcessRegistry.insert/3` returns `:ok`)
+- **AND** the coordinator is stopped via `ProcessHub.Initializer.stop/1`
+- **AND** a new coordinator is started with the same `:durable_ets` path
+- **THEN** the registry returns the previously-registered child
+
+#### Scenario: ETS replay populates the table on open
+
+- **GIVEN** a DETS file containing N non-expired registry rows
+- **WHEN** the backend's `open/2` returns `{:ok, ref}`
+- **THEN** the ETS table behind `ref` contains exactly those N rows
+- **AND** subsequent reads return values without touching DETS
+
+#### Scenario: Corrupt DETS file is rotated; ETS starts empty
+
+- **GIVEN** a path containing bytes that are not a valid DETS file
+- **WHEN** a hub starts with `registry_backend: {:durable_ets, path: "<that path>"}`
+- **THEN** the corrupt file is rotated to `<path>.corrupt-<monotonic>`
+- **AND** telemetry `[:process_hub, :registry, :backend_corrupt]` fires
+- **AND** the original path holds a fresh empty DETS file
+- **AND** the ETS table starts empty
+
+#### Scenario: DETS write error rolls back the ETS write
+
+- **GIVEN** a `:durable_ets` backend in which the DETS file becomes unwritable mid-life (e.g. underlying volume goes read-only)
+- **WHEN** an `insert/3` is attempted
+- **THEN** `:ets.insert/2` is called and then rolled back via `:ets.delete/2`
+- **AND** the call returns `{:error, reason}`
+- **AND** subsequent reads do NOT see the rolled-back row
+
+### Requirement: `:registry_backend` accepts the `:durable_ets` shape
+
+The `:registry_backend` field on `ProcessHub.t()` SHALL accept the additional shape `{:durable_ets, keyword()}` alongside the existing shapes (`:ets`, `{:dets, keyword()}`, `{module, keyword()}`).
+
+The typespec on `ProcessHub.t().registry_backend` SHALL be extended to reflect the new shape. The accompanying `@doc` paragraph SHALL describe the read/write split and recommend the backend for read-heavy workloads that also need restart-survival.
+
+#### Scenario: Documented shape compiles and starts a hub
+
+- **GIVEN** a `%ProcessHub{hub_id: :h, registry_backend: {:durable_ets, []}}` settings struct
+- **WHEN** `ProcessHub.Initializer.start_link/1` is invoked
+- **THEN** the call returns `{:ok, pid}`
+- **AND** `ProcessHub.is_alive?(:h)` returns `true`
