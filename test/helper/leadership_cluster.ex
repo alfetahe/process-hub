@@ -21,16 +21,5 @@ defmodule Test.Helper.LeadershipCluster do
   end
 
   @doc "Polls `fun` until it returns truthy or the timeout elapses; returns the boolean."
-  def eventually(fun, timeout \\ 8_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    do_eventually(fun, deadline)
-  end
-
-  defp do_eventually(fun, deadline) do
-    cond do
-      fun.() -> true
-      System.monotonic_time(:millisecond) > deadline -> false
-      true -> Process.sleep(100) && do_eventually(fun, deadline)
-    end
-  end
+  def eventually(fun, timeout \\ 8_000), do: Test.Helper.Common.eventually(fun, timeout)
 end

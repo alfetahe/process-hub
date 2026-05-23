@@ -49,17 +49,17 @@ defmodule ProcessHub.Service.Leadership do
     # Undo any prior graceful step-down that marked this node ineligible.
     Application.put_env(:elector, :candidate_node, true)
 
-    case ensure_started() do
+    case Application.ensure_started(:elector) do
       :ok ->
         refresh_candidacy()
         install_election_hook()
         elect_with_retry()
-        ensure_watcher_started()
+        ensure_singleton(Watcher)
         # Pick up the leader if the watcher pre-existed (subscribed before start).
         Watcher.recheck()
         # The oracle manager hosts the leader-only oracle and keeps it failed
         # over; it subscribes to the watcher, so start it after the watcher.
-        ensure_manager_started()
+        ensure_singleton(Oracle.Manager)
         :ok
 
       {:error, _reason} = error ->
@@ -80,8 +80,8 @@ defmodule ProcessHub.Service.Leadership do
     if started?() do
       step_down()
       # Stop the manager first so it tears down the leader-hosted oracle.
-      stop_manager()
-      stop_watcher()
+      stop_singleton(Oracle.Manager)
+      stop_singleton(Watcher)
       Application.stop(:elector)
     end
 
@@ -100,7 +100,7 @@ defmodule ProcessHub.Service.Leadership do
   """
   @spec subscribe(pid()) :: :ok
   def subscribe(pid \\ self()) do
-    ensure_watcher_started()
+    ensure_singleton(Watcher)
     Watcher.subscribe(pid)
   end
 
@@ -168,13 +168,6 @@ defmodule ProcessHub.Service.Leadership do
   ### elector helpers
   ##############################################################################
 
-  defp ensure_started() do
-    case Application.ensure_started(:elector) do
-      :ok -> :ok
-      {:error, _reason} = error -> error
-    end
-  end
-
   # Normalises elector's leader response to `node() | :none`. elector returns
   # `{:ok, :undefined}` (an atom, so it takes the `{:ok, _}` branch) before the
   # first election completes, and `{:error, :leader_node_not_set}` defensively.
@@ -241,53 +234,26 @@ defmodule ProcessHub.Service.Leadership do
     :ok
   end
 
-  # The watcher is a per-node singleton whose lifecycle follows leadership, not
-  # the caller's — start it linked then unlink so it survives the caller.
-  defp ensure_watcher_started() do
-    case Watcher.whereis() do
+  # Watcher and Oracle.Manager are per-node singletons whose lifecycle follows
+  # leadership, not the caller's. Each exposes `whereis/0` and `start_link/0`;
+  # start linked then unlink so the process survives the caller.
+  defp ensure_singleton(module) do
+    case module.whereis() do
       nil ->
-        case Watcher.start_link() do
-          {:ok, pid} ->
-            :erlang.unlink(pid)
-            :ok
-
-          {:error, {:already_started, _pid}} ->
-            :ok
+        case module.start_link() do
+          {:ok, pid} -> :erlang.unlink(pid)
+          {:error, {:already_started, _pid}} -> :ok
         end
 
       _pid ->
         :ok
     end
+
+    :ok
   end
 
-  defp stop_watcher() do
-    case Watcher.whereis() do
-      nil -> :ok
-      pid -> GenServer.stop(pid)
-    end
-  end
-
-  # The oracle manager is a per-node singleton; like the watcher, start it linked
-  # then unlink so it follows leadership rather than the caller.
-  defp ensure_manager_started() do
-    case Oracle.Manager.whereis() do
-      nil ->
-        case Oracle.Manager.start_link() do
-          {:ok, pid} ->
-            :erlang.unlink(pid)
-            :ok
-
-          {:error, {:already_started, _pid}} ->
-            :ok
-        end
-
-      _pid ->
-        :ok
-    end
-  end
-
-  defp stop_manager() do
-    case Oracle.Manager.whereis() do
+  defp stop_singleton(module) do
+    case module.whereis() do
       nil -> :ok
       pid -> GenServer.stop(pid)
     end

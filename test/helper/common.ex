@@ -18,6 +18,20 @@ defmodule Test.Helper.Common do
     end)
   end
 
+  @doc "Polls `fun` until it returns truthy or `timeout` ms elapse; returns the boolean."
+  def eventually(fun, timeout \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_eventually(fun, deadline)
+  end
+
+  defp do_eventually(fun, deadline) do
+    cond do
+      fun.() -> true
+      System.monotonic_time(:millisecond) > deadline -> false
+      true -> Process.sleep(50) && do_eventually(fun, deadline)
+    end
+  end
+
   def stop_peers(peer_nodes, count) do
     stopped_peers = Enum.take(peer_nodes, count)
 

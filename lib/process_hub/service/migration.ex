@@ -17,6 +17,10 @@ defmodule ProcessHub.Service.Migration do
   If the target start fails after the source was stopped, the oracle rolls back
   by restarting the process on the source hub with the snapshot, so the process
   is never lost (it ends up in exactly one hub).
+
+  This basic migration moves a **single-instance** (e.g. `Singularity`) process: a
+  replicated child (more than one live location) returns `{:error,
+  :replicated_not_supported}` rather than collapsing its replicas.
   """
 
   alias ProcessHub.Service.Oracle
@@ -30,7 +34,7 @@ defmodule ProcessHub.Service.Migration do
   @type result() ::
           {:ok, map()}
           | {:rolled_back, term()}
-          | {:error, :no_oracle | :source_not_found | term()}
+          | {:error, :no_oracle | :source_not_found | :replicated_not_supported | term()}
 
   @doc """
   Migrates `child_id` from `source_hub` to `target_hub` with state handoff.
@@ -62,10 +66,15 @@ defmodule ProcessHub.Service.Migration do
       nil ->
         {:error, :source_not_found}
 
-      {source_spec, node_pids} ->
-        source_pid = node_pids |> List.first() |> elem(1)
-        module = spec_module(source_spec)
+      {_source_spec, node_pids} when length(node_pids) > 1 ->
+        # Basic migration moves a single-instance process; a replicated child
+        # would need replication-factor-aware placement on the target, so fail
+        # loud rather than silently collapse its replicas.
+        {:error, :replicated_not_supported}
+
+      {source_spec, [{_node, source_pid}]} ->
         target_spec = Keyword.get(opts, :target_spec, source_spec)
+        module = spec_module(source_spec)
         do_migrate(source_hub, target_hub, child_id, source_spec, source_pid, target_spec, module)
     end
   end

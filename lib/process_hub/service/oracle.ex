@@ -25,6 +25,11 @@ defmodule ProcessHub.Service.Oracle do
 
   @global_name __MODULE__
 
+  # Cap on cached coordination results (the dedup window). Reset past the cap so
+  # the cache cannot grow without bound; evicting a key just lets a future
+  # request for it be re-admitted.
+  @max_work_entries 10_000
+
   @type hub_entry() :: %{hub_id: ProcessHub.hub_id(), node: node(), metadata: map()}
 
   ##############################################################################
@@ -128,7 +133,7 @@ defmodule ProcessHub.Service.Oracle do
     case Map.get(state.work, key) do
       nil ->
         result = run_work(work)
-        {:reply, {:ok, result}, %{state | work: Map.put(state.work, key, {:done, result})}}
+        {:reply, {:ok, result}, %{state | work: remember_work(state.work, key, result)}}
 
       {:done, result} ->
         {:reply, {:already_done, result}, state}
@@ -145,4 +150,9 @@ defmodule ProcessHub.Service.Oracle do
 
   defp run_work(work) when is_function(work, 0), do: work.()
   defp run_work({m, f, a}), do: apply(m, f, a)
+
+  defp remember_work(work, key, result) do
+    work = if map_size(work) >= @max_work_entries, do: %{}, else: work
+    Map.put(work, key, {:done, result})
+  end
 end

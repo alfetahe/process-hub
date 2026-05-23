@@ -13,6 +13,8 @@ defmodule Test.ProcessHubMigrationTest do
 
   alias ProcessHub.Service.Leadership
   alias ProcessHub.Service.Oracle
+  alias ProcessHub.Service.ProcessRegistry
+  alias Test.Helper.Common
   alias Test.Helper.TestServer
 
   @hub_a :migr_hub_a
@@ -39,7 +41,7 @@ defmodule Test.ProcessHubMigrationTest do
 
   defp with_oracle() do
     assert ProcessHub.start_leadership() == :ok
-    assert eventually(fn -> Oracle.whereis() != :undefined end)
+    assert Common.eventually(fn -> Oracle.whereis() != :undefined end)
   end
 
   defp spec(id), do: %{id: id, start: {TestServer, :start_link, [%{name: id}]}}
@@ -56,12 +58,6 @@ defmodule Test.ProcessHubMigrationTest do
     GenServer.call(pid, {:get_value, key})
   end
 
-  defp eventually(fun, timeout \\ 5_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    Stream.repeatedly(fn -> fun.() || (Process.sleep(50) && false) end)
-    |> Enum.find(fn ok -> ok or System.monotonic_time(:millisecond) > deadline end)
-  end
 
   test "migrate_process returns {:error, :no_oracle} when leadership is not started" do
     refute ProcessHub.is_leader?()
@@ -118,5 +114,17 @@ defmodule Test.ProcessHubMigrationTest do
 
     # The snapshot state was restored on the source.
     assert value(@hub_a, "w3", :counter) == 42
+  end
+
+  test "migration of a replicated (multi-location) process is refused" do
+    with_oracle()
+
+    # Inject a synthetic replicated entry (two locations) into the source hub.
+    ProcessRegistry.bulk_insert(@hub_a, %{
+      "replicated" => {spec("replicated"), [{node(), self()}, {:"ghost@127.0.0.1", self()}], %{}}
+    })
+
+    assert ProcessHub.migrate_process(@hub_a, @hub_b, "replicated") ==
+             {:error, :replicated_not_supported}
   end
 end

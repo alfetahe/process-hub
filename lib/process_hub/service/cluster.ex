@@ -126,12 +126,41 @@ defmodule ProcessHub.Service.Cluster do
   """
   @spec purge_node(ProcessHub.hub_id(), node()) :: [ProcessHub.child_id()]
   def purge_node(hub_id, node) do
-    ProcessRegistry.dump_all(hub_id)
+    purge_from(hub_id, ProcessRegistry.dump_all(hub_id), MapSet.new([node]))
+  end
+
+  @doc """
+  Purges every node that is not part of the hub's current cluster from the
+  process registry. Returns the list of purged dead nodes.
+
+  Delete-only, like `purge_node/2`; it does not redistribute. Intended for
+  out-of-band reconcile and cold-boot replay sanitisation.
+  """
+  @spec purge_dead_nodes(ProcessHub.hub_id()) :: [node()]
+  def purge_dead_nodes(hub_id) do
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    cluster_nodes = MapSet.new(nodes(hub.storage.misc, [:include_local]))
+    registry = ProcessRegistry.dump_all(hub_id)
+
+    dead_nodes =
+      registry
+      |> Enum.flat_map(fn {_child_id, {_spec, node_pids, _meta}} -> Keyword.keys(node_pids) end)
+      |> Enum.uniq()
+      |> Enum.reject(fn n -> MapSet.member?(cluster_nodes, n) end)
+
+    purge_from(hub_id, registry, MapSet.new(dead_nodes))
+    dead_nodes
+  end
+
+  # Single pass over an already-dumped registry: drop every `{node, pid}` whose
+  # node is in `nodes_to_purge`, deleting entries left empty. Returns affected ids.
+  defp purge_from(hub_id, registry, nodes_to_purge) do
+    registry
     |> Enum.filter(fn {_child_id, {_spec, node_pids, _meta}} ->
-      Keyword.has_key?(node_pids, node)
+      Enum.any?(node_pids, fn {node, _pid} -> MapSet.member?(nodes_to_purge, node) end)
     end)
     |> Enum.map(fn {child_id, {_spec, node_pids, _meta}} ->
-      case Keyword.delete(node_pids, node) do
+      case Enum.reject(node_pids, fn {node, _pid} -> MapSet.member?(nodes_to_purge, node) end) do
         [] ->
           ProcessRegistry.delete(hub_id, child_id)
 
@@ -143,31 +172,6 @@ defmodule ProcessHub.Service.Cluster do
 
       child_id
     end)
-  end
-
-  @doc """
-  Purges every node that is not part of the hub's current cluster from the
-  process registry (via `purge_node/2`). Returns the list of purged dead nodes.
-
-  Delete-only, like `purge_node/2`; it does not redistribute. Intended for
-  out-of-band reconcile and cold-boot replay sanitisation.
-  """
-  @spec purge_dead_nodes(ProcessHub.hub_id()) :: [node()]
-  def purge_dead_nodes(hub_id) do
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
-    cluster_nodes = nodes(hub.storage.misc, [:include_local])
-
-    dead_nodes =
-      ProcessRegistry.dump_all(hub_id)
-      |> Enum.flat_map(fn {_child_id, {_spec, node_pids, _meta}} ->
-        Keyword.keys(node_pids)
-      end)
-      |> Enum.uniq()
-      |> Enum.reject(fn n -> n in cluster_nodes end)
-
-    Enum.each(dead_nodes, fn n -> purge_node(hub_id, n) end)
-
-    dead_nodes
   end
 
   @doc """

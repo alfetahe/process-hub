@@ -7,6 +7,7 @@ defmodule Test.ProcessHubOracleTest do
 
   alias ProcessHub.Service.Leadership
   alias ProcessHub.Service.Oracle
+  alias Test.Helper.Common
 
   setup do
     Leadership.stop()
@@ -14,18 +15,7 @@ defmodule Test.ProcessHubOracleTest do
     :ok
   end
 
-  defp wait_for_oracle(timeout \\ 5_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    do_wait(deadline)
-  end
-
-  defp do_wait(deadline) do
-    cond do
-      Oracle.whereis() != :undefined -> true
-      System.monotonic_time(:millisecond) > deadline -> false
-      true -> Process.sleep(50) && do_wait(deadline)
-    end
-  end
+  defp wait_for_oracle(), do: Common.eventually(fn -> Oracle.whereis() != :undefined end)
 
   test "client API returns {:error, :no_oracle} when leadership is not started" do
     refute ProcessHub.is_leader?()
