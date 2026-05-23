@@ -116,6 +116,61 @@ defmodule ProcessHub.Service.Cluster do
   end
 
   @doc """
+  Removes every process-registry entry that references `node`, deleting any child
+  entry left with no remaining locations. Returns the affected `child_id`s.
+
+  This is a delete-only dead-node maintenance primitive for the cases the
+  automatic `:nodedown` purge does not cover — for example `{dead_node, pid}`
+  rows replayed from a durable registry at cold boot, where no `:nodedown` event
+  ever fires. It does not redistribute; re-placement is the caller's job.
+  """
+  @spec purge_node(ProcessHub.hub_id(), node()) :: [ProcessHub.child_id()]
+  def purge_node(hub_id, node) do
+    ProcessRegistry.dump_all(hub_id)
+    |> Enum.filter(fn {_child_id, {_spec, node_pids, _meta}} ->
+      Keyword.has_key?(node_pids, node)
+    end)
+    |> Enum.map(fn {child_id, {_spec, node_pids, _meta}} ->
+      case Keyword.delete(node_pids, node) do
+        [] ->
+          ProcessRegistry.delete(hub_id, child_id)
+
+        remaining ->
+          ProcessRegistry.update(hub_id, child_id, fn spec, _node_pids, meta ->
+            {spec, remaining, meta}
+          end)
+      end
+
+      child_id
+    end)
+  end
+
+  @doc """
+  Purges every node that is not part of the hub's current cluster from the
+  process registry (via `purge_node/2`). Returns the list of purged dead nodes.
+
+  Delete-only, like `purge_node/2`; it does not redistribute. Intended for
+  out-of-band reconcile and cold-boot replay sanitisation.
+  """
+  @spec purge_dead_nodes(ProcessHub.hub_id()) :: [node()]
+  def purge_dead_nodes(hub_id) do
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    cluster_nodes = nodes(hub.storage.misc, [:include_local])
+
+    dead_nodes =
+      ProcessRegistry.dump_all(hub_id)
+      |> Enum.flat_map(fn {_child_id, {_spec, node_pids, _meta}} ->
+        Keyword.keys(node_pids)
+      end)
+      |> Enum.uniq()
+      |> Enum.reject(fn n -> n in cluster_nodes end)
+
+    Enum.each(dead_nodes, fn n -> purge_node(hub_id, n) end)
+
+    dead_nodes
+  end
+
+  @doc """
   Handles the node up event by dispatching hooks, adding nodes to cluster state,
   checking partition tolerance for quorum recovery, and triggering the node up update task.
   """
