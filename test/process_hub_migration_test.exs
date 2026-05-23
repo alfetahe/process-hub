@@ -21,7 +21,9 @@ defmodule Test.ProcessHubMigrationTest do
   @hub_b :migr_hub_b
 
   setup do
+    # Force-stop elector even if another test left it running, for a clean slate.
     Leadership.stop()
+    Application.stop(:elector)
     start_hub(@hub_a)
     start_hub(@hub_b)
 

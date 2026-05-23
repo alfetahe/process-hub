@@ -962,13 +962,14 @@ defmodule ProcessHub do
 
   The migration is coordinated by the leader-hosted oracle, which serializes and
   de-duplicates it (so two nodes cannot migrate the same process concurrently)
-  and owns the `freeze → snapshot → stop → start → commit` sequence — rolling
+  and owns the `snapshot → stop → start → deliver → commit` sequence — rolling
   back (restarting on the source with the snapshot) if the target start fails, so
   the process is never lost. Requires leadership to be started.
 
-  State handoff is explicit via the `ProcessHub.Migration.Handover` contract; with
-  no callbacks implemented the raw state is carried across verbatim. The target
-  node is chosen by the target hub's distribution strategy.
+  State handoff uses the `ProcessHub.Migration.Handover` contract — `use` its macro
+  (or implement its handler messages); a process that supports neither is migrated
+  **without** its state. The target node is chosen by the target hub's
+  distribution strategy.
 
   Returns `{:ok, info}` on success, `{:rolled_back, reason}` if the target start
   failed (process restored on the source), or `{:error, reason}` (for example

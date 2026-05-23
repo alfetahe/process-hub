@@ -10,7 +10,9 @@ defmodule Test.ProcessHubOracleTest do
   alias Test.Helper.Common
 
   setup do
+    # Force-stop elector even if another test left it running, for a clean slate.
     Leadership.stop()
+    Application.stop(:elector)
     on_exit(fn -> Leadership.stop() end)
     :ok
   end
@@ -72,5 +74,17 @@ defmodule Test.ProcessHubOracleTest do
 
     assert_received :work_ran
     refute_received :work_ran_again
+  end
+
+  test "coordinate/2 isolates a failing work item and keeps the oracle alive" do
+    assert ProcessHub.start_leadership() == :ok
+    assert wait_for_oracle()
+    pid = Oracle.whereis()
+
+    assert {:error, {_kind, _reason}} = Oracle.coordinate(:boom, fn -> raise "boom" end)
+
+    # The shared oracle did not crash, and failures are not cached (retryable).
+    assert Oracle.whereis() == pid
+    assert {:ok, :recovered} = Oracle.coordinate(:boom, fn -> :recovered end)
   end
 end

@@ -3,24 +3,29 @@ defmodule ProcessHub.Service.Migration do
   Basic, oracle-coordinated hub-to-hub process migration.
 
   `migrate_process/4` moves a process from a source hub to a target hub, handing
-  the previous process's state to the new one via the explicit
-  `ProcessHub.Migration.Handover` contract (no transparent capture).
+  the previous process's state to the new one via the `ProcessHub.Migration.Handover`
+  contract (no transparent capture).
 
   The migration is delegated to the leader-hosted oracle
   (`ProcessHub.Service.Oracle.coordinate/2`), which serializes it per
   `{child_id, source, target}` and de-duplicates redundant/concurrent requests
   (the "migration token"). The oracle, as the single owner, drives the sequence:
 
-      freeze (suspend source) → snapshot (export) → stop on source →
-      start on target → import → commit
+      snapshot (export) → stop on source → start on target → deliver → commit
 
   If the target start fails after the source was stopped, the oracle rolls back
   by restarting the process on the source hub with the snapshot, so the process
   is never lost (it ends up in exactly one hub).
 
-  This basic migration moves a **single-instance** (e.g. `Singularity`) process: a
-  replicated child (more than one live location) returns `{:error,
-  :replicated_not_supported}` rather than collapsing its replicas.
+  This basic migration moves a **single-instance** (e.g. `Singularity`) process; a
+  replicated child (more than one live location) returns
+  `{:error, :replicated_not_supported}` rather than collapsing its replicas.
+
+  > #### State handover {: .info}
+  >
+  > State is carried over only if the process supports `ProcessHub.Migration.Handover`
+  > (`use` the macro, or implement the handler messages). Otherwise it migrates
+  > **without** its state.
   """
 
   alias ProcessHub.Service.Oracle
@@ -30,6 +35,8 @@ defmodule ProcessHub.Service.Migration do
 
   # Bound on confirming a start/stop has taken effect (and synced to this node).
   @op_timeout_ms 8_000
+  # How long to wait for the source's handover state before migrating without it.
+  @handover_timeout_ms 5_000
 
   @type result() ::
           {:ok, map()}
@@ -74,8 +81,7 @@ defmodule ProcessHub.Service.Migration do
 
       {source_spec, [{_node, source_pid}]} ->
         target_spec = Keyword.get(opts, :target_spec, source_spec)
-        module = spec_module(source_spec)
-        do_migrate(source_hub, target_hub, child_id, source_spec, source_pid, target_spec, module)
+        do_migrate(source_hub, target_hub, child_id, source_spec, source_pid, target_spec)
     end
   end
 
@@ -83,19 +89,16 @@ defmodule ProcessHub.Service.Migration do
   ### Private functions
   ##############################################################################
 
-  defp do_migrate(source_hub, target_hub, child_id, source_spec, source_pid, target_spec, module) do
-    # freeze: stop the source from processing so no updates are lost between the
-    # snapshot and the stop.
-    freeze(source_pid)
-    export = export_state(module, source_pid)
-
-    # stop on source (removes it from the source registry and terminates the pid).
+  defp do_migrate(source_hub, target_hub, child_id, source_spec, source_pid, target_spec) do
+    # Snapshot the source's handover state (if it supports the contract), then
+    # stop it and start on the target. Message-based handover means nothing here
+    # blocks indefinitely or risks crashing the oracle.
+    handover = export_state(source_pid, child_id)
     stop_child(source_hub, child_id)
 
-    # start on target; the target node is chosen by the target hub's strategy.
     case start_child(target_hub, target_spec) do
       {:ok, target_pid} ->
-        import_state(module, target_pid, export)
+        deliver_state(target_pid, child_id, handover)
 
         {:ok,
          %{
@@ -108,37 +111,35 @@ defmodule ProcessHub.Service.Migration do
 
       {:error, reason} ->
         # rollback: restore the process on the source with the snapshot.
-        rollback(source_hub, source_spec, module, export)
+        rollback(source_hub, source_spec, child_id, handover)
         {:rolled_back, reason}
     end
   end
 
-  defp freeze(pid) do
-    try do
-      :sys.suspend(pid)
-    catch
-      _kind, _reason -> :ok
+  # Ask the source for its handover state via the `ProcessHub.Migration.Handover`
+  # contract. Returns `{:ok, state}` if it replies, `:no_handover` otherwise.
+  defp export_state(source_pid, child_id) do
+    send(source_pid, {:process_hub, :query_migration_handover_state, self(), child_id})
+
+    receive do
+      {:process_hub, :migration_state, ^child_id, state} -> {:ok, state}
+    after
+      @handover_timeout_ms -> :no_handover
     end
   end
 
-  defp export_state(module, pid) do
-    raw = :sys.get_state(pid)
+  defp deliver_state(_pid, _child_id, :no_handover), do: :ok
 
-    if function_exported?(module, :handover_export, 1) do
-      module.handover_export(raw)
-    else
-      raw
-    end
-  end
-
-  defp import_state(module, pid, export) do
-    if function_exported?(module, :handover_import, 2) do
-      :sys.replace_state(pid, fn state -> module.handover_import(export, state) end)
-    else
-      :sys.replace_state(pid, fn _state -> export end)
-    end
-
+  defp deliver_state(pid, child_id, {:ok, state}) do
+    send(pid, {:process_hub, :migration_handover, child_id, state})
     :ok
+  end
+
+  defp rollback(source_hub, source_spec, child_id, handover) do
+    case start_child(source_hub, source_spec) do
+      {:ok, pid} -> deliver_state(pid, child_id, handover)
+      {:error, _reason} -> :error
+    end
   end
 
   defp stop_child(hub_id, child_id) do
@@ -199,14 +200,4 @@ defmodule ProcessHub.Service.Migration do
         result
     end
   end
-
-  defp rollback(source_hub, source_spec, module, export) do
-    case start_child(source_hub, source_spec) do
-      {:ok, pid} -> import_state(module, pid, export)
-      {:error, _reason} -> :error
-    end
-  end
-
-  defp spec_module(%{start: {module, _fun, _args}}), do: module
-  defp spec_module(_spec), do: nil
 end

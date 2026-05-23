@@ -49,8 +49,13 @@ defmodule ProcessHub.Service.Leadership do
     # Undo any prior graceful step-down that marked this node ineligible.
     Application.put_env(:elector, :candidate_node, true)
 
+    # Remember whether leadership (not a distribution strategy) started elector,
+    # so `stop/0` only tears down an elector instance it actually owns.
+    owns_elector = not started?()
+
     case Application.ensure_started(:elector) do
       :ok ->
+        if owns_elector, do: Application.put_env(:process_hub, :leadership_owns_elector, true)
         refresh_candidacy()
         install_election_hook()
         elect_with_retry()
@@ -78,11 +83,26 @@ defmodule ProcessHub.Service.Leadership do
   @spec stop() :: :ok
   def stop() do
     if started?() do
-      step_down()
+      owns_elector = Application.get_env(:process_hub, :leadership_owns_elector, false)
+
+      # Only step down / stop elector when leadership owns it — never disrupt an
+      # elector instance a distribution strategy (e.g. CentralizedLoadBalancer)
+      # started.
+      if owns_elector, do: step_down()
+
       # Stop the manager first so it tears down the leader-hosted oracle.
       stop_singleton(Oracle.Manager)
       stop_singleton(Watcher)
-      Application.stop(:elector)
+
+      if owns_elector do
+        Application.delete_env(:process_hub, :leadership_owns_elector)
+        Application.stop(:elector)
+      end
+
+      # Undo the elector config that start/0 and step-down set, so it does not
+      # leak to other elector users (e.g. CentralizedLoadBalancer).
+      Application.put_env(:elector, :candidate_node, true)
+      Application.delete_env(:elector, :post_election_hooks)
     end
 
     :ok

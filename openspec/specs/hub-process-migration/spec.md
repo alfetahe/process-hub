@@ -7,10 +7,11 @@ TBD - created by archiving change cluster-leadership-and-migration. Update Purpo
 
 ProcessHub SHALL provide a basic operation to migrate a process from a source hub to a
 target hub: stop it on the source, start it on the target, and hand the previous process's
-state to the new one. State handoff SHALL be explicit via a small contract the migrated
-process implements (export the state on the source, import it on the target) — ProcessHub
-SHALL NOT attempt transparent state capture. The target node SHALL be chosen by the target
-hub's normal distribution strategy.
+state to the new one. State handoff SHALL be explicit via the `ProcessHub.Migration.Handover`
+contract the migrated process opts into (its macro, or the handler messages implemented
+manually) — ProcessHub SHALL NOT attempt transparent state capture. A process that does not
+opt in is migrated without its state. The target node SHALL be chosen by the target hub's
+normal distribution strategy.
 
 #### Scenario: Process moves to the target hub carrying its state
 - **GIVEN** a process registered in source hub A holding some state
@@ -31,8 +32,8 @@ de-duplicate redundant requests for an in-flight or completed migration.
 
 ### Requirement: Migration SHALL preserve the process across mid-operation failure
 
-The oracle SHALL own the migration sequence (freeze → snapshot → stop on source → start on
-target → commit) so a failure of the target start does not lose the process: on failure the
+The oracle SHALL own the migration sequence (snapshot → stop on source → start on target →
+deliver → commit) so a failure of the target start does not lose the process: on failure the
 oracle SHALL roll back (restart the process on the source with the snapshot).
 
 The oracle is the migration's durable owner and fails over with leadership, so coordination
@@ -47,8 +48,8 @@ this basic feature; per-process migration tokens make redundant requests idempot
 - **THEN** the process SHALL be restarted on the source hub with the snapshot state
 - **AND** the process SHALL NOT be lost (it exists in exactly one hub afterward)
 
-#### Scenario: No lost updates during handoff
-- **GIVEN** a process actively handling work on the source hub
+#### Scenario: State is captured via the handover contract
+- **GIVEN** a process that supports the handover contract on the source hub
 - **WHEN** it is migrated
-- **THEN** its state SHALL be frozen before the snapshot is taken so updates are not lost between snapshot and stop
+- **THEN** its state SHALL be captured via the contract before the source is stopped, and delivered to the new process on the target
 

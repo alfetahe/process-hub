@@ -3,8 +3,18 @@ defmodule Test.Helper.LeadershipCluster do
   # Shared helpers for multi-node leadership/oracle tests. Functions run on the
   # test (local) node and use erpc to drive remote peers.
 
-  def start_leadership_on(n) when n === node(), do: ProcessHub.start_leadership()
-  def start_leadership_on(n), do: :erpc.call(n, ProcessHub, :start_leadership, [])
+  # Force-stop any elector the node auto-started (TestNode starts loaded apps on
+  # peers) so leadership actually *owns* it here, matching production where
+  # `start_leadership/0` starts elector and `stop_leadership/0` tears it down.
+  def start_leadership_on(n) when n === node() do
+    Application.stop(:elector)
+    ProcessHub.start_leadership()
+  end
+
+  def start_leadership_on(n) do
+    :erpc.call(n, Application, :stop, [:elector])
+    :erpc.call(n, ProcessHub, :start_leadership, [])
+  end
 
   def stop_leadership_on(n) when n === node(), do: ProcessHub.stop_leadership()
   def stop_leadership_on(n), do: :erpc.call(n, ProcessHub, :stop_leadership, [])

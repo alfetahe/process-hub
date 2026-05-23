@@ -92,6 +92,7 @@ defmodule Test.ProcessHubMigrationMultinodeTest do
     assert eventually(fn -> ProcessHub.child_lookup(@hub_a, "mw") == nil end)
 
     {_spec, [{_node, new_pid}]} = ProcessHub.child_lookup(@hub_b, "mw")
-    assert GenServer.call(new_pid, {:get_value, :counter}) == 99
+    # Handover is delivered asynchronously, so poll for it.
+    assert eventually(fn -> GenServer.call(new_pid, {:get_value, :counter}) == 99 end)
   end
 end

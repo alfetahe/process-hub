@@ -10,8 +10,10 @@ defmodule Test.ProcessHubLeadershipTest do
   alias ProcessHub.Service.Leadership
 
   setup do
-    # Guarantee a clean slate — leadership must not be started when a test begins.
+    # Guarantee a clean slate — force-stop elector even if another test (e.g.
+    # CentralizedLoadBalancer) left it running, so leadership is truly not started.
     Leadership.stop()
+    Application.stop(:elector)
     on_exit(fn -> Leadership.stop() end)
     :ok
   end

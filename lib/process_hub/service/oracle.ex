@@ -131,12 +131,19 @@ defmodule ProcessHub.Service.Oracle do
   @impl true
   def handle_call({:coordinate, key, work}, _from, state) do
     case Map.get(state.work, key) do
-      nil ->
-        result = run_work(work)
-        {:reply, {:ok, result}, %{state | work: remember_work(state.work, key, result)}}
-
       {:done, result} ->
         {:reply, {:already_done, result}, state}
+
+      nil ->
+        # The work runs in the oracle process; guard it so a failing/unresponsive
+        # coordination task (e.g. a bad migration target) cannot crash this shared
+        # singleton. Failures are not cached, so they can be retried.
+        try do
+          result = run_work(work)
+          {:reply, {:ok, result}, %{state | work: remember_work(state.work, key, result)}}
+        catch
+          kind, reason -> {:reply, {:error, {kind, reason}}, state}
+        end
     end
   end
 
