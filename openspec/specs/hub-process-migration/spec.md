@@ -1,7 +1,10 @@
 # hub-process-migration Specification
 
 ## Purpose
-TBD - created by archiving change cluster-leadership-and-migration. Update Purpose after archive.
+Basic, oracle-coordinated hub-to-hub migration of a single-instance process: stop on the
+source, start on the target, with explicit state handoff via the
+`ProcessHub.Migration.Handover` contract (no transparent capture, no `:sys`). Serialized and
+de-duplicated by the oracle, with rollback on a failed target start.
 ## Requirements
 ### Requirement: A process SHALL be migratable from one hub to another with state handoff
 
@@ -11,13 +14,20 @@ state to the new one. State handoff SHALL be explicit via the `ProcessHub.Migrat
 contract the migrated process opts into (its macro, or the handler messages implemented
 manually) — ProcessHub SHALL NOT attempt transparent state capture. A process that does not
 opt in is migrated without its state. The target node SHALL be chosen by the target hub's
-normal distribution strategy.
+normal distribution strategy. This basic operation migrates a **single-instance** process; a
+replicated child (more than one live location) SHALL be refused with
+`{:error, :replicated_not_supported}` rather than collapsing its replicas.
 
 #### Scenario: Process moves to the target hub carrying its state
 - **GIVEN** a process registered in source hub A holding some state
 - **WHEN** it is migrated to target hub B
 - **THEN** it SHALL no longer be running/registered in hub A
 - **AND** it SHALL be running/registered in hub B initialized with the exported state
+
+#### Scenario: Migrating a replicated process is refused
+- **GIVEN** a child registered on more than one node (replicated)
+- **WHEN** it is migrated
+- **THEN** the operation SHALL return `{:error, :replicated_not_supported}` and SHALL NOT collapse its replicas
 
 ### Requirement: Migration SHALL be coordinated (serialized and de-duplicated) by the oracle
 

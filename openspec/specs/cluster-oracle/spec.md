@@ -1,7 +1,10 @@
 # cluster-oracle Specification
 
 ## Purpose
-TBD - created by archiving change cluster-leadership-and-migration. Update Purpose after archive.
+Authoritative, leader-hosted cluster-coordination service (`ProcessHub.Service.Oracle`): a
+hub directory, cluster info/stats, and the single serializer for cluster-singleton work. It
+runs as exactly one instance on the elected leader and fails over with leadership, rebuilding
+its directory from re-announcement.
 ## Requirements
 ### Requirement: The oracle SHALL be a single authoritative service running on the leader
 
@@ -64,10 +67,18 @@ the oracle SHALL maintain the resulting directory and answer discovery queries
 The oracle SHALL serialize and de-duplicate cluster-singleton coordination work — work that
 must happen at most once cluster-wide (for example hub-to-hub process migration) — so two
 nodes cannot drive the same coordination operation concurrently; such work SHALL be
-submitted to the oracle rather than performed independently per node.
+submitted to the oracle rather than performed independently per node. A failing coordination
+task SHALL NOT crash the oracle (the shared singleton): the failure SHALL be reported to the
+caller and SHALL NOT be cached, so it can be retried.
 
 #### Scenario: Concurrent identical requests are de-duplicated
 - **GIVEN** two nodes submit the same coordination request to the oracle near-simultaneously
 - **WHEN** the oracle processes them
 - **THEN** the operation SHALL be admitted at most once (the second observes the in-progress/completed state and does not re-run it)
+
+#### Scenario: A failing coordination task does not crash the oracle
+- **GIVEN** a submitted coordination task that raises or exits
+- **WHEN** the oracle runs it
+- **THEN** the oracle SHALL stay alive and return an error to the caller
+- **AND** the failure SHALL NOT be cached (a later identical request is admitted again)
 

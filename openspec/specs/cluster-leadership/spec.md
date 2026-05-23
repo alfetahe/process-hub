@@ -1,7 +1,10 @@
 # cluster-leadership Specification
 
 ## Purpose
-TBD - created by archiving change cluster-leadership-and-migration. Update Purpose after archive.
+Opt-in, elector-backed cluster leadership: lifecycle (`start_leadership/0` / `stop_leadership/0`),
+leader query (`leader/0` / `is_leader?/0`), service-level change subscription, transition
+telemetry, graceful step-down, and the `on_leader/1` run-if-leader helper. Logic lives in
+`ProcessHub.Service.Leadership`; `ProcessHub` exposes only thin delegators.
 ## Requirements
 ### Requirement: Leadership SHALL be opt-in and never started by default
 
@@ -9,8 +12,9 @@ ProcessHub SHALL NOT start the `:elector` application (and therefore Erlang `:gl
 default. Leadership SHALL be started only when (a) the user explicitly calls
 `ProcessHub.start_leadership/0`, or (b) a distribution strategy that requires it
 (`CentralizedLoadBalancer`) starts it. `ProcessHub.stop_leadership/0` SHALL stop the local
-elector instance. The logic SHALL live in `ProcessHub.Service.Leadership`; `ProcessHub`
-SHALL expose only thin delegators.
+elector instance **only when leadership started it** — if a distribution strategy started
+elector, `stop_leadership/0` SHALL leave it running. The logic SHALL live in
+`ProcessHub.Service.Leadership`; `ProcessHub` SHALL expose only thin delegators.
 
 #### Scenario: A hub with a non-elector strategy does not start :global
 - **GIVEN** a hub using `ConsistentHashing` and a user who never calls `start_leadership/0`
@@ -21,6 +25,11 @@ SHALL expose only thin delegators.
 - **WHEN** the user calls `ProcessHub.start_leadership/0`
 - **THEN** the local elector instance SHALL be started
 - **AND** a subsequent `ProcessHub.stop_leadership/0` SHALL stop it
+
+#### Scenario: Stopping leadership leaves a strategy-started elector running
+- **GIVEN** elector was started by a distribution strategy (not by `start_leadership/0`)
+- **WHEN** `ProcessHub.stop_leadership/0` is called
+- **THEN** the elector instance SHALL keep running and SHALL NOT be forced to step down
 
 ### Requirement: Leader query SHALL NOT auto-start leadership
 
@@ -68,9 +77,9 @@ leadership without subscribing.
 
 ### Requirement: Stopping leadership SHALL step down gracefully
 
-`ProcessHub.stop_leadership/0` SHALL trigger a clean leadership step-down so a successor is
-elected promptly (rather than waiting for a node-down timeout), enabling zero-downtime
-rolling restarts of the leader node.
+When leadership owns the elector instance, `ProcessHub.stop_leadership/0` SHALL trigger a
+clean leadership step-down so a successor is elected promptly (rather than waiting for a
+node-down timeout), enabling zero-downtime rolling restarts of the leader node.
 
 #### Scenario: Step-down hands leadership over promptly
 - **GIVEN** a multi-node cluster whose local node is the leader
