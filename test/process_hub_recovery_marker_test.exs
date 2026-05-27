@@ -13,6 +13,8 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias ProcessHub.Service.Recovery
   alias ProcessHub.Service.ProcessRegistry
 
@@ -121,13 +123,20 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
       # Path with a non-writable parent
       bad_marker = "/proc/1/cluster.healthy"
 
-      start_hub!(
-        hub_id: hub_id,
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: bad_marker}
-      )
+      # The write failure is logged at error level by design; capture it so
+      # the expected `:enoent` doesn't surface as suite noise.
+      log =
+        capture_log(fn ->
+          start_hub!(
+            hub_id: hub_id,
+            auto_recovery: true,
+            recovery_marker: %{enabled?: true, path: bad_marker}
+          )
 
-      assert ProcessHub.await_normal(hub_id, 5_000) == :ok
+          assert ProcessHub.await_normal(hub_id, 5_000) == :ok
+        end)
+
+      assert log =~ "Failed to write recovery marker"
     end
   end
 

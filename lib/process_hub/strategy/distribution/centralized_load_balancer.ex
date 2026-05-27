@@ -371,7 +371,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
     local_stats = query_stats(state.hub)
     node = Node.self()
 
-    case Elector.get_leader() do
+    case safe_get_leader() do
       {:ok, leader_node} ->
         if leader_node === Node.self() do
           GenServer.cast(
@@ -387,7 +387,12 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
           )
         end
 
-      _ ->
+      :none ->
+        # Elector unavailable (e.g. mid-teardown) — skip this tick silently;
+        # the rescheduled timer will pick it back up once it's running again.
+        :ok
+
+      :error ->
         LoggerService.error("Failed to get leader node", %{}, prefix: "CentralizedLoadBalancer")
     end
 
@@ -592,6 +597,20 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
       end)
 
     if weight_sum > 0, do: weighted_sum / weight_sum, else: 0.0
+  end
+
+  # `Elector.get_leader/0` exits with :noproc if `:elector_state` is down
+  # (e.g. during hub teardown). Convert that to `:none` so callers can skip
+  # gracefully instead of crashing the GenServer.
+  defp safe_get_leader do
+    try do
+      case Elector.get_leader() do
+        {:ok, leader} -> {:ok, leader}
+        _ -> :error
+      end
+    catch
+      :exit, {:noproc, _} -> :none
+    end
   end
 
   defp schedule_stats_push(strategy) do

@@ -11,6 +11,8 @@ defmodule Test.ProcessHubMigrationTest do
   """
   use ExUnit.Case
 
+  import ExUnit.CaptureLog
+
   alias ProcessHub.Service.Leadership
   alias ProcessHub.Service.Oracle
   alias ProcessHub.Service.ProcessRegistry
@@ -107,8 +109,15 @@ defmodule Test.ProcessHubMigrationTest do
 
     failing_target = %{id: "w3", start: {TestServer, :start_link_err, [%{name: "w3"}]}}
 
-    assert {:rolled_back, _reason} =
-             ProcessHub.migrate_process(@hub_a, @hub_b, "w3", target_spec: failing_target)
+    # The expected child-start failure is logged by StartChildrenRequest;
+    # capture it so it doesn't masquerade as a real error in the suite output.
+    log =
+      capture_log(fn ->
+        assert {:rolled_back, _reason} =
+                 ProcessHub.migrate_process(@hub_a, @hub_b, "w3", target_spec: failing_target)
+      end)
+
+    assert log =~ "Child start failed"
 
     # The process is not lost: restored on the source, absent from the target.
     assert ProcessHub.child_lookup(@hub_a, "w3") != nil

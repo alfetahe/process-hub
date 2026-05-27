@@ -45,32 +45,43 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   @impl GenServer
   def handle_call({:insert, hub_id, child_spec, child_nodes, opts}, _from, state) do
-    {:reply, handle_insert(hub_id, child_spec, child_nodes, opts), state}
+    {:reply, with_storage(fn -> handle_insert(hub_id, child_spec, child_nodes, opts) end), state}
   end
 
   @impl GenServer
   def handle_call({:delete, hub_id, child_id, opts}, _from, state) do
-    {:reply, handle_delete(hub_id, child_id, opts), state}
+    {:reply, with_storage(fn -> handle_delete(hub_id, child_id, opts) end), state}
   end
 
   @impl GenServer
   def handle_call({:bulk_insert, hub_id, children, opts}, _from, state) do
-    {:reply, handle_bulk_insert(hub_id, children, opts), state}
+    {:reply, with_storage(fn -> handle_bulk_insert(hub_id, children, opts) end), state}
   end
 
   @impl GenServer
   def handle_call({:bulk_delete, hub_id, children, opts}, _from, state) do
-    {:reply, handle_bulk_delete(hub_id, children, opts), state}
+    {:reply, with_storage(fn -> handle_bulk_delete(hub_id, children, opts) end), state}
   end
 
   @impl GenServer
   def handle_call({:update, hub_id, child_id, update_fn}, _from, state) do
-    {:reply, handle_update(hub_id, child_id, update_fn), state}
+    {:reply, with_storage(fn -> handle_update(hub_id, child_id, update_fn) end), state}
   end
 
   @impl GenServer
   def handle_call({:clear_all, hub_id}, _from, state) do
-    {:reply, handle_clear_all(hub_id), state}
+    {:reply, with_storage(fn -> handle_clear_all(hub_id) end), state}
+  end
+
+  # Drops mutation requests that race against hub teardown: Coordinator.terminate
+  # closes the registry backend, so a still-queued bulk_delete/insert can land
+  # after the ETS table is gone and crash on `:ets.insert/2`.
+  defp with_storage(fun) do
+    try do
+      fun.()
+    rescue
+      ArgumentError -> :ok
+    end
   end
 
   @doc "Returns information about all registered processes. Will be deprecated in the future."

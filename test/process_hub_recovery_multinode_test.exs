@@ -20,6 +20,8 @@ defmodule Test.ProcessHubRecoveryMultiNodeTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Test.Helper.TestNode
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
@@ -51,7 +53,11 @@ defmodule Test.ProcessHubRecoveryMultiNodeTest do
     # helper which start_link's AND unlinks on the peer side, so the hub
     # survives this RPC call returning.
     :erpc.call(peer_name, Test.Helper.Bootstrap, :start_hub_on_node, [
-      %ProcessHub{hub_id: hub_id, hubs_discover_interval: 200},
+      %ProcessHub{
+        hub_id: hub_id,
+        hubs_discover_interval: 200,
+        cluster_event_debounce: 0
+      },
       %{}
     ])
 
@@ -146,34 +152,41 @@ defmodule Test.ProcessHubRecoveryMultiNodeTest do
       ]
     }
 
-    {:ok, pid} =
-      ProcessHub.Initializer.start_link(%ProcessHub{
-        hub_id: hub_id,
-        hooks: hooks,
-        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000],
-        recovery_marker: %{enabled?: false}
-      })
+    # capture_log swallows the expected crash-isolation warning so it doesn't
+    # leak into suite output; the test is explicitly verifying the crash path.
+    log =
+      capture_log(fn ->
+        {:ok, pid} =
+          ProcessHub.Initializer.start_link(%ProcessHub{
+            hub_id: hub_id,
+            hooks: hooks,
+            auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000],
+            recovery_marker: %{enabled?: false}
+          })
 
-    :erlang.unlink(pid)
-    on_exit(fn -> ProcessHub.Initializer.stop(hub_id) end)
+        :erlang.unlink(pid)
+        on_exit(fn -> ProcessHub.Initializer.stop(hub_id) end)
 
-    # The slow handler signals as it enters; we use the timestamp delta
-    # from there to post_replay to confirm blocking.
-    assert_receive {:slow_pre_replay_entered, t_entered}, 3_000
+        # The slow handler signals as it enters; we use the timestamp delta
+        # from there to post_replay to confirm blocking.
+        assert_receive {:slow_pre_replay_entered, t_entered}, 3_000
 
-    # The crashing handler should have its crash caught — after slow returns.
-    assert_receive {:crashing_pre_replay_entered, _t}, 3_000
+        # The crashing handler should have its crash caught — after slow returns.
+        assert_receive {:crashing_pre_replay_entered, _t}, 3_000
 
-    # Post-replay still fires: handler crash did not prevent the lifecycle.
-    assert_receive {:post_replay, _payload}, 3_000
+        # Post-replay still fires: handler crash did not prevent the lifecycle.
+        assert_receive {:post_replay, _payload}, 3_000
 
-    # Confirm the lifecycle finished.
-    assert ProcessHub.await_normal(hub_id, 2_000) == :ok
+        # Confirm the lifecycle finished.
+        assert ProcessHub.await_normal(hub_id, 2_000) == :ok
 
-    t_now = System.monotonic_time(:millisecond)
-    # The slow handler sleeps for 300 ms; we expect at least 250 ms between
-    # entry and the lifecycle finishing.
-    assert t_now - t_entered >= 250
+        t_now = System.monotonic_time(:millisecond)
+        # The slow handler sleeps for 300 ms; we expect at least 250 ms between
+        # entry and the lifecycle finishing.
+        assert t_now - t_entered >= 250
+      end)
+
+    assert log =~ "intentional handler crash"
   end
 
   # ---- Hook-handler helpers (called by the coordinator) ---------------------

@@ -35,7 +35,10 @@ defmodule Test.ProcessHubDebounceSafetyTest do
   test "hub still clusters when hubs_discover_interval <= cluster_event_debounce",
        %{peer: peer} do
     id = :debounce_safety_hub
-    start_hub_pair(id, peer)
+    # The suboptimal-config warning is asserted in its own test; here we just
+    # care about clustering, so swallow the expected warning to keep the
+    # suite output clean.
+    capture_log(fn -> start_hub_pair(id, peer) end)
     assert_clustered(id, peer)
   end
 

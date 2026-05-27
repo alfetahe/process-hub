@@ -82,9 +82,12 @@ defmodule Test.ProcessHub.Service.Storage.DetsTest do
 
   test "TTL emulation: get returns nil after expiry", %{hub_id: hub_id, path: path} do
     {:ok, ref} = Backend.open(hub_id, path: path)
-    Backend.insert(ref, :ttl_key, :ttl_value, ttl: 50)
+    # TTL needs enough headroom that the synchronous DETS write + the
+    # pre-expiry get can both finish within it on a loaded test machine,
+    # otherwise the first assertion races the disk and flakes.
+    Backend.insert(ref, :ttl_key, :ttl_value, ttl: 500)
     assert Backend.get(ref, :ttl_key) === :ttl_value
-    Process.sleep(120)
+    Process.sleep(700)
     assert Backend.get(ref, :ttl_key) === nil
     refute Backend.exists?(ref, :ttl_key)
     Backend.close(ref)
