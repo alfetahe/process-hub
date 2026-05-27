@@ -98,3 +98,25 @@ not-leader indication without evaluating it.
 - **THEN** `fun` SHALL be evaluated and its result returned
 - **AND** when called on a non-leader node `fun` SHALL NOT be evaluated
 
+### Requirement: The elected leader SHALL match the configured strategy and converge after membership changes
+
+The leader ProcessHub surfaces (`ProcessHub.leader/0`, `is_leader?/0`) SHALL reflect the node
+chosen by the configured election strategy, and after a node joins or leaves the cluster the
+leader SHALL converge to a single, strategy-correct value on all nodes. A leader chosen under
+an incomplete candidate view during the join/`:global`-merge window (for example a node that
+self-elected before it observed its peers) SHALL NOT persist as the reported leader once the
+cluster has stabilized.
+
+#### Scenario: Reported leader equals the strategy's choice
+
+- **GIVEN** a multi-node cluster with leadership started on every node
+- **WHEN** the cluster has stabilized after the nodes joined
+- **THEN** `ProcessHub.leader/0` SHALL return the node selected by the configured election strategy on every node (it SHALL NOT return a stale, self-elected node)
+- **AND** all nodes SHALL agree on the same leader
+
+#### Scenario: Convergence after a node joins
+
+- **GIVEN** a cluster with leadership started and a leader elected
+- **WHEN** another node starts leadership and joins
+- **THEN** within a bounded time `ProcessHub.leader/0` SHALL return the strategy-correct leader for the new membership on all nodes
+
