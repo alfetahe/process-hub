@@ -178,7 +178,7 @@ defmodule ProcessHub.MixProject do
     [
       {:blockade, "~> 0.2.2"},
       {:hash_ring, "~> 0.4.2"},
-      {:elector, path: "/home/moon/Code/elector", runtime: false},
+      {:elector, "~> 0.3.3", runtime: false},
       {:telemetry, "~> 1.0", optional: true},
       {:ex_doc, "~> 0.34.2", only: :dev, runtime: false},
       {:benchee, "~> 1.5", only: [:dev, :test]}
