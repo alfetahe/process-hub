@@ -39,6 +39,27 @@ All notable changes to this project will be documented in this file.
 - Purely additive. Existing `:ets` and `{:dets, _}` configurations are untouched. The new option is opt-in.
 - No new dependency.
 
+### Added (opt-in recovery marker)
+Fixes the bug where a single restarted node could push its old, stale registry data into a healthy cluster. The node now decides at boot whether to trust its own disk or its peers, based on a small marker file the operator controls.
+
+- A node writes a marker file every time it shuts down cleanly. Next boot:
+  - **Marker present** → trust peers, start with an empty registry, no disk replay.
+  - **Marker absent** → recover from disk (this is the "rebuild from scratch" case).
+- Two new operator functions to clear the marker (so the next boot recovers from disk):
+  - `ProcessHub.prepare_recovery/1` — local node.
+  - `ProcessHub.prepare_recovery_cluster/1` — every reachable peer over RPC.
+- Env var `PROCESS_HUB_RECOVERY_MODE=auto|force|skip` overrides the marker per node without touching disk.
+- Disk replay now restores only child specs — stale pids and metadata are dropped (this is the actual bug fix).
+- New `:recovery_marker` config field on `%ProcessHub{}` and `:recovery_timeout_ms` inside `:auto_recovery`.
+- Restarted node tells peers `{:cluster_join, {:restarted, node()}}` once so they purge any dead pids that belonged to its previous incarnation.
+- New telemetry events `[:process_hub, :recovery, :started | :complete | :skipped | :timeout]`.
+- New `guides/Persistence.md` section explains the lifecycle and operator runbook.
+
+### Backward compatibility
+- Default (`auto_recovery: false`) → nothing changes; no marker is written or read.
+- If you already use `auto_recovery: true` and want the previous behaviour, set `recovery_marker: %{enabled?: false}`.
+- Old peers ignore the new restart signal — mixed-version clusters keep working.
+
 ## v0.5.0-beta - 2026-02-17
 This release adds per-child metadata support, an experimental autonomous migration strategy, and major performance optimizations for large-scale operations.
 It also includes a complete hook system overhaul with consistent naming and map-based data formats, a reimplemented HotSwap migration matching ColdSwap's pattern, and removal of the event queue locking mechanism.

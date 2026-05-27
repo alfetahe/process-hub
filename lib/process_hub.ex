@@ -207,23 +207,38 @@ defmodule ProcessHub do
     See `guides/Persistence.md` for the recovery semantics, telemetry
     events, and operational profile.
   - `:auto_recovery` is optional and enables a three-state coordinator
-    boot lifecycle (`:recovery_pending → :recovering | :normal`) with a
-    configurable peer-handshake window. The default is `false`. Requires a
-    persistent `:registry_backend` (e.g. `{:dets, _}`) to be useful; with the
-    default `:ets` backend the replay step finds an empty registry. Accepted
-    shapes:
+    boot lifecycle (`:recovery_pending → :recovering | :normal`). The
+    default is `false`. Requires a persistent `:registry_backend` (e.g.
+    `{:dets, _}`) to be useful; with the default `:ets` backend the
+    replay step finds an empty registry. Accepted shapes:
     - `false` — disabled (default).
     - `true` — enabled with default options.
     - `keyword()` — explicit options:
-      - `:recovery_window_ms` — window length in ms before falling back
-        to local replay if no peer reports `:normal`. Default `10_000`.
-        Range `[1_000, 600_000]`.
+      - `:recovery_window_ms` — peer-handshake window in ms before
+        falling back to local replay. Used only when the marker gate
+        is disabled. Default `10_000`. Range `[1_000, 600_000]`.
       - `:replay_timeout_ms` — safety timeout on the `:recovering` state.
         Default `60_000`. Range `[1_000, 3_600_000]`.
+      - `:recovery_timeout_ms` — cluster-event queue gate ceiling. The
+        coordinator force-opens the gate after this many ms even if
+        replay has not finished. Default `30_000`. Range
+        `[1_000, 600_000]`.
+
+  - `:recovery_marker` is optional and configures the marker file that
+    gates boot-time replay of the persistent registry. Accepts
+    `%{enabled?: boolean(), path: nil | String.t()}`. Defaults to
+    `%{enabled?: <auto_recovery enabled?>, path: nil}` — when
+    `auto_recovery` is enabled, the marker gate is enabled too.
+    `path: nil` resolves to
+    `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
+    The `PROCESS_HUB_RECOVERY_MODE` env var overrides the marker decision
+    per node (`auto | force | skip`). See `prepare_recovery/1` and
+    `prepare_recovery_cluster/1` for the operator API.
 
     See `guides/Persistence.md` for the full state-machine, the peer
     handshake, the hooks, and the recommended pairing with
-    `registry_backend: {:dets, _}` for full restart-survival.
+    `registry_backend: {:dets, _}` or `{:durable_ets, _}` for full
+    restart-survival.
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -260,7 +275,8 @@ defmodule ProcessHub do
             | {:dets, keyword()}
             | {:durable_ets, keyword()}
             | {module(), keyword()},
-          auto_recovery: false | true | keyword()
+          auto_recovery: false | true | keyword(),
+          recovery_marker: nil | keyword() | map()
         }
 
   @enforce_keys [:hub_id]
@@ -283,7 +299,8 @@ defmodule ProcessHub do
     cross_node_request_timeout: 5000,
     req_cleanup_interval: 60000,
     registry_backend: :ets,
-    auto_recovery: false
+    auto_recovery: false,
+    recovery_marker: nil
   ]
 
   @doc """
@@ -1070,6 +1087,37 @@ defmodule ProcessHub do
         end
     end
   end
+
+  @doc """
+  Deletes the recovery marker on the local node so the next coordinator
+  boot selects recovery mode.
+
+  Safe to call on a running hub — only the marker file is touched; the
+  live coordinator is not interrupted. The call is idempotent (returns
+  `:ok` even when the marker is absent). Hubs whose
+  `:recovery_marker.enabled?` is `false` ignore the call.
+
+  See `prepare_recovery_cluster/1` for the RPC fan-out variant.
+  """
+  @spec prepare_recovery(hub_id()) :: :ok | {:error, term()}
+  defdelegate prepare_recovery(hub_id \\ :default_hub),
+    to: ProcessHub.Service.Recovery,
+    as: :prepare_recovery_local
+
+  @doc """
+  Fans out `prepare_recovery/1` to every member of the hub via
+  `:rpc.multicall/4`.
+
+  Returns:
+
+    * `{:ok, [node]}` — every member acked.
+    * `{:partial, [acked], [unreachable]}` — at least one peer failed.
+    * `{:error, reason}` — cluster API itself failed (e.g. hub not running).
+  """
+  @spec prepare_recovery_cluster(hub_id()) ::
+          {:ok, [node()]} | {:partial, [node()], [node()]} | {:error, term()}
+  defdelegate prepare_recovery_cluster(hub_id \\ :default_hub),
+    to: ProcessHub.Service.Recovery
 
   @doc """
   Dynamically registers hook handlers for specific hub events.

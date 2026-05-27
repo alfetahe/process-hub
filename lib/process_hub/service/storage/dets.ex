@@ -41,6 +41,7 @@ defmodule ProcessHub.Service.Storage.Dets do
   @spec open(atom(), keyword()) :: {:ok, atom()} | {:error, term()}
   def open(hub_id, opts) when is_atom(hub_id) do
     path = resolve_path(hub_id, opts)
+    replay? = Keyword.get(opts, :recovery_replay, true)
     File.mkdir_p!(Path.dirname(path))
 
     {result, repaired?} =
@@ -54,7 +55,12 @@ defmodule ProcessHub.Service.Storage.Dets do
 
     case result do
       {:ok, table} ->
-        emit_opened(hub_id, table, path, repaired?)
+        unless replay? do
+          :dets.delete_all_objects(table)
+          :dets.sync(table)
+        end
+
+        emit_opened(hub_id, table, path, repaired?, replay?)
         {:ok, table}
 
       {:error, _} = err ->
@@ -222,7 +228,7 @@ defmodule ProcessHub.Service.Storage.Dets do
     end
   end
 
-  defp emit_opened(hub_id, _table, path, repaired?) do
+  defp emit_opened(hub_id, _table, path, repaired?, replayed?) do
     row_count =
       try do
         :dets.info(hub_id, :size) || 0
@@ -234,7 +240,8 @@ defmodule ProcessHub.Service.Storage.Dets do
       hub_id: hub_id,
       backend: __MODULE__,
       path: path,
-      repaired: repaired?
+      repaired: repaired?,
+      replayed: replayed?
     })
   end
 

@@ -6,6 +6,8 @@ defmodule ProcessHub.Initializer do
   """
 
   alias :blockade, as: Blockade
+  alias ProcessHub.Service.Recovery
+  alias ProcessHub.Service.LoggerService
 
   use Supervisor
 
@@ -13,8 +15,12 @@ defmodule ProcessHub.Initializer do
   @spec start_link(ProcessHub.t()) :: {:ok, pid()} | {:error, term()}
   def start_link(%ProcessHub{} = hub_settings) do
     case validate_config(hub_settings) do
-      :ok -> Supervisor.start_link(__MODULE__, hub_settings)
-      {:error, _} = err -> err
+      :ok ->
+        warn_on_suboptimal_config(hub_settings)
+        Supervisor.start_link(__MODULE__, hub_settings)
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -27,6 +33,28 @@ defmodule ProcessHub.Initializer do
       :ok
     end
   end
+
+  # Bounded max-wait still flushes, but a debounce >= discover interval makes
+  # every discovery tick wasted work — surface without rejecting start.
+  defp warn_on_suboptimal_config(%ProcessHub{
+         hub_id: hub_id,
+         cluster_event_debounce: debounce,
+         hubs_discover_interval: discover
+       })
+       when is_integer(debounce) and is_integer(discover) and debounce >= discover do
+    LoggerService.warning(
+      ":cluster_event_debounce (@debounce ms) >= :hubs_discover_interval (@discover ms) " <>
+        "for hub @hub_id; set :cluster_event_debounce below :hubs_discover_interval.",
+      %{
+        "hub_id" => inspect(hub_id),
+        "debounce" => Integer.to_string(debounce),
+        "discover" => Integer.to_string(discover)
+      },
+      prefix: "Initializer"
+    )
+  end
+
+  defp warn_on_suboptimal_config(_), do: :ok
 
   defp validate_handover_replication(%ProcessHub{
          migration_strategy: migration_strat,
@@ -105,16 +133,14 @@ defmodule ProcessHub.Initializer do
   end
 
   defp setup_storage(hub_id, hub_conf) do
-    hook_registry = :ets.new(hub_id, [:set, :public])
-    misc_storage = :ets.new(hub_id, [:set, :public])
-
     {backend_module, backend_opts} = resolve_registry_backend(hub_conf.registry_backend)
+    backend_opts = Recovery.maybe_inject_replay_flag(backend_opts, hub_id, hub_conf)
     {:ok, backend_ref} = backend_module.open(hub_id, backend_opts)
     ProcessHub.Service.Storage.register_backend(hub_id, backend_module, backend_ref)
 
     %{
-      hook: hook_registry,
-      misc: misc_storage,
+      hook: :ets.new(hub_id, [:set, :public]),
+      misc: :ets.new(hub_id, [:set, :public]),
       registry_backend: {backend_module, backend_ref}
     }
   end

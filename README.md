@@ -57,11 +57,21 @@ exposes:
   DETS file for restart-survival), or `{Module, opts}` (custom). See
   [guides/Persistence.md](guides/Persistence.md).
 - `:auto_recovery` *(default: `false`)* — opts into a three-state
-  coordinator boot lifecycle (`:recovery_pending → :recovering | :normal`)
-  with a configurable peer-handshake window. Accepts `false`, `true`, or
-  `[recovery_window_ms: integer(), replay_timeout_ms: integer()]`. Most
-  useful with `registry_backend: {:dets, _}` for full restart-survival.
-  See the "Coordinator recovery" section in
+  coordinator boot lifecycle (`:recovery_pending → :recovering | :normal`).
+  Accepts `false`, `true`, or
+  `[recovery_window_ms: integer(), replay_timeout_ms: integer(),
+  recovery_timeout_ms: integer()]`. Most useful with
+  `registry_backend: {:dets, _}` or `{:durable_ets, _}` for full
+  restart-survival. See the "Coordinator recovery" section in
+  [guides/Persistence.md](guides/Persistence.md).
+- `:recovery_marker` *(default: `nil` → enabled when `:auto_recovery` is)*
+  — gates the boot-time DETS read path behind a per-node marker file so
+  a single-node restart cannot inject stale rows into a healthy cluster.
+  Accepts `%{enabled?: boolean(), path: nil | String.t()}`. Operators arm
+  recovery via `ProcessHub.prepare_recovery/1` or
+  `ProcessHub.prepare_recovery_cluster/1`; the `PROCESS_HUB_RECOVERY_MODE`
+  env var overrides per node (`auto | force | skip`). See "Operator-
+  controlled recovery via marker file" in
   [guides/Persistence.md](guides/Persistence.md).
 
 For the full set of options and strategy documentation, see

@@ -209,12 +209,269 @@ Two events are emitted from the replay path:
 ### Recommended pairing
 
 `auto_recovery: true` is most useful with a persistent registry
-backend such as `registry_backend: {:dets, []}`. With the default
-`:ets` backend, the registry is empty on every restart — the coord-
-inator transitions through `:recovering` with zero rows to replay and
-immediately reaches `:normal`. The combination is permitted but does
-not provide restart-survival; documentation calls this out so opera-
-tors do not assume otherwise.
+backend such as `registry_backend: {:dets, []}` or
+`{:durable_ets, []}`. With the default `:ets` backend, the registry
+is empty on every restart — the coordinator transitions through
+`:recovering` with zero rows to replay and immediately reaches
+`:normal`. The combination is permitted but does not provide
+restart-survival; documentation calls this out so operators do not
+assume otherwise.
+
+## Operator-controlled recovery via marker file
+
+The peer-handshake protocol above defers to peers on a per-event
+basis: a returning node asks each joining peer whether the peer is
+already `:normal`, and only replays from disk when no peer says yes
+inside the window. That works for the "we lost a single node and
+peers are healthy" case — but it does not catch the **DETS-read on
+open** path that runs *before* any peer can be consulted.
+
+The defect in the open-time replay is that:
+
+1. `Storage.Dets.open/2` and `Storage.DurableEts.open/2` populate the
+   in-memory registry from DETS at boot.
+2. A single node returning to a multi-node cluster therefore re-asserts
+   its **stale** local rows (dead pids, obsolete metadata) into the
+   in-memory view.
+3. The peer handshake happens too late — `init_sync` then merges the
+   polluted local view back into the cluster, leaving every peer with
+   ghost bindings whose pid lives on the rejoining node but does not
+   actually exist there.
+
+The opt-in **marker file gate** fixes this by making the operator
+the source of truth for "should this node trust its local DETS?"
+A per-node zero-byte marker file is consulted at `init/1` — *before*
+the backend opens — and the resolved decision is passed straight
+through to the backend `open/2` call.
+
+### Mode resolution
+
+The recovery mode resolves at coordinator `init/1` from three inputs,
+in precedence order:
+
+1. **`PROCESS_HUB_RECOVERY_MODE`** env var, when set:
+   * `force` — recover even if the marker is present.
+   * `skip` — never recover even if the marker is absent (start
+     empty; do not read DETS; still write the marker on entry to
+     `:normal`).
+   * `auto` (default if unset) — fall through to the marker decision.
+2. **`:recovery_marker.enabled?`** is `false` → mode is `:normal`
+   (this is the opt-out for consumers that want to keep using the
+   legacy peer-mode-exchange path).
+3. **Marker file present** at the resolved path → mode is `:normal`;
+   **absent** → mode is `:recovery`.
+
+Unknown env values fall back to `auto` and emit a WARN log naming
+the offending value. The env var is evaluated **once** at
+`init/1` — runtime changes do not affect an already-resolved mode.
+
+### Configuration
+
+```elixir
+%ProcessHub{
+  hub_id: :my_hub,
+  registry_backend: {:durable_ets, []},
+  auto_recovery: [
+    recovery_window_ms: 10_000,
+    replay_timeout_ms: 60_000,
+    recovery_timeout_ms: 30_000
+  ],
+  recovery_marker: %{
+    enabled?: true,
+    path: "/var/lib/process_hub/my_hub/cluster.healthy"
+  }
+}
+```
+
+`:recovery_marker` accepts `%{enabled?: boolean(), path: nil | String.t()}`:
+
+* `enabled?` — defaults to `auto_recovery != false`. When `false`,
+  the marker gate is bypassed entirely and the legacy peer-mode-
+  exchange protocol drives the lifecycle (no DETS-read gating, no
+  marker IO).
+* `path` — when `nil`, resolves to
+  `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`
+  (typically `/var/lib/process_hub/<hub_id>/cluster.healthy` on
+  Linux). The parent directory is created on first write.
+
+`:recovery_timeout_ms` (new, inside `:auto_recovery`) is the upper
+bound on the cluster-event **queue gate**. Default `30_000`, range
+`[1_000, 600_000]`. The previous `:replay_timeout_ms` keeps its
+meaning as the upper bound on the replay loop itself; both timers
+race and the earlier of the two opens the gate.
+
+### Boot sequences
+
+**Normal-mode boot (marker present, env=auto)**
+
+1. Resolve mode → `:normal`.
+2. Open the backend with `recovery_replay: false` — DETS opened but
+   no row is loaded into the in-memory view.
+3. `:recovery_state` is `:normal` from `init/1`.
+4. Emit `[:process_hub, :recovery, :skipped]` with
+   `reason: :marker_present`.
+5. (Re)write the marker (idempotent).
+6. Register cluster handlers — no queue, no waiting.
+7. First `@event_cluster_join` → existing `NodeUp.handle/1` runs and
+   `init_sync` inherits state from peers.
+
+**Recovery-mode boot (marker absent, env=auto)**
+
+1. Resolve mode → `:recovery`.
+2. Open the backend with `recovery_replay: true` — DETS rows are
+   loaded into the in-memory view (cspecs only).
+3. `:recovery_state` is `:recovery_pending`.
+4. Emit `[:process_hub, :recovery, :started]` with `cspec_count`.
+5. Schedule the `recovery_timeout_ms` ceiling timer.
+6. Spawn the replay task: for each cspec, dispatch
+   `Distributor.compose_start_operation/3` with cspec-only payload.
+   Per-cspec failures log WARN and increment the `failed` counter
+   without aborting the loop.
+7. While in `:recovery_pending` / `:recovering`, the coordinator
+   **queues** incoming cluster events (`@event_cluster_join`,
+   `@event_cluster_leave`, `:nodedown`) in `state.recovery_event_queue`
+   instead of processing them inline. BEAM distribution itself keeps
+   running normally — only ProcessHub's handlers are gated.
+8. When every cspec has been attempted (success / error / skip), or
+   the `recovery_timeout_ms` ceiling fires, the gate opens:
+   * Cancel the timeout timer.
+   * Emit `[:process_hub, :recovery, :complete]` or `:timeout`.
+   * Dispatch `recovery_state_changed` (`:recovering → :normal`).
+   * Write the marker.
+   * Broadcast `{:cluster_join, {:restarted, node()}}` to peers
+     (fast-restart purge signal — see below).
+   * Drain the event queue in FIFO order through the normal handlers.
+9. Subsequent cluster events are processed inline.
+
+### Cspecs-only replay
+
+Recovery replay loads `child_spec` only — `node_pids` and metadata
+are **dropped**. Bindings (assigned executor, last-seen pid,
+downstream-consumer metadata) are recomputed by the first migration
+tick after the cluster forms. This is the change that closes the
+stale-binding leak: a recovered row routes through exactly the same
+code as a freshly-registered, never-yet-started child
+(`Extractor.local_and_empty_children/1`).
+
+### Operator API
+
+```elixir
+# Arm the local node for recovery on next boot.
+ProcessHub.prepare_recovery(:my_hub)
+# => :ok | {:error, term()}
+
+# Arm every hub member via :rpc.multicall/4.
+ProcessHub.prepare_recovery_cluster(:my_hub)
+# => {:ok, [node()]}
+# | {:partial, [acked :: node()], [unreachable :: node()]}
+# | {:error, term()}
+```
+
+Both functions only delete the marker file; the running coordinator
+is **not** interrupted. The next coordinator boot picks up the marker
+absence. Hubs whose `:recovery_marker.enabled?` is `false` ignore the
+call and return `:ok`.
+
+Wrap `prepare_recovery_cluster/1` in your operations CLI when you
+plan a full-cluster restart — it is the runbook step that distin-
+guishes "rolling restart, peers dominate" from "drain & rebuild from
+disk".
+
+### Fast-restart purge signal
+
+When a pod restarts faster than peers detect the disconnect (i.e.
+within `:net_ticktime`), peers may still be holding bindings whose
+`node_pids` lists contain `{restarted_node, dead_pid}`. The
+coordinator emits a tagged variant of `@event_cluster_join` —
+`{:cluster_join, {:restarted, node()}}` — exactly once per lifetime
+on entry to `:normal`. Peers route the tagged variant through
+`ProcessHub.Service.ProcessRegistry.purge_node_bindings/2`, which
+drops the restarted node from every binding's `node_pids` list
+(deleting the binding when the list becomes empty). The subsequent
+`init_sync` then runs against a clean peer view.
+
+Old ProcessHub peers silently drop the tagged variant — same mixed-
+version graceful-degradation pattern as the existing
+`@event_recovery_state_announce` handling.
+
+### Telemetry
+
+The marker-gated path emits four `[:process_hub, :recovery, _]`
+events (additive — independent of the legacy
+`[:process_hub, :coordinator, :recovery_replay_*]` events):
+
+* `[:process_hub, :recovery, :started]` —
+  `%{cspec_count, system_time}` /
+  `%{hub_id, mode, marker_path}`.
+* `[:process_hub, :recovery, :complete]` —
+  `%{cspec_count, succeeded, failed, skipped, elapsed_ms}` /
+  `%{hub_id, mode}`.
+* `[:process_hub, :recovery, :skipped]` — `%{system_time}` /
+  `%{hub_id, reason}` where `reason ∈ {:marker_present, :env_skip,
+  :disabled}`.
+* `[:process_hub, :recovery, :timeout]` —
+  `%{cspec_count, attempted, elapsed_ms}` / `%{hub_id, mode}`.
+
+Operators running dashboards typically alert on `:skipped` being the
+steady state (green) and on unexpected `:started` / `:timeout` events
+(amber / red).
+
+The `[:process_hub, :registry, :backend_opened]` event now also
+carries `replayed: boolean()` in metadata, distinguishing normal-mode
+(no replay) from recovery-mode (full replay) boots.
+
+### Failure modes
+
+* **Corrupt DETS in recovery mode.** The backend rotates the corrupt
+  file to `<path>.corrupt-<monotonic>` and opens a fresh empty file.
+  Recovery runs against an empty registry, emits `:complete` with
+  `cspec_count: 0`, writes the marker, and transitions to `:normal`.
+  The operator gets a loud telemetry signal that recovery ran against
+  an empty file.
+* **Marker write failure (e.g. disk full).** Logged at ERROR; the
+  coordinator continues with `recovery_state: :normal`. The next boot
+  sees the marker absent and selects recovery mode again — fail-safe
+  default ("a node that cannot persist 'I am healthy' must default to
+  'I might not be healthy'").
+* **`prepare_recovery_cluster` partial reach.** Returns
+  `{:partial, acked, unreachable}` — operators handle by retrying or
+  by arming the down nodes manually before they boot.
+* **Operator armed recovery mid-recovery.** Calling
+  `prepare_recovery/1` while the coordinator is in `:recovering`
+  deletes the marker, but the in-flight replay still completes and
+  the marker is rewritten on transition to `:normal`. Re-arm by
+  calling `prepare_recovery/1` *after* the coordinator reaches
+  `:normal` (use `await_normal/2` to wait).
+* **Cluster-wide cold boot stampede.** If every node's marker is
+  absent simultaneously (e.g. a power-cycle that hits every pod), the
+  full cluster recovers from disk in parallel. This is the intended
+  "drain & rebuild from disk" path. To avoid it on a *planned* full
+  restart, **do not** arm `prepare_recovery_cluster/1` for that
+  operation — let the markers stay present and rely on peers.
+  Cluster-wide cold boot is what `prepare_recovery_cluster/1` is
+  *for*; do not invoke it casually.
+* **Ephemeral / `emptyDir`-style storage.** The marker path and the
+  DETS path must live on the same persistent volume. The defaults
+  (`/var/lib/process_hub/<hub_id>/cluster.healthy` and
+  `priv/process_hub/<hub_id>/registry.dets`) assume persistent
+  storage; operators using ephemeral pod storage already cannot use
+  the persistent backends for restart-survival anyway.
+
+### Choosing between the two recovery paths
+
+| Concern | `recovery_marker: %{enabled?: true}` (default) | `recovery_marker: %{enabled?: false}` (opt-out) |
+| --- | --- | --- |
+| Mode selector | env > marker > config | peer-mode-exchange (legacy) |
+| DETS read on open | gated by mode | always replayed |
+| Cluster-event queue | active in `:recovering` | not used |
+| Operator action to recover | `prepare_recovery_cluster/1` before restart | none — peer handshake decides per node |
+| Fast-restart purge signal | emitted | emitted (when `auto_recovery: true`) |
+| Stale-binding leak window | closed | open (the bug this change fixes) |
+
+New deployments should prefer the marker-gated path. Existing
+consumers that rely on the peer-mode-exchange semantics can opt out
+explicitly by setting `recovery_marker: %{enabled?: false}` and
+otherwise leaving `:auto_recovery` unchanged.
 
 ## Hybrid backend (`:durable_ets`)
 

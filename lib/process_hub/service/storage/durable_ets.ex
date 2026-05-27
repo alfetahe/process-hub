@@ -65,6 +65,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   @spec open(atom(), keyword()) :: {:ok, ref()} | {:error, term()}
   def open(hub_id, opts) when is_atom(hub_id) do
     path = resolve_path(hub_id, opts)
+    replay? = Keyword.get(opts, :recovery_replay, true)
     File.mkdir_p!(Path.dirname(path))
 
     {result, repaired?} =
@@ -79,8 +80,8 @@ defmodule ProcessHub.Service.Storage.DurableEts do
     case result do
       {:ok, dets_table} ->
         ets_tid = ETS.new(:durable_ets_registry, [:set, :public, read_concurrency: true])
-        replay_into_ets(dets_table, ets_tid)
-        emit_opened(hub_id, dets_table, path, repaired?)
+        if replay?, do: replay_into_ets(dets_table, ets_tid)
+        emit_opened(hub_id, dets_table, path, repaired?, replay?)
         {:ok, {ets_tid, dets_table}}
 
       {:error, _} = err ->
@@ -275,7 +276,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
     end
   end
 
-  defp emit_opened(hub_id, dets_table, path, repaired?) do
+  defp emit_opened(hub_id, dets_table, path, repaired?, replayed?) do
     row_count =
       try do
         :dets.info(dets_table, :size) || 0
@@ -287,7 +288,8 @@ defmodule ProcessHub.Service.Storage.DurableEts do
       hub_id: hub_id,
       backend: __MODULE__,
       path: path,
-      repaired: repaired?
+      repaired: repaired?,
+      replayed: replayed?
     })
   end
 

@@ -84,12 +84,16 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp do_init(hub_conf, procs, storage, recovery_config) do
+    {marker, recovery_state, resolved_mode} =
+      Recovery.init_marker(hub_conf.hub_id, Map.get(hub_conf, :recovery_marker), recovery_config.enabled?)
+
     state = %Hub{
       hub_id: hub_conf.hub_id,
       procs: procs,
       storage: storage,
       recovery_config: recovery_config,
-      recovery_state: initial_recovery_state(recovery_config)
+      recovery_state: recovery_state,
+      recovery_marker: marker
     }
 
     hub_conf = init_strategies(state, hub_conf)
@@ -97,40 +101,31 @@ defmodule ProcessHub.Coordinator do
     register_handlers(storage.hook, hub_conf.hooks)
     setup_misc_storage(hub_conf, storage)
 
-    local_store = state.storage.misc
-    event_queue = state.procs.event_queue
+    Registry.register(state.procs.system_registry, "initializer", state.procs.initializer)
 
-    # Register the initializer pid on the registry.
-    Registry.register(
-      state.procs.system_registry,
-      "initializer",
-      state.procs.initializer
-    )
-
-    # Schedule periodic tasks.
-    schedule_hub_discovery(Storage.get(local_store, StorageKey.hdi()))
-    schedule_sync(Storage.get(local_store, StorageKey.strsyn()))
+    schedule_hub_discovery(Storage.get(state.storage.misc, StorageKey.hdi()))
+    schedule_sync(Storage.get(state.storage.misc, StorageKey.strsyn()))
     schedule_request_cleanup(state)
 
-    # Monitor cluster join events.
-    Blockade.monitor_handlers(event_queue, @event_cluster_join)
+    Blockade.monitor_handlers(state.procs.event_queue, @event_cluster_join)
 
-    # Make sure we register all joined hub nodes.
     state =
-      event_queue
+      state.procs.event_queue
       |> Blockade.get_handlers(@event_cluster_join)
       |> elem(1)
       |> join_handlers(state)
 
     state = maybe_start_recovery_window(state)
+    state = Recovery.start(state, resolved_mode)
 
     {:ok, state, {:continue, :additional_setup}}
   end
 
-  defp initial_recovery_state(%{enabled?: true}), do: :recovery_pending
-  defp initial_recovery_state(_), do: :normal
-
-  defp maybe_start_recovery_window(%Hub{recovery_state: :recovery_pending} = state) do
+  # Peer-mode-exchange window is used only when the marker gate is
+  # explicitly disabled (back-compat opt-out path).
+  defp maybe_start_recovery_window(
+         %Hub{recovery_state: :recovery_pending, recovery_marker: %{enabled?: false}} = state
+       ) do
     timer =
       Process.send_after(self(), :recovery_window_elapsed, state.recovery_config.recovery_window_ms)
 
@@ -318,17 +313,21 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_cluster_leave, node}, state) do
-    {:noreply, batch_event(state, :cluster_leave, node)}
+  def handle_info({@event_cluster_leave, node} = msg, state) do
+    if Recovery.gate_closed?(state) do
+      {:noreply, Recovery.enqueue(state, msg)}
+    else
+      {:noreply, batch_event(state, :cluster_leave, node)}
+    end
   end
 
   @impl true
-  def handle_info({:nodedown, node}, state) do
-    # Batch rapid nodedown events together to avoid multiple independent redistributions.
-    # When nodes go down rapidly, we collect them and process as a single batch.
-    # The batch window ensures all nodedown events from rapid scale-down are captured
-    # together, allowing consistent redistribution calculations across all nodes.
-    {:noreply, batch_event(state, :nodedown, node)}
+  def handle_info({:nodedown, node} = msg, state) do
+    if Recovery.gate_closed?(state) do
+      {:noreply, Recovery.enqueue(state, msg)}
+    else
+      {:noreply, batch_event(state, :nodedown, node)}
+    end
   end
 
   @impl true
@@ -384,8 +383,21 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_cluster_join, node}, state) do
-    {:noreply, batch_event(state, :cluster_join, node)}
+  def handle_info({@event_cluster_join, payload} = msg, state) do
+    case payload do
+      {:restarted, n} when is_atom(n) ->
+        {:noreply, Recovery.handle_restart_signal(state, n, msg)}
+
+      node when is_atom(node) ->
+        if Recovery.gate_closed?(state),
+          do: {:noreply, Recovery.enqueue(state, msg)},
+          else: {:noreply, batch_event(state, :cluster_join, node)}
+
+      # Unrecognised tagged variant — silently drop (mixed-version
+      # graceful degradation).
+      _ ->
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -448,6 +460,30 @@ defmodule ProcessHub.Coordinator do
     # Ignore announces from ourselves.
     {:noreply, state}
   end
+
+  @impl true
+  def handle_info(:start_marker_replay, %Hub{recovery_state: :recovery_pending} = state),
+    do: {:noreply, Recovery.spawn_replay(state)}
+
+  def handle_info(:start_marker_replay, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info({:marker_replay_done, result}, state)
+      when state.recovery_state in [:recovery_pending, :recovering] do
+    Recovery.emit_replay_complete(state, result)
+    {:noreply, Recovery.open_gate(state, :replay_complete)}
+  end
+
+  def handle_info({:marker_replay_done, _result}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info(:recovery_timeout_elapsed, state)
+      when state.recovery_state in [:recovery_pending, :recovering] do
+    Recovery.emit_replay_timeout(state)
+    {:noreply, Recovery.open_gate(state, :recovery_timeout)}
+  end
+
+  def handle_info(:recovery_timeout_elapsed, state), do: {:noreply, state}
 
   @impl true
   def handle_info(:recovery_window_elapsed, %Hub{recovery_state: :recovery_pending} = state) do
@@ -629,20 +665,25 @@ defmodule ProcessHub.Coordinator do
     end
   end
 
-  # Adds a node to the event batch and starts a timer if this is the first event.
+  # Adds a node to the event batch and (re)schedules the flush timer with a
+  # bounded total wait, so a sustained event stream cannot starve the batch.
   # Returns the updated state.
   @spec batch_event(Hub.t(), atom(), node()) :: Hub.t()
   defp batch_event(state, event_type, node) do
     batch = get_in(state.event_batches, [event_type]) || Hub.default_batch_state()
     debounce_delay = get_debounce_delay(state)
+    max_wait = max_batch_wait(debounce_delay)
+    now = System.monotonic_time(:millisecond)
 
-    # Cancel existing timer if present (true debounce - reset on each event)
+    started_at = batch.started_at || now
+    remaining_window = max(0, max_wait - (now - started_at))
+    delay = min(debounce_delay, remaining_window)
+
     if batch.timer_ref do
       Process.cancel_timer(batch.timer_ref)
     end
 
-    # Always start a new timer (resets the debounce window)
-    timer_ref = Process.send_after(self(), {:process_batch, event_type}, debounce_delay)
+    timer_ref = Process.send_after(self(), {:process_batch, event_type}, delay)
 
     # Deduplicate nodes in batch
     nodes =
@@ -652,7 +693,7 @@ defmodule ProcessHub.Coordinator do
         [node | batch.nodes]
       end
 
-    new_batch = %{nodes: nodes, timer_ref: timer_ref}
+    new_batch = %{nodes: nodes, timer_ref: timer_ref, started_at: started_at}
     put_in(state.event_batches[event_type], new_batch)
   end
 
@@ -670,6 +711,13 @@ defmodule ProcessHub.Coordinator do
   defp get_debounce_delay(state) do
     Storage.get(state.storage.misc, StorageKey.ced()) || 500
   end
+
+  # Derived upper bound on how long a single batch window may grow before it
+  # MUST flush, regardless of fresh events. A small multiple of the configured
+  # debounce keeps the cap intuitively close to user intent while guaranteeing
+  # the batch is processed in bounded time.
+  defp max_batch_wait(0), do: 0
+  defp max_batch_wait(debounce) when debounce > 0, do: max(debounce * 4, debounce + 500)
 
   defp join_handlers(handlers, state) do
     node_list = Node.list()

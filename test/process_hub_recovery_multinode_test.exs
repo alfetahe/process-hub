@@ -91,7 +91,8 @@ defmodule Test.ProcessHubRecoveryMultiNodeTest do
         hooks: hooks,
         cluster_event_debounce: 0,
         hubs_discover_interval: 200,
-        auto_recovery: [recovery_window_ms: 5_000, replay_timeout_ms: 5_000]
+        auto_recovery: [recovery_window_ms: 5_000, replay_timeout_ms: 5_000],
+        recovery_marker: %{enabled?: false}
       })
 
     :erlang.unlink(pid)
@@ -149,7 +150,8 @@ defmodule Test.ProcessHubRecoveryMultiNodeTest do
       ProcessHub.Initializer.start_link(%ProcessHub{
         hub_id: hub_id,
         hooks: hooks,
-        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000]
+        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000],
+        recovery_marker: %{enabled?: false}
       })
 
     :erlang.unlink(pid)

@@ -87,7 +87,8 @@ defmodule Test.ProcessHubRecoveryTest do
       start_hub!(
         hub_id: hub_id,
         hooks: hooks,
-        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000]
+        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000],
+        recovery_marker: %{enabled?: false}
       )
 
       # Initial state observation must be :recovery_pending — the GenServer
@@ -110,7 +111,8 @@ defmodule Test.ProcessHubRecoveryTest do
 
       start_hub!(
         hub_id: hub_id,
-        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000]
+        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000],
+        recovery_marker: %{enabled?: false}
       )
 
       assert ProcessHub.recovery_state(hub_id) == :recovery_pending
@@ -123,7 +125,8 @@ defmodule Test.ProcessHubRecoveryTest do
 
       start_hub!(
         hub_id: hub_id,
-        auto_recovery: [recovery_window_ms: 5_000, replay_timeout_ms: 5_000]
+        auto_recovery: [recovery_window_ms: 5_000, replay_timeout_ms: 5_000],
+        recovery_marker: %{enabled?: false}
       )
 
       assert ProcessHub.recovery_state(hub_id) == :recovery_pending
@@ -157,7 +160,8 @@ defmodule Test.ProcessHubRecoveryTest do
       start_hub!(
         hub_id: hub_id,
         hooks: hooks,
-        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000]
+        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000],
+        recovery_marker: %{enabled?: false}
       )
 
       assert_receive {:pre_replay, %{hub_id: ^hub_id, child_count: 0}}, 3_000
@@ -204,7 +208,8 @@ defmodule Test.ProcessHubRecoveryTest do
 
       start_hub!(
         hub_id: hub_id,
-        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000]
+        auto_recovery: [recovery_window_ms: 1_000, replay_timeout_ms: 5_000],
+        recovery_marker: %{enabled?: false}
       )
 
       assert_receive {:telemetry,
