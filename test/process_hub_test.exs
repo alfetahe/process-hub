@@ -506,6 +506,30 @@ defmodule ProcessHubTest do
     assert ProcessHub.is_partitioned?(hub_id) === true
   end
 
+  test "quorum recovery refreshes stale local registry pids", %{hub_id: hub_id, hub: hub} do
+    [child_spec] = ProcessHub.Utility.Bag.gen_child_specs(1, id_type: :atom)
+
+    ProcessHub.start_child(hub_id, child_spec, awaitable: true)
+    |> ProcessHub.Future.await()
+
+    old_pid = ProcessHub.Service.ProcessRegistry.local_pid(hub_id, child_spec.id)
+    assert is_pid(old_pid)
+
+    # Quorum lockdown terminates the distributed supervisor (and the child), but
+    # the registry retains the entry to use as the restart manifest on recovery.
+    assert ProcessHub.Service.State.toggle_quorum_failure(hub) === :ok
+    refute Process.alive?(old_pid)
+
+    # Recovery restarts the child with a fresh pid; the registry must be refreshed
+    # so it no longer points at the dead pid (which would otherwise be propagated).
+    assert ProcessHub.Service.State.toggle_quorum_success(hub) === :ok
+
+    new_pid = ProcessHub.Service.ProcessRegistry.local_pid(hub_id, child_spec.id)
+    assert is_pid(new_pid)
+    assert Process.alive?(new_pid)
+    assert new_pid !== old_pid
+  end
+
   test "child lookup", %{hub_id: hub_id} = _context do
     assert ProcessHub.child_lookup(hub_id, :none) === nil
 
