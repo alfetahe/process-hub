@@ -83,9 +83,13 @@ defmodule ProcessHub.Worker.Janitor do
         nil
 
       {child_id, {child_spec, _nodes, metadata}, ttl_expire} ->
-        if curr_timestamp > ttl_expire do
+        # Re-validate expiry inside the registry process before deleting. The
+        # match above is a dirty ETS read; an incoming registration may have
+        # re-populated this entry (clearing its TTL) in the meantime, in which
+        # case the guarded delete is a no-op and we must not log an expiry.
+        if curr_timestamp > ttl_expire and
+             ProcessRegistry.delete_if_expired(hub_id, child_id) do
           log_pending_expiry(hub_id, child_id, child_spec, metadata)
-          ProcessRegistry.delete(hub_id, child_id)
         end
 
       _ ->

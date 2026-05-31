@@ -39,6 +39,40 @@ defmodule Test.Service.ProcessRegistryTest do
     end)
   end
 
+  describe "delete_if_expired/2" do
+    test "removes an entry whose TTL is still expired", %{hub_id: hub_id} do
+      child_spec = %{id: :expired_tombstone, start: :mfa}
+      ProcessRegistry.insert(hub_id, child_spec, [], metadata: %{}, ttl: -1000)
+
+      assert ProcessRegistry.delete_if_expired(hub_id, :expired_tombstone) === true
+      assert :ets.lookup(hub_id, :expired_tombstone) === []
+    end
+
+    test "keeps an entry that was re-populated (TTL cleared) since the scan", %{hub_id: hub_id} do
+      child_spec = %{id: :repopulated, start: :mfa}
+      # Tombstone with an already-expired TTL, as the janitor's scan would observe.
+      ProcessRegistry.insert(hub_id, child_spec, [], metadata: %{}, ttl: -1000)
+      # An incoming registration re-populates the entry, clearing the TTL
+      # (turning the row into a permanent 2-tuple) before the delete is applied.
+      ProcessRegistry.insert(hub_id, child_spec, [{:node1, self()}], metadata: %{})
+
+      assert ProcessRegistry.delete_if_expired(hub_id, :repopulated) === false
+      assert ProcessRegistry.lookup(hub_id, :repopulated) !== nil
+    end
+
+    test "keeps an entry that was given a fresh (future) TTL lease", %{hub_id: hub_id} do
+      child_spec = %{id: :released, start: :mfa}
+      ProcessRegistry.insert(hub_id, child_spec, [], metadata: %{}, ttl: 600_000)
+
+      assert ProcessRegistry.delete_if_expired(hub_id, :released) === false
+      assert :ets.lookup(hub_id, :released) !== []
+    end
+
+    test "is a no-op for a missing entry", %{hub_id: hub_id} do
+      assert ProcessRegistry.delete_if_expired(hub_id, :does_not_exist) === false
+    end
+  end
+
   test "bulk insert", %{hub_id: hub_id, hub: hub} = _context do
     ProcessRegistry.clear_all(hub_id)
 
