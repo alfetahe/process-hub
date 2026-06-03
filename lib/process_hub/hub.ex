@@ -49,6 +49,8 @@ defmodule ProcessHub.Hub do
             hook: :ets.tid()
           },
           event_batches: %{nodedown: batch_state(), cluster_join: batch_state()},
+          # Per-node membership reconciliation fail-safe timers, keyed by node.
+          nodeup_reconcile_timers: %{node() => reference()},
           pending_operations: %{reference() => ProcessHub.Service.RequestManager.t()},
           pending_work_count: non_neg_integer(),
           recovery_state: recovery_state(),
@@ -72,6 +74,7 @@ defmodule ProcessHub.Hub do
       nodedown: %{nodes: [], timer_ref: nil, started_at: nil},
       cluster_join: %{nodes: [], timer_ref: nil, started_at: nil}
     },
+    nodeup_reconcile_timers: %{},
     pending_operations: %{},
     pending_work_count: 0,
     recovery_state: :normal,

@@ -82,4 +82,8 @@ defmodule Test.Constant.StorageKeyTest do
   test "storage key cross node request timeout" do
     assert StorageKey.cnrt() === :cross_node_request_timeout
   end
+
+  test "storage key nodeup reconcile interval" do
+    assert StorageKey.nri() === :nodeup_reconcile_interval
+  end
 end

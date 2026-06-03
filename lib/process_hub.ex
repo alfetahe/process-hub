@@ -184,6 +184,12 @@ defmodule ProcessHub do
   for each cross-node request in the batch. The default is `5000` (5 seconds).
   - `:req_cleanup_interval` is optional and defines the interval in milliseconds
   for cleaning up expired pending requests. The default is `60000` (1 minute).
+  - `:nodeup_reconcile_interval` is optional and defines the delay in milliseconds before a
+  per-node membership reconciliation fail-safe runs after a node connects (`:nodeup`). It is a
+  backstop for a missed `pg` cluster-join notification: when it fires, `pg` has settled, so the
+  node is merged via the normal snapshot-merge if (and only if) it is running the same hub.
+  This reconciles cluster *membership* and is unrelated to process-placement reconciliation.
+  The default is `3000` (3 seconds); `0` disables the fail-safe.
   - `:registry_backend` is optional and selects the storage backend for the
   process registry table. The default is `:ets`. Accepted shapes:
     - `:ets` — in-memory only. Registry contents are lost when the
@@ -270,6 +276,7 @@ defmodule ProcessHub do
           cluster_event_debounce: pos_integer(),
           cross_node_request_timeout: pos_integer(),
           req_cleanup_interval: pos_integer(),
+          nodeup_reconcile_interval: non_neg_integer(),
           registry_backend:
             :ets
             | {:dets, keyword()}
@@ -298,6 +305,7 @@ defmodule ProcessHub do
     cluster_event_debounce: 500,
     cross_node_request_timeout: 5000,
     req_cleanup_interval: 60000,
+    nodeup_reconcile_interval: 3000,
     registry_backend: :ets,
     auto_recovery: false,
     recovery_marker: nil

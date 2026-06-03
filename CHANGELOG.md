@@ -60,6 +60,14 @@ Fixes the bug where a single restarted node could push its old, stale registry d
 - If you already use `auto_recovery: true` and want the previous behaviour, set `recovery_marker: %{enabled?: false}`.
 - Old peers ignore the new restart signal — mixed-version clusters keep working.
 
+### Added (node-up reconciliation fail-safe)
+Closes a split-brain gap: if the `pg` cluster-join `:join` notification is missed on a (re)connection, two BEAM-connected hubs could stay split.
+
+- On `:nodeup` the coordinator schedules a bounded, per-node timer; when it fires `pg` has settled and the node is merged via the existing snapshot-merge — but only if it is a genuine same-hub peer (it registered our cluster-join `pg` handler). The merge reuses the existing idempotent path and is cancelled when the normal path wins or the node goes down.
+- New `:nodeup_reconcile_interval` field on `%ProcessHub{}` (default `3000` ms; `0` disables).
+- Added cluster-formation logging on several coordinator paths (boot handler set, pg join/leave, propagate external set, batch flush, hub merge) to make membership convergence observable.
+
+
 ## v0.5.0-beta - 2026-02-17
 This release adds per-child metadata support, an experimental autonomous migration strategy, and major performance optimizations for large-scale operations.
 It also includes a complete hook system overhaul with consistent naming and map-based data formats, a reimplemented HotSwap migration matching ColdSwap's pattern, and removal of the event queue locking mechanism.

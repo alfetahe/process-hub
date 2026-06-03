@@ -38,4 +38,6 @@ defmodule ProcessHub.Constant.StorageKey do
   def cnrt, do: :cross_node_request_timeout
   @spec rci() :: :req_cleanup_interval
   def rci, do: :req_cleanup_interval
+  @spec nri() :: :nodeup_reconcile_interval
+  def nri, do: :nodeup_reconcile_interval
 end

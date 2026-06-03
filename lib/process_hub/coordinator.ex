@@ -109,11 +109,22 @@ defmodule ProcessHub.Coordinator do
 
     Blockade.monitor_handlers(state.procs.event_queue, @event_cluster_join)
 
-    state =
+    boot_handlers =
       state.procs.event_queue
       |> Blockade.get_handlers(@event_cluster_join)
       |> elem(1)
-      |> join_handlers(state)
+
+    LoggerService.info(
+      "boot: cluster_join handlers known to pg @nodes | connected @connected | recovery @rs",
+      %{
+        "nodes" => handler_nodes(boot_handlers),
+        "connected" => Node.list(),
+        "rs" => recovery_state
+      },
+      prefix: "Coordinator"
+    )
+
+    state = join_handlers(boot_handlers, state)
 
     state = maybe_start_recovery_window(state)
     state = Recovery.start(state, resolved_mode)
@@ -323,6 +334,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({:nodedown, node} = msg, state) do
+    state = cancel_nodeup_reconcile(state, node)
+
     if Recovery.gate_closed?(state) do
       {:noreply, Recovery.enqueue(state, msg)}
     else
@@ -378,8 +391,34 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({:nodeup, _node}, state) do
-    {:noreply, state}
+  def handle_info({:nodeup, node}, state) do
+    LoggerService.info(
+      "nodeup @node | external cluster_join members @ext | connected @connected",
+      %{
+        "node" => node,
+        "ext" => external_cluster_join_nodes(state),
+        "connected" => Node.list()
+      },
+      prefix: "Coordinator"
+    )
+
+    # pg scopes aren't synced yet at :nodeup; defer the merge to a fail-safe
+    # timer that re-runs it once pg has settled, covering a missed :join.
+    {:noreply, schedule_nodeup_reconcile(state, node)}
+  end
+
+  @impl true
+  def handle_info({:nodeup_reconcile, node}, state) do
+    state = cancel_nodeup_reconcile(state, node)
+
+    # Merge only a genuine same-hub peer: one still connected that registered
+    # our cluster_join pg handler (what :join relies on). Anything else — e.g.
+    # a node not running our hub — is never added to the batch.
+    if Enum.member?(external_cluster_join_nodes(state), node) do
+      {:noreply, batch_event(state, :cluster_join, node)}
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -389,9 +428,23 @@ defmodule ProcessHub.Coordinator do
         {:noreply, Recovery.handle_restart_signal(state, n, msg)}
 
       node when is_atom(node) ->
-        if Recovery.gate_closed?(state),
-          do: {:noreply, Recovery.enqueue(state, msg)},
-          else: {:noreply, batch_event(state, :cluster_join, node)}
+        if Recovery.gate_closed?(state) do
+          LoggerService.info(
+            "cluster_join from @node ENQUEUED (recovery gate closed, state @rs)",
+            %{"node" => node, "rs" => state.recovery_state},
+            prefix: "Coordinator"
+          )
+
+          {:noreply, Recovery.enqueue(state, msg)}
+        else
+          LoggerService.info(
+            "cluster_join from @node accepted (gate open)",
+            %{"node" => node},
+            prefix: "Coordinator"
+          )
+
+          {:noreply, batch_event(state, :cluster_join, node)}
+        end
 
       # Unrecognised tagged variant — silently drop (mixed-version
       # graceful degradation).
@@ -412,8 +465,18 @@ defmodule ProcessHub.Coordinator do
         Enum.member?(current_connected, node)
       end)
 
+    LoggerService.info(
+      "cluster_join batch flush: batched @batched | valid-still-connected @valid",
+      %{"batched" => nodes, "valid" => valid_join_nodes},
+      prefix: "Coordinator"
+    )
+
     state =
       if length(valid_join_nodes) > 0 do
+        # The normal path is merging these nodes, so their fail-safe timers
+        # are redundant.
+        state = cancel_nodeup_reconciles(state, valid_join_nodes)
+
         # While in :recovery_pending, ask the joining peer for its current
         # recovery state so we can decide whether to defer or replay.
         if state.recovery_state == :recovery_pending do
@@ -524,12 +587,28 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  # This is the mechanism that handles new nodes joining the cluster as
+  # observed through pg's cluster_join handlers.
+  # Here we know that the remote nodes connected are also running the same `:hub_id`
+  # instances since they are the ones that registered the handlers.
   def handle_info({_ref, :join, @event_cluster_join, handlers}, state) do
+    LoggerService.info(
+      "pg cluster_join handlers JOINED @nodes | connected @connected",
+      %{"nodes" => handler_nodes(handlers), "connected" => Node.list()},
+      prefix: "Coordinator"
+    )
+
     {:noreply, join_handlers(handlers, state)}
   end
 
   @impl true
-  def handle_info({_ref, :leave, @event_cluster_join, _handlers}, state) do
+  def handle_info({_ref, :leave, @event_cluster_join, handlers}, state) do
+    LoggerService.info(
+      "pg cluster_join handlers LEFT @nodes | connected @connected",
+      %{"nodes" => handler_nodes(handlers), "connected" => Node.list()},
+      prefix: "Coordinator"
+    )
+
     {:noreply, state}
   end
 
@@ -538,6 +617,12 @@ defmodule ProcessHub.Coordinator do
     state.storage.misc
     |> Storage.get(StorageKey.hdi())
     |> schedule_hub_discovery()
+
+    LoggerService.debug(
+      "propagate cluster_join → external members @ext | connected @connected",
+      %{"ext" => external_cluster_join_nodes(state), "connected" => Node.list()},
+      prefix: "Coordinator"
+    )
 
     Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_join, node(), %{
       members: :external
@@ -642,6 +727,12 @@ defmodule ProcessHub.Coordinator do
       end)
 
     if length(new_nodes) > 0 do
+      LoggerService.info(
+        "hub merge: adding nodes @new (current membership @existing)",
+        %{"new" => new_nodes, "existing" => hub_nodes},
+        prefix: "Coordinator"
+      )
+
       # Broadcast local registry data to joining nodes.
       Synchronizer.broadcast_local_registry(hub, new_nodes)
 
@@ -718,6 +809,21 @@ defmodule ProcessHub.Coordinator do
   # the batch is processed in bounded time.
   defp max_batch_wait(0), do: 0
   defp max_batch_wait(debounce) when debounce > 0, do: max(debounce * 4, debounce + 500)
+
+  # Nodes hosting the given handler pids, deduped (used for formation logging).
+  defp handler_nodes(handlers) do
+    handlers |> Enum.map(&node/1) |> Enum.uniq()
+  end
+
+  # Remote nodes pg currently resolves as cluster_join handlers. An empty list
+  # while a peer is in `Node.list()` means the pg scope never synced.
+  defp external_cluster_join_nodes(state) do
+    state.procs.event_queue
+    |> Blockade.get_handlers(@event_cluster_join)
+    |> elem(1)
+    |> handler_nodes()
+    |> Enum.reject(&(&1 == node()))
+  end
 
   defp join_handlers(handlers, state) do
     node_list = Node.list()
@@ -802,6 +908,7 @@ defmodule ProcessHub.Coordinator do
     Storage.insert(storage.misc, StorageKey.ced(), settings.cluster_event_debounce)
     Storage.insert(storage.misc, StorageKey.cnrt(), settings.cross_node_request_timeout)
     Storage.insert(storage.misc, StorageKey.rci(), settings.req_cleanup_interval)
+    Storage.insert(storage.misc, StorageKey.nri(), settings.nodeup_reconcile_interval)
   end
 
   defp register_handlers(%{event_queue: eq}) do
@@ -836,6 +943,35 @@ defmodule ProcessHub.Coordinator do
 
   defp schedule_hub_discovery(interval) do
     Process.send_after(self(), :propagate, interval)
+  end
+
+  # Per-node membership reconciliation fail-safe (0 disables). Re-arms cleanly
+  # on flapping by cancelling any pending timer for the node first.
+  defp schedule_nodeup_reconcile(state, node) do
+    case Storage.get(state.storage.misc, StorageKey.nri()) || 0 do
+      interval when interval > 0 ->
+        state = cancel_nodeup_reconcile(state, node)
+        ref = Process.send_after(self(), {:nodeup_reconcile, node}, interval)
+        put_in(state.nodeup_reconcile_timers[node], ref)
+
+      _ ->
+        state
+    end
+  end
+
+  defp cancel_nodeup_reconcile(state, node) do
+    case Map.pop(state.nodeup_reconcile_timers, node) do
+      {nil, _} ->
+        state
+
+      {ref, rest} ->
+        Process.cancel_timer(ref)
+        %{state | nodeup_reconcile_timers: rest}
+    end
+  end
+
+  defp cancel_nodeup_reconciles(state, nodes) do
+    Enum.reduce(nodes, state, fn n, acc -> cancel_nodeup_reconcile(acc, n) end)
   end
 
   defp schedule_request_cleanup(state) do
