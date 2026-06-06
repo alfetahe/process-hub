@@ -161,7 +161,7 @@ defmodule ProcessHub do
   - `:distribution_strategy` is optional and is used to define the strategy for process distribution.
   The default is `ProcessHub.Strategy.Distribution.ConsistentHashing`.
   - `:hubs_discover_interval` is optional and is used to define the interval in milliseconds
-  for hubs to start the discovery process. The default is `30000` (30 seconds).
+  for hubs to start the discovery process. The default is `10000` (10 seconds).
   - `:storage_purge_interval` is optional and is used to define the interval in milliseconds
   for the janitor to clean up the old cache records when the TTL expires. The default is `15000` (15 seconds).
   - `:migr_base_timeout` is optional and is used to define the base timeout in milliseconds

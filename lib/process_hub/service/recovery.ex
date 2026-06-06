@@ -511,9 +511,9 @@ defmodule ProcessHub.Service.Recovery do
     do: %{state | recovery_event_queue: q ++ [msg]}
 
   @doc """
-  Handles a tagged `{:cluster_join, {:restarted, node}}` signal: queues
-  it while the gate is closed; otherwise purges bindings whose
-  `node_pids` list contains the restarted peer.
+  Handles a peer's `@event_node_restarted` signal: queues it while the gate is
+  closed; otherwise purges bindings whose `node_pids` list contains the
+  restarted peer.
   """
   @spec handle_restart_signal(Hub.t(), node(), term()) :: Hub.t()
   def handle_restart_signal(state, restarted_node, msg) do
@@ -591,8 +591,8 @@ defmodule ProcessHub.Service.Recovery do
   defp maybe_emit_restart_signal(%Hub{} = state) do
     Dispatcher.dispatch_event(
       state.procs.event_queue,
-      @event_cluster_join,
-      {:restarted, node()},
+      @event_node_restarted,
+      node(),
       %{members: :external}
     )
 

@@ -67,6 +67,9 @@ Closes a split-brain gap: if the `pg` cluster-join `:join` notification is misse
 - New `:nodeup_reconcile_interval` field on `%ProcessHub{}` (default `3000` ms; `0` disables).
 - Added cluster-formation logging on several coordinator paths (boot handler set, pg join/leave, propagate external set, batch flush, hub merge) to make membership convergence observable.
 
+### Changed (cluster-event naming)
+Reserved the `cluster_join` event for actual cluster joins: the periodic discovery announce now uses a dedicated `@event_cluster_heartbeat` and the fast-restart purge signal a dedicated `@event_node_restarted`, instead of both piggybacking on `@event_cluster_join`. A steady-state discovery tick is now a silent no-op and only triggers a join when it reveals a node not already in the cluster, eliminating the periodic `cluster_join` log noise.
+
 
 ## v0.5.0-beta - 2026-02-17
 This release adds per-child metadata support, an experimental autonomous migration strategy, and major performance optimizations for large-scale operations.

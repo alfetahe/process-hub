@@ -203,9 +203,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @doc """
   Removes `restarted_node` from every binding's `node_pids` list.
 
-  Used by the fast-restart purge signal (`{:cluster_join, {:restarted,
-  node}}`): when a peer restarts within `:net_ticktime`, other peers
-  may still be holding bindings whose pid lives on the restarted node.
+  Used by the fast-restart purge signal (`@event_node_restarted`): when a peer
+  restarts within `:net_ticktime`, other peers may still be holding bindings
+  whose pid lives on the restarted node.
   This helper rewrites those rows so the dead pid is dropped before
   `init_sync` runs against the rejoined peer.
 

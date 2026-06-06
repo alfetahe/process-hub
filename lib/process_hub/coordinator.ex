@@ -396,7 +396,7 @@ defmodule ProcessHub.Coordinator do
       "nodeup @node | external cluster_join members @ext | connected @connected",
       %{
         "node" => node,
-        "ext" => external_cluster_join_nodes(state),
+        "ext" => external_hub_nodes(state),
         "connected" => Node.list()
       },
       prefix: "Coordinator"
@@ -414,7 +414,7 @@ defmodule ProcessHub.Coordinator do
     # Merge only a genuine same-hub peer: one still connected that registered
     # our cluster_join pg handler (what :join relies on). Anything else — e.g.
     # a node not running our hub — is never added to the batch.
-    if Enum.member?(external_cluster_join_nodes(state), node) do
+    if Enum.member?(external_hub_nodes(state), node) do
       {:noreply, batch_event(state, :cluster_join, node)}
     else
       {:noreply, state}
@@ -422,35 +422,13 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_cluster_join, payload} = msg, state) do
-    case payload do
-      {:restarted, n} when is_atom(n) ->
-        {:noreply, Recovery.handle_restart_signal(state, n, msg)}
+  def handle_info({@event_cluster_heartbeat, peer}, state) when is_atom(peer) do
+    {:noreply, reconcile_presence(state, peer)}
+  end
 
-      node when is_atom(node) ->
-        if Recovery.gate_closed?(state) do
-          LoggerService.info(
-            "cluster_join from @node ENQUEUED (recovery gate closed, state @rs)",
-            %{"node" => node, "rs" => state.recovery_state},
-            prefix: "Coordinator"
-          )
-
-          {:noreply, Recovery.enqueue(state, msg)}
-        else
-          LoggerService.info(
-            "cluster_join from @node accepted (gate open)",
-            %{"node" => node},
-            prefix: "Coordinator"
-          )
-
-          {:noreply, batch_event(state, :cluster_join, node)}
-        end
-
-      # Unrecognised tagged variant — silently drop (mixed-version
-      # graceful degradation).
-      _ ->
-        {:noreply, state}
-    end
+  @impl true
+  def handle_info({@event_node_restarted, peer} = msg, state) when is_atom(peer) do
+    {:noreply, Recovery.handle_restart_signal(state, peer, msg)}
   end
 
   @impl true
@@ -464,12 +442,6 @@ defmodule ProcessHub.Coordinator do
       Enum.filter(nodes, fn node ->
         Enum.member?(current_connected, node)
       end)
-
-    LoggerService.info(
-      "cluster_join batch flush: batched @batched | valid-still-connected @valid",
-      %{"batched" => nodes, "valid" => valid_join_nodes},
-      prefix: "Coordinator"
-    )
 
     state =
       if length(valid_join_nodes) > 0 do
@@ -618,13 +590,7 @@ defmodule ProcessHub.Coordinator do
     |> Storage.get(StorageKey.hdi())
     |> schedule_hub_discovery()
 
-    LoggerService.debug(
-      "propagate cluster_join → external members @ext | connected @connected",
-      %{"ext" => external_cluster_join_nodes(state), "connected" => Node.list()},
-      prefix: "Coordinator"
-    )
-
-    Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_join, node(), %{
+    Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_heartbeat, node(), %{
       members: :external
     })
 
@@ -714,6 +680,16 @@ defmodule ProcessHub.Coordinator do
     end
 
     state
+  end
+
+  # A presence announce merges only a node we don't already track, so a
+  # steady-state heartbeat is a silent no-op.
+  defp reconcile_presence(state, peer) do
+    cond do
+      not Cluster.new_node?(Cluster.nodes(state.storage.misc, [:include_local]), peer) -> state
+      Recovery.gate_closed?(state) -> Recovery.enqueue(state, {@event_cluster_heartbeat, peer})
+      true -> batch_event(state, :cluster_join, peer)
+    end
   end
 
   @doc false
@@ -817,7 +793,7 @@ defmodule ProcessHub.Coordinator do
 
   # Remote nodes pg currently resolves as cluster_join handlers. An empty list
   # while a peer is in `Node.list()` means the pg scope never synced.
-  defp external_cluster_join_nodes(state) do
+  defp external_hub_nodes(state) do
     state.procs.event_queue
     |> Blockade.get_handlers(@event_cluster_join)
     |> elem(1)
@@ -913,6 +889,8 @@ defmodule ProcessHub.Coordinator do
 
   defp register_handlers(%{event_queue: eq}) do
     Blockade.add_handler(eq, @event_cluster_join)
+    Blockade.add_handler(eq, @event_cluster_heartbeat)
+    Blockade.add_handler(eq, @event_node_restarted)
     Blockade.add_handler(eq, @event_cluster_leave)
     Blockade.add_handler(eq, @event_cluster_leave_batch)
     Blockade.add_handler(eq, @event_node_registry_broadcast)
