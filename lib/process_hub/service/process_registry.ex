@@ -12,6 +12,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
   use GenServer
 
   @default_timeout 10_000
+  # Per-peer budget for opt-in update propagation. Kept short: propagation
+  # runs in the caller (e.g. inside a heal/rebind path) and is best-effort —
+  # a slow peer must not stall the caller for the full local timeout.
+  @propagate_timeout 2_000
 
   @type registry() :: %{
           ProcessHub.child_id() => {
@@ -475,10 +479,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
   - `:propagate` - When `true`, after the local update succeeds the same
     `update_fn` is applied on every other hub node's registry (best-effort:
     unreachable peers are logged and skipped; they converge on rejoin via
-    peer sync). Each peer applies the function to its own current row, so
+    peer sync; each peer call is bounded to 2s so a slow peer cannot stall
+    the caller). Each peer applies the function to its own current row, so
     the function must be pure and convergent. Defaults to `false` — plain
     updates stay node-local (node-down purging relies on that).
-  - `:timeout` - GenServer call timeout in milliseconds (default: `10_000`)
+  - `:timeout` - local GenServer call timeout in milliseconds (default: `10_000`)
 
   ## Return Values
   - `:ok` - On successful update
@@ -495,7 +500,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
     result = GenServer.call(via(hub_id), {:update, hub_id, child_id, update_fn}, timeout)
 
     if result == :ok and Keyword.get(opts, :propagate, false) do
-      propagate_update(hub_id, child_id, update_fn, timeout)
+      propagate_update(hub_id, child_id, update_fn, @propagate_timeout)
     end
 
     result
