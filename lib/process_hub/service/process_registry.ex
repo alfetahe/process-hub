@@ -7,6 +7,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
 
+  require Logger
+
   use GenServer
 
   @default_timeout 10_000
@@ -469,6 +471,15 @@ defmodule ProcessHub.Service.ProcessRegistry do
   The function should return a tuple in the following format: `{child_spec, node_pids, metadata}`
   and those values will be then used to update the row.
 
+  ## Options
+  - `:propagate` - When `true`, after the local update succeeds the same
+    `update_fn` is applied on every other hub node's registry (best-effort:
+    unreachable peers are logged and skipped; they converge on rejoin via
+    peer sync). Each peer applies the function to its own current row, so
+    the function must be pure and convergent. Defaults to `false` — plain
+    updates stay node-local (node-down purging relies on that).
+  - `:timeout` - GenServer call timeout in milliseconds (default: `10_000`)
+
   ## Return Values
   - `:ok` - On successful update
   - `{:error, "No child found"}` - If no child is found for the given `child_id`
@@ -477,10 +488,49 @@ defmodule ProcessHub.Service.ProcessRegistry do
   ## Important
   Use this function with care as any invalid data may corrupt the registry.
   """
-  @spec update(ProcessHub.hub_id(), ProcessHub.child_id(), function()) ::
+  @spec update(ProcessHub.hub_id(), ProcessHub.child_id(), function(), keyword()) ::
           :ok | {:error, String.t()}
-  def update(hub_id, child_id, update_fn) do
-    GenServer.call(via(hub_id), {:update, hub_id, child_id, update_fn})
+  def update(hub_id, child_id, update_fn, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    result = GenServer.call(via(hub_id), {:update, hub_id, child_id, update_fn}, timeout)
+
+    if result == :ok and Keyword.get(opts, :propagate, false) do
+      propagate_update(hub_id, child_id, update_fn, timeout)
+    end
+
+    result
+  end
+
+  # Re-apply `update_fn` on every other hub node so durable child_spec or
+  # metadata edits survive a restart driven from any node's registry copy.
+  defp propagate_update(hub_id, child_id, update_fn, timeout) do
+    ProcessHub.nodes(hub_id)
+    |> Enum.each(fn node ->
+      try do
+        case :erpc.call(
+               node,
+               GenServer,
+               :call,
+               [via(hub_id), {:update, hub_id, child_id, update_fn}, timeout],
+               timeout
+             ) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "ProcessRegistry update propagation rejected on #{inspect(node)} " <>
+                "for #{inspect(child_id)}: #{inspect(reason)}"
+            )
+        end
+      catch
+        kind, reason ->
+          Logger.warning(
+            "ProcessRegistry update propagation failed on #{inspect(node)} " <>
+              "for #{inspect(child_id)}: #{inspect(kind)} #{inspect(reason)}"
+          )
+      end
+    end)
   end
 
   defp handle_insert(hub_id, child_spec, child_nodes, opts) do
