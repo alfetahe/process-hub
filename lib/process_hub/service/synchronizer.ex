@@ -73,7 +73,7 @@ defmodule ProcessHub.Service.Synchronizer do
       # TODO: may want to add some type of locking or transactions here.
       Enum.each(remote_children, fn {remote_cs, remote_pid, remote_meta} ->
         # Check if local children contain remote node data.
-        case ProcessRegistry.lookup(hub.hub_id, remote_cs.id) do
+        case ProcessRegistry.lookup(hub.hub_id, remote_cs.id, with_metadata: true) do
           nil ->
             # We don't have data locally so add it.
             ProcessRegistry.insert(
@@ -84,19 +84,18 @@ defmodule ProcessHub.Service.Synchronizer do
               metadata: remote_meta
             )
 
-          {_, local_child_nodes} ->
-            # Check if the pid associated with the remote node is different than
-            # what we have locally.
+          {local_cs, local_child_nodes, local_meta} ->
+            # Sync reconciles placement, not spec/metadata: update the remote
+            # node's pid but keep the local (authoritative) spec and metadata.
             if Keyword.get(local_child_nodes, remote_node, nil) !== remote_pid do
               updated = Keyword.put(local_child_nodes, remote_node, remote_pid)
 
-              # We have data locally, update the pid that is associated with the remote node.
               ProcessRegistry.insert(
                 hub.hub_id,
-                remote_cs,
+                local_cs,
                 updated,
                 hook_storage: hub.storage.hook,
-                metadata: remote_meta
+                metadata: local_meta
               )
             end
         end
