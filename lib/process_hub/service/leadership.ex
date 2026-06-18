@@ -19,6 +19,7 @@ defmodule ProcessHub.Service.Leadership do
   alias :elector, as: Elector
   alias ProcessHub.Service.Leadership.Watcher
   alias ProcessHub.Service.Oracle
+  alias ProcessHub.Utility.Singleton
 
   # The elector state process is locally registered under this name; its
   # presence is the single source of truth for "leadership is started".
@@ -59,12 +60,12 @@ defmodule ProcessHub.Service.Leadership do
         refresh_candidacy()
         install_election_hook()
         elect_with_retry()
-        ensure_singleton(Watcher)
+        Singleton.ensure_started(Watcher)
         # Pick up the leader if the watcher pre-existed (subscribed before start).
         Watcher.recheck()
         # The oracle manager hosts the leader-only oracle and keeps it failed
         # over; it subscribes to the watcher, so start it after the watcher.
-        ensure_singleton(Oracle.Manager)
+        Singleton.ensure_started(Oracle.Manager)
         :ok
 
       {:error, _reason} = error ->
@@ -120,7 +121,7 @@ defmodule ProcessHub.Service.Leadership do
   """
   @spec subscribe(pid()) :: :ok
   def subscribe(pid \\ self()) do
-    ensure_singleton(Watcher)
+    Singleton.ensure_started(Watcher)
     Watcher.subscribe(pid)
   end
 
@@ -255,27 +256,12 @@ defmodule ProcessHub.Service.Leadership do
   end
 
   # Watcher and Oracle.Manager are per-node singletons whose lifecycle follows
-  # leadership, not the caller's. Each exposes `whereis/0` and `start_link/0`;
-  # start linked then unlink so the process survives the caller.
-  defp ensure_singleton(module) do
-    case module.whereis() do
-      nil ->
-        case module.start_link() do
-          {:ok, pid} -> :erlang.unlink(pid)
-          {:error, {:already_started, _pid}} -> :ok
-        end
-
-      _pid ->
-        :ok
-    end
-
-    :ok
-  end
-
+  # leadership, not the caller's. Started via `Singleton.ensure_started/1` (linked
+  # then unlinked so they survive the caller).
   defp stop_singleton(module) do
     case module.whereis() do
       nil -> :ok
-      pid -> GenServer.stop(pid)
+      pid -> Singleton.safe_stop(pid)
     end
   end
 end

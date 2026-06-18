@@ -13,8 +13,10 @@ defmodule ProcessHub.Service.Oracle.Manager do
 
   use GenServer
 
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Leadership
   alias ProcessHub.Service.Oracle
+  alias ProcessHub.Utility.Singleton
 
   # Retry delay while a stale oracle on the previous leader is still shutting down.
   @ensure_retry_ms 150
@@ -122,7 +124,7 @@ defmodule ProcessHub.Service.Oracle.Manager do
         else
           # A stale oracle on the previous leader is still up — stop it and
           # retry shortly so this node takes over the global registration.
-          stop_pid(pid)
+          Singleton.safe_stop(pid)
           Process.send_after(self(), :ensure_oracle, @ensure_retry_ms)
           state
         end
@@ -130,18 +132,10 @@ defmodule ProcessHub.Service.Oracle.Manager do
   end
 
   defp stop_local_oracle(%{oracle_pid: pid}) when is_pid(pid) do
-    if node(pid) === node(), do: stop_pid(pid)
+    if node(pid) === node(), do: Singleton.safe_stop(pid)
   end
 
   defp stop_local_oracle(_state), do: :ok
-
-  defp stop_pid(pid) do
-    try do
-      GenServer.stop(pid)
-    catch
-      _kind, _reason -> :ok
-    end
-  end
 
   defp reannounce(%{announcements: announcements}) do
     Enum.each(announcements, fn {hub_id, metadata} ->
@@ -150,6 +144,6 @@ defmodule ProcessHub.Service.Oracle.Manager do
   end
 
   defp broadcast_reannounce() do
-    Enum.each([node() | Node.list()], fn n -> send({__MODULE__, n}, :reannounce) end)
+    Cluster.broadcast(__MODULE__, :reannounce)
   end
 end

@@ -63,6 +63,16 @@ defmodule ProcessHub.Service.Cluster do
     end
   end
 
+  @doc """
+  Sends `msg` to the locally-registered process `module` on every cluster node,
+  including the local node.
+  """
+  @spec broadcast(module(), term()) :: :ok
+  def broadcast(module, msg) do
+    Enum.each([node() | Node.list()], fn n -> send({module, n}, msg) end)
+    :ok
+  end
+
   @doc "Promotes the current node to a cluster node."
   @spec promote_to_node(Hub.t(), node()) :: :ok | {:error, :not_alive}
   def promote_to_node(hub, node_name) do

@@ -14,6 +14,7 @@ defmodule ProcessHub.Service.Leadership.Watcher do
 
   use GenServer
 
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Leadership
 
   @notification :processhub_leadership
@@ -51,8 +52,7 @@ defmodule ProcessHub.Service.Leadership.Watcher do
   """
   @spec broadcast_recheck() :: :ok
   def broadcast_recheck() do
-    Enum.each([node() | Node.list()], fn n -> send({__MODULE__, n}, :recheck) end)
-    :ok
+    Cluster.broadcast(__MODULE__, :recheck)
   end
 
   ##############################################################################
