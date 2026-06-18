@@ -15,6 +15,7 @@ defmodule ProcessHub.Service.Storage.Ets do
   @behaviour ProcessHub.Service.Storage.Behaviour
 
   alias :ets, as: ETS
+  alias ProcessHub.Service.Storage.Entry
 
   @impl true
   @spec open(atom(), keyword()) :: {:ok, atom()} | {:error, term()}
@@ -50,16 +51,8 @@ defmodule ProcessHub.Service.Storage.Ets do
   @impl true
   @spec insert(atom() | :ets.tid(), term(), term(), keyword()) :: :ok
   def insert(ref, key, value, opts) do
-    case Keyword.get(opts, :ttl) do
-      ttl when is_integer(ttl) ->
-        expire = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.+(ttl)
-        ETS.insert(ref, {key, value, expire})
-        :ok
-
-      _ ->
-        ETS.insert(ref, {key, value})
-        :ok
-    end
+    ETS.insert(ref, Entry.build(key, value, opts))
+    :ok
   end
 
   @impl true

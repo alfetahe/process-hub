@@ -58,13 +58,15 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   @behaviour ProcessHub.Service.Storage.Behaviour
 
   alias :ets, as: ETS
+  alias ProcessHub.Service.Storage.DetsFile
+  alias ProcessHub.Service.Storage.Entry
 
   @type ref() :: {:ets.tid(), atom()}
 
   @impl true
   @spec open(atom(), keyword()) :: {:ok, ref()} | {:error, term()}
   def open(hub_id, opts) when is_atom(hub_id) do
-    path = resolve_path(hub_id, opts)
+    path = DetsFile.resolve_path(hub_id, opts)
     replay? = Keyword.get(opts, :recovery_replay, true)
     File.mkdir_p!(Path.dirname(path))
 
@@ -74,14 +76,14 @@ defmodule ProcessHub.Service.Storage.DurableEts do
           {{:ok, table}, false}
 
         {:error, reason} ->
-          rotate_and_reopen(hub_id, path, reason)
+          DetsFile.rotate_and_reopen(hub_id, path, reason)
       end
 
     case result do
       {:ok, dets_table} ->
         ets_tid = ETS.new(:durable_ets_registry, [:set, :public, read_concurrency: true])
         if replay?, do: replay_into_ets(dets_table, ets_tid)
-        emit_opened(hub_id, dets_table, path, repaired?, replay?)
+        DetsFile.emit_opened(hub_id, __MODULE__, path, repaired?, replay?)
         {:ok, {ets_tid, dets_table}}
 
       {:error, _} = err ->
@@ -112,17 +114,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   @impl true
   @spec insert(ref(), term(), term(), keyword()) :: :ok | {:error, term()}
   def insert(ref, key, value, opts) do
-    object =
-      case Keyword.get(opts, :ttl) do
-        ttl when is_integer(ttl) ->
-          expire = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.+(ttl)
-          {key, value, expire}
-
-        _ ->
-          {key, value}
-      end
-
-    do_write(ref, key, object)
+    do_write(ref, key, Entry.build(key, value, opts))
   end
 
   @impl true
@@ -130,8 +122,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   def get({ets_tid, _dets}, key) do
     case ETS.lookup(ets_tid, key) do
       [] -> nil
-      [{_key, value, expire} | _] -> if past?(expire), do: nil, else: value
-      [{_key, value} | _] -> value
+      [entry | _] -> Entry.value(entry)
     end
   end
 
@@ -140,7 +131,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   def exists?({ets_tid, _dets}, key) do
     case ETS.lookup(ets_tid, key) do
       [] -> false
-      [entry | _] -> not expired?(entry)
+      [entry | _] -> not Entry.expired?(entry)
     end
   end
 
@@ -152,7 +143,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
     case :dets.delete(dets_table, key) do
       :ok ->
-        emit(:remove, %{count: 1}, %{hub_id: dets_table, child_id: key})
+        DetsFile.emit(:remove, %{count: 1}, %{hub_id: dets_table, child_id: key})
         :dets.sync(dets_table)
         :ok
 
@@ -169,7 +160,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   def export_all({ets_tid, _dets}) do
     ETS.foldl(
       fn entry, acc ->
-        if expired?(entry), do: acc, else: [entry | acc]
+        if Entry.expired?(entry), do: acc, else: [entry | acc]
       end,
       [],
       ets_tid
@@ -181,7 +172,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   def foldl({ets_tid, _dets}, acc, fun) do
     ETS.foldl(
       fn entry, acc_in ->
-        if expired?(entry), do: acc_in, else: fun.(entry, acc_in)
+        if Entry.expired?(entry), do: acc_in, else: fun.(entry, acc_in)
       end,
       acc,
       ets_tid
@@ -218,7 +209,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
     case :dets.insert(dets_table, object) do
       :ok ->
-        emit(:insert, %{count: 1}, %{hub_id: dets_table, child_id: key})
+        DetsFile.emit(:insert, %{count: 1}, %{hub_id: dets_table, child_id: key})
         :dets.sync(dets_table)
         :ok
 
@@ -233,80 +224,11 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   defp replay_into_ets(dets_table, ets_tid) do
     :dets.foldl(
       fn entry, acc ->
-        if expired?(entry), do: acc, else: ETS.insert(ets_tid, entry)
+        if Entry.expired?(entry), do: acc, else: ETS.insert(ets_tid, entry)
         acc
       end,
       :ok,
       dets_table
     )
   end
-
-  defp resolve_path(hub_id, opts) do
-    case Keyword.get(opts, :path) do
-      nil -> default_path(hub_id)
-      path when is_binary(path) -> path
-      path when is_list(path) -> List.to_string(path)
-    end
-  end
-
-  defp default_path(hub_id) do
-    base =
-      case :code.priv_dir(:process_hub) do
-        {:error, :bad_name} -> Path.join([File.cwd!(), "priv"])
-        priv when is_list(priv) -> List.to_string(priv)
-      end
-
-    Path.join([base, "process_hub", Atom.to_string(hub_id), "registry.dets"])
-  end
-
-  defp rotate_and_reopen(hub_id, path, reason) do
-    rotated = "#{path}.corrupt-#{System.monotonic_time()}"
-    _ = File.rename(path, rotated)
-
-    emit(:backend_corrupt, %{}, %{
-      hub_id: hub_id,
-      path: path,
-      rotated_to: rotated,
-      reason: reason
-    })
-
-    case :dets.open_file(hub_id, file: to_charlist(path), repair: true, type: :set) do
-      {:ok, table} -> {{:ok, table}, true}
-      {:error, _} = err -> {err, false}
-    end
-  end
-
-  defp emit_opened(hub_id, dets_table, path, repaired?, replayed?) do
-    row_count =
-      try do
-        :dets.info(dets_table, :size) || 0
-      rescue
-        _ -> 0
-      end
-
-    emit(:backend_opened, %{row_count: row_count, elapsed_ms: 0}, %{
-      hub_id: hub_id,
-      backend: __MODULE__,
-      path: path,
-      repaired: repaired?,
-      replayed: replayed?
-    })
-  end
-
-  defp emit(event, measurements, metadata) do
-    :telemetry.execute([:process_hub, :registry, event], measurements, metadata)
-  rescue
-    UndefinedFunctionError -> :ok
-    ArgumentError -> :ok
-  end
-
-  defp expired?({_key, _value, expire}), do: past?(expire)
-  defp expired?(_other), do: false
-
-  defp past?(expire) when is_integer(expire) do
-    now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
-    now > expire
-  end
-
-  defp past?(_), do: false
 end

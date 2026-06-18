@@ -37,10 +37,13 @@ defmodule ProcessHub.Service.Storage.Dets do
 
   @behaviour ProcessHub.Service.Storage.Behaviour
 
+  alias ProcessHub.Service.Storage.DetsFile
+  alias ProcessHub.Service.Storage.Entry
+
   @impl true
   @spec open(atom(), keyword()) :: {:ok, atom()} | {:error, term()}
   def open(hub_id, opts) when is_atom(hub_id) do
-    path = resolve_path(hub_id, opts)
+    path = DetsFile.resolve_path(hub_id, opts)
     replay? = Keyword.get(opts, :recovery_replay, true)
     File.mkdir_p!(Path.dirname(path))
 
@@ -50,7 +53,7 @@ defmodule ProcessHub.Service.Storage.Dets do
           {{:ok, table}, false}
 
         {:error, reason} ->
-          rotate_and_reopen(hub_id, path, reason)
+          DetsFile.rotate_and_reopen(hub_id, path, reason)
       end
 
     case result do
@@ -60,7 +63,7 @@ defmodule ProcessHub.Service.Storage.Dets do
           :dets.sync(table)
         end
 
-        emit_opened(hub_id, table, path, repaired?, replay?)
+        DetsFile.emit_opened(hub_id, __MODULE__, path, repaired?, replay?)
         {:ok, table}
 
       {:error, _} = err ->
@@ -86,17 +89,7 @@ defmodule ProcessHub.Service.Storage.Dets do
   @impl true
   @spec insert(atom(), term(), term(), keyword()) :: :ok | {:error, term()}
   def insert(ref, key, value, opts) do
-    object =
-      case Keyword.get(opts, :ttl) do
-        ttl when is_integer(ttl) ->
-          expire = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.+(ttl)
-          {key, value, expire}
-
-        _ ->
-          {key, value}
-      end
-
-    do_insert(ref, key, object)
+    do_insert(ref, key, Entry.build(key, value, opts))
   end
 
   @impl true
@@ -104,7 +97,7 @@ defmodule ProcessHub.Service.Storage.Dets do
   def get(ref, key) do
     case :dets.lookup(ref, key) do
       [] -> nil
-      [entry | _] -> from_entry(entry)
+      [entry | _] -> Entry.value(entry)
     end
   end
 
@@ -113,7 +106,7 @@ defmodule ProcessHub.Service.Storage.Dets do
   def exists?(ref, key) do
     case :dets.lookup(ref, key) do
       [] -> false
-      [entry | _] -> not expired?(entry)
+      [entry | _] -> not Entry.expired?(entry)
     end
   end
 
@@ -122,7 +115,7 @@ defmodule ProcessHub.Service.Storage.Dets do
   def remove(ref, key) do
     case :dets.delete(ref, key) do
       :ok ->
-        emit(:remove, %{count: 1}, %{hub_id: ref, child_id: key})
+        DetsFile.emit(:remove, %{count: 1}, %{hub_id: ref, child_id: key})
         :dets.sync(ref)
         :ok
 
@@ -136,7 +129,7 @@ defmodule ProcessHub.Service.Storage.Dets do
   def export_all(ref) do
     :dets.foldl(
       fn entry, acc ->
-        if expired?(entry), do: acc, else: [entry | acc]
+        if Entry.expired?(entry), do: acc, else: [entry | acc]
       end,
       [],
       ref
@@ -148,7 +141,7 @@ defmodule ProcessHub.Service.Storage.Dets do
   def foldl(ref, acc, fun) do
     :dets.foldl(
       fn entry, acc_in ->
-        if expired?(entry), do: acc_in, else: fun.(entry, acc_in)
+        if Entry.expired?(entry), do: acc_in, else: fun.(entry, acc_in)
       end,
       acc,
       ref
@@ -182,7 +175,7 @@ defmodule ProcessHub.Service.Storage.Dets do
   defp do_insert(ref, key, object) do
     case :dets.insert(ref, object) do
       :ok ->
-        emit(:insert, %{count: 1}, %{hub_id: ref, child_id: key})
+        DetsFile.emit(:insert, %{count: 1}, %{hub_id: ref, child_id: key})
         :dets.sync(ref)
         :ok
 
@@ -190,81 +183,4 @@ defmodule ProcessHub.Service.Storage.Dets do
         {:error, reason}
     end
   end
-
-  defp resolve_path(hub_id, opts) do
-    case Keyword.get(opts, :path) do
-      nil -> default_path(hub_id)
-      path when is_binary(path) -> path
-      path when is_list(path) -> List.to_string(path)
-    end
-  end
-
-  defp default_path(hub_id) do
-    base =
-      case :code.priv_dir(:process_hub) do
-        {:error, :bad_name} -> Path.join([File.cwd!(), "priv"])
-        priv when is_list(priv) -> List.to_string(priv)
-      end
-
-    Path.join([base, "process_hub", Atom.to_string(hub_id), "registry.dets"])
-  end
-
-  defp rotate_and_reopen(hub_id, path, reason) do
-    rotated =
-      "#{path}.corrupt-#{System.monotonic_time()}"
-
-    _ = File.rename(path, rotated)
-
-    emit(:backend_corrupt, %{}, %{
-      hub_id: hub_id,
-      path: path,
-      rotated_to: rotated,
-      reason: reason
-    })
-
-    case :dets.open_file(hub_id, file: to_charlist(path), repair: true, type: :set) do
-      {:ok, table} -> {{:ok, table}, true}
-      {:error, _} = err -> {err, false}
-    end
-  end
-
-  defp emit_opened(hub_id, _table, path, repaired?, replayed?) do
-    row_count =
-      try do
-        :dets.info(hub_id, :size) || 0
-      rescue
-        _ -> 0
-      end
-
-    emit(:backend_opened, %{row_count: row_count, elapsed_ms: 0}, %{
-      hub_id: hub_id,
-      backend: __MODULE__,
-      path: path,
-      repaired: repaired?,
-      replayed: replayed?
-    })
-  end
-
-  defp emit(event, measurements, metadata) do
-    :telemetry.execute([:process_hub, :registry, event], measurements, metadata)
-  rescue
-    UndefinedFunctionError -> :ok
-    ArgumentError -> :ok
-  end
-
-  defp from_entry({_key, value}), do: value
-
-  defp from_entry({_key, value, expire}) do
-    if past?(expire), do: nil, else: value
-  end
-
-  defp expired?({_key, _value, expire}), do: past?(expire)
-  defp expired?(_other), do: false
-
-  defp past?(expire) when is_integer(expire) do
-    now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
-    now > expire
-  end
-
-  defp past?(_), do: false
 end
