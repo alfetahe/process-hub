@@ -65,7 +65,7 @@ defmodule MyApp.Application do
 end
 ```
 
-See `ProcessHub.init_opts/0` for more information on the options that can be passed to the start functions.
+See `t:ProcessHub.init_opts/0` for more information on the options that can be passed to the start functions.
 
 ## Stopping processes
 Processes can be stopped dynamically using the `ProcessHub.stop_child/3` or `ProcessHub.stop_children/3` functions.
@@ -81,7 +81,7 @@ ProcessHub.stop_children(:my_hub, ["child_id1", "child_id2"])
 {:ok, :stop_initiated}
 ```
 
-See `ProcessHub.stop_opts/0` for more information on the options that can be passed to the stop functions.
+See `t:ProcessHub.stop_opts/0` for more information on the options that can be passed to the stop functions.
 
 ### Self-stopping processes
 Processes can also stop themselves by sending exit signals to the linked processes (supervisor).

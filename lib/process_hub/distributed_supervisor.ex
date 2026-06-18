@@ -41,7 +41,7 @@ defmodule ProcessHub.DistributedSupervisor do
   @doc """
   Initializes the distributed supervisor with the given arguments.
 
-  We will call the Erlang `:supervisor.init/1` function with the given arguments.
+  We will call the Erlang `:supervisor` init/1 function with the given arguments.
   this in turn will call the `init/1`
   """
   def init({sup, mod, args}), do: :supervisor.init({sup, mod, args})
@@ -125,7 +125,7 @@ defmodule ProcessHub.DistributedSupervisor do
   @doc """
   Handles the process exit messages for the child processes.
 
-  We delegate the work the the `:supervisor.handle_info/2` function and then
+  We delegate the work the the `:supervisor` handle_info/2 function and then
   propagate the event to the `Dispatcher` module to notify the other nodes
   about the child process failure.
   """

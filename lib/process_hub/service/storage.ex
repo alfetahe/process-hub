@@ -6,7 +6,7 @@ defmodule ProcessHub.Service.Storage do
     * **Misc storage** — strategy configs, runtime state. Always ETS.
     * **Hook storage** — registered hook handlers. Always ETS.
     * **Process registry** — child registrations. Routed through the
-      configured `t:ProcessHub.Service.Storage.Behaviour/0` backend
+      configured `ProcessHub.Service.Storage.Behaviour` backend
       (default `ProcessHub.Service.Storage.Ets`).
 
   When a registry backend is opened it registers itself with this

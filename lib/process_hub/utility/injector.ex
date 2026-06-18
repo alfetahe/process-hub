@@ -20,6 +20,7 @@ defmodule ProcessHub.Utility.Injector do
       args = for i <- 0..arity, i > 0, do: Macro.var(:"arg#{i}", __MODULE__)
 
       quote do
+        @doc false
         defdelegate unquote(func)(unquote_splicing(args)), to: unquote(base_module)
       end
     end
