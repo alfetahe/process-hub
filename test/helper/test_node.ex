@@ -47,6 +47,7 @@ defmodule Test.Helper.TestNode do
     rpc.(Application, :ensure_all_started, [:logger])
 
     rpc.(Logger, :configure, [[level: Logger.level()]])
+    rpc.(Test.Helper.LoggerFilters, :install, [])
     rpc.(Mix, :env, [Mix.env()])
 
     loaded_apps =

@@ -13,9 +13,9 @@ defmodule Test.ProcessHubSplitBrainMultiNodeTest do
   an already-`:normal` coordinator.
 
   This test drives exactly that order and asserts both nodes see the full
-  membership. It also serves as the live exercise for the formation logging in
-  `coordinator.ex` (boot handler set, pg join/leave, propagate external set,
-  batch flush, hub merge) — run with `capture_log: false` to read them.
+  membership. To watch the coordinator's formation logging in `coordinator.ex`
+  (boot handler set, pg join/leave, propagate external set, batch flush, hub
+  merge), temporarily bump the level to `:info` here while debugging.
   """
 
   use ExUnit.Case, async: false
@@ -24,20 +24,13 @@ defmodule Test.ProcessHubSplitBrainMultiNodeTest do
   alias Test.Helper.Bootstrap
 
   @moduletag :multinode
-  @moduletag capture_log: false
 
   setup_all do
-    # This probe exists to make formation observable; surface the info-level
-    # coordinator logs (suite default is :warning) and restore after.
-    prior_level = Logger.level()
-    Logger.configure(level: :info)
-
     [{peer_name, peer_pid}] = TestNode.start_nodes(1, prefix: "split_brain_mn")
     :erlang.unlink(peer_pid)
 
     on_exit(fn ->
       if Process.alive?(peer_pid), do: :peer.stop(peer_pid)
-      Logger.configure(level: prior_level)
     end)
 
     {:ok, %{peer: peer_name}}
