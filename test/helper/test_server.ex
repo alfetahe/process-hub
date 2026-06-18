@@ -1,11 +1,10 @@
 defmodule Test.Helper.TestServer do
   use GenServer
 
-  # Use the HotSwap, ColdSwap, and inter-hub migration handover macros for testing.
-  # The first declares the shared behaviour; the rest skip it to avoid duplicates.
+  # Use the HotSwap and ColdSwap migration handover macros for testing.
+  # The first declares the shared behaviour; the second skips it to avoid duplicates.
   use ProcessHub.Strategy.Migration.HotSwap
   use ProcessHub.Strategy.Migration.ColdSwap, declare_behaviour: false
-  use ProcessHub.Migration.Handover, declare_behaviour: false
 
   def test() do
     :test_ok

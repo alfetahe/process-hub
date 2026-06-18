@@ -8,7 +8,7 @@ defmodule Test.ProcessHubRegistryUpdatePropagationTest do
   """
   use ExUnit.Case, async: false
 
-  import Test.Helper.LeadershipCluster
+  import Test.Helper.Common
 
   alias Test.Helper.TestNode
   alias Test.Helper.Bootstrap

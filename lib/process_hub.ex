@@ -11,8 +11,6 @@ defmodule ProcessHub do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Distributor
-  alias ProcessHub.Service.Leadership
-  alias ProcessHub.Service.Migration
   alias ProcessHub.Future
 
   @typedoc """
@@ -908,102 +906,6 @@ defmodule ProcessHub do
   def nodes(hub_id, opts \\ []) do
     GenServer.call(hub_id, {:get_nodes, opts})
   end
-
-  @doc """
-  Starts opt-in, cluster-wide leadership on the local node.
-
-  Leadership elects a single leader node per BEAM cluster via the `:elector`
-  library. Because starting it also starts Erlang `:global`,
-  ProcessHub never starts leadership by default — call this to opt in.
-
-  Idempotent. Returns `:ok`, or `{:error, term()}` if `:elector` fails to start.
-
-  ## Example
-      iex> ProcessHub.start_leadership()
-      :ok
-  """
-  @spec start_leadership() :: :ok | {:error, term()}
-  defdelegate start_leadership(), to: Leadership, as: :start
-
-  @doc """
-  Stops leadership on the local node. No-op when leadership is not started.
-
-  ## Example
-      iex> ProcessHub.stop_leadership()
-      :ok
-  """
-  @spec stop_leadership() :: :ok
-  defdelegate stop_leadership(), to: Leadership, as: :stop
-
-  @doc """
-  Returns the current cluster leader node.
-
-    * `{:ok, node()}` - the elected leader.
-    * `{:ok, :none}` - leadership is started but no leader is elected yet.
-    * `{:error, :leadership_not_started}` - leadership has not been started.
-
-  Does not start leadership as a side effect.
-
-  ## Example
-      iex> ProcessHub.start_leadership()
-      iex> ProcessHub.leader()
-      {:ok, :"node1@127.0.0.1"}
-  """
-  @spec leader() :: {:ok, Leadership.leader()} | {:error, :leadership_not_started}
-  defdelegate leader(), to: Leadership
-
-  @doc """
-  Returns whether the local node is the cluster leader. `false` when leadership
-  is not started. Does not start leadership as a side effect.
-
-  ## Example
-      iex> ProcessHub.is_leader?()
-      false
-  """
-  @spec is_leader?() :: boolean()
-  defdelegate is_leader?(), to: Leadership
-
-  @doc """
-  Runs the zero-arity `fun` only if the local node is the cluster leader,
-  returning its result; otherwise returns `{:error, :not_leader}` without
-  evaluating `fun`.
-
-  ## Example
-      iex> ProcessHub.on_leader(fn -> :did_work end)
-      :did_work
-  """
-  @spec on_leader((-> result)) :: result | {:error, :not_leader} when result: var
-  defdelegate on_leader(fun), to: Leadership
-
-  @doc """
-  Migrates a process from `source_hub` to `target_hub`, handing the previous
-  process's state to the new one.
-
-  The migration is coordinated by the leader-hosted oracle, which serializes and
-  de-duplicates it (so two nodes cannot migrate the same process concurrently)
-  and owns the `snapshot → stop → start → deliver → commit` sequence — rolling
-  back (restarting on the source with the snapshot) if the target start fails, so
-  the process is never lost. Requires leadership to be started.
-
-  State handoff uses the `ProcessHub.Migration.Handover` contract — `use` its macro
-  (or implement its handler messages); a process that supports neither is migrated
-  **without** its state. The target node is chosen by the target hub's
-  distribution strategy.
-
-  Returns `{:ok, info}` on success, `{:rolled_back, reason}` if the target start
-  failed (process restored on the source), or `{:error, reason}` (for example
-  `{:error, :no_oracle}` when leadership is not started).
-
-  ## Options
-    * `:target_spec` - child spec to start on the target hub (defaults to the
-      source's spec).
-
-  ## Example
-      iex> ProcessHub.migrate_process(:hub_a, :hub_b, "worker_1")
-      {:ok, %{child_id: "worker_1", from: :hub_a, to: :hub_b, node: :"node1@127.0.0.1"}}
-  """
-  @spec migrate_process(hub_id(), hub_id(), child_id(), keyword()) :: Migration.result()
-  defdelegate migrate_process(source_hub, target_hub, child_id, opts \\ []), to: Migration
 
   @doc """
   Promotes a `ProcessHub` instance to run in distributed node mode.
