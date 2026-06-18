@@ -81,6 +81,9 @@ defmodule Test.ProcessHubRegistryUpdatePropagationTest do
     assert marker(peer, child_id) == :everywhere
   end
 
+  # The peer legitimately rejects with "No child found"; the warning is the
+  # expected best-effort signal, so capture it instead of spamming the suite.
+  @tag capture_log: true
   test "propagation is best-effort when a peer misses the row", %{peer: peer} do
     child_id = "local_only_row"
     child_spec = %{id: child_id, start: {:m, :f, []}}

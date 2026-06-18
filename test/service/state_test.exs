@@ -3,6 +3,8 @@ defmodule Test.Service.StateTest do
 
   use ExUnit.Case
 
+  import Test.Helper.Common
+
   setup do
     Test.Helper.SetupHelper.setup_base(%{}, :state_test)
   end
@@ -19,13 +21,15 @@ defmodule Test.Service.StateTest do
     assert State.toggle_quorum_failure(hub) === :ok
     assert State.toggle_quorum_failure(hub) === {:error, :already_partitioned}
     assert State.is_partitioned?(hub) === true
-    assert Registry.lookup(hub.procs.system_registry, "dist_sup") === []
+    # Registry drops the terminated dist_sup's entry asynchronously, so wait.
+    assert eventually(fn -> Registry.lookup(hub.procs.system_registry, "dist_sup") === [] end)
   end
 
   test "toggle quorum success", %{hub: hub} = _context do
     assert State.toggle_quorum_failure(hub) === :ok
     assert State.is_partitioned?(hub) === true
-    assert Registry.lookup(hub.procs.system_registry, "dist_sup") === []
+    # Registry drops the terminated dist_sup's entry asynchronously, so wait.
+    assert eventually(fn -> Registry.lookup(hub.procs.system_registry, "dist_sup") === [] end)
     assert State.toggle_quorum_success(hub) === :ok
     assert State.toggle_quorum_success(hub) === {:error, :not_partitioned}
     assert State.is_partitioned?(hub) === false
