@@ -82,12 +82,10 @@ defmodule Test.ProcessHub.Service.Storage.DetsTest do
 
   test "TTL emulation: get returns nil after expiry", %{hub_id: hub_id, path: path} do
     {:ok, ref} = Backend.open(hub_id, path: path)
-    # TTL needs enough headroom that the synchronous DETS write + the
-    # pre-expiry get can both finish within it on a loaded test machine,
-    # otherwise the first assertion races the disk and flakes.
-    Backend.insert(ref, :ttl_key, :ttl_value, ttl: 500)
-    assert Backend.get(ref, :ttl_key) === :ttl_value
-    Process.sleep(700)
+    # A live TTL is returned; an entry whose expiry is already in the past reads as expired.
+    Backend.insert(ref, :live_key, :live_value, ttl: 60_000)
+    assert Backend.get(ref, :live_key) === :live_value
+    Backend.insert(ref, :ttl_key, :ttl_value, ttl: -1)
     assert Backend.get(ref, :ttl_key) === nil
     refute Backend.exists?(ref, :ttl_key)
     Backend.close(ref)
@@ -96,8 +94,7 @@ defmodule Test.ProcessHub.Service.Storage.DetsTest do
   test "export_all filters expired entries", %{hub_id: hub_id, path: path} do
     {:ok, ref} = Backend.open(hub_id, path: path)
     Backend.insert(ref, :alive, :v)
-    Backend.insert(ref, :ttl_key, :v, ttl: 50)
-    Process.sleep(120)
+    Backend.insert(ref, :ttl_key, :v, ttl: -1)
     rows = Backend.export_all(ref)
     keys = Enum.map(rows, &elem(&1, 0))
     assert :alive in keys

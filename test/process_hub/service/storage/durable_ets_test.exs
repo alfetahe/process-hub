@@ -167,14 +167,18 @@ defmodule Test.ProcessHub.Service.Storage.DurableEtsTest do
     } do
       {:ok, ref} = Backend.open(hub_id, path: path)
 
-      assert :ok = Backend.insert(ref, :ttl_key, :ttl_value, ttl: 50)
-      assert Backend.get(ref, :ttl_key) === :ttl_value
+      # A live TTL is returned; an entry whose expiry is already in the past reads as expired.
+      assert :ok = Backend.insert(ref, :live_key, :live_value, ttl: 60_000)
+      assert Backend.get(ref, :live_key) === :live_value
 
-      Process.sleep(80)
+      assert :ok = Backend.insert(ref, :ttl_key, :ttl_value, ttl: -1)
 
       assert Backend.get(ref, :ttl_key) === nil
       assert Backend.exists?(ref, :ttl_key) === false
-      assert Backend.export_all(ref) === []
+
+      keys = Backend.export_all(ref) |> Enum.map(&elem(&1, 0))
+      assert :live_key in keys
+      refute :ttl_key in keys
 
       Backend.close(ref)
     end

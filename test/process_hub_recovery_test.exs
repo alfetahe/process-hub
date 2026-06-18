@@ -138,13 +138,17 @@ defmodule Test.ProcessHubRecoveryTest do
         capture_log(fn ->
           start_hub!(hub_id: hub_id, hooks: hooks, auto_recovery: [marker_path: marker])
 
-          assert_receive {:slow_pre_replay_entered, t_entered}, 3_000
+          assert_receive {:slow_pre_replay_entered, handler_pid}, 3_000
           assert_receive {:crashing_pre_replay_entered, _t}, 3_000
+
+          # While the slow handler blocks, the replay phase must not complete —
+          # proving pre_recovery_replay waits for handlers to return.
+          refute_receive {:post_replay, _payload}, 100
+
+          send(handler_pid, :release)
+
           assert_receive {:post_replay, _payload}, 3_000
           assert ProcessHub.await_normal(hub_id, 2_000) == :ok
-
-          # The slow handler sleeps 300 ms; the lifecycle must have blocked on it.
-          assert System.monotonic_time(:millisecond) - t_entered >= 250
         end)
 
       assert log =~ "intentional handler crash"
@@ -215,9 +219,13 @@ defmodule Test.ProcessHubRecoveryTest do
   def forward_to(pid, tag, payload), do: send(pid, {tag, payload})
 
   def slow_pre_replay(parent, _hook_data) do
-    send(parent, {:slow_pre_replay_entered, System.monotonic_time(:millisecond)})
-    Process.sleep(300)
-    :ok
+    send(parent, {:slow_pre_replay_entered, self()})
+    # Block until the test releases us, proving the lifecycle waits for the handler.
+    receive do
+      :release -> :ok
+    after
+      5_000 -> :ok
+    end
   end
 
   def crashing_pre_replay(parent, _hook_data) do

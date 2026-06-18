@@ -210,7 +210,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
     test "forwards child to correct node when registry points elsewhere", %{hub: hub} do
       child_id = :"remote_child_#{System.unique_integer([:positive])}"
       fake_remote_node = :"fake_remote@127.0.0.1"
-      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      fake_pid = spawn(fn -> receive do _ -> :ok end end)
 
       child_spec = %{id: child_id, start: {Agent, :start_link, [fn -> :ok end]}}
 
@@ -257,7 +257,7 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
 
     test "does not forward to nodes that already received the original request", %{hub: hub} do
       child_id = :"no_reforward_#{System.unique_integer([:positive])}"
-      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      fake_pid = spawn(fn -> receive do _ -> :ok end end)
 
       child_spec = %{id: child_id, start: {Agent, :start_link, [fn -> :ok end]}}
 

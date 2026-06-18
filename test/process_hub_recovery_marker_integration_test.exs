@@ -69,7 +69,7 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
     dets = Path.join(dir, "registry.dets")
     marker = Path.join(dir, "cluster.healthy")
 
-    {hub_id, _pid} =
+    {hub_id, pid} =
       start_hub!(
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
@@ -90,9 +90,11 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
     assert {%{id: "seeded"}, _} = ProcessRegistry.lookup(hub_id, "seeded")
     assert File.exists?(marker)
 
+    # Supervisor.stop/1 is synchronous; the monitor confirms the hub (and its
+    # registry/name) is fully down before we re-start, with no inherited state.
+    ref = Process.monitor(pid)
     stop_hub(hub_id)
-    # Ensure no inherited state leaks via process registry / name.
-    Process.sleep(50)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
 
     # Re-start with marker still present. The backend MUST open without
     # replaying the DETS row into ETS.
@@ -116,7 +118,7 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
     dets = Path.join(dir, "registry.dets")
     marker = Path.join(dir, "cluster.healthy")
 
-    {hub_id, _pid} =
+    {hub_id, pid} =
       start_hub!(
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
@@ -134,8 +136,10 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
     assert :ok = ProcessHub.prepare_recovery(hub_id)
     refute File.exists?(marker)
 
+    # Wait for full shutdown (synchronous) before re-starting into recovery mode.
+    ref = Process.monitor(pid)
     stop_hub(hub_id)
-    Process.sleep(50)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
 
     handler_id = make_ref()
     parent = self()

@@ -7,7 +7,7 @@ defmodule Test.Utility.ExtractorTest do
     test "extracts local node pid pairs" do
       local = node()
       pid1 = self()
-      pid2 = spawn(fn -> :timer.sleep(:infinity) end)
+      pid2 = spawn(fn -> receive do _ -> :ok end end)
 
       items = %{
         :child1 => {%{id: :child1}, [{local, pid1}], %{}},
