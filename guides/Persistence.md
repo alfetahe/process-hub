@@ -99,22 +99,22 @@ breaking existing call sites.
 When a returning node holds a persisted registry, naively re-asserting
 those rows on boot would either resurrect children the cluster has
 already redistributed or duplicate children running on peers. The
-opt-in **coordinator recovery** lifecycle gives the coordinator a
-"wait and see" phase so it can defer to peers when they hold
-authoritative state.
+opt-in **coordinator recovery** lifecycle gates the boot-time DETS read
+behind a per-node marker file so a single-node restart trusts its local
+disk only when the operator has armed it to.
 
 ### The three states
 
 The coordinator's `:recovery_state` is one of:
 
   * **`:recovery_pending`** — initial state when `:auto_recovery` is
-    enabled. The coordinator is gathering peer information to decide
-    whether to replay locally.
+    enabled and the marker is absent. The coordinator is about to begin
+    replaying from the persistent registry.
   * **`:recovering`** — actively iterating the persisted registry and
     dispatching `start_children` calls.
-  * **`:normal`** — fully operational. Reachable from
-    `:recovery_pending` (deferred-to-peers path) or from `:recovering`
-    (replay completed or timed out).
+  * **`:normal`** — fully operational. Reachable directly from
+    `:recovery_pending` when the marker is present (skip replay) or from
+    `:recovering` (replay completed or timed out).
 
 When `:auto_recovery` is `false` (the default), `:recovery_state` is
 `:normal` from `init/1` and never transitions — preserving every bit
@@ -127,8 +127,9 @@ of pre-existing behaviour.
   hub_id: :my_hub,
   registry_backend: {:dets, []},
   auto_recovery: [
-    recovery_window_ms: 10_000,
-    replay_timeout_ms: 60_000
+    marker_path: "/var/lib/process_hub/my_hub/cluster.healthy",
+    replay_timeout_ms: 60_000,
+    recovery_timeout_ms: 30_000
   ]
 }
 ```
@@ -136,42 +137,43 @@ of pre-existing behaviour.
 Accepted shapes:
 
   * `false` (default) — disabled.
-  * `true` — enabled with default window and timeout.
+  * `true` — enabled with default marker path and timeouts.
   * `keyword()` — explicit:
-    * `:recovery_window_ms` — default `10_000`, range
-      `[1_000, 600_000]`.
+    * `:marker_path` — operator override for the marker file location.
+      When `nil`/unset, resolves to
+      `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
     * `:replay_timeout_ms` — default `60_000`, range
       `[1_000, 3_600_000]`.
+    * `:recovery_timeout_ms` — default `30_000`, range
+      `[1_000, 600_000]`.
 
 Out-of-range values cause the coordinator to refuse to start with
 `{:invalid_auto_recovery, _}`.
 
-### Peer handshake
+### Marker gate
 
-While in `:recovery_pending`, on receipt of `@event_cluster_join` for a
-new peer, the coordinator dispatches `@event_recovery_state_query` to
-that peer. The peer responds with `@event_recovery_state_announce`
-carrying its current state.
+When `:auto_recovery` is enabled the marker file is **always** the
+gating mechanism. At `init/1`, *before* the backend opens:
 
-  * If any peer reports `:normal`, the coordinator cancels the window
-    timer and transitions directly to `:normal` (skip replay; the
-    existing synchronization strategy populates the local registry
-    from peers).
-  * If the window elapses without a `:normal` peer, the coordinator
-    transitions to `:recovering`, replays its persisted registry via
-    `Distributor.compose_start_operation/3`, then transitions to
-    `:normal`.
-
-Old ProcessHub versions silently drop the new events (no handler
-registered) — mixed-version clusters function correctly.
+  * **Marker present** → mode is `:normal`. The backend opens without
+    loading any DETS rows; `:recovery_state` is `:normal` from `init/1`
+    and the existing synchronization strategy populates the local
+    registry from peers.
+  * **Marker absent** → mode is `:recovery`. The coordinator enters
+    `:recovery_pending`, replays its persisted registry (cspecs only)
+    via `Distributor.compose_start_request/3` while in `:recovering`,
+    then transitions to `:normal` and writes the marker.
 
 ### Hooks
 
 Three new hooks (see `ProcessHub.Constant.Hook`) cover the lifecycle:
 
   * `recovery_state_changed/0` — fires on every transition (async).
-    Payload: `%{from: state, to: state, reason: atom(),
-    peers: %{node => state}}`.
+    Payload: `%{from: state, to: state, reason: atom()}`. In the marker
+    path the transitions are `:recovery_pending → :recovering` with
+    reason `:marker_absent`, then `:recovering → :normal` with reason
+    `:replay_complete` (or `:recovery_timeout` if the gate ceiling
+    fires).
   * `pre_recovery_replay/0` — fires once when entering `:recovering`,
     before any `start_children` is dispatched. **Synchronous** — the
     coordinator awaits each handler's reply. Use for prerequisite
@@ -197,14 +199,10 @@ For hubs without `:auto_recovery`, both functions report `:normal` /
 
 ### Telemetry
 
-Two events are emitted from the replay path:
-
-  * `[:process_hub, :coordinator, :recovery_replay_started]`
-    — measurements `%{child_count: N}`, metadata `%{hub_id: id}`.
-  * `[:process_hub, :coordinator, :recovery_replay_completed]`
-    — measurements `%{child_count: N, succeeded: S, failed: F,
-    elapsed_ms: T}`, metadata `%{hub_id: id, reason: atom()}`. The
-    `reason` is `:completed`, `:replay_timeout`, or `:empty`.
+The recovery lifecycle emits `[:process_hub, :recovery, _]` events —
+see "Operator-controlled recovery via marker file" → "Telemetry" below
+for the full payloads of `:started`, `:complete`, `:skipped`, and
+`:timeout`.
 
 ### Recommended pairing
 
@@ -219,34 +217,28 @@ assume otherwise.
 
 ## Operator-controlled recovery via marker file
 
-The peer-handshake protocol above defers to peers on a per-event
-basis: a returning node asks each joining peer whether the peer is
-already `:normal`, and only replays from disk when no peer says yes
-inside the window. That works for the "we lost a single node and
-peers are healthy" case — but it does not catch the **DETS-read on
-open** path that runs *before* any peer can be consulted.
-
-The defect in the open-time replay is that:
+The marker gate is what makes `:auto_recovery` safe for a node that
+returns into a live cluster. Without it, the **DETS-read on open** path
+would re-assert stale local rows before any peer can be consulted:
 
 1. `Storage.Dets.open/2` and `Storage.DurableEts.open/2` populate the
    in-memory registry from DETS at boot.
 2. A single node returning to a multi-node cluster therefore re-asserts
    its **stale** local rows (dead pids, obsolete metadata) into the
    in-memory view.
-3. The peer handshake happens too late — `init_sync` then merges the
-   polluted local view back into the cluster, leaving every peer with
-   ghost bindings whose pid lives on the rejoining node but does not
-   actually exist there.
+3. `init_sync` then merges the polluted local view back into the
+   cluster, leaving every peer with ghost bindings whose pid lives on
+   the rejoining node but does not actually exist there.
 
-The opt-in **marker file gate** fixes this by making the operator
-the source of truth for "should this node trust its local DETS?"
-A per-node zero-byte marker file is consulted at `init/1` — *before*
-the backend opens — and the resolved decision is passed straight
-through to the backend `open/2` call.
+The **marker file gate** fixes this by making the operator the source
+of truth for "should this node trust its local DETS?" A per-node
+zero-byte marker file is consulted at `init/1` — *before* the backend
+opens — and the resolved decision is passed straight through to the
+backend `open/2` call.
 
 ### Mode resolution
 
-The recovery mode resolves at coordinator `init/1` from three inputs,
+The recovery mode resolves at coordinator `init/1` from two inputs,
 in precedence order:
 
 1. **`PROCESS_HUB_RECOVERY_MODE`** env var, when set:
@@ -255,10 +247,7 @@ in precedence order:
      empty; do not read DETS; still write the marker on entry to
      `:normal`).
    * `auto` (default if unset) — fall through to the marker decision.
-2. **`:recovery_marker.enabled?`** is `false` → mode is `:normal`
-   (this is the opt-out for consumers that want to keep using the
-   legacy peer-mode-exchange path).
-3. **Marker file present** at the resolved path → mode is `:normal`;
+2. **Marker file present** at the resolved path → mode is `:normal`;
    **absent** → mode is `:recovery`.
 
 Unknown env values fall back to `auto` and emit a WARN log naming
@@ -272,33 +261,24 @@ the offending value. The env var is evaluated **once** at
   hub_id: :my_hub,
   registry_backend: {:durable_ets, []},
   auto_recovery: [
-    recovery_window_ms: 10_000,
+    marker_path: "/var/lib/process_hub/my_hub/cluster.healthy",
     replay_timeout_ms: 60_000,
     recovery_timeout_ms: 30_000
-  ],
-  recovery_marker: %{
-    enabled?: true,
-    path: "/var/lib/process_hub/my_hub/cluster.healthy"
-  }
+  ]
 }
 ```
 
-`:recovery_marker` accepts `%{enabled?: boolean(), path: nil | String.t()}`:
+The marker is always the gating mechanism whenever `:auto_recovery` is
+enabled. `:marker_path` overrides the file location; when `nil`/unset
+it resolves to
+`:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`
+(typically `/var/lib/process_hub/<hub_id>/cluster.healthy` on Linux).
+The parent directory is created on first write.
 
-* `enabled?` — defaults to `auto_recovery != false`. When `false`,
-  the marker gate is bypassed entirely and the legacy peer-mode-
-  exchange protocol drives the lifecycle (no DETS-read gating, no
-  marker IO).
-* `path` — when `nil`, resolves to
-  `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`
-  (typically `/var/lib/process_hub/<hub_id>/cluster.healthy` on
-  Linux). The parent directory is created on first write.
-
-`:recovery_timeout_ms` (new, inside `:auto_recovery`) is the upper
-bound on the cluster-event **queue gate**. Default `30_000`, range
-`[1_000, 600_000]`. The previous `:replay_timeout_ms` keeps its
-meaning as the upper bound on the replay loop itself; both timers
-race and the earlier of the two opens the gate.
+`:recovery_timeout_ms` is the upper bound on the cluster-event **queue
+gate**. Default `30_000`, range `[1_000, 600_000]`. `:replay_timeout_ms`
+is the upper bound on the replay loop itself; both timers race and the
+earlier of the two opens the gate.
 
 ### Boot sequences
 
@@ -369,8 +349,8 @@ ProcessHub.prepare_recovery_cluster(:my_hub)
 
 Both functions only delete the marker file; the running coordinator
 is **not** interrupted. The next coordinator boot picks up the marker
-absence. Hubs whose `:recovery_marker.enabled?` is `false` ignore the
-call and return `:ok`.
+absence. Hubs with `auto_recovery: false` ignore the call and return
+`:ok`.
 
 Wrap `prepare_recovery_cluster/1` in your operations CLI when you
 plan a full-cluster restart — it is the runbook step that distin-
@@ -390,15 +370,14 @@ drops the restarted node from every binding's `node_pids` list
 (deleting the binding when the list becomes empty). The subsequent
 `init_sync` then runs against a clean peer view.
 
-Old ProcessHub peers silently drop the tagged variant — same mixed-
-version graceful-degradation pattern as the existing
-`@event_recovery_state_announce` handling.
+Old ProcessHub peers silently drop the tagged variant — the same
+mixed-version graceful-degradation pattern ProcessHub uses for other
+additive cluster events.
 
 ### Telemetry
 
 The marker-gated path emits four `[:process_hub, :recovery, _]`
-events (additive — independent of the legacy
-`[:process_hub, :coordinator, :recovery_replay_*]` events):
+events:
 
 * `[:process_hub, :recovery, :started]` —
   `%{cspec_count, system_time}` /
@@ -407,8 +386,7 @@ events (additive — independent of the legacy
   `%{cspec_count, succeeded, failed, skipped, elapsed_ms}` /
   `%{hub_id, mode}`.
 * `[:process_hub, :recovery, :skipped]` — `%{system_time}` /
-  `%{hub_id, reason}` where `reason ∈ {:marker_present, :env_skip,
-  :disabled}`.
+  `%{hub_id, reason}` where `reason ∈ {:marker_present, :env_skip}`.
 * `[:process_hub, :recovery, :timeout]` —
   `%{cspec_count, attempted, elapsed_ms}` / `%{hub_id, mode}`.
 
@@ -457,21 +435,13 @@ carries `replayed: boolean()` in metadata, distinguishing normal-mode
   storage; operators using ephemeral pod storage already cannot use
   the persistent backends for restart-survival anyway.
 
-### Choosing between the two recovery paths
+### Disabling recovery
 
-| Concern | `recovery_marker: %{enabled?: true}` (default) | `recovery_marker: %{enabled?: false}` (opt-out) |
-| --- | --- | --- |
-| Mode selector | env > marker > config | peer-mode-exchange (legacy) |
-| DETS read on open | gated by mode | always replayed |
-| Cluster-event queue | active in `:recovering` | not used |
-| Operator action to recover | `prepare_recovery_cluster/1` before restart | none — peer handshake decides per node |
-| Fast-restart purge signal | emitted | emitted (when `auto_recovery: true`) |
-| Stale-binding leak window | closed | open (the bug this change fixes) |
-
-New deployments should prefer the marker-gated path. Existing
-consumers that rely on the peer-mode-exchange semantics can opt out
-explicitly by setting `recovery_marker: %{enabled?: false}` and
-otherwise leaving `:auto_recovery` unchanged.
+The marker gate is always on when `:auto_recovery` is enabled, so there
+is a single recovery path. To disable boot-time recovery entirely, set
+`auto_recovery: false` — the coordinator transitions to `:normal` at
+`init/1`, no marker IO happens, and the DETS-read-on-open path behaves
+exactly as it did before this feature existed.
 
 ## Hybrid backend (`:durable_ets`)
 

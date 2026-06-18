@@ -331,7 +331,7 @@ Concretely, the backend `open/2` callback SHALL accept a new option
   associated in-memory table. The in-memory table is left empty. Mutating
   callbacks continue to write through to DETS.
 
-`ProcessHub.Coordinator` (when `:recovery_marker.enabled?` is `true`) SHALL
+`ProcessHub.Coordinator` (when `:auto_recovery` is enabled) SHALL
 compute the boolean from the resolved mode and pass it as
 `recovery_replay: false` for normal-mode boots and `recovery_replay: true` for
 recovery-mode boots.

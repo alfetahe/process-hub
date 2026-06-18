@@ -2,77 +2,29 @@
 All notable changes to this project will be documented in this file.
 
 ## Unreleased
+This release adds opt-in registry persistence with pluggable storage backends and an opt-in, marker-gated boot recovery mechanism that lets a restarted node rebuild its registry from disk, fixing a case where a restarted node could push stale registry data into a healthy cluster.
+It also adds a node-up reconciliation fail-safe against split-brain and quiets periodic cluster-discovery logging.
+
+All existing `%ProcessHub{}` configurations work unchanged: `:registry_backend` defaults to `:ets` and `:auto_recovery` to `false`, and mixed-version clusters keep working as old peers ignore the new restart signal.
 
 ### Added
-- Pluggable registry storage backend behaviour `ProcessHub.Service.Storage.Behaviour`. Registry-table operations (`open/2`, `close/1`, `insert/3`, `insert/4`, `get/2`, `exists?/2`, `remove/2`, `export_all/1`, `foldl/3`, `match/2`, `clear_all/1`) are now routed through a configurable backend module.
-- `ProcessHub.Service.Storage.Ets` — default in-memory backend. Bit-for-bit identical observable behaviour to the prior `Storage` module.
-- `ProcessHub.Service.Storage.Dets` — opt-in on-disk persistence backend. Sync-after-write durability, `repair: true` on open, and corruption rotation (`<file>.corrupt-<monotonic>` + telemetry).
-- New `:registry_backend` field on `%ProcessHub{}` (default `:ets`). Accepts `:ets`, `{:dets, opts}`, or `{Module, opts}` for a custom backend implementing the new behaviour.
-- Telemetry events (additive): `[:process_hub, :registry, :backend_opened]`, `[:process_hub, :registry, :backend_corrupt]`, `[:process_hub, :registry, :insert]`, `[:process_hub, :registry, :remove]`. Existing telemetry is unchanged.
-- New guide `guides/Persistence.md` covering the opt-in DETS backend, default file location, recovery semantics on corruption, telemetry events, and the operational profile.
-- Opt-in three-state coordinator boot lifecycle (`:recovery_pending → :recovering | :normal`) with a configurable peer-handshake window. Enabled via the new `:auto_recovery` field on `%ProcessHub{}` (default `false`). Accepts `false`, `true`, or `[recovery_window_ms: integer(), replay_timeout_ms: integer()]`.
-- New module `ProcessHub.Service.Recovery` housing the recovery state-machine, peer-mode exchange helpers, replay orchestration, and a synchronous-blocking hook variant for `pre_recovery_replay`.
-- New constant module `ProcessHub.Constant.RecoveryState` with the three state-name atoms.
-- New events `@event_recovery_state_announce` and `@event_recovery_state_query` on `ProcessHub.Constant.Event`. Used by the peer-mode exchange protocol; old ProcessHub versions silently drop them (graceful degradation in mixed-version clusters).
-- New hook keys on `ProcessHub.Constant.Hook`: `recovery_state_changed/0` (async, every transition), `pre_recovery_replay/0` (**synchronous** — coordinator awaits each handler; per-handler timeout derived from `:replay_timeout_ms`), and `post_recovery_replay/0` (async).
-- New public API on `ProcessHub`: `recovery_state/1` and `await_normal/2`. Both work for any hub regardless of opt-in (return `:normal` / `:ok` for non-opted-in hubs).
-- New telemetry events (additive): `[:process_hub, :coordinator, :recovery_replay_started]` and `[:process_hub, :coordinator, :recovery_replay_completed]`.
-- "Coordinator recovery" section added to `guides/Persistence.md` describing the three states, peer handshake, configuration, hooks, public API, and the recommended pairing with `registry_backend: {:dets, _}`.
+- Pluggable registry storage backend: new `:registry_backend` field on `%ProcessHub{}` (default `:ets`). Accepts `:ets`, `{:dets, opts}`, `{:durable_ets, opts}`, or `{Module, opts}` for a custom backend implementing `ProcessHub.Service.Storage.Behaviour`.
+  - `:ets` — default in-memory backend (unchanged behaviour).
+  - `{:dets, opts}` — on-disk persistence: sync-after-write durability, `repair: true` on open, and corruption rotation.
+  - `{:durable_ets, opts}` — hybrid: in-memory reads with synchronous DETS mirroring for restart survival. Shares the DETS on-disk format, so a hub can switch between `:dets` and `:durable_ets` against the same `:path` and keep its rows.
+- Opt-in, marker-gated boot recovery via the single `:auto_recovery` field on `%ProcessHub{}` (default `false`). Accepts `false`, `true`, or a keyword list of `:marker_path` (operator override for the marker file location), `:replay_timeout_ms`, and `:recovery_timeout_ms`. A successful boot writes the marker file; on next boot the node skips replay if the marker is present, or rebuilds from disk if it is absent. Disk replay restores only child specs — stale pids and metadata are dropped (fixes a restarted node pushing stale registry data into a healthy cluster).
+  - New API: `ProcessHub.recovery_state/1`, `await_normal/2`, `prepare_recovery/1`, and `prepare_recovery_cluster/1` (all safe to call on non-opted-in hubs).
+  - `PROCESS_HUB_RECOVERY_MODE=auto|force|skip` overrides the marker per node without touching disk.
+  - New hooks: `recovery_state_changed`, `pre_recovery_replay` (**synchronous** — the coordinator awaits each handler), and `post_recovery_replay`.
+- `:nodeup_reconcile_interval` field on `%ProcessHub{}` (default `3000` ms; `0` disables) — fail-safe that merges a peer if the `pg` cluster-join notification is missed on a reconnection, closing a split-brain gap.
+- New guide `guides/Persistence.md` covering the persistence backends and the recovery lifecycle / operator runbook.
+- Telemetry events (additive): `[:process_hub, :registry, :backend_opened | :backend_corrupt | :insert | :remove]` and `[:process_hub, :recovery, :started | :complete | :skipped | :timeout]`.
 
-### Backward compatibility
-- All existing `%ProcessHub{}` configurations continue to work without modification. The `:registry_backend` default of `:ets` matches all pre-existing behaviour.
-- `ProcessHub.Service.Storage`'s public API is unchanged.
-- `ProcessHub.Service.ProcessRegistry`'s public API is unchanged.
-- No new required runtime dependency: `:telemetry` is declared as optional in `mix.exs`; backend telemetry calls are silently no-ops when it is not loaded.
-- The `:auto_recovery` field defaults to `false`. Existing hubs see no behavioural change: `:recovery_state` is set to `:normal` at `init/1` and never transitions; the new hooks are not invoked; the new events are dispatched only when the lifecycle is active.
-- New events `@event_recovery_state_*` are silently dropped by pre-change ProcessHub versions (no handler registered) — mixed-version clusters function correctly.
-- New public functions (`recovery_state/1`, `await_normal/2`) are safe to call on any hub including hubs without opt-in.
-
-### Added (`:durable_ets` registry backend)
-- New backend `ProcessHub.Service.Storage.DurableEts` selectable via `registry_backend: {:durable_ets, opts}`. Reads serve from an in-memory ETS table; mutations are mirrored synchronously to a DETS file (`:dets.sync/1` per write) for restart-survival. The DETS file is replayed into ETS on open, so reads are immediately authoritative.
-- The `:path` opt mirrors the `{:dets, _}` backend (same default `priv/process_hub/<hub_id>/registry.dets`); the on-disk format is a plain DETS file, so a hub can be switched between the two backends against the same path and keep its rows.
-- DETS-write errors during a mutation cause the in-memory ETS row to be rolled back so observers see consistent state and the call returns `{:error, reason}`.
-- Telemetry events match the `{:dets, _}` backend (`[:process_hub, :registry, :backend_opened | :backend_corrupt | :insert | :remove]`) with `backend: ProcessHub.Service.Storage.DurableEts` in metadata.
-- "Hybrid backend (`:durable_ets`)" section added to `guides/Persistence.md` with a side-by-side trade-off table.
-
-### Backward compatibility (`:durable_ets`)
-- Purely additive. Existing `:ets` and `{:dets, _}` configurations are untouched. The new option is opt-in.
-- No new dependency.
-
-### Added (opt-in recovery marker)
-Fixes the bug where a single restarted node could push its old, stale registry data into a healthy cluster. The node now decides at boot whether to trust its own disk or its peers, based on a small marker file the operator controls.
-
-- A node writes a marker file every time it shuts down cleanly. Next boot:
-  - **Marker present** → trust peers, start with an empty registry, no disk replay.
-  - **Marker absent** → recover from disk (this is the "rebuild from scratch" case).
-- Two new operator functions to clear the marker (so the next boot recovers from disk):
-  - `ProcessHub.prepare_recovery/1` — local node.
-  - `ProcessHub.prepare_recovery_cluster/1` — every reachable peer over RPC.
-- Env var `PROCESS_HUB_RECOVERY_MODE=auto|force|skip` overrides the marker per node without touching disk.
-- Disk replay now restores only child specs — stale pids and metadata are dropped (this is the actual bug fix).
-- New `:recovery_marker` config field on `%ProcessHub{}` and `:recovery_timeout_ms` inside `:auto_recovery`.
-- Restarted node tells peers `{:cluster_join, {:restarted, node()}}` once so they purge any dead pids that belonged to its previous incarnation.
-- New telemetry events `[:process_hub, :recovery, :started | :complete | :skipped | :timeout]`.
-- New `guides/Persistence.md` section explains the lifecycle and operator runbook.
-
-### Backward compatibility
-- Default (`auto_recovery: false`) → nothing changes; no marker is written or read.
-- If you already use `auto_recovery: true` and want the previous behaviour, set `recovery_marker: %{enabled?: false}`.
-- Old peers ignore the new restart signal — mixed-version clusters keep working.
-
-### Added (node-up reconciliation fail-safe)
-Closes a split-brain gap: if the `pg` cluster-join `:join` notification is missed on a (re)connection, two BEAM-connected hubs could stay split.
-
-- On `:nodeup` the coordinator schedules a bounded, per-node timer; when it fires `pg` has settled and the node is merged via the existing snapshot-merge — but only if it is a genuine same-hub peer (it registered our cluster-join `pg` handler). The merge reuses the existing idempotent path and is cancelled when the normal path wins or the node goes down.
-- New `:nodeup_reconcile_interval` field on `%ProcessHub{}` (default `3000` ms; `0` disables).
-- Added cluster-formation logging on several coordinator paths (boot handler set, pg join/leave, propagate external set, batch flush, hub merge) to make membership convergence observable.
-
-### Changed (cluster-event naming)
-Reserved the `cluster_join` event for actual cluster joins: the periodic discovery announce now uses a dedicated `@event_cluster_heartbeat` and the fast-restart purge signal a dedicated `@event_node_restarted`, instead of both piggybacking on `@event_cluster_join`. A steady-state discovery tick is now a silent no-op and only triggers a join when it reveals a node not already in the cluster, eliminating the periodic `cluster_join` log noise.
+### Changed
+- Periodic node discovery no longer emits noisy `cluster_join` log lines: a steady-state discovery tick is now a silent no-op and only triggers a join when it reveals a node not already in the cluster.
 
 ### Fixed
 - Registry sync (`Synchronizer.append_data/2`) no longer overwrites a known child's local child-spec and metadata with a peer's copy on a pid change — it only updates the pid map. A node replaying stale durable state could otherwise clobber a peer's current spec, leaving a degraded process after redistribution.
-
 
 ## v0.5.0-beta - 2026-02-17
 This release adds per-child metadata support, an experimental autonomous migration strategy, and major performance optimizations for large-scale operations.

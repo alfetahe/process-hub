@@ -56,22 +56,24 @@ exposes:
   `{:durable_ets, opts}` (hybrid — in-memory reads, write-through to a
   DETS file for restart-survival), or `{Module, opts}` (custom). See
   [guides/Persistence.md](guides/Persistence.md).
-- `:auto_recovery` *(default: `false`)* — opts into a three-state
-  coordinator boot lifecycle (`:recovery_pending → :recovering | :normal`).
-  Accepts `false`, `true`, or
-  `[recovery_window_ms: integer(), replay_timeout_ms: integer(),
-  recovery_timeout_ms: integer()]`. Most useful with
+- `:auto_recovery` *(default: `false`)* — opts into a marker-gated,
+  three-state coordinator boot lifecycle
+  (`:recovery_pending → :recovering | :normal`). Accepts `false`, `true`,
+  or `[marker_path: String.t(), replay_timeout_ms: integer(),
+  recovery_timeout_ms: integer()]`. When enabled, a per-node marker file
+  gates the boot-time DETS read path so a single-node restart cannot
+  inject stale rows into a healthy cluster: marker present → boot
+  straight to `:normal` (skip replay); marker absent → `:recovering`
+  (cspecs-only replay from the persistent registry) → `:normal`, then
+  the marker is written. `:marker_path` overrides the marker file
+  location (unset/`nil` → default
+  `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`).
+  Operators arm recovery via `ProcessHub.prepare_recovery/1` or
+  `ProcessHub.prepare_recovery_cluster/1` (both delete the marker so the
+  next boot replays); the `PROCESS_HUB_RECOVERY_MODE` env var overrides
+  per node (`auto | force | skip`). Most useful with
   `registry_backend: {:dets, _}` or `{:durable_ets, _}` for full
   restart-survival. See the "Coordinator recovery" section in
-  [guides/Persistence.md](guides/Persistence.md).
-- `:recovery_marker` *(default: `nil` → enabled when `:auto_recovery` is)*
-  — gates the boot-time DETS read path behind a per-node marker file so
-  a single-node restart cannot inject stale rows into a healthy cluster.
-  Accepts `%{enabled?: boolean(), path: nil | String.t()}`. Operators arm
-  recovery via `ProcessHub.prepare_recovery/1` or
-  `ProcessHub.prepare_recovery_cluster/1`; the `PROCESS_HUB_RECOVERY_MODE`
-  env var overrides per node (`auto | force | skip`). See "Operator-
-  controlled recovery via marker file" in
   [guides/Persistence.md](guides/Persistence.md).
 
 For the full set of options and strategy documentation, see
