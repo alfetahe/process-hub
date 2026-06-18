@@ -213,16 +213,19 @@ defmodule ProcessHub do
     See `guides/Persistence.md` for the recovery semantics, telemetry
     events, and operational profile.
   - `:auto_recovery` is optional and enables a three-state coordinator
-    boot lifecycle (`:recovery_pending → :recovering | :normal`). The
-    default is `false`. Requires a persistent `:registry_backend` (e.g.
-    `{:dets, _}`) to be useful; with the default `:ets` backend the
-    replay step finds an empty registry. Accepted shapes:
+    boot lifecycle (`:recovery_pending → :recovering | :normal`) gated by
+    a marker file. The default is `false`. Requires a persistent
+    `:registry_backend` (e.g. `{:dets, _}`) to be useful; with the
+    default `:ets` backend the replay step finds an empty registry.
+    Accepted shapes:
     - `false` — disabled (default).
     - `true` — enabled with default options.
     - `keyword()` — explicit options:
-      - `:recovery_window_ms` — peer-handshake window in ms before
-        falling back to local replay. Used only when the marker gate
-        is disabled. Default `10_000`. Range `[1_000, 600_000]`.
+      - `:marker_path` — operator override for the marker file location.
+        `nil` (default) resolves to
+        `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
+        Marker present on boot → straight to `:normal`; absent →
+        `:recovering` with a cspecs-only replay, then `:normal`.
       - `:replay_timeout_ms` — safety timeout on the `:recovering` state.
         Default `60_000`. Range `[1_000, 3_600_000]`.
       - `:recovery_timeout_ms` — cluster-event queue gate ceiling. The
@@ -230,19 +233,12 @@ defmodule ProcessHub do
         replay has not finished. Default `30_000`. Range
         `[1_000, 600_000]`.
 
-  - `:recovery_marker` is optional and configures the marker file that
-    gates boot-time replay of the persistent registry. Accepts
-    `%{enabled?: boolean(), path: nil | String.t()}`. Defaults to
-    `%{enabled?: <auto_recovery enabled?>, path: nil}` — when
-    `auto_recovery` is enabled, the marker gate is enabled too.
-    `path: nil` resolves to
-    `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
     The `PROCESS_HUB_RECOVERY_MODE` env var overrides the marker decision
     per node (`auto | force | skip`). See `prepare_recovery/1` and
     `prepare_recovery_cluster/1` for the operator API.
 
-    See `guides/Persistence.md` for the full state-machine, the peer
-    handshake, the hooks, and the recommended pairing with
+    See `guides/Persistence.md` for the full state-machine, the marker
+    gate, the hooks, and the recommended pairing with
     `registry_backend: {:dets, _}` or `{:durable_ets, _}` for full
     restart-survival.
   """
@@ -282,8 +278,7 @@ defmodule ProcessHub do
             | {:dets, keyword()}
             | {:durable_ets, keyword()}
             | {module(), keyword()},
-          auto_recovery: false | true | keyword(),
-          recovery_marker: nil | keyword() | map()
+          auto_recovery: false | true | keyword()
         }
 
   @enforce_keys [:hub_id]
@@ -307,8 +302,7 @@ defmodule ProcessHub do
     req_cleanup_interval: 60000,
     nodeup_reconcile_interval: 3000,
     registry_backend: :ets,
-    auto_recovery: false,
-    recovery_marker: nil
+    auto_recovery: false
   ]
 
   @doc """
@@ -919,7 +913,7 @@ defmodule ProcessHub do
   Starts opt-in, cluster-wide leadership on the local node.
 
   Leadership elects a single leader node per BEAM cluster via the `:elector`
-  library. Because starting it also starts Erlang `:global` (a real cost),
+  library. Because starting it also starts Erlang `:global`,
   ProcessHub never starts leadership by default — call this to opt in.
 
   Idempotent. Returns `:ok`, or `{:error, term()}` if `:elector` fails to start.
@@ -1043,19 +1037,7 @@ defmodule ProcessHub do
       :normal
   """
   @spec recovery_state(hub_id()) :: :recovery_pending | :recovering | :normal
-  def recovery_state(hub_id) do
-    case Process.whereis(hub_id) do
-      nil ->
-        :normal
-
-      _pid ->
-        try do
-          GenServer.call(hub_id, :get_recovery_state)
-        catch
-          :exit, _ -> :normal
-        end
-    end
-  end
+  defdelegate recovery_state(hub_id), to: ProcessHub.Service.Recovery
 
   @doc """
   Blocks until the hub's `recovery_state` reaches `:normal` or the timeout
@@ -1072,29 +1054,7 @@ defmodule ProcessHub do
       :ok
   """
   @spec await_normal(hub_id(), non_neg_integer()) :: :ok | {:error, :timeout}
-  def await_normal(hub_id, timeout_ms \\ 60_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_await_normal(hub_id, deadline)
-  end
-
-  defp do_await_normal(hub_id, deadline) do
-    case recovery_state(hub_id) do
-      :normal ->
-        :ok
-
-      _other ->
-        remaining = deadline - System.monotonic_time(:millisecond)
-
-        cond do
-          remaining <= 0 ->
-            {:error, :timeout}
-
-          true ->
-            Process.sleep(min(remaining, 50))
-            do_await_normal(hub_id, deadline)
-        end
-    end
-  end
+  defdelegate await_normal(hub_id, timeout_ms \\ 60_000), to: ProcessHub.Service.Recovery
 
   @doc """
   Deletes the recovery marker on the local node so the next coordinator
@@ -1102,8 +1062,8 @@ defmodule ProcessHub do
 
   Safe to call on a running hub — only the marker file is touched; the
   live coordinator is not interrupted. The call is idempotent (returns
-  `:ok` even when the marker is absent). Hubs whose
-  `:recovery_marker.enabled?` is `false` ignore the call.
+  `:ok` even when the marker is absent). Hubs started without
+  `:auto_recovery` ignore the call.
 
   See `prepare_recovery_cluster/1` for the RPC fan-out variant.
   """

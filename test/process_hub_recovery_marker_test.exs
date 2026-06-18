@@ -7,8 +7,8 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
   cluster-event queue + drain, `prepare_recovery/1`, and the fast-
   restart purge signal.
 
-  Multi-node integration (Section 9) is covered separately by
-  `process_hub_recovery_marker_multinode_test.exs`.
+  Persistence/replay integration is covered separately by
+  `process_hub_recovery_marker_integration_test.exs`.
   """
 
   use ExUnit.Case, async: false
@@ -65,8 +65,7 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
 
       start_hub!(
         hub_id: hub_id,
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
       assert ProcessHub.await_normal(hub_id, 5_000) == :ok
@@ -104,8 +103,7 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
 
       start_hub!(
         hub_id: hub_id,
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
       assert ProcessHub.recovery_state(hub_id) == :normal
@@ -129,8 +127,7 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
         capture_log(fn ->
           start_hub!(
             hub_id: hub_id,
-            auto_recovery: true,
-            recovery_marker: %{enabled?: true, path: bad_marker}
+            auto_recovery: [marker_path: bad_marker]
           )
 
           assert ProcessHub.await_normal(hub_id, 5_000) == :ok
@@ -148,8 +145,7 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
 
       start_hub!(
         hub_id: hub_id,
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
       assert ProcessHub.await_normal(hub_id, 5_000) == :ok
@@ -162,10 +158,10 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
       assert :ok = ProcessHub.prepare_recovery(hub_id)
     end
 
-    test "no-op when marker.enabled? is false" do
+    test "no-op when auto_recovery is disabled" do
       hub_id = unique_id(:prep_disabled)
 
-      start_hub!(hub_id: hub_id, recovery_marker: %{enabled?: false})
+      start_hub!(hub_id: hub_id)
       assert :ok = ProcessHub.prepare_recovery(hub_id)
     end
 
@@ -244,8 +240,7 @@ defmodule Test.ProcessHubRecoveryMarkerTest do
 
       start_hub!(
         hub_id: hub_id,
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
       assert ProcessHub.recovery_state(hub_id) == :normal

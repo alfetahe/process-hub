@@ -54,8 +54,7 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
       start_hub!(
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
     on_exit(fn -> stop_hub(hub_id) end)
@@ -74,8 +73,7 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
       start_hub!(
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
     assert ProcessHub.await_normal(hub_id, 5_000) == :ok
@@ -102,8 +100,7 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
       start_hub!(
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
     on_exit(fn -> stop_hub(hub_id) end)
@@ -123,8 +120,7 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
       start_hub!(
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
     assert ProcessHub.await_normal(hub_id, 5_000) == :ok
@@ -154,8 +150,7 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
       start_hub!(
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
     on_exit(fn -> stop_hub(hub_id) end)
@@ -191,11 +186,10 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
         auto_recovery: [
-          recovery_window_ms: 1_000,
+          marker_path: marker,
           replay_timeout_ms: 5_000,
           recovery_timeout_ms: 3_000
-        ],
-        recovery_marker: %{enabled?: true, path: marker}
+        ]
       )
 
     on_exit(fn -> stop_hub(hub_id) end)
@@ -230,8 +224,7 @@ defmodule Test.ProcessHubRecoveryMarkerIntegrationTest do
       start_hub!(
         hub_id: hub_id,
         registry_backend: {:durable_ets, path: dets},
-        auto_recovery: true,
-        recovery_marker: %{enabled?: true, path: marker}
+        auto_recovery: [marker_path: marker]
       )
 
     on_exit(fn -> stop_hub(hub_id) end)

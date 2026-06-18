@@ -15,21 +15,21 @@ defmodule ProcessHub.Hub do
 
   @typedoc """
   Parsed `:auto_recovery` config. `enabled?` gates the lifecycle;
-  `recovery_window_ms` is the peer-handshake window;
   `replay_timeout_ms` caps the replay loop; `recovery_timeout_ms`
-  caps the cluster-event queue gate.
+  caps the cluster-event queue gate; `marker_path` is the operator
+  override for the marker file location (`nil` resolves to the default).
   """
   @type recovery_config() :: %{
           enabled?: boolean(),
-          recovery_window_ms: pos_integer(),
           replay_timeout_ms: pos_integer(),
-          recovery_timeout_ms: pos_integer()
+          recovery_timeout_ms: pos_integer(),
+          marker_path: nil | String.t()
         }
 
   @typedoc """
-  Marker config. `enabled?` is the gate switch; `path` holds the
-  *resolved absolute* marker path after coordinator init (or `nil`
-  while disabled).
+  Resolved marker state derived from `:auto_recovery`. `enabled?` mirrors
+  the recovery config; `path` holds the *resolved absolute* marker path
+  after coordinator init (or `nil` while disabled).
   """
   @type recovery_marker() :: %{enabled?: boolean(), path: nil | String.t()}
 
@@ -55,12 +55,11 @@ defmodule ProcessHub.Hub do
           pending_work_count: non_neg_integer(),
           recovery_state: recovery_state(),
           recovery_config: recovery_config(),
-          recovery_window_timer: reference() | nil,
-          recovery_peers: %{node() => recovery_state()},
           recovery_marker: recovery_marker(),
           recovery_event_queue: [term()],
           recovery_timeout_timer: reference() | nil,
-          recovery_restart_signal_sent?: boolean()
+          recovery_restart_signal_sent?: boolean(),
+          recovery_normal_waiters: %{GenServer.from() => reference()}
         }
 
   @doc "Returns the default event batch state."
@@ -80,15 +79,14 @@ defmodule ProcessHub.Hub do
     recovery_state: :normal,
     recovery_config: %{
       enabled?: false,
-      recovery_window_ms: 10_000,
       replay_timeout_ms: 60_000,
-      recovery_timeout_ms: 30_000
+      recovery_timeout_ms: 30_000,
+      marker_path: nil
     },
-    recovery_window_timer: nil,
-    recovery_peers: %{},
     recovery_marker: %{enabled?: false, path: nil},
     recovery_event_queue: [],
     recovery_timeout_timer: nil,
-    recovery_restart_signal_sent?: false
+    recovery_restart_signal_sent?: false,
+    recovery_normal_waiters: %{}
   ]
 end

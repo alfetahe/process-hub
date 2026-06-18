@@ -3,22 +3,13 @@ defmodule ProcessHub.Service.Recovery do
   State-machine logic for the coordinator boot-recovery lifecycle.
 
   When `:auto_recovery` is enabled the coordinator transitions through
-  three states (`:recovery_pending → :recovering | :normal`) on start-up.
-  Two protocols can drive that lifecycle:
-
-    * **Marker-gated (primary)** — when `:recovery_marker.enabled?` is
-      `true` (the default for `auto_recovery: true`), the resolved mode
-      is computed from env > marker > config at `init/1`. Marker
-      present → straight to `:normal`. Marker absent → `:recovering`
-      with a cspecs-only replay, then `:normal`. While the gate is
-      closed cluster events are queued and drained in FIFO order on
-      gate open. The marker is rewritten on every successful boot.
-
-    * **Peer-mode-exchange (opt-out)** — when
-      `:recovery_marker.enabled?` is `false`, the legacy
-      `@event_recovery_state_query` / `_announce` protocol still drives
-      the lifecycle (preserved for back-compat with consumers that
-      depended on the previous semantics).
+  three states (`:recovery_pending → :recovering | :normal`) on start-up,
+  driven by the marker gate: the resolved mode is computed from
+  env > marker > config at `init/1`. Marker present → straight to
+  `:normal`. Marker absent → `:recovering` with a cspecs-only replay,
+  then `:normal`. While the gate is closed cluster events are queued and
+  drained in FIFO order on gate open. The marker is rewritten on every
+  successful boot.
 
   Replay only produces work with a persistent `:registry_backend` (e.g.
   `{:dets, _}`); with `:ets` the dump is empty. Replay is **cspecs-only**:
@@ -27,7 +18,7 @@ defmodule ProcessHub.Service.Recovery do
 
   This module owns the pure helpers used by the coordinator:
 
-    - parsing/validating the `:auto_recovery` and `:recovery_marker` configs
+    - parsing/validating the `:auto_recovery` config (including `:marker_path`)
     - resolving the recovery mode (`resolve_mode/3`) with
       `PROCESS_HUB_RECOVERY_MODE` env-var precedence (`auto | force | skip`)
     - marker IO (`marker_exists?/1`, `write_marker/1`, `delete_marker/1`)
@@ -54,12 +45,9 @@ defmodule ProcessHub.Service.Recovery do
 
   use Event
 
-  @default_recovery_window_ms 10_000
   @default_replay_timeout_ms 60_000
   @default_recovery_timeout_ms 30_000
 
-  @recovery_window_min 1_000
-  @recovery_window_max 600_000
   @replay_timeout_min 1_000
   @replay_timeout_max 3_600_000
   @recovery_timeout_min 1_000
@@ -85,7 +73,8 @@ defmodule ProcessHub.Service.Recovery do
 
     * `false` — disabled.
     * `true` — enabled with defaults.
-    * `keyword()` — explicit `:recovery_window_ms` / `:replay_timeout_ms`.
+    * `keyword()` — explicit `:replay_timeout_ms` / `:recovery_timeout_ms`
+      and the optional `:marker_path` override.
 
   Returns `{:ok, recovery_config}` or `{:error, reason}` for out-of-range
   values. Unknown shapes return `{:error, :invalid_auto_recovery}` so the
@@ -103,21 +92,14 @@ defmodule ProcessHub.Service.Recovery do
     {:ok,
      %{
        enabled?: true,
-       recovery_window_ms: @default_recovery_window_ms,
        replay_timeout_ms: @default_replay_timeout_ms,
-       recovery_timeout_ms: @default_recovery_timeout_ms
+       recovery_timeout_ms: @default_recovery_timeout_ms,
+       marker_path: nil
      }}
   end
 
   def parse_config(opts) when is_list(opts) do
-    with {:ok, window} <-
-           validate_int(
-             Keyword.get(opts, :recovery_window_ms, @default_recovery_window_ms),
-             @recovery_window_min,
-             @recovery_window_max,
-             :recovery_window_ms_out_of_range
-           ),
-         {:ok, replay} <-
+    with {:ok, replay} <-
            validate_int(
              Keyword.get(opts, :replay_timeout_ms, @default_replay_timeout_ms),
              @replay_timeout_min,
@@ -130,13 +112,15 @@ defmodule ProcessHub.Service.Recovery do
              @recovery_timeout_min,
              @recovery_timeout_max,
              :recovery_timeout_ms_out_of_range
-           ) do
+           ),
+         {:ok, marker_path} <-
+           validate_marker_path(Keyword.get(opts, :marker_path)) do
       {:ok,
        %{
          enabled?: true,
-         recovery_window_ms: window,
          replay_timeout_ms: replay,
-         recovery_timeout_ms: recovery_timeout
+         recovery_timeout_ms: recovery_timeout,
+         marker_path: marker_path
        }}
     end
   end
@@ -148,47 +132,16 @@ defmodule ProcessHub.Service.Recovery do
   def disabled_config do
     %{
       enabled?: false,
-      recovery_window_ms: @default_recovery_window_ms,
       replay_timeout_ms: @default_replay_timeout_ms,
-      recovery_timeout_ms: @default_recovery_timeout_ms
+      recovery_timeout_ms: @default_recovery_timeout_ms,
+      marker_path: nil
     }
   end
 
-  @doc """
-  Parses the `:recovery_marker` config field into a normalised map.
-
-  Accepts:
-
-    * `nil` / unset — defaults derived from `auto_recovery_enabled?`.
-    * `keyword()` / `map()` — explicit `:enabled?` and `:path`.
-
-  Returns the normalised marker config map. The `:path` value is left
-  un-resolved (the absolute path is computed later via `resolve_marker_path/2`).
-  """
-  @spec parse_marker_config(term(), boolean()) ::
-          %{enabled?: boolean(), path: nil | String.t()}
-  def parse_marker_config(nil, auto_recovery_enabled?) do
-    %{enabled?: auto_recovery_enabled?, path: nil}
-  end
-
-  def parse_marker_config(opts, auto_recovery_enabled?) when is_list(opts) do
-    parse_marker_config(Map.new(opts), auto_recovery_enabled?)
-  end
-
-  def parse_marker_config(%{} = opts, auto_recovery_enabled?) do
-    enabled? = Map.get(opts, :enabled?, auto_recovery_enabled?)
-    path = Map.get(opts, :path, nil)
-    %{enabled?: !!enabled?, path: normalise_marker_path(path)}
-  end
-
-  def parse_marker_config(_other, auto_recovery_enabled?) do
-    %{enabled?: auto_recovery_enabled?, path: nil}
-  end
-
-  defp normalise_marker_path(nil), do: nil
-  defp normalise_marker_path(path) when is_binary(path), do: path
-  defp normalise_marker_path(path) when is_list(path), do: List.to_string(path)
-  defp normalise_marker_path(_), do: nil
+  defp validate_marker_path(nil), do: {:ok, nil}
+  defp validate_marker_path(path) when is_binary(path), do: {:ok, path}
+  defp validate_marker_path(path) when is_list(path), do: {:ok, List.to_string(path)}
+  defp validate_marker_path(_), do: {:error, {:invalid_auto_recovery, :invalid_marker_path}}
 
   @doc """
   Resolves the absolute marker path for a hub.
@@ -234,18 +187,9 @@ defmodule ProcessHub.Service.Recovery do
   def write_marker(nil), do: :ok
 
   def write_marker(path) when is_binary(path) do
-    parent = Path.dirname(path)
-
-    with :ok <- ensure_parent(parent),
+    with :ok <- File.mkdir_p(Path.dirname(path)),
          :ok <- File.touch(path) do
       :ok
-    end
-  end
-
-  defp ensure_parent(parent) do
-    case File.mkdir_p(parent) do
-      :ok -> :ok
-      {:error, _} = err -> err
     end
   end
 
@@ -280,13 +224,20 @@ defmodule ProcessHub.Service.Recovery do
   def resolve_mode(env, marker_exists?, marker_enabled?)
       when is_boolean(marker_exists?) and is_boolean(marker_enabled?) do
     case classify_env(env) do
-      :force -> :recovery
-      :skip -> :normal
-      :auto -> auto_mode(marker_exists?, marker_enabled?)
+      :force ->
+        :recovery
+
+      :skip ->
+        :normal
+
+      :auto ->
+        cond do
+          not marker_enabled? -> :normal
+          marker_exists? -> :normal
+          true -> :recovery
+        end
     end
   end
-
-  defp classify_env(nil), do: :auto
 
   defp classify_env(value) when is_binary(value) do
     case String.downcase(String.trim(value)) do
@@ -307,10 +258,6 @@ defmodule ProcessHub.Service.Recovery do
 
     :auto
   end
-
-  defp auto_mode(_marker_exists?, false), do: :normal
-  defp auto_mode(true, true), do: :normal
-  defp auto_mode(false, true), do: :recovery
 
   @doc """
   Returns the resolved env-var atom (`:auto | :force | :skip`).
@@ -340,9 +287,9 @@ defmodule ProcessHub.Service.Recovery do
   # --- marker-driven boot orchestration --------------------------------------
 
   @doc """
-  Injects `recovery_replay: bool` into backend opts when the marker
-  gate is enabled. Honours an explicitly set value if the caller
-  already provided one.
+  Injects `recovery_replay: bool` into backend opts when `:auto_recovery`
+  is enabled. Honours an explicitly set value if the caller already
+  provided one.
   """
   @spec maybe_inject_replay_flag(keyword(), atom(), map() | struct()) :: keyword()
   def maybe_inject_replay_flag(opts, hub_id, hub_conf) do
@@ -351,15 +298,14 @@ defmodule ProcessHub.Service.Recovery do
         opts
 
       true ->
-        enabled? = Map.get(hub_conf, :auto_recovery, false) != false
-        cfg = parse_marker_config(Map.get(hub_conf, :recovery_marker), enabled?)
+        case parse_config(Map.get(hub_conf, :auto_recovery, false)) do
+          {:ok, %{enabled?: true, marker_path: marker_path}} ->
+            path = resolve_marker_path(hub_id, marker_path)
+            replay? = resolve_mode(read_env(), marker_exists?(path), true) == :recovery
+            Keyword.put(opts, :recovery_replay, replay?)
 
-        if cfg.enabled? do
-          path = resolve_marker_path(hub_id, cfg.path)
-          replay? = resolve_mode(read_env(), marker_exists?(path), true) == :recovery
-          Keyword.put(opts, :recovery_replay, replay?)
-        else
-          opts
+          _ ->
+            opts
         end
     end
   end
@@ -372,21 +318,20 @@ defmodule ProcessHub.Service.Recovery do
   coordinator's `init/1`) stamps the marker onto `%Hub{}` and decides
   what to do next via `start/2`.
   """
-  @spec init_marker(atom(), term(), boolean()) ::
+  @spec init_marker(atom(), nil | String.t(), boolean()) ::
           {Hub.recovery_marker(), Hub.recovery_state(), :normal | :recovery}
-  def init_marker(hub_id, raw, auto_recovery_enabled?) do
-    cfg = parse_marker_config(raw, auto_recovery_enabled?)
-    path = if cfg.enabled?, do: resolve_marker_path(hub_id, cfg.path), else: cfg.path
-    mode = resolve_mode(read_env(), marker_exists?(path), cfg.enabled?)
+  def init_marker(hub_id, marker_path, auto_recovery_enabled?) do
+    path = if auto_recovery_enabled?, do: resolve_marker_path(hub_id, marker_path), else: nil
+    mode = resolve_mode(read_env(), marker_exists?(path), auto_recovery_enabled?)
 
     initial =
       cond do
-        auto_recovery_enabled? and cfg.enabled? and mode == :normal -> :normal
+        auto_recovery_enabled? and mode == :normal -> :normal
         auto_recovery_enabled? -> :recovery_pending
         true -> :normal
       end
 
-    {%{cfg | path: path}, initial, mode}
+    {%{enabled?: auto_recovery_enabled?, path: path}, initial, mode}
   end
 
   @doc """
@@ -404,10 +349,17 @@ defmodule ProcessHub.Service.Recovery do
   def start(%Hub{recovery_marker: %{enabled?: false}} = state, _), do: state
 
   def start(%Hub{} = state, :normal) do
+    reason =
+      cond do
+        env_mode() == :skip -> :env_skip
+        marker_exists?(state.recovery_marker.path) -> :marker_present
+        true -> :disabled
+      end
+
     emit_recovery_telemetry(
       :skipped,
       %{system_time: System.system_time()},
-      %{hub_id: state.hub_id, reason: skip_reason(state), marker_path: state.recovery_marker.path}
+      %{hub_id: state.hub_id, reason: reason, marker_path: state.recovery_marker.path}
     )
 
     persist_marker(state)
@@ -567,17 +519,7 @@ defmodule ProcessHub.Service.Recovery do
     end
   end
 
-  defp skip_reason(%Hub{recovery_marker: %{path: path}}) do
-    cond do
-      env_mode() == :skip -> :env_skip
-      marker_exists?(path) -> :marker_present
-      true -> :disabled
-    end
-  end
-
   defp env_mode, do: resolved_env_mode(read_env())
-
-  defp drain_queue(%Hub{recovery_event_queue: []} = state), do: state
 
   defp drain_queue(%Hub{recovery_event_queue: queue} = state) do
     Enum.each(queue, &send(self(), &1))
@@ -613,12 +555,54 @@ defmodule ProcessHub.Service.Recovery do
 
 
   @doc """
+  Returns the coordinator's current `:recovery_state`.
+
+  Returns `:normal` when the hub does not exist or was started without
+  `:auto_recovery`.
+  """
+  @spec recovery_state(ProcessHub.hub_id()) :: :recovery_pending | :recovering | :normal
+  def recovery_state(hub_id) do
+    case Process.whereis(hub_id) do
+      nil ->
+        :normal
+
+      _pid ->
+        try do
+          GenServer.call(hub_id, :get_recovery_state)
+        catch
+          :exit, _ -> :normal
+        end
+    end
+  end
+
+  @doc """
+  Blocks until the coordinator reaches `:normal` or `timeout_ms` elapses.
+
+  Returns `:ok` on reaching `:normal` (immediately when the hub does not exist
+  or has no recovery), or `{:error, :timeout}` otherwise.
+  """
+  @spec await_normal(ProcessHub.hub_id(), non_neg_integer()) :: :ok | {:error, :timeout}
+  def await_normal(hub_id, timeout_ms \\ 60_000) do
+    case Process.whereis(hub_id) do
+      nil ->
+        :ok
+
+      _pid ->
+        try do
+          GenServer.call(hub_id, {:await_normal, timeout_ms}, timeout_ms + 1_000)
+        catch
+          :exit, _ -> {:error, :timeout}
+        end
+    end
+  end
+
+  @doc """
   Deletes the recovery marker on the local node so the next coordinator
   boot selects recovery mode.
 
   Safe to call on a running hub — only the marker file is touched.
-  Idempotent (returns `:ok` even when the marker is absent). Hubs with
-  `recovery_marker.enabled?: false` are no-ops.
+  Idempotent (returns `:ok` even when the marker is absent). Hubs started
+  without `:auto_recovery` are no-ops.
 
   See `prepare_recovery_cluster/1` for the RPC fan-out variant.
   """
@@ -693,75 +677,6 @@ defmodule ProcessHub.Service.Recovery do
   defp validate_int(_value, _min, _max, err), do: {:error, {:invalid_auto_recovery, err}}
 
   @doc """
-  Decides the next state given the current state and a peer-announce event.
-
-  Returns one of:
-
-    * `{:transition, :normal, :peer_normal}` — defer-to-peers path.
-    * `:no_change` — peer announce does not change local state.
-
-  Pure function. Coordinator carries out the actual transition and
-  side-effects.
-  """
-  @spec compute_transition(Hub.recovery_state(), Hub.recovery_state()) ::
-          {:transition, :normal, :peer_normal} | :no_change
-  def compute_transition(:recovery_pending, :normal),
-    do: {:transition, :normal, :peer_normal}
-
-  def compute_transition(_local, _peer), do: :no_change
-
-  @doc """
-  Returns true if at least one peer is reported as `:normal`.
-
-  Used by the window-elapsed handler to decide between the deferred path
-  and the local-replay path.
-  """
-  @spec any_peer_normal?(%{node() => Hub.recovery_state()}) :: boolean()
-  def any_peer_normal?(peers) when is_map(peers) do
-    Enum.any?(peers, fn {_node, state} -> state == :normal end)
-  end
-
-  @doc """
-  Dispatches `@event_recovery_state_query` to the given peer node(s).
-  """
-  @spec dispatch_query(Hub.t(), [node()] | :external) :: :ok
-  def dispatch_query(%Hub{} = state, members) do
-    members = normalize_members(members)
-
-    Dispatcher.dispatch_event(
-      state.procs.event_queue,
-      @event_recovery_state_query,
-      node(),
-      %{members: members}
-    )
-
-    :ok
-  end
-
-  @doc """
-  Dispatches `@event_recovery_state_announce` carrying `{node(), state}`
-  to the given peer node(s).
-  """
-  @spec dispatch_announce(Hub.t(), [node()] | :external | :local) :: :ok
-  def dispatch_announce(%Hub{} = state, members) do
-    members = normalize_members(members)
-
-    Dispatcher.dispatch_event(
-      state.procs.event_queue,
-      @event_recovery_state_announce,
-      {node(), state.recovery_state},
-      %{members: members}
-    )
-
-    :ok
-  end
-
-  defp normalize_members(:external), do: :external
-  defp normalize_members(:local), do: :local
-  defp normalize_members(:global), do: :global
-  defp normalize_members(nodes) when is_list(nodes), do: nodes
-
-  @doc """
   Dispatches the `recovery_state_changed` hook with full payload.
   """
   @spec dispatch_state_changed_hook(Hub.t(), atom(), atom(), atom()) :: :ok
@@ -769,8 +684,7 @@ defmodule ProcessHub.Service.Recovery do
     HookManager.dispatch_hook(state.storage.hook, Hook.recovery_state_changed(), %{
       from: from,
       to: to,
-      reason: reason,
-      peers: state.recovery_peers
+      reason: reason
     })
 
     :ok
@@ -898,38 +812,28 @@ defmodule ProcessHub.Service.Recovery do
   defp extract_cspec(_), do: :skip
 
   defp run_replay_task(state, child_specs, skipped, replay_timeout_ms, started_at) do
-    parent = self()
-    ref = make_ref()
-
-    {pid, mon_ref} =
-      spawn_monitor(fn ->
-        result =
-          try do
-            Distributor.compose_start_operation(state, child_specs, [
-              {:auto_recovery_replay, true},
-              {:awaitable, false},
-              {:check_existing, false},
-              {:disable_logging, true}
-            ])
-          rescue
-            err -> {:error, err}
-          end
-
-        send(parent, {ref, result})
-      end)
-
+    n = length(child_specs)
     elapsed = System.monotonic_time(:millisecond) - started_at
     remaining = max(replay_timeout_ms - elapsed, 0)
-    n = length(child_specs)
 
-    receive do
-      {^ref, {:ok, _operation}} ->
-        Process.demonitor(mon_ref, [:flush])
+    worker = fn ->
+      try do
+        Distributor.compose_start_operation(state, child_specs, [
+          {:auto_recovery_replay, true},
+          {:awaitable, false},
+          {:check_existing, false},
+          {:disable_logging, true}
+        ])
+      rescue
+        err -> {:error, err}
+      end
+    end
+
+    case await_task(worker, remaining) do
+      {:ok, {:ok, _operation}} ->
         {n, 0, skipped, :completed}
 
-      {^ref, {:error, reason}} ->
-        Process.demonitor(mon_ref, [:flush])
-
+      {:ok, {:error, reason}} ->
         LoggerService.warning(
           "Recovery replay returned error: @reason",
           %{"reason" => inspect(reason)},
@@ -938,7 +842,7 @@ defmodule ProcessHub.Service.Recovery do
 
         {0, n, skipped, :completed}
 
-      {:DOWN, ^mon_ref, :process, ^pid, reason} ->
+      {:down, reason} ->
         LoggerService.warning(
           "Recovery replay task crashed: @reason",
           %{"reason" => inspect(reason)},
@@ -946,10 +850,8 @@ defmodule ProcessHub.Service.Recovery do
         )
 
         {0, n, skipped, :completed}
-    after
-      remaining ->
-        Process.demonitor(mon_ref, [:flush])
 
+      :timeout ->
         LoggerService.warning(
           "Recovery replay timed out after @ms ms; continuing in background",
           %{"ms" => Integer.to_string(replay_timeout_ms)},
@@ -957,6 +859,31 @@ defmodule ProcessHub.Service.Recovery do
         )
 
         {0, n, skipped, :replay_timeout}
+    end
+  end
+
+  # Runs `worker_fun` in a monitored process and waits up to `timeout` ms for it
+  # to send back its result. Returns `{:ok, result}` when the worker replies,
+  # `{:down, reason}` if it dies first, or `:timeout`. With
+  # `kill_on_timeout: true` a still-running worker is killed on timeout.
+  defp await_task(worker_fun, timeout, opts \\ []) do
+    parent = self()
+    ref = make_ref()
+
+    {pid, mon_ref} = spawn_monitor(fn -> send(parent, {ref, worker_fun.()}) end)
+
+    receive do
+      {^ref, result} ->
+        Process.demonitor(mon_ref, [:flush])
+        {:ok, result}
+
+      {:DOWN, ^mon_ref, :process, ^pid, reason} ->
+        {:down, reason}
+    after
+      timeout ->
+        Process.demonitor(mon_ref, [:flush])
+        if Keyword.get(opts, :kill_on_timeout, false), do: Process.exit(pid, :kill)
+        :timeout
     end
   end
 
@@ -998,75 +925,56 @@ defmodule ProcessHub.Service.Recovery do
   defp run_handler_blocking(%HookManager{m: module, f: func, a: args} = handler, hook_data, timeout) do
     args = substitute_wildcard(args, hook_data)
 
-    parent = self()
-    ref = make_ref()
-
-    {pid, mon_ref} =
-      spawn_monitor(fn ->
-        result =
-          try do
-            apply(module, func, args)
-          rescue
-            e -> {:__hook_raised__, e, __STACKTRACE__}
-          catch
-            kind, value -> {:__hook_caught__, kind, value, __STACKTRACE__}
-          end
-
-        send(parent, {ref, result})
-      end)
-
-    receive do
-      {^ref, {:__hook_raised__, e, st}} ->
-        Process.demonitor(mon_ref, [:flush])
-
-        LoggerService.warning(
-          "Recovery hook handler @id raised: @error",
-          %{"id" => inspect(handler.id), "error" => Exception.format(:error, e, st)},
-          prefix: "Recovery"
-        )
-
-        :ok
-
-      {^ref, {:__hook_caught__, kind, value, _st}} ->
-        Process.demonitor(mon_ref, [:flush])
-
-        LoggerService.warning(
-          "Recovery hook handler @id caught @kind: @value",
-          %{
-            "id" => inspect(handler.id),
-            "kind" => Atom.to_string(kind),
-            "value" => inspect(value)
-          },
-          prefix: "Recovery"
-        )
-
-        :ok
-
-      {^ref, _ok} ->
-        Process.demonitor(mon_ref, [:flush])
-        :ok
-
-      {:DOWN, ^mon_ref, :process, ^pid, reason} when reason != :normal ->
-        LoggerService.warning(
-          "Recovery hook handler @id task crashed: @reason",
-          %{"id" => inspect(handler.id), "reason" => inspect(reason)},
-          prefix: "Recovery"
-        )
-
-        :ok
-    after
-      timeout ->
-        Process.demonitor(mon_ref, [:flush])
-        Process.exit(pid, :kill)
-
-        LoggerService.warning(
-          "Recovery hook handler @id timed out after @ms ms",
-          %{"id" => inspect(handler.id), "ms" => Integer.to_string(timeout)},
-          prefix: "Recovery"
-        )
-
-        :ok
+    worker = fn ->
+      try do
+        apply(module, func, args)
+      rescue
+        e -> {:__hook_raised__, e, __STACKTRACE__}
+      catch
+        kind, value -> {:__hook_caught__, kind, value, __STACKTRACE__}
+      end
     end
+
+    case await_task(worker, timeout, kill_on_timeout: true) do
+      {:ok, {:__hook_raised__, e, st}} -> log_handler_error(:raised, handler.id, {e, st})
+      {:ok, {:__hook_caught__, kind, value, _st}} -> log_handler_error(:caught, handler.id, {kind, value})
+      {:ok, _ok} -> :ok
+      {:down, :normal} -> :ok
+      {:down, reason} -> log_handler_error(:crashed, handler.id, reason)
+      :timeout -> log_handler_error(:timeout, handler.id, timeout)
+    end
+  end
+
+  defp log_handler_error(:raised, id, {e, st}) do
+    LoggerService.warning(
+      "Recovery hook handler @id raised: @error",
+      %{"id" => inspect(id), "error" => Exception.format(:error, e, st)},
+      prefix: "Recovery"
+    )
+  end
+
+  defp log_handler_error(:caught, id, {kind, value}) do
+    LoggerService.warning(
+      "Recovery hook handler @id caught @kind: @value",
+      %{"id" => inspect(id), "kind" => Atom.to_string(kind), "value" => inspect(value)},
+      prefix: "Recovery"
+    )
+  end
+
+  defp log_handler_error(:crashed, id, reason) do
+    LoggerService.warning(
+      "Recovery hook handler @id task crashed: @reason",
+      %{"id" => inspect(id), "reason" => inspect(reason)},
+      prefix: "Recovery"
+    )
+  end
+
+  defp log_handler_error(:timeout, id, timeout) do
+    LoggerService.warning(
+      "Recovery hook handler @id timed out after @ms ms",
+      %{"id" => inspect(id), "ms" => Integer.to_string(timeout)},
+      prefix: "Recovery"
+    )
   end
 
   defp substitute_wildcard(args, hook_data) do
@@ -1076,17 +984,16 @@ defmodule ProcessHub.Service.Recovery do
     end)
   end
 
-  defp emit_telemetry(event, measurements, metadata) do
+  defp do_emit(prefix, event, measurements, metadata) do
     if Code.ensure_loaded?(:telemetry) do
-      :telemetry.execute(
-        [:process_hub, :coordinator, event],
-        measurements,
-        metadata
-      )
+      :telemetry.execute([:process_hub, prefix, event], measurements, metadata)
     end
 
     :ok
   end
+
+  defp emit_telemetry(event, measurements, metadata),
+    do: do_emit(:coordinator, event, measurements, metadata)
 
   @doc """
   Emits a `[:process_hub, :recovery, event]` telemetry event.
@@ -1096,15 +1003,6 @@ defmodule ProcessHub.Service.Recovery do
   legacy `[:process_hub, :coordinator, _]` replay events.
   """
   @spec emit_recovery_telemetry(atom(), map(), map()) :: :ok
-  def emit_recovery_telemetry(event, measurements, metadata) do
-    if Code.ensure_loaded?(:telemetry) do
-      :telemetry.execute(
-        [:process_hub, :recovery, event],
-        measurements,
-        metadata
-      )
-    end
-
-    :ok
-  end
+  def emit_recovery_telemetry(event, measurements, metadata),
+    do: do_emit(:recovery, event, measurements, metadata)
 end

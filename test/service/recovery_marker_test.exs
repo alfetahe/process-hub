@@ -3,7 +3,7 @@ defmodule Test.Service.RecoveryMarkerTest do
   Unit tests for the marker-gated recovery primitives:
 
     * `Recovery.parse_config/1` for `:recovery_timeout_ms`
-    * `Recovery.parse_marker_config/2` and `resolve_marker_path/2`
+    * `Recovery.init_marker/3` and `resolve_marker_path/2`
     * `Recovery.resolve_mode/3` env-var precedence
     * `Recovery.marker_exists?/1`, `write_marker/1`, `delete_marker/1`
   """
@@ -37,20 +37,34 @@ defmodule Test.Service.RecoveryMarkerTest do
     end
   end
 
-  describe "parse_marker_config/2" do
-    test "nil defaults track auto_recovery_enabled?" do
-      assert %{enabled?: true, path: nil} = Recovery.parse_marker_config(nil, true)
-      assert %{enabled?: false, path: nil} = Recovery.parse_marker_config(nil, false)
+  describe "init_marker/3" do
+    test "disabled -> marker disabled, state :normal" do
+      assert {%{enabled?: false, path: nil}, :normal, :normal} =
+               Recovery.init_marker(:hub, nil, false)
     end
 
-    test "explicit map values override the defaults" do
-      assert %{enabled?: false, path: "/tmp/x"} =
-               Recovery.parse_marker_config(%{enabled?: false, path: "/tmp/x"}, true)
+    test "enabled + marker absent -> :recovery_pending, recovery mode" do
+      path = tmp_path()
+      on_exit(fn -> File.rm(path) end)
+
+      assert {%{enabled?: true, path: ^path}, :recovery_pending, :recovery} =
+               Recovery.init_marker(:hub, path, true)
     end
 
-    test "keyword list shape works" do
-      assert %{enabled?: true, path: "/tmp/k"} =
-               Recovery.parse_marker_config([enabled?: true, path: "/tmp/k"], false)
+    test "enabled + marker present -> :normal, normal mode" do
+      path = tmp_path()
+      File.touch!(path)
+      on_exit(fn -> File.rm(path) end)
+
+      assert {%{enabled?: true, path: ^path}, :normal, :normal} =
+               Recovery.init_marker(:hub, path, true)
+    end
+
+    test "enabled + nil path resolves the default location" do
+      assert {%{enabled?: true, path: path}, _state, _mode} =
+               Recovery.init_marker(:my_hub, nil, true)
+
+      assert path =~ "/my_hub/cluster.healthy"
     end
   end
 
