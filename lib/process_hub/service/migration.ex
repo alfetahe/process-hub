@@ -33,8 +33,6 @@ defmodule ProcessHub.Service.Migration do
   alias ProcessHub.Future
   alias ProcessHub.StartResult
 
-  # Bound on confirming a start/stop has taken effect (and synced to this node).
-  @op_timeout_ms 8_000
   # How long to wait for the source's handover state before migrating without it.
   @handover_timeout_ms 5_000
 
@@ -143,9 +141,13 @@ defmodule ProcessHub.Service.Migration do
   end
 
   defp stop_child(hub_id, child_id) do
-    ProcessHub.stop_child(hub_id, child_id)
-    # Confirm removal (and its sync to this node) before proceeding.
-    await_unregistered(hub_id, child_id, @op_timeout_ms)
+    # Awaitable stop blocks (via the request manager's reply — message passing,
+    # not polling) until the stop has actually completed.
+    case hub_id |> ProcessHub.stop_child(child_id, awaitable: true) |> Future.await() do
+      # Op completed before we awaited; it is already done.
+      {:error, :pending_request_not_found} -> :ok
+      _result -> :ok
+    end
   end
 
   defp start_child(hub_id, spec) do
@@ -156,48 +158,16 @@ defmodule ProcessHub.Service.Migration do
       %StartResult{} = result ->
         {:error, StartResult.errors(result)}
 
-      # Cross-node race: the operation completed before we awaited. Fall back to
-      # the registry (the source of truth), allowing for a brief sync window.
+      # Cross-node race: the operation completed before we awaited, so read the
+      # pid from the registry (the source of truth) directly.
       {:error, :pending_request_not_found} ->
-        await_registered(hub_id, spec.id, @op_timeout_ms)
+        case ProcessRegistry.lookup(hub_id, spec.id) do
+          {_spec, [{_node, pid} | _]} -> {:ok, pid}
+          _ -> {:error, :start_failed}
+        end
 
       {:error, reason} ->
         {:error, reason}
-    end
-  end
-
-  defp await_registered(hub_id, child_id, timeout) do
-    poll_until(timeout, fn ->
-      case ProcessRegistry.lookup(hub_id, child_id) do
-        {_spec, [{_node, pid} | _]} -> {:ok, pid}
-        _ -> :retry
-      end
-    end) || {:error, :start_failed}
-  end
-
-  defp await_unregistered(hub_id, child_id, timeout) do
-    poll_until(timeout, fn ->
-      if ProcessRegistry.lookup(hub_id, child_id) == nil, do: :ok, else: :retry
-    end) || :ok
-  end
-
-  defp poll_until(timeout, fun) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    do_poll_until(deadline, fun)
-  end
-
-  defp do_poll_until(deadline, fun) do
-    case fun.() do
-      :retry ->
-        if System.monotonic_time(:millisecond) > deadline do
-          nil
-        else
-          Process.sleep(50)
-          do_poll_until(deadline, fun)
-        end
-
-      result ->
-        result
     end
   end
 end
