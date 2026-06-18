@@ -3,6 +3,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   Provides implementation for distribution behavior using centralized load balancing.
 
   > #### Experimental {: .warning}
+  >
   > This strategy is experimental and may change in future releases.
   > Use in production at your own discretion.
 

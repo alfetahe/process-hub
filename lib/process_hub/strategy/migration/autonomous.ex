@@ -11,7 +11,8 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
 
   > #### Experimental {: .warning}
   >
-  > This strategy is experimental and may change in future versions.
+  > This strategy is experimental and may change in future releases.
+  > Use in production at your own discretion.
   """
 
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy

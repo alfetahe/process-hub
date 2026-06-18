@@ -42,43 +42,6 @@ Main features include:
 - Customizable and extendable to alter the default behavior of the system by implementing custom hook handlers and strategies.
 - Optional disk-backed (DETS) registry that survives coordinator restart on a single node — opt in via `:registry_backend`. See [Persistence](guides/Persistence.md).
 
-## Configuration
-
-ProcessHub configuration is controlled through the `%ProcessHub{}` struct
-(see `t:ProcessHub.t/0`). In addition to the strategy fields
-(`:redundancy_strategy`, `:migration_strategy`, `:synchronization_strategy`,
-`:partition_tolerance_strategy`, `:distribution_strategy`), the struct
-exposes:
-
-- `:registry_backend` *(default: `:ets`)* — selects the storage backend
-  for the per-coordinator process registry. Accepts `:ets` (in-memory),
-  `{:dets, opts}` (on-disk; reads from disk),
-  `{:durable_ets, opts}` (hybrid — in-memory reads, write-through to a
-  DETS file for restart-survival), or `{Module, opts}` (custom). See
-  [guides/Persistence.md](guides/Persistence.md).
-- `:auto_recovery` *(default: `false`)* — opts into a marker-gated,
-  three-state coordinator boot lifecycle
-  (`:recovery_pending → :recovering | :normal`). Accepts `false`, `true`,
-  or `[marker_path: String.t(), replay_timeout_ms: integer(),
-  recovery_timeout_ms: integer()]`. When enabled, a per-node marker file
-  gates the boot-time DETS read path so a single-node restart cannot
-  inject stale rows into a healthy cluster: marker present → boot
-  straight to `:normal` (skip replay); marker absent → `:recovering`
-  (cspecs-only replay from the persistent registry) → `:normal`, then
-  the marker is written. `:marker_path` overrides the marker file
-  location (unset/`nil` → default
-  `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`).
-  Operators arm recovery via `ProcessHub.prepare_recovery/1` or
-  `ProcessHub.prepare_recovery_cluster/1` (both delete the marker so the
-  next boot replays); the `PROCESS_HUB_RECOVERY_MODE` env var overrides
-  per node (`auto | force | skip`). Most useful with
-  `registry_backend: {:dets, _}` or `{:durable_ets, _}` for full
-  restart-survival. See the "Coordinator recovery" section in
-  [guides/Persistence.md](guides/Persistence.md).
-
-For the full set of options and strategy documentation, see
-[guides/Configuration.md](guides/Configuration.md).
-
 ## Installation
 
 1. Add `process_hub` to your list of dependencies in `mix.exs`:
@@ -176,7 +139,37 @@ iex> ProcessHub.get_pid(:my_hub, :my_process_1)
 #PID<0.228.0>
 ```
 
-**See the [documentation](https://hexdocs.pm/process_hub) for more guides.**
+## Configuration
+
+ProcessHub runs with sensible defaults — `%ProcessHub{hub_id: :my_hub}` is a
+complete, valid configuration. Behaviour is customized through the
+`%ProcessHub{}` struct (see `t:ProcessHub.t/0`), which lets you swap the
+distribution, migration, synchronization, replication and partition-tolerance
+strategies and optionally make the process registry disk-backed.
+
+```elixir
+ProcessHub.child_spec(%ProcessHub{
+  hub_id: :my_hub,
+  # Migrate process state to the target node during redistribution.
+  migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{},
+  # Run each process on 2 nodes for redundancy.
+  redundancy_strategy: %ProcessHub.Strategy.Redundancy.Replication{replication_factor: 2},
+  # Stay available only while a quorum of nodes is connected.
+  partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.StaticQuorum{quorum_size: 2},
+  # Persist the registry to disk so a single-node restart keeps its children.
+  registry_backend: {:dets, path: "priv/my_hub.dets"}
+})
+```
+
+See [guides/Configuration.md](guides/Configuration.md) for the full set of
+options, and [guides/Persistence.md](guides/Persistence.md) for the optional
+disk-backed registry and coordinator recovery.
+
+## Getting started 📚
+
+New to ProcessHub? **Start with the [Getting started guide](https://hexdocs.pm/process_hub/introduction.html)** — it walks you through installation, configuration, and your first distributed processes.
+
+Browse the [full documentation](https://hexdocs.pm/process_hub) for all guides and the API reference.
 
 ## Contributing
 Contributions are welcome and appreciated. If you have any ideas, suggestions, or bugs to report,

@@ -188,6 +188,7 @@ defmodule ProcessHub do
   node is merged via the normal snapshot-merge if (and only if) it is running the same hub.
   This reconciles cluster *membership* and is unrelated to process-placement reconciliation.
   The default is `3000` (3 seconds); `0` disables the fail-safe.
+  This fail-safe is **experimental** and may change in future releases.
   - `:registry_backend` is optional and selects the storage backend for the
   process registry table. The default is `:ets`. Accepted shapes:
     - `:ets` — in-memory only. Registry contents are lost when the
@@ -212,7 +213,8 @@ defmodule ProcessHub do
     events, and operational profile.
   - `:auto_recovery` is optional and enables a three-state coordinator
     boot lifecycle (`:recovery_pending → :recovering | :normal`) gated by
-    a marker file. The default is `false`. Requires a persistent
+    a marker file. **Experimental** and may change in future releases.
+    The default is `false`. Requires a persistent
     `:registry_backend` (e.g. `{:dets, _}`) to be useful; with the
     default `:ets` backend the replay step finds an empty registry.
     Accepted shapes:
@@ -929,6 +931,8 @@ defmodule ProcessHub do
   @doc """
   Returns the current `:recovery_state` of the hub's coordinator.
 
+  Part of the **experimental** boot-recovery feature (see `:auto_recovery`).
+
   When the hub was started without `:auto_recovery` (or with
   `auto_recovery: false`), this function always returns `:normal`.
 
@@ -944,6 +948,8 @@ defmodule ProcessHub do
   @doc """
   Blocks until the hub's `recovery_state` reaches `:normal` or the timeout
   elapses.
+
+  Part of the **experimental** boot-recovery feature (see `:auto_recovery`).
 
   When the hub was started without `:auto_recovery`, returns `:ok`
   immediately.
@@ -962,6 +968,8 @@ defmodule ProcessHub do
   Deletes the recovery marker on the local node so the next coordinator
   boot selects recovery mode.
 
+  Part of the **experimental** boot-recovery feature (see `:auto_recovery`).
+
   Safe to call on a running hub — only the marker file is touched; the
   live coordinator is not interrupted. The call is idempotent (returns
   `:ok` even when the marker is absent). Hubs started without
@@ -977,6 +985,8 @@ defmodule ProcessHub do
   @doc """
   Fans out `prepare_recovery/1` to every member of the hub via
   `:rpc.multicall/4`.
+
+  Part of the **experimental** boot-recovery feature (see `:auto_recovery`).
 
   Returns:
 

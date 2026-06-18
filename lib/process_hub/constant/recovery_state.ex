@@ -2,6 +2,11 @@ defmodule ProcessHub.Constant.RecoveryState do
   @moduledoc """
   Named constants for the three coordinator boot-recovery states.
 
+  > #### Experimental {: .warning}
+  >
+  > Coordinator boot recovery is experimental and may change in future releases.
+  > Use in production at your own discretion.
+
   When `auto_recovery` is enabled, the coordinator transitions through these
   states during start-up. When `auto_recovery` is disabled, the coordinator's
   `:recovery_state` field is set to `:normal` at `init/1` time and never

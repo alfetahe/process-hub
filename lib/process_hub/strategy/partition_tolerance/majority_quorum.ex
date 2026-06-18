@@ -3,6 +3,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
   The majority quorum strategy provides automatic partition tolerance that adapts to cluster size.
 
   > #### Experimental {: .warning}
+  >
   > This strategy is experimental and may change in future releases.
   > Use in production at your own discretion.
 

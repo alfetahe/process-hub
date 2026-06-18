@@ -163,9 +163,10 @@ or geographic distribution.
 a single leader node collects performance metrics from all nodes and makes distribution decisions
 based on real-time load data. The leader is determined by highest uptime and is not configurable.
 
-  > #### Experimental Strategy {: .warning}
-  > The `CentralizedLoadBalancer` strategy is currently **experimental** and should not be used
-  > in production environments.
+  > #### Experimental {: .warning}
+  >
+  > The `CentralizedLoadBalancer` strategy is currently **experimental** and may
+  > change in future releases. Use in production at your own discretion.
 
   **Configuration options:**
   - `:max_history_size` (default: 30) - Maximum historical load scores to maintain

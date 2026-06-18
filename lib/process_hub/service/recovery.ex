@@ -2,6 +2,11 @@ defmodule ProcessHub.Service.Recovery do
   @moduledoc """
   State-machine logic for the coordinator boot-recovery lifecycle.
 
+  > #### Experimental {: .warning}
+  >
+  > Coordinator boot recovery is experimental and may change in future releases.
+  > Use in production at your own discretion.
+
   When `:auto_recovery` is enabled the coordinator transitions through
   three states (`:recovery_pending → :recovering | :normal`) on start-up,
   driven by the marker gate: the resolved mode is computed from

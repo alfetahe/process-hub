@@ -74,7 +74,8 @@ should keep the default `:ets` backend.
 
 DETS does not compact automatically — deleted entries leave gaps in
 the file. The registry is bounded by the number of children, so this
-is usually negligible. Periodic compaction via `:dets.repair/1` is an
+is usually negligible. DETS exposes no manual compaction API; reclaiming
+the gaps requires closing the table and rewriting it, which is an
 operator concern.
 
 ## TTL semantics
@@ -95,6 +96,12 @@ that a future replicated backend (Raft, etc.) can plug in without
 breaking existing call sites.
 
 ## Coordinator recovery
+
+> #### Experimental {: .warning}
+>
+> Coordinator recovery (the `:auto_recovery` lifecycle described in this and the
+> following sections) is currently **experimental** and may change in future
+> releases. The persistence backends above are not affected by this notice.
 
 When a returning node holds a persisted registry, naively re-asserting
 those rows on boot would either resurrect children the cluster has

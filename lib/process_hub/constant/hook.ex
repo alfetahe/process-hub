@@ -170,6 +170,8 @@ defmodule ProcessHub.Constant.Hook do
   Hook dispatched on every coordinator `:recovery_state` transition when the
   hub has opted into `:auto_recovery`.
 
+  Part of the **experimental** boot-recovery feature; may change in future releases.
+
   Data: `%{from: atom(), to: atom(), reason: atom(), peers: %{node() => atom()}}`
   """
   @spec recovery_state_changed() :: atom()
@@ -177,7 +179,8 @@ defmodule ProcessHub.Constant.Hook do
 
   @doc """
   Hook dispatched once when the coordinator enters `:recovering`, before any
-  `start_children` is dispatched. This hook is dispatched **synchronously** —
+  `start_children` is dispatched. Part of the **experimental** boot-recovery
+  feature; may change in future releases. This hook is dispatched **synchronously** —
   the coordinator awaits each registered handler's reply before proceeding,
   so handlers may block on prerequisite-service readiness.
 
@@ -193,6 +196,8 @@ defmodule ProcessHub.Constant.Hook do
   @doc """
   Hook dispatched once when the coordinator leaves `:recovering` (whether via
   completion or via the `:replay_timeout_ms` safety path). Async.
+
+  Part of the **experimental** boot-recovery feature; may change in future releases.
 
   Data: `%{hub_id: atom(), child_count: non_neg_integer(), succeeded: non_neg_integer(), failed: non_neg_integer(), reason: atom()}`
   """
