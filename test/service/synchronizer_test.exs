@@ -344,4 +344,42 @@ defmodule Test.Service.SynchronizerTest do
 
     assert result === :ok
   end
+
+  describe "broadcastable_local_data/1 (empty-broadcast suppression)" do
+    test "suppresses an empty registry before any local child has been hosted",
+         %{hub: hub} = _context do
+      assert Synchronizer.local_sync_data(hub) === []
+      assert Synchronizer.broadcastable_local_data(hub) === :suppress
+    end
+
+    test "returns data once a local child is hosted", %{hub: hub} = _context do
+      ProcessRegistry.insert(hub.hub_id, %{id: :bcast}, [{node(), self()}], metadata: %{})
+
+      assert {:ok, [{_cs, _pid, _meta}]} = Synchronizer.broadcastable_local_data(hub)
+    end
+
+    test "still broadcasts an empty registry after a hosted child drains",
+         %{hub: hub} = _context do
+      ProcessRegistry.insert(hub.hub_id, %{id: :drain}, [{node(), self()}], metadata: %{})
+      # Observing the non-empty registry latches this node as populated for the boot.
+      assert {:ok, [_]} = Synchronizer.broadcastable_local_data(hub)
+
+      ProcessRegistry.delete(hub.hub_id, :drain)
+      assert Synchronizer.local_sync_data(hub) === []
+
+      # Legitimately drained (already populated this boot) -> still broadcasts so
+      # peers reconcile stale records. No bug trade against the loss fix.
+      assert Synchronizer.broadcastable_local_data(hub) === {:ok, []}
+    end
+
+    test "an unrelated peer's sync does not unsuppress an empty node",
+         %{hub: hub} = _context do
+      # Inbound sync data is recorded under the peer node, never the local node,
+      # so a freshly (re)started/wiped node stays empty and must stay suppressed.
+      Synchronizer.append_data(hub, %{:peer@host => [{%{id: :remote_child}, self(), %{}}]})
+
+      assert Synchronizer.local_sync_data(hub) === []
+      assert Synchronizer.broadcastable_local_data(hub) === :suppress
+    end
+  end
 end

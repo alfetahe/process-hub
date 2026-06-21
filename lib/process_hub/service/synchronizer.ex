@@ -133,20 +133,50 @@ defmodule ProcessHub.Service.Synchronizer do
   end
 
   @doc """
+  Returns local registry data to broadcast, or `:suppress`.
+
+  A node that has not hosted any local child since its current boot (e.g. a
+  freshly (re)started or recovery-wiped node) returns `[]` from
+  `local_sync_data/1`. Broadcasting that empty would make peers' `detach_data/2`
+  treat the node as authoritatively hosting nothing and delete every registry
+  record for it. We suppress the empty until the node has hosted a child at
+  least once this boot (latched in `storage.misc`); a node that legitimately
+  drained its children is already latched, so it still broadcasts its empty and
+  peers still reconcile stale records.
+  """
+  @spec broadcastable_local_data(Hub.t()) ::
+          {:ok, [{ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}]} | :suppress
+  def broadcastable_local_data(hub) do
+    case local_sync_data(hub) do
+      [] ->
+        if Storage.get(hub.storage.misc, StorageKey.rp()) === true, do: {:ok, []}, else: :suppress
+
+      data ->
+        Storage.insert(hub.storage.misc, StorageKey.rp(), true)
+        {:ok, data}
+    end
+  end
+
+  @doc """
   Broadcasts local registry data to the specified target nodes.
 
   Called when new nodes join the cluster to share local process information.
   """
   @spec broadcast_local_registry(Hub.t(), [node()]) :: :ok
   def broadcast_local_registry(state, target_nodes) do
-    sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
-    local_data = local_sync_data(state)
+    case broadcastable_local_data(state) do
+      :suppress ->
+        :ok
 
-    SynchronizationStrategy.broadcast_local_data(
-      sync_strategy,
-      state,
-      local_data,
-      target_nodes
-    )
+      {:ok, local_data} ->
+        sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
+
+        SynchronizationStrategy.broadcast_local_data(
+          sync_strategy,
+          state,
+          local_data,
+          target_nodes
+        )
+    end
   end
 end

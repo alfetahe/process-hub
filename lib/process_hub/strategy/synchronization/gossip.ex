@@ -359,10 +359,24 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       :ok
     end
 
+    # Stamp this node's own data into the gossip payload. A node that has not
+    # hosted a child this boot stamps the `:suppressed` marker instead of its
+    # empty registry: it stays visible for gossip convergence (missing_nodes),
+    # but receivers skip it so it never makes peers delete its records via
+    # detach_data (see Synchronizer.broadcastable_local_data/1).
+    defp stamp_local_data(hub, nodes_data, timestamp) do
+      data =
+        case Synchronizer.broadcastable_local_data(hub) do
+          {:ok, local_data} -> local_data
+          :suppress -> :suppressed
+        end
+
+      Map.put(nodes_data, node(), {data, timestamp})
+    end
+
     defp merge_sync_data(misc_storage, hub, ref, nodes_data, sync_acks) do
       local_timestamp = Bag.timestamp(:microsecond)
-      local_data = Synchronizer.local_sync_data(hub)
-      nodes_data = Map.put(nodes_data, node(), {local_data, local_timestamp})
+      nodes_data = stamp_local_data(hub, nodes_data, local_timestamp)
 
       case Storage.get(misc_storage, ref) do
         nil ->
@@ -408,6 +422,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         end
       end)
     end
+
+    defp sync_locally_node(_misc_storage, _hub, _node, :suppressed, _timestamp), do: :ok
 
     defp sync_locally_node(misc_storage, hub, node, data, timestamp) do
       Synchronizer.append_data(hub, %{node => data})
@@ -459,8 +475,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
     defp merge_join_data(misc_storage, hub, ref, nodes_data, sync_acks) do
       local_timestamp = Bag.timestamp(:microsecond)
-      local_data = Synchronizer.local_sync_data(hub)
-      nodes_data = Map.put(nodes_data, node(), {local_data, local_timestamp})
+      nodes_data = stamp_local_data(hub, nodes_data, local_timestamp)
 
       case Storage.get(misc_storage, ref) do
         nil ->
@@ -549,6 +564,8 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
         end
       end)
     end
+
+    defp sync_join_locally_node(_misc_storage, _hub, _node, :suppressed, _timestamp), do: :ok
 
     defp sync_join_locally_node(misc_storage, hub, node, data, timestamp) do
       Synchronizer.append_data(hub, %{node => data})

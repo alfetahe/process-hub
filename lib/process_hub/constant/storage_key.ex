@@ -40,4 +40,6 @@ defmodule ProcessHub.Constant.StorageKey do
   def rci, do: :req_cleanup_interval
   @spec nri() :: :nodeup_reconcile_interval
   def nri, do: :nodeup_reconcile_interval
+  @spec rp() :: :registry_populated
+  def rp, do: :registry_populated
 end
