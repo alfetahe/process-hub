@@ -212,7 +212,7 @@ defmodule Test.Strategy.Synchronization.GossipIntegrationTest do
   end
 
   describe "merge stamping (empty-broadcast suppression)" do
-    test "does not stamp this node's empty data when it has hosted nothing this boot",
+    test "stamps a non-authoritative marker when it has hosted nothing this boot",
          %{hub: hub} = _context do
       # Ensure this node is unpopulated (has hosted nothing since boot).
       Storage.remove(hub.storage.misc, StorageKey.rp())
@@ -229,9 +229,9 @@ defmodule Test.Strategy.Synchronization.GossipIntegrationTest do
 
       SynchronizationStrategy.handle_synchronization(strategy, hub, sync_data, :remote@host)
 
-      # This node stays in the payload for gossip convergence, but as the
-      # non-authoritative :suppressed marker (never an empty list that peers
-      # would apply via detach_data and delete our records).
+      # This node stays a key so gossip still converges (missing_nodes), but as
+      # the :suppressed marker — never an empty list that peers would apply via
+      # detach_data and use to wipe our records.
       {merged, _acks} = Storage.get(hub.storage.misc, ref)
       assert {:suppressed, _ts} = Map.get(merged, node())
       assert Map.has_key?(merged, :remote@host)

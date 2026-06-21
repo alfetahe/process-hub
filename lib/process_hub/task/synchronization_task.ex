@@ -30,8 +30,8 @@ defmodule ProcessHub.Task.SynchronizationTask do
     def handle(%__MODULE__{hub: hub} = arg) do
       sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
 
-      unless State.is_partitioned?(arg.hub) or
-               Synchronizer.broadcastable_local_data(hub) === :suppress do
+      if not State.is_partitioned?(arg.hub) and
+           Synchronizer.broadcastable_local_data(hub) !== :suppress do
         hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
         SynchronizationStrategy.init_sync(sync_strat, hub, hub_nodes)

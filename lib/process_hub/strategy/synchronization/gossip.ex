@@ -340,9 +340,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
     defp init_sync_internal(strategy, %Hub{} = hub, cluster_nodes, true) do
       ref = make_ref()
 
-      sync_data = %{
-        node() => {Synchronizer.local_sync_data(hub), Bag.timestamp(:microsecond)}
-      }
+      sync_data = stamp_local_data(hub, %{}, Bag.timestamp(:microsecond))
 
       Storage.insert(hub.storage.misc, ref, {sync_data, []}, ttl: strategy.sync_interval)
 
@@ -359,11 +357,11 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
       :ok
     end
 
-    # Stamp this node's own data into the gossip payload. A node that has not
-    # hosted a child this boot stamps the `:suppressed` marker instead of its
-    # empty registry: it stays visible for gossip convergence (missing_nodes),
-    # but receivers skip it so it never makes peers delete its records via
-    # detach_data (see Synchronizer.broadcastable_local_data/1).
+    # Stamp this node's own data into the gossip payload. A node that has hosted
+    # no child this boot stamps the `:suppressed` marker instead of its empty
+    # registry: it stays a key so gossip still converges (missing_nodes is
+    # satisfied), but receivers skip it so it never makes peers delete its
+    # records via detach_data (see Synchronizer.broadcastable_local_data/1).
     defp stamp_local_data(hub, nodes_data, timestamp) do
       data =
         case Synchronizer.broadcastable_local_data(hub) do

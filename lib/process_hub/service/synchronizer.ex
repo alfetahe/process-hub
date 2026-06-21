@@ -133,16 +133,14 @@ defmodule ProcessHub.Service.Synchronizer do
   end
 
   @doc """
-  Returns local registry data to broadcast, or `:suppress`.
+  Returns `{:ok, data}` to broadcast, or `:suppress`.
 
-  A node that has not hosted any local child since its current boot (e.g. a
-  freshly (re)started or recovery-wiped node) returns `[]` from
-  `local_sync_data/1`. Broadcasting that empty would make peers' `detach_data/2`
-  treat the node as authoritatively hosting nothing and delete every registry
-  record for it. We suppress the empty until the node has hosted a child at
-  least once this boot (latched in `storage.misc`); a node that legitimately
-  drained its children is already latched, so it still broadcasts its empty and
-  peers still reconcile stale records.
+  A node that has hosted no local child since boot returns an empty
+  `local_sync_data/1`; broadcasting it would make peers' `detach_data/2` treat
+  the node as authoritatively empty and wipe its records. We suppress that empty
+  until the node has hosted a child at least once (latched in `storage.misc`,
+  which resets on restart). A node that legitimately drained its children is
+  already latched, so it still broadcasts its empty and peers reconcile.
   """
   @spec broadcastable_local_data(Hub.t()) ::
           {:ok, [{ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}]} | :suppress
