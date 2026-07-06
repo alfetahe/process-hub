@@ -74,41 +74,4 @@ defmodule Test.Service.StorageRecoveryReplayTest do
     end
   end
 
-  describe "telemetry — replayed metadata" do
-    test "Storage.Dets backend_opened includes replayed: false" do
-      hub_id = unique_hub(:dets_telemetry)
-      path = tmp_dets_path("dets_telemetry")
-      handler_id = make_ref()
-      parent = self()
-
-      :telemetry.attach(handler_id, [:process_hub, :registry, :backend_opened], fn _e, m, md, _ ->
-        send(parent, {:opened, m, md})
-      end, nil)
-
-      on_exit(fn -> :telemetry.detach(handler_id) end)
-
-      {:ok, ref} = Dets.open(hub_id, path: path, recovery_replay: false)
-      Dets.close(ref)
-
-      assert_receive {:opened, _measurements, %{replayed: false}}, 500
-    end
-
-    test "Storage.DurableEts backend_opened includes replayed: true by default" do
-      hub_id = unique_hub(:durable_telemetry)
-      path = tmp_dets_path("durable_telemetry")
-      handler_id = make_ref()
-      parent = self()
-
-      :telemetry.attach(handler_id, [:process_hub, :registry, :backend_opened], fn _e, m, md, _ ->
-        send(parent, {:opened, m, md})
-      end, nil)
-
-      on_exit(fn -> :telemetry.detach(handler_id) end)
-
-      {:ok, ref} = DurableEts.open(hub_id, path: path)
-      DurableEts.close(ref)
-
-      assert_receive {:opened, _measurements, %{replayed: true}}, 500
-    end
-  end
 end

@@ -10,18 +10,17 @@ defmodule ProcessHub.Hub do
           started_at: integer() | nil
         }
 
-  @typedoc "Coordinator boot-recovery state (see `ProcessHub.Constant.RecoveryState`)."
-  @type recovery_state() :: :recovery_pending | :recovering | :normal
+  @typedoc "Coordinator boot-recovery state."
+  @type recovery_state() :: :recovering | :normal
 
   @typedoc """
   Parsed `:auto_recovery` config. `enabled?` gates the lifecycle;
-  `replay_timeout_ms` caps the replay loop; `recovery_timeout_ms`
-  caps the cluster-event queue gate; `marker_path` is the operator
-  override for the marker file location (`nil` resolves to the default).
+  `recovery_timeout_ms` caps the recovery loop and the cluster-event
+  queue gate; `marker_path` is the operator override for the marker file
+  location (`nil` resolves to the default).
   """
   @type recovery_config() :: %{
           enabled?: boolean(),
-          replay_timeout_ms: pos_integer(),
           recovery_timeout_ms: pos_integer(),
           marker_path: nil | String.t()
         }
@@ -58,7 +57,6 @@ defmodule ProcessHub.Hub do
           recovery_marker: recovery_marker(),
           recovery_event_queue: [term()],
           recovery_timeout_timer: reference() | nil,
-          recovery_restart_signal_sent?: boolean(),
           recovery_normal_waiters: %{GenServer.from() => reference()}
         }
 
@@ -79,14 +77,12 @@ defmodule ProcessHub.Hub do
     recovery_state: :normal,
     recovery_config: %{
       enabled?: false,
-      replay_timeout_ms: 60_000,
       recovery_timeout_ms: 30_000,
       marker_path: nil
     },
     recovery_marker: %{enabled?: false, path: nil},
     recovery_event_queue: [],
     recovery_timeout_timer: nil,
-    recovery_restart_signal_sent?: false,
     recovery_normal_waiters: %{}
   ]
 end

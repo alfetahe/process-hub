@@ -6,6 +6,7 @@ defmodule ProcessHub.Service.Cluster do
 
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.State
   alias ProcessHub.Constant.Event
@@ -160,6 +161,53 @@ defmodule ProcessHub.Service.Cluster do
 
     purge_from(hub_id, registry, MapSet.new(dead_nodes))
     dead_nodes
+  end
+
+  @doc """
+  Generates a boot token that is stable for the lifetime of the node and differs
+  across restarts. Broadcast to peers so they can tell a restart from a flap.
+  """
+  @spec boot_token() :: integer()
+  def boot_token, do: System.system_time(:microsecond)
+
+  @doc """
+  Broadcasts this node's boot token to peers so they can reap any bindings left
+  over from a previous incarnation. Sent once on every boot, for every backend.
+  """
+  @spec announce_boot(Hub.t(), integer()) :: :ok
+  def announce_boot(%Hub{} = hub, token) do
+    Dispatcher.dispatch_event(
+      hub.procs.event_queue,
+      @event_node_restarted,
+      {node(), token},
+      %{members: :external}
+    )
+
+    :ok
+  end
+
+  @doc """
+  Handles a peer's boot announcement: purges the peer's registry bindings the
+  first time a given token is seen (a genuine restart), and does nothing when the
+  token is unchanged (a network flap or a duplicate announcement).
+
+  This closes the fast-restart stale-binding gap for every backend — the stale
+  `{peer, dead_pid}` rows live on the local (peer) node, independent of the
+  restarted node's `:registry_backend`. Purging is delete-only; the child's
+  re-placement is handled by the normal redistribution path, and any binding
+  wiped by a late announcement is re-asserted by the returning node's next sync.
+  """
+  @spec handle_boot_announcement(Hub.t(), node(), integer()) :: :ok
+  def handle_boot_announcement(%Hub{} = hub, peer, token) do
+    tokens = Storage.get(hub.storage.misc, StorageKey.nbt()) || %{}
+
+    if Map.get(tokens, peer) === token do
+      :ok
+    else
+      purge_node(hub.hub_id, peer)
+      Storage.insert(hub.storage.misc, StorageKey.nbt(), Map.put(tokens, peer, token))
+      :ok
+    end
   end
 
   # Single pass over an already-dumped registry: drop every `{node, pid}` whose

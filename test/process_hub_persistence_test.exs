@@ -68,32 +68,21 @@ defmodule Test.ProcessHubPersistenceTest do
 
     File.write!(path, "this is definitely not a valid dets file")
 
-    handler_id = make_ref()
-    parent = self()
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        {:ok, pid} =
+          ProcessHub.Initializer.start_link(%ProcessHub{
+            hub_id: hub_id,
+            registry_backend: {:dets, path: path}
+          })
 
-    :telemetry.attach(
-      handler_id,
-      [:process_hub, :registry, :backend_corrupt],
-      fn _e, _m, md, _ -> send(parent, {:corrupt, md}) end,
-      nil
-    )
+        :erlang.unlink(pid)
+        on_exit(fn -> ProcessHub.Initializer.stop(hub_id) end)
+        assert ProcessRegistry.dump(hub_id) === %{}
+      end)
 
-    {:ok, pid} =
-      ProcessHub.Initializer.start_link(%ProcessHub{
-        hub_id: hub_id,
-        registry_backend: {:dets, path: path}
-      })
-
-    :erlang.unlink(pid)
-
-    on_exit(fn ->
-      :telemetry.detach(handler_id)
-      ProcessHub.Initializer.stop(hub_id)
-    end)
-
-    assert_receive {:corrupt, %{path: ^path, rotated_to: rotated}}, 2_000
-    assert File.exists?(rotated)
-    assert ProcessRegistry.dump(hub_id) === %{}
+    assert log =~ "registry backend corrupt"
+    assert Path.wildcard(path <> ".corrupt-*") != []
   end
 
   test "default config (no :registry_backend) does NOT create a DETS file" do

@@ -114,82 +114,17 @@ defmodule Test.ProcessHub.Service.Storage.DetsTest do
     Backend.close(ref)
   end
 
-  test "telemetry: backend_opened fires on open", %{hub_id: hub_id, path: path} do
-    handler_id = make_ref()
-    parent = self()
-
-    :telemetry.attach(
-      handler_id,
-      [:process_hub, :registry, :backend_opened],
-      fn _event, measurements, metadata, _ ->
-        send(parent, {:backend_opened, measurements, metadata})
-      end,
-      nil
-    )
-
-    {:ok, ref} = Backend.open(hub_id, path: path)
-    assert_receive {:backend_opened, %{row_count: 0}, %{backend: ProcessHub.Service.Storage.Dets}},
-                   500
-
-    :telemetry.detach(handler_id)
-    Backend.close(ref)
-  end
-
-  test "telemetry: backend_corrupt + rotation when file is unrepairable", %{
-    hub_id: hub_id,
-    path: path
-  } do
+  test "corrupt file is rotated aside, logged, and reopened empty", %{hub_id: hub_id, path: path} do
     File.write!(path, "this is not a valid dets file content garbage garbage garbage")
 
-    handler_id = make_ref()
-    parent = self()
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        {:ok, ref} = Backend.open(hub_id, path: path)
+        assert Backend.get(ref, :anything) == nil
+        Backend.close(ref)
+      end)
 
-    :telemetry.attach(
-      handler_id,
-      [:process_hub, :registry, :backend_corrupt],
-      fn _event, _measurements, metadata, _ ->
-        send(parent, {:backend_corrupt, metadata})
-      end,
-      nil
-    )
-
-    {:ok, ref} = Backend.open(hub_id, path: path)
-    assert_receive {:backend_corrupt, %{path: ^path, rotated_to: rotated}}, 1_000
-    assert File.exists?(rotated)
-    assert String.contains?(rotated, ".corrupt-")
-
-    :telemetry.detach(handler_id)
-    Backend.close(ref)
-  end
-
-  test "telemetry: insert and remove emit events", %{hub_id: hub_id, path: path} do
-    {:ok, ref} = Backend.open(hub_id, path: path)
-    parent = self()
-    insert_handler = make_ref()
-    remove_handler = make_ref()
-
-    :telemetry.attach(
-      insert_handler,
-      [:process_hub, :registry, :insert],
-      fn _e, m, md, _ -> send(parent, {:tel_insert, m, md}) end,
-      nil
-    )
-
-    :telemetry.attach(
-      remove_handler,
-      [:process_hub, :registry, :remove],
-      fn _e, m, md, _ -> send(parent, {:tel_remove, m, md}) end,
-      nil
-    )
-
-    Backend.insert(ref, :ck, :cv)
-    assert_receive {:tel_insert, %{count: 1}, %{child_id: :ck}}, 500
-
-    Backend.remove(ref, :ck)
-    assert_receive {:tel_remove, %{count: 1}, %{child_id: :ck}}, 500
-
-    :telemetry.detach(insert_handler)
-    :telemetry.detach(remove_handler)
-    Backend.close(ref)
+    assert log =~ "registry backend corrupt"
+    assert length(Path.wildcard(path <> ".corrupt-*")) == 1
   end
 end

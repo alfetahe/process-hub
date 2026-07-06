@@ -129,6 +129,10 @@ defmodule ProcessHub.Coordinator do
 
     state = Recovery.start(state, resolved_mode)
 
+    boot_token = Cluster.boot_token()
+    Storage.insert(storage.misc, StorageKey.sbt(), boot_token)
+    Cluster.announce_boot(state, boot_token)
+
     {:ok, state, {:continue, :additional_setup}}
   end
 
@@ -426,8 +430,15 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_node_restarted, peer} = msg, state) when is_atom(peer) do
-    {:noreply, Recovery.handle_restart_signal(state, peer, msg)}
+  def handle_info({@event_node_restarted, {peer, token}} = msg, state) when is_atom(peer) do
+    # Defer while a local recovery replay is in flight so the purge does not race
+    # the registry rebuild; the drained queue re-runs it once the gate opens.
+    if Recovery.gate_closed?(state) do
+      {:noreply, Recovery.enqueue(state, msg)}
+    else
+      Cluster.handle_boot_announcement(state, peer, token)
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -457,25 +468,23 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info(:start_marker_replay, %Hub{recovery_state: :recovery_pending} = state),
+  def handle_info(:start_marker_replay, %Hub{recovery_state: :recovering} = state),
     do: {:noreply, Recovery.spawn_replay(state)}
 
   def handle_info(:start_marker_replay, state), do: {:noreply, state}
 
   @impl true
-  def handle_info({:marker_replay_done, result}, state)
-      when state.recovery_state in [:recovery_pending, :recovering] do
-    Recovery.emit_replay_complete(state, result)
-    {:noreply, state |> Recovery.open_gate(:replay_complete) |> reply_normal_waiters()}
+  def handle_info({:marker_replay_done, result}, %Hub{recovery_state: :recovering} = state) do
+    measurements = Recovery.replay_measurements(result)
+    {:noreply, state |> Recovery.open_gate(:replay_complete, measurements) |> reply_normal_waiters()}
   end
 
   def handle_info({:marker_replay_done, _result}, state), do: {:noreply, state}
 
   @impl true
-  def handle_info(:recovery_timeout_elapsed, state)
-      when state.recovery_state in [:recovery_pending, :recovering] do
-    Recovery.emit_replay_timeout(state)
-    {:noreply, state |> Recovery.open_gate(:recovery_timeout) |> reply_normal_waiters()}
+  def handle_info(:recovery_timeout_elapsed, %Hub{recovery_state: :recovering} = state) do
+    measurements = Recovery.timeout_measurements(state)
+    {:noreply, state |> Recovery.open_gate(:recovery_timeout, measurements) |> reply_normal_waiters()}
   end
 
   def handle_info(:recovery_timeout_elapsed, state), do: {:noreply, state}

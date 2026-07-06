@@ -185,57 +185,21 @@ defmodule Test.ProcessHub.Service.Storage.DurableEtsTest do
   end
 
   describe "corruption rotation" do
-    test "garbage file is rotated; ETS starts empty; telemetry fires", %{
+    test "garbage file is rotated aside, logged, and ETS starts empty", %{
       hub_id: hub_id,
       path: path
     } do
       File.write!(path, "this is definitely not a valid dets file")
 
-      handler_id = make_ref()
-      parent = self()
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          {:ok, {ets_tid, _} = ref} = Backend.open(hub_id, path: path)
+          assert :ets.info(ets_tid, :size) === 0
+          Backend.close(ref)
+        end)
 
-      :telemetry.attach(
-        handler_id,
-        [:process_hub, :registry, :backend_corrupt],
-        fn _e, _m, md, _ -> send(parent, {:corrupt, md}) end,
-        nil
-      )
-
-      on_exit(fn -> :telemetry.detach(handler_id) end)
-
-      {:ok, {ets_tid, _} = ref} = Backend.open(hub_id, path: path)
-
-      assert_receive {:corrupt, %{path: ^path, rotated_to: rotated}}, 2_000
-      assert File.exists?(rotated)
-      assert :ets.info(ets_tid, :size) === 0
-
-      Backend.close(ref)
-    end
-  end
-
-  describe "telemetry on open" do
-    test "backend_opened metadata identifies the DurableEts module", %{
-      hub_id: hub_id,
-      path: path
-    } do
-      handler_id = make_ref()
-      parent = self()
-
-      :telemetry.attach(
-        handler_id,
-        [:process_hub, :registry, :backend_opened],
-        fn _e, _m, md, _ -> send(parent, {:opened, md}) end,
-        nil
-      )
-
-      on_exit(fn -> :telemetry.detach(handler_id) end)
-
-      {:ok, ref} = Backend.open(hub_id, path: path)
-
-      assert_receive {:opened, %{backend: ProcessHub.Service.Storage.DurableEts, path: ^path}},
-                     2_000
-
-      Backend.close(ref)
+      assert log =~ "registry backend corrupt"
+      assert length(Path.wildcard(path <> ".corrupt-*")) == 1
     end
   end
 

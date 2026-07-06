@@ -83,4 +83,33 @@ defmodule Test.ProcessHubNodePurgeTest do
     # The dead node was already scrubbed, so nothing left to purge.
     assert Cluster.purge_dead_nodes(hub_id) == []
   end
+
+  describe "handle_boot_announcement/3 (fast-restart reaping)" do
+    # Reproduces the fast-restart gap: a peer that returns within :net_ticktime
+    # fires no :nodedown, so the cluster keeps its now-dead bindings until it
+    # announces a new boot token. Backend-independent — verified on `:ets`.
+    test "a changed boot token reaps the returning node's dead bindings", %{hub_id: hub_id, hub: hub} do
+      peer = :"peer_a@127.0.0.1"
+      dead = spawn(fn -> :ok end)
+      ref = Process.monitor(dead)
+      assert_receive {:DOWN, ^ref, _, _, _}
+
+      ProcessRegistry.bulk_insert(hub_id, %{"child_x" => {spec("child_x"), [{peer, dead}], %{}}})
+
+      Cluster.handle_boot_announcement(hub, peer, 1)
+
+      assert ProcessRegistry.lookup(hub_id, "child_x") == nil
+    end
+
+    test "a repeated token is a no-op (flap keeps live bindings)", %{hub_id: hub_id, hub: hub} do
+      peer = :"peer_b@127.0.0.1"
+      ProcessRegistry.bulk_insert(hub_id, %{"child_y" => {spec("child_y"), [{peer, self()}], %{}}})
+
+      Cluster.handle_boot_announcement(hub, peer, 7)
+      ProcessRegistry.bulk_insert(hub_id, %{"child_y" => {spec("child_y"), [{peer, self()}], %{}}})
+      Cluster.handle_boot_announcement(hub, peer, 7)
+
+      assert {_spec, [{^peer, _pid}]} = ProcessRegistry.lookup(hub_id, "child_y")
+    end
+  end
 end

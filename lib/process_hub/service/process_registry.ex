@@ -206,56 +206,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
     GenServer.call(via(hub_id), {:clear_all, hub_id})
   end
 
-  @doc """
-  Removes `restarted_node` from every binding's `node_pids` list.
-
-  Used by the fast-restart purge signal (`@event_node_restarted`): when a peer
-  restarts within `:net_ticktime`, other peers may still be holding bindings
-  whose pid lives on the restarted node.
-  This helper rewrites those rows so the dead pid is dropped before
-  `init_sync` runs against the rejoined peer.
-
-  A binding whose `node_pids` becomes empty is removed entirely; the
-  restarted peer will re-register the cspec via its own replay or via
-  `init_sync`.
-  """
-  @spec purge_node_bindings(ProcessHub.hub_id(), node()) :: :ok
-  def purge_node_bindings(hub_id, restarted_node) do
-    Storage.foldl(hub_id, [], fn entry, acc ->
-      [entry | acc]
-    end)
-    |> Enum.each(fn entry ->
-      case purge_entry(entry, restarted_node) do
-        :unchanged ->
-          :ok
-
-        {:update, child_id, {child_spec, new_nodes, metadata}} ->
-          Storage.insert(hub_id, child_id, {child_spec, new_nodes, metadata})
-
-        {:delete, child_id} ->
-          Storage.remove(hub_id, child_id)
-      end
-    end)
-
-    :ok
-  end
-
-  defp purge_entry({child_id, {child_spec, node_pids, metadata}}, restarted_node) do
-    new_pids = Enum.reject(node_pids, fn {n, _} -> n == restarted_node end)
-
-    cond do
-      new_pids == node_pids -> :unchanged
-      new_pids == [] -> {:delete, child_id}
-      true -> {:update, child_id, {child_spec, new_pids, metadata}}
-    end
-  end
-
-  defp purge_entry({child_id, {child_spec, node_pids, metadata}, _ttl}, restarted_node) do
-    purge_entry({child_id, {child_spec, node_pids, metadata}}, restarted_node)
-  end
-
-  defp purge_entry(_other, _node), do: :unchanged
-
   @doc "Returns information on all processes that are running on the local node."
   @spec local_data(ProcessHub.hub_id()) :: [
           {ProcessHub.child_id(), {ProcessHub.child_spec(), [{node(), pid()}]}}

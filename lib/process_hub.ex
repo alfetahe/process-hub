@@ -211,12 +211,11 @@ defmodule ProcessHub do
 
     See `guides/Persistence.md` for the recovery semantics, telemetry
     events, and operational profile.
-  - `:auto_recovery` is optional and enables a three-state coordinator
-    boot lifecycle (`:recovery_pending → :recovering | :normal`) gated by
-    a marker file. **Experimental** and may change in future releases.
-    The default is `false`. Requires a persistent
-    `:registry_backend` (e.g. `{:dets, _}`) to be useful; with the
-    default `:ets` backend the replay step finds an empty registry.
+  - `:auto_recovery` is optional and enables a marker-gated coordinator
+    boot lifecycle (`:recovering → :normal`). **Experimental** and may
+    change in future releases. The default is `false`. Requires a
+    persistent `:registry_backend` (e.g. `{:dets, _}`) to be useful; with
+    the default `:ets` backend the replay step finds an empty registry.
     Accepted shapes:
     - `false` — disabled (default).
     - `true` — enabled with default options.
@@ -226,16 +225,13 @@ defmodule ProcessHub do
         `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
         Marker present on boot → straight to `:normal`; absent →
         `:recovering` with a cspecs-only replay, then `:normal`.
-      - `:replay_timeout_ms` — safety timeout on the `:recovering` state.
-        Default `60_000`. Range `[1_000, 3_600_000]`.
-      - `:recovery_timeout_ms` — cluster-event queue gate ceiling. The
-        coordinator force-opens the gate after this many ms even if
-        replay has not finished. Default `30_000`. Range
-        `[1_000, 600_000]`.
+      - `:recovery_timeout_ms` — safety ceiling on the `:recovering` state:
+        bounds the replay loop and force-opens the cluster-event queue gate
+        after this many ms. Default `30_000`. Range `[1_000, 600_000]`.
 
-    The `PROCESS_HUB_RECOVERY_MODE` env var overrides the marker decision
-    per node (`auto | force | skip`). See `prepare_recovery/1` and
-    `prepare_recovery_cluster/1` for the operator API.
+    See `ProcessHub.Service.Recovery` (`recovery_state/1`, `await_normal/2`,
+    `prepare_recovery/1`, `prepare_recovery_cluster/1`) for the
+    recovery/operator API.
 
     See `guides/Persistence.md` for the full state-machine, the marker
     gate, the hooks, and the recommended pairing with
@@ -927,77 +923,6 @@ defmodule ProcessHub do
   def promote_to_node(hub_id, node_name \\ node()) do
     GenServer.call(hub_id, {:promote_to_node, node_name})
   end
-
-  @doc """
-  Returns the current `:recovery_state` of the hub's coordinator.
-
-  Part of the **experimental** boot-recovery feature (see `:auto_recovery`).
-
-  When the hub was started without `:auto_recovery` (or with
-  `auto_recovery: false`), this function always returns `:normal`.
-
-  When the hub does not exist, returns `:normal` (default-handle).
-
-  ## Example
-      iex> ProcessHub.recovery_state(:my_hub)
-      :normal
-  """
-  @spec recovery_state(hub_id()) :: :recovery_pending | :recovering | :normal
-  defdelegate recovery_state(hub_id), to: ProcessHub.Service.Recovery
-
-  @doc """
-  Blocks until the hub's `recovery_state` reaches `:normal` or the timeout
-  elapses.
-
-  Part of the **experimental** boot-recovery feature (see `:auto_recovery`).
-
-  When the hub was started without `:auto_recovery`, returns `:ok`
-  immediately.
-
-  Returns `:ok` when the coordinator reaches `:normal` within the timeout
-  and `{:error, :timeout}` otherwise.
-
-  ## Example
-      iex> ProcessHub.await_normal(:my_hub, 30_000)
-      :ok
-  """
-  @spec await_normal(hub_id(), non_neg_integer()) :: :ok | {:error, :timeout}
-  defdelegate await_normal(hub_id, timeout_ms \\ 60_000), to: ProcessHub.Service.Recovery
-
-  @doc """
-  Deletes the recovery marker on the local node so the next coordinator
-  boot selects recovery mode.
-
-  Part of the **experimental** boot-recovery feature (see `:auto_recovery`).
-
-  Safe to call on a running hub — only the marker file is touched; the
-  live coordinator is not interrupted. The call is idempotent (returns
-  `:ok` even when the marker is absent). Hubs started without
-  `:auto_recovery` ignore the call.
-
-  See `prepare_recovery_cluster/1` for the RPC fan-out variant.
-  """
-  @spec prepare_recovery(hub_id()) :: :ok | {:error, term()}
-  defdelegate prepare_recovery(hub_id \\ :default_hub),
-    to: ProcessHub.Service.Recovery,
-    as: :prepare_recovery_local
-
-  @doc """
-  Fans out `prepare_recovery/1` to every member of the hub via
-  `:rpc.multicall/4`.
-
-  Part of the **experimental** boot-recovery feature (see `:auto_recovery`).
-
-  Returns:
-
-    * `{:ok, [node]}` — every member acked.
-    * `{:partial, [acked], [unreachable]}` — at least one peer failed.
-    * `{:error, reason}` — cluster API itself failed (e.g. hub not running).
-  """
-  @spec prepare_recovery_cluster(hub_id()) ::
-          {:ok, [node()]} | {:partial, [node()], [node()]} | {:error, term()}
-  defdelegate prepare_recovery_cluster(hub_id \\ :default_hub),
-    to: ProcessHub.Service.Recovery
 
   @doc """
   Dynamically registers hook handlers for specific hub events.

@@ -47,7 +47,7 @@ defmodule ProcessHub.Service.Storage.Dets do
     replay? = Keyword.get(opts, :recovery_replay, true)
     File.mkdir_p!(Path.dirname(path))
 
-    {result, repaired?} =
+    {result, _repaired?} =
       case :dets.open_file(hub_id, file: to_charlist(path), repair: true, type: :set) do
         {:ok, table} ->
           {{:ok, table}, false}
@@ -63,7 +63,6 @@ defmodule ProcessHub.Service.Storage.Dets do
           :dets.sync(table)
         end
 
-        DetsFile.emit_opened(hub_id, __MODULE__, path, repaired?, replay?)
         {:ok, table}
 
       {:error, _} = err ->
@@ -115,7 +114,6 @@ defmodule ProcessHub.Service.Storage.Dets do
   def remove(ref, key) do
     case :dets.delete(ref, key) do
       :ok ->
-        DetsFile.emit(:remove, %{count: 1}, %{hub_id: ref, child_id: key})
         :dets.sync(ref)
         :ok
 
@@ -172,10 +170,9 @@ defmodule ProcessHub.Service.Storage.Dets do
 
   ## Helpers ----------------------------------------------------------------
 
-  defp do_insert(ref, key, object) do
+  defp do_insert(ref, _key, object) do
     case :dets.insert(ref, object) do
       :ok ->
-        DetsFile.emit(:insert, %{count: 1}, %{hub_id: ref, child_id: key})
         :dets.sync(ref)
         :ok
 

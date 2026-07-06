@@ -70,7 +70,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
     replay? = Keyword.get(opts, :recovery_replay, true)
     File.mkdir_p!(Path.dirname(path))
 
-    {result, repaired?} =
+    {result, _repaired?} =
       case :dets.open_file(hub_id, file: to_charlist(path), repair: true, type: :set) do
         {:ok, table} ->
           {{:ok, table}, false}
@@ -83,7 +83,6 @@ defmodule ProcessHub.Service.Storage.DurableEts do
       {:ok, dets_table} ->
         ets_tid = ETS.new(:durable_ets_registry, [:set, :public, read_concurrency: true])
         if replay?, do: replay_into_ets(dets_table, ets_tid)
-        DetsFile.emit_opened(hub_id, __MODULE__, path, repaired?, replay?)
         {:ok, {ets_tid, dets_table}}
 
       {:error, _} = err ->
@@ -143,7 +142,6 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
     case :dets.delete(dets_table, key) do
       :ok ->
-        DetsFile.emit(:remove, %{count: 1}, %{hub_id: dets_table, child_id: key})
         :dets.sync(dets_table)
         :ok
 
@@ -209,7 +207,6 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
     case :dets.insert(dets_table, object) do
       :ok ->
-        DetsFile.emit(:insert, %{count: 1}, %{hub_id: dets_table, child_id: key})
         :dets.sync(dets_table)
         :ok
 

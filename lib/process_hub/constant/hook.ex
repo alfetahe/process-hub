@@ -167,12 +167,19 @@ defmodule ProcessHub.Constant.Hook do
   def scoreboard_updated(), do: :scoreboard_updated_hook
 
   @doc """
-  Hook dispatched on every coordinator `:recovery_state` transition when the
-  hub has opted into `:auto_recovery`.
+  Hook dispatched on every coordinator recovery-lifecycle moment when the hub
+  has opted into `:auto_recovery`. This is the single observability surface for
+  the lifecycle. Moments:
+
+    * `:init → :recovering` (`reason: :marker_absent`) — boot enters replay.
+    * `:init → :normal` (`reason: :marker_present`) — boot skips replay.
+    * `:recovering → :normal` (`reason: :replay_complete | :recovery_timeout`).
 
   Part of the **experimental** boot-recovery feature; may change in future releases.
 
-  Data: `%{from: atom(), to: atom(), reason: atom(), peers: %{node() => atom()}}`
+  Data: `%{hub_id: atom(), from: atom(), to: atom(), reason: atom(), measurements: map()}`
+  where `measurements` carries the per-moment counts (e.g. `cspec_count`,
+  `succeeded`, `failed`, `skipped`, `elapsed_ms`).
   """
   @spec recovery_state_changed() :: atom()
   def recovery_state_changed(), do: :recovery_state_changed_hook
@@ -185,7 +192,7 @@ defmodule ProcessHub.Constant.Hook do
   so handlers may block on prerequisite-service readiness.
 
   Handlers should return quickly. Long blocks risk forcing the
-  `:replay_timeout_ms` safety path. Crashes inside handlers are caught and
+  `:recovery_timeout_ms` safety path. Crashes inside handlers are caught and
   logged; replay proceeds regardless.
 
   Data: `%{hub_id: atom(), child_count: non_neg_integer()}`
@@ -195,7 +202,7 @@ defmodule ProcessHub.Constant.Hook do
 
   @doc """
   Hook dispatched once when the coordinator leaves `:recovering` (whether via
-  completion or via the `:replay_timeout_ms` safety path). Async.
+  completion or via the `:recovery_timeout_ms` safety path). Async.
 
   Part of the **experimental** boot-recovery feature; may change in future releases.
 
