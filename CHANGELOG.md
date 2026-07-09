@@ -2,18 +2,21 @@
 All notable changes to this project will be documented in this file.
 
 ## Unreleased
-This release introduces the ability to swap the registry backend. ETS remains the default, but DETS (on-disk) and a hybrid backend (ETS for reads, DETS for writes) are now supported for restart survival. It also includes a few bug fixes and introduces some experimental recovery mechanisms.
+This release is aimed at making the system more resilient: a pluggable registry backend (ETS stays the default, with on-disk and hybrid options today and room for further storage integrations), safe migration — processes can defer their own migration and a node can be drained before shutdown — and experimental recovery mechanisms. It also includes a few bug fixes.
 
 ### Added
 - Pluggable registry storage backend: new `:registry_backend` field on `%ProcessHub{}` (default `:ets`). Accepts `:ets`, `{:dets, opts}`, `{:durable_ets, opts}`, or `{Module, opts}` for a custom backend implementing `ProcessHub.Service.Storage.Behaviour`.
   - `:ets` — default in-memory backend (unchanged behaviour).
   - `{:dets, opts}` — on-disk persistence: sync-after-write durability, `repair: true` on open, and corruption rotation.
   - `{:durable_ets, opts}` — hybrid: in-memory reads with synchronous DETS mirroring for restart survival. Shares the DETS on-disk format, so a hub can switch between `:dets` and `:durable_ets` against the same `:path` and keep its rows.
+- Opt-in migration consent: `:consent_settings` on `HotSwap`/`ColdSwap` (default `nil` — disabled, no overhead). A process that does `use ProcessHub.Strategy.Migration.MigrationConsent` is asked before it is migrated; `:defer` (or no reply within `:consent_timeout`) parks it in a deferred list, retried every `:retry_interval` and force-migrated after `:max_defer_time`. `ProcessHub.Service.Migration.migration_ready/2` signals readiness early. Primary instances only; processes started through wrapper modules are not detected.
+- `ProcessHub.Service.Migration.drain/2` — blocking graceful node drain before shutdown. Removes the node from the distribution cluster-wide, migrates all local children away through the consent gate, and force-migrates whatever is still deferred at the `:timeout` deadline (default `60_000` ms). Returns `{:ok, %{migrated: n, forced: m}}`, or an error without touching children when no other node exists or the hub is partitioned/locked. Not reversible — restart the hub to rejoin.
+- New hooks: `migration_deferred` (child ids parked) and `drain_completed` (drain summary).
+- New guide `guides/Persistence.md` covering the persistence backends and the recovery lifecycle / operator runbook.
 - **Experimental:** opt-in, marker-gated boot recovery via the single `:auto_recovery` field on `%ProcessHub{}` (default `false`). Accepts `false`, `true`, or a keyword list of `:marker_path` (operator override for the marker file location) and `:recovery_timeout_ms` (safety ceiling on the `:recovering` state, default `30_000`). A successful boot writes the marker file; on next boot the node skips replay if the marker is present, or rebuilds from disk if it is absent (state is `:recovering` → `:normal`). Disk replay restores only child specs — stale pids and metadata are dropped (fixes a restarted node pushing stale registry data into a healthy cluster).
   - API on `ProcessHub.Service.Recovery`: `recovery_state/1`, `await_normal/2`, `prepare_recovery/1`, and `prepare_recovery_cluster/1` (all safe to call on non-opted-in hubs).
   - New hooks: `recovery_state_changed`, `pre_recovery_replay` (**synchronous** — the coordinator awaits each handler), and `post_recovery_replay`.
 - **Experimental:** `:nodeup_reconcile_interval` field on `%ProcessHub{}` (default `3000` ms; `0` disables) — fail-safe that merges a peer if the `pg` cluster-join notification is missed on a reconnection, closing a split-brain gap.
-- New guide `guides/Persistence.md` covering the persistence backends and the recovery lifecycle / operator runbook.
 
 ### Fixed
 - Fast-restart stale bindings are now reaped on every backend (including default `:ets`). A node that restarts within `:net_ticktime` (no `:nodedown`) left peers pointing at its dead pids, since the rejoin sync only appends. Each node now broadcasts a per-boot token; peers purge a node's bindings only when its token changes (distinguishing a restart from a network flap). This replaces the previous purge signal that was gated behind `:auto_recovery`.

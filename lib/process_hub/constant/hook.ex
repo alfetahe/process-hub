@@ -159,6 +159,24 @@ defmodule ProcessHub.Constant.Hook do
   def handover_delivered(), do: :handover_delivered_hook
 
   @doc """
+  Hook dispatched when children are added to the deferred-migration list
+  because they deferred (or did not answer) a migration consent query.
+
+  Data: `%{child_ids: [child_id()]}`
+  """
+  @spec migration_deferred() :: atom()
+  def migration_deferred(), do: :migration_deferred_hook
+
+  @doc """
+  Hook dispatched when a node drain completes, including deadline-forced
+  completion.
+
+  Data: `%{migrated: non_neg_integer(), forced: non_neg_integer()}`
+  """
+  @spec drain_completed() :: atom()
+  def drain_completed(), do: :drain_completed_hook
+
+  @doc """
   Hook dispatched when the centralized load balancer scoreboard is updated.
 
   Data: `%{scoreboard: term(), node: node()}`

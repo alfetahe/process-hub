@@ -52,6 +52,7 @@ defmodule ProcessHub.Hub do
           nodeup_reconcile_timers: %{node() => reference()},
           pending_operations: %{reference() => ProcessHub.Service.RequestManager.t()},
           pending_work_count: non_neg_integer(),
+          migration_retry_timer: reference() | {:running, reference()} | nil,
           recovery_state: recovery_state(),
           recovery_config: recovery_config(),
           recovery_marker: recovery_marker(),
@@ -74,6 +75,7 @@ defmodule ProcessHub.Hub do
     nodeup_reconcile_timers: %{},
     pending_operations: %{},
     pending_work_count: 0,
+    migration_retry_timer: nil,
     recovery_state: :normal,
     recovery_config: %{
       enabled?: false,

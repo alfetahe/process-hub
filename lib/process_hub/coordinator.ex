@@ -33,6 +33,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.RequestManager
   alias ProcessHub.Service.LoggerService
+  alias ProcessHub.Service.Migration
   alias ProcessHub.Service.Recovery
   alias ProcessHub.Utility.TimerMap
   alias ProcessHub.Hub
@@ -290,6 +291,11 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_call({:migration_deferred_update, fun}, _from, state) do
+    {:reply, Migration.apply_deferred_update(state, fun), state}
+  end
+
+  @impl true
   def handle_call(:get_state, _from, state) do
     {:reply, state, state}
   end
@@ -318,7 +324,9 @@ defmodule ProcessHub.Coordinator do
     # Register the caller and reply once the coordinator reaches :normal
     # (see reply_normal_waiters/1); a timer bounds the wait. No polling.
     timer = Process.send_after(self(), {:await_normal_timeout, from}, timeout_ms)
-    {:noreply, %{state | recovery_normal_waiters: Map.put(state.recovery_normal_waiters, from, timer)}}
+
+    {:noreply,
+     %{state | recovery_normal_waiters: Map.put(state.recovery_normal_waiters, from, timer)}}
   end
 
   @impl true
@@ -476,7 +484,9 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({:marker_replay_done, result}, %Hub{recovery_state: :recovering} = state) do
     measurements = Recovery.replay_measurements(result)
-    {:noreply, state |> Recovery.open_gate(:replay_complete, measurements) |> reply_normal_waiters()}
+
+    {:noreply,
+     state |> Recovery.open_gate(:replay_complete, measurements) |> reply_normal_waiters()}
   end
 
   def handle_info({:marker_replay_done, _result}, state), do: {:noreply, state}
@@ -484,7 +494,9 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info(:recovery_timeout_elapsed, %Hub{recovery_state: :recovering} = state) do
     measurements = Recovery.timeout_measurements(state)
-    {:noreply, state |> Recovery.open_gate(:recovery_timeout, measurements) |> reply_normal_waiters()}
+
+    {:noreply,
+     state |> Recovery.open_gate(:recovery_timeout, measurements) |> reply_normal_waiters()}
   end
 
   def handle_info(:recovery_timeout_elapsed, state), do: {:noreply, state}
@@ -552,9 +564,13 @@ defmodule ProcessHub.Coordinator do
     |> Storage.get(StorageKey.hdi())
     |> schedule_hub_discovery()
 
-    Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_heartbeat, node(), %{
-      members: :external
-    })
+    # A draining node must not announce presence — a heartbeat would re-add it
+    # to its peers' distribution.
+    unless Migration.draining?(state) do
+      Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_heartbeat, node(), %{
+        members: :external
+      })
+    end
 
     {:noreply, state}
   end
@@ -587,6 +603,40 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  # No retry timer is kept while the deferred list is empty.
+  def handle_info({:migration_retry_ensure, delay}, %Hub{migration_retry_timer: nil} = state) do
+    case Migration.deferred_list(state) do
+      [] -> {:noreply, state}
+      _ -> {:noreply, %{state | migration_retry_timer: send_retry_tick(delay)}}
+    end
+  end
+
+  def handle_info({:migration_retry_ensure, _delay}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info(:migration_retry_tick, state) do
+    task =
+      Task.Supervisor.async_nolink(state.procs.task_sup, Migration, :handle_retry_tick, [state])
+
+    {:noreply, %{state | migration_retry_timer: {:running, task.ref}}}
+  end
+
+  @impl true
+  def handle_info({ref, _remaining}, %Hub{migration_retry_timer: {:running, ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, rearm_migration_retry(state)}
+  end
+
+  @impl true
+  # A crashed tick must not wedge the timer.
+  def handle_info(
+        {:DOWN, ref, :process, _pid, _reason},
+        %Hub{migration_retry_timer: {:running, ref}} = state
+      ) do
+    {:noreply, rearm_migration_retry(state)}
+  end
+
+  @impl true
   def handle_info(msg, state) do
     LoggerService.warning("Unhandled message: @message", %{"message" => msg},
       prefix: "Coordinator"
@@ -604,12 +654,26 @@ defmodule ProcessHub.Coordinator do
     %{state | pending_work_count: state.pending_work_count + 1}
   end
 
+  # Re-arms the tick only while entries remain (the ensure clause checks).
+  defp rearm_migration_retry(state) do
+    delay = Migration.retry_interval(state)
+
+    case Migration.deferred_list(state) do
+      [] -> %{state | migration_retry_timer: nil}
+      _ -> %{state | migration_retry_timer: send_retry_tick(delay)}
+    end
+  end
+
+  defp send_retry_tick(delay), do: Process.send_after(self(), :migration_retry_tick, delay)
+
   # ---- Recovery transition helpers ------------------------------------------
 
   # Replies :ok to every `await_normal` waiter once the coordinator reaches
   # :normal. Idempotent and a no-op while still recovering, so it is safe to
   # pipe any post-transition state through it.
-  defp reply_normal_waiters(%Hub{recovery_state: :normal, recovery_normal_waiters: waiters} = state)
+  defp reply_normal_waiters(
+         %Hub{recovery_state: :normal, recovery_normal_waiters: waiters} = state
+       )
        when map_size(waiters) > 0 do
     Enum.each(waiters, fn {from, timer} ->
       Process.cancel_timer(timer)

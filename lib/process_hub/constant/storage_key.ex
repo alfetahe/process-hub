@@ -42,6 +42,10 @@ defmodule ProcessHub.Constant.StorageKey do
   def nri, do: :nodeup_reconcile_interval
   @spec rp() :: :registry_populated
   def rp, do: :registry_populated
+  @spec mdl() :: :migration_deferred_list
+  def mdl, do: :migration_deferred_list
+  @spec drn() :: :node_draining
+  def drn, do: :node_draining
   @spec sbt() :: :self_boot_token
   def sbt, do: :self_boot_token
   @spec nbt() :: :node_boot_tokens

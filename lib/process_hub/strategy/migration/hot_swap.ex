@@ -39,19 +39,23 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   > strategy. With replication, multiple instances of a process run across the cluster, making
   > state handover semantics undefined. If you attempt to use `handover: true` with replication,
   > the hub will fail to start with `{:error, {:invalid_config, :handover_with_replication_not_supported}}`.
+
+  ## Migration Consent
+
+  Set `consent_settings` to let processes postpone their own migration.
+  See `ProcessHub.Strategy.Migration.MigrationConsent`.
   """
 
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Migration.SwapMigration
+  alias ProcessHub.Strategy.Migration.MigrationConsent
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Storage
   alias ProcessHub.Strategy.Migration.HotSwap
-  alias ProcessHub.Utility.Extractor
   alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
-  alias ProcessHub.Request.PostAction
 
   @typedoc """
   The hot swap migration struct.
@@ -60,16 +64,19 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   - `:handover` - Enable state handover before termination (default: false)
   - `:state_ttl` - TTL for stored states in milliseconds (default: 30000)
   - `:state_query_timeout` - Timeout for querying state from local process (default: 5000)
+  - `:consent_settings` - `MigrationConsent` struct enabling migration consent (default: nil)
   """
   @type t() :: %__MODULE__{
           handover: boolean(),
           state_ttl: pos_integer(),
-          state_query_timeout: pos_integer()
+          state_query_timeout: pos_integer(),
+          consent_settings: MigrationConsent.t() | nil
         }
 
   defstruct handover: false,
             state_ttl: 30000,
-            state_query_timeout: 5000
+            state_query_timeout: 5000,
+            consent_settings: nil
 
   @doc """
   Options:
@@ -254,116 +261,13 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     def init(strategy, _hub), do: strategy
 
     @impl MigrationStrategy
-    def handle_topology_expansion(
-          %HotSwap{handover: handover, state_ttl: ttl, state_query_timeout: timeout} = _struct,
-          hub,
-          nodes,
-          handler
-        ) do
-      {handler, processable, migration_candidates} =
-        SwapMigration.compute_processable(hub, handler)
-
-      %{stop_local: to_stop_locally, forward_to: to_send_to_nodes} = processable
-
-      # HotSwap: query and store states BEFORE sending (if handover), but DO NOT terminate.
-      if handover and length(to_stop_locally) > 0 do
-        local_pids = Extractor.local_cid_pid_pairs(migration_candidates)
-        query_and_store_states_with_pids(hub, to_stop_locally, local_pids, ttl, timeout)
-      end
-
-      migrated = Enum.map(to_send_to_nodes, fn {cspec, _meta, _target_nodes} -> cspec end)
-
-      # Group by target node and create requests.
-      # HotSwap ALWAYS uses a post-action (even without handover) to terminate
-      # old processes after remote start succeeds.
-      grouped = SwapMigration.group_children_by_node(to_send_to_nodes)
-
-      requests = create_hotswap_requests(hub, grouped, to_stop_locally)
-      SwapMigration.send_start_requests(hub, requests)
-      SwapMigration.dispatch_migration_hook(hub, migrated, nodes)
-
-      handler
+    def handle_topology_expansion(%HotSwap{} = strategy, hub, nodes, handler) do
+      SwapMigration.handle_expansion(hub, strategy, nodes, handler)
     end
 
     @impl MigrationStrategy
     def handle_topology_contraction(%HotSwap{} = _struct, hub, _removed_nodes, handler) do
       SwapMigration.handle_contraction(hub, handler)
-    end
-
-    # Creates per-node migration requests with post-action that terminates
-    # old processes after remote start succeeds.
-    defp create_hotswap_requests(hub, grouped_by_node, to_stop_locally) do
-      Enum.flat_map(grouped_by_node, fn {target_node, children_data} ->
-        if children_data != [] do
-          # Only include child_ids that need to be terminated on the originating node.
-          child_ids =
-            children_data
-            |> Enum.map(fn {cspec, _meta} -> cspec.id end)
-            |> Enum.filter(fn cid -> Enum.member?(to_stop_locally, cid) end)
-
-          opts =
-            if child_ids != [] do
-              [
-                post_action:
-                  PostAction.new(
-                    HotSwap,
-                    :handle_post_action_migrate_complete,
-                    [node(), child_ids]
-                  )
-              ]
-            else
-              []
-            end
-
-          [
-            ProcessHub.Request.Handler.StartChildrenRequest.for_migration(
-              hub,
-              target_node,
-              children_data,
-              opts
-            )
-          ]
-        else
-          []
-        end
-      end)
-    end
-
-    defp query_and_store_states_with_pids(hub, children_to_stop, local_pids, ttl, timeout) do
-      self_pid = self()
-
-      # Send query messages to all processes and collect child_ids with their PIDs
-      child_id_pids =
-        Enum.reduce(children_to_stop, [], fn cid, acc ->
-          pid = Map.get(local_pids, cid)
-
-          if is_pid(pid) && Process.alive?(pid) do
-            send(pid, {:process_hub, :query_hot_handover_state, self_pid, cid})
-            [{cid, pid} | acc]
-          else
-            acc
-          end
-        end)
-
-      child_ids = Enum.map(child_id_pids, fn {cid, _} -> cid end)
-
-      # Collect responses with timeout
-      states = SwapMigration.collect_states(child_ids, timeout, [], :hotswap_state)
-
-      # Store collected states with TTL, including the old PID reference
-      Enum.each(states, fn {child_id, state} ->
-        old_pid =
-          Enum.find_value(child_id_pids, fn {cid, pid} ->
-            if cid == child_id, do: pid, else: nil
-          end)
-
-        Storage.insert(
-          hub.storage.misc,
-          {:hotswap_state, child_id},
-          {state, old_pid},
-          ttl: ttl
-        )
-      end)
     end
   end
 end

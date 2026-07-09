@@ -9,12 +9,17 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
 
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Strategy.Migration.ColdSwap
+  alias ProcessHub.Strategy.Migration.HotSwap
+  alias ProcessHub.Strategy.Migration.MigrationConsent
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.Distributor
+  alias ProcessHub.Service.Migration
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Bag
@@ -109,6 +114,117 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   end
 
   @doc """
+  Full topology expansion for both swap strategies: consent gate, then migration.
+  """
+  @spec handle_expansion(ProcessHub.Hub.t(), struct(), [node()], map()) :: map()
+  def handle_expansion(hub, strategy, nodes, handler) do
+    {handler, processable, candidates} = compute_processable(hub, handler)
+
+    {%{stop_local: stop_local, forward_to: forward_to}, deferred} =
+      partition_by_consent(hub, strategy, processable, candidates)
+
+    Migration.defer_children(hub, deferred)
+    migrate(hub, strategy, forward_to, stop_local)
+
+    dispatch_migration_hook(hub, Enum.map(forward_to, fn {cspec, _, _} -> cspec end), nodes)
+
+    handler
+  end
+
+  @doc """
+  Migrates `forward_to` (`[{cspec, meta, target_nodes}]`), handing over state and
+  terminating the `stop_local` children per the strategy's swap semantics.
+  """
+  @spec migrate(ProcessHub.Hub.t(), struct(), list(), [ProcessHub.child_id()]) :: :ok
+  def migrate(hub, strategy, forward_to, stop_local) do
+    if strategy.handover, do: handover_states(hub, strategy, stop_local)
+
+    if match?(%ColdSwap{}, strategy) and stop_local !== [] do
+      Distributor.children_terminate(
+        hub,
+        stop_local,
+        Storage.get(hub.storage.misc, StorageKey.strsyn())
+      )
+    end
+
+    forward_to
+    |> group_children_by_node()
+    |> create_migration_requests(hub, strategy, stop_local)
+    |> then(&send_start_requests(hub, &1))
+  end
+
+  @doc """
+  Splits the processable set by migration consent: participating local children
+  are queried under a shared `consent_timeout` deadline, and `:defer`/no-reply
+  children as well as already-deferred ones are removed from the set. Returns
+  `{processable, newly_deferred_child_ids}`; no-op without consent settings.
+  """
+  @spec partition_by_consent(ProcessHub.Hub.t(), struct(), map(), map()) ::
+          {map(), [ProcessHub.child_id()]}
+  def partition_by_consent(_hub, %{consent_settings: nil}, processable, _candidates) do
+    {processable, []}
+  end
+
+  def partition_by_consent(
+        hub,
+        %{consent_settings: %MigrationConsent{consent_timeout: timeout}},
+        %{stop_local: stop_local, forward_to: forward_to},
+        candidates
+      ) do
+    already_deferred = Migration.deferred_child_ids(hub)
+    local_pids = Extractor.local_cid_pid_pairs(candidates)
+
+    queried =
+      (Enum.map(forward_to, fn {cspec, _, _} -> cspec.id end) ++ stop_local)
+      |> Enum.uniq()
+      |> Enum.filter(fn cid ->
+        not MapSet.member?(already_deferred, cid) and is_pid(Map.get(local_pids, cid)) and
+          consent_capable?(candidates, cid)
+      end)
+
+    ready = query_consent(Enum.map(queried, &{&1, Map.get(local_pids, &1)}), timeout)
+
+    newly_deferred = Enum.reject(queried, &MapSet.member?(ready, &1))
+    excluded = MapSet.union(MapSet.new(newly_deferred), already_deferred)
+
+    processable = %{
+      stop_local: Enum.reject(stop_local, &MapSet.member?(excluded, &1)),
+      forward_to:
+        Enum.reject(forward_to, fn {cspec, _, _} -> MapSet.member?(excluded, cspec.id) end)
+    }
+
+    {processable, newly_deferred}
+  end
+
+  @doc """
+  Queries consent from each `{child_id, pid}` pair and returns the child ids
+  that replied `:ready` within the shared `timeout` deadline.
+  """
+  @spec query_consent([{ProcessHub.child_id(), pid()}], non_neg_integer()) :: MapSet.t()
+  def query_consent([], _timeout), do: MapSet.new()
+
+  def query_consent(cid_pids, timeout) do
+    self_pid = self()
+
+    Enum.each(cid_pids, fn {cid, pid} ->
+      send(pid, {:process_hub, :migration_consent, self_pid, cid})
+    end)
+
+    cid_pids
+    |> Enum.map(&elem(&1, 0))
+    |> collect_states(timeout, [], :migration_consent_reply)
+    |> Enum.filter(fn {_cid, reply} -> reply === :ready end)
+    |> MapSet.new(fn {cid, _reply} -> cid end)
+  end
+
+  defp consent_capable?(candidates, cid) do
+    case Map.get(candidates, cid) do
+      {cspec, _node_pids, _meta} -> MigrationConsent.participates?(cspec)
+      _ -> false
+    end
+  end
+
+  @doc """
   Groups `[{cspec, meta, target_nodes}]` into `%{node => [{cspec, meta}]}`.
   """
   @spec group_children_by_node([{ProcessHub.child_spec(), map(), [node()]}]) :: %{
@@ -125,27 +241,6 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   end
 
   @doc """
-  Creates `StartChildrenRequest.for_migration` for each node group.
-
-  `post_action` is nil or a `PostAction` struct.
-  """
-  @spec create_migration_requests(
-          ProcessHub.Hub.t(),
-          %{node() => [{ProcessHub.child_spec(), map()}]},
-          PostAction.t() | nil
-        ) :: [StartChildrenRequest.t()]
-  def create_migration_requests(hub, grouped_by_node, post_action) do
-    Enum.flat_map(grouped_by_node, fn {target_node, children_data} ->
-      if children_data != [] do
-        opts = if post_action, do: [post_action: post_action], else: []
-        [StartChildrenRequest.for_migration(hub, target_node, children_data, opts)]
-      else
-        []
-      end
-    end)
-  end
-
-  @doc """
   Sends start requests via Dispatcher if non-empty.
   """
   @spec send_start_requests(ProcessHub.Hub.t(), [StartChildrenRequest.t()]) :: :ok
@@ -153,6 +248,71 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
 
   def send_start_requests(hub, requests) do
     Dispatcher.children_start(hub, requests)
+  end
+
+  # HotSwap terminates the old process in its post-action, after the remote
+  # start succeeds; ColdSwap terminates before starting, so it only needs a
+  # post-action to deliver handover state.
+  defp create_migration_requests(grouped_by_node, hub, strategy, stop_local) do
+    Enum.flat_map(grouped_by_node, fn
+      {_target_node, []} ->
+        []
+
+      {target_node, children_data} ->
+        cids = Enum.map(children_data, fn {cspec, _meta} -> cspec.id end)
+
+        opts =
+          case post_action(strategy, cids, stop_local) do
+            nil -> []
+            post_action -> [post_action: post_action]
+          end
+
+        [StartChildrenRequest.for_migration(hub, target_node, children_data, opts)]
+    end)
+  end
+
+  defp post_action(%HotSwap{}, cids, stop_local) do
+    case Enum.filter(cids, &Enum.member?(stop_local, &1)) do
+      [] -> nil
+      ids -> PostAction.new(HotSwap, :handle_post_action_migrate_complete, [node(), ids])
+    end
+  end
+
+  defp post_action(%ColdSwap{handover: true}, cids, _stop_local) do
+    PostAction.new(ColdSwap, :handle_post_action_state_fetch, [node(), cids])
+  end
+
+  defp post_action(_strategy, _cids, _stop_local), do: nil
+
+  defp handover_states(hub, strategy, cids) do
+    {query_msg, response_msg} = handover_msgs(strategy)
+    self_pid = self()
+    pids = alive_local_pids(hub, cids)
+
+    Enum.each(pids, fn {cid, pid} -> send(pid, {:process_hub, query_msg, self_pid, cid}) end)
+
+    pids
+    |> Map.keys()
+    |> collect_states(strategy.state_query_timeout, [], response_msg)
+    |> Enum.each(&store_handover_state(hub, strategy, &1, pids))
+  end
+
+  defp alive_local_pids(hub, cids) do
+    cids
+    |> Enum.map(&{&1, ProcessRegistry.local_pid(hub.hub_id, &1)})
+    |> Enum.filter(fn {_cid, pid} -> is_pid(pid) && Process.alive?(pid) end)
+    |> Map.new()
+  end
+
+  defp handover_msgs(%HotSwap{}), do: {:query_hot_handover_state, :hotswap_state}
+  defp handover_msgs(%ColdSwap{}), do: {:query_cold_handover_state, :coldswap_state}
+
+  defp store_handover_state(hub, %HotSwap{state_ttl: ttl}, {cid, state}, pids) do
+    Storage.insert(hub.storage.misc, {:hotswap_state, cid}, {state, pids[cid]}, ttl: ttl)
+  end
+
+  defp store_handover_state(hub, %ColdSwap{state_ttl: ttl}, {cid, state}, _pids) do
+    Storage.insert(hub.storage.misc, {:coldswap_state, cid}, state, ttl: ttl)
   end
 
   @doc """
@@ -383,14 +543,7 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
 
   # Sends collected shutdown states to target nodes
   defp send_states_to_target_nodes({local_data, states}, hub, callback_mod) do
-    dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
-
-    repl_fact =
-      Storage.get(hub.storage.misc, StorageKey.strred())
-      |> RedundancyStrategy.replication_factor()
-
-    cids = Enum.map(local_data, &elem(&1, 0))
-    cid_node_pairs = DistributionStrategy.belongs_to(dist_strat, hub, cids, repl_fact)
+    cid_node_pairs = belongs_to(hub, Enum.map(local_data, &elem(&1, 0)))
 
     send_data =
       Enum.reduce(cid_node_pairs, %{}, fn {cid, new_nodes}, acc ->
@@ -449,6 +602,25 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   ##############################################################################
   # Helpers
   ##############################################################################
+
+  @doc "Nodes each `child_id` belongs to, per the hub's current distribution."
+  @spec belongs_to(ProcessHub.Hub.t(), [ProcessHub.child_id()]) :: %{
+          ProcessHub.child_id() => [node()]
+        }
+  def belongs_to(_hub, []), do: %{}
+
+  def belongs_to(hub, child_ids) do
+    repl_fact =
+      Storage.get(hub.storage.misc, StorageKey.strred())
+      |> RedundancyStrategy.replication_factor()
+
+    DistributionStrategy.belongs_to(
+      Storage.get(hub.storage.misc, StorageKey.strdist()),
+      hub,
+      child_ids,
+      repl_fact
+    )
+  end
 
   @doc false
   def find_new_nodes(old_nodes, new_nodes) do

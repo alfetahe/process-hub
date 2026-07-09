@@ -432,62 +432,6 @@ defmodule Test.Strategy.Migration.SwapMigrationTest do
     end
   end
 
-  describe "create_migration_requests/3" do
-    setup do
-      hub_id = :"test_cmr_#{:erlang.unique_integer([:positive])}"
-      misc_storage = :ets.new(hub_id, [:set, :public])
-
-      dist_strat = %ProcessHub.Strategy.Distribution.ConsistentHashing{}
-      Storage.insert(misc_storage, :distribution_strategy, dist_strat)
-      Storage.insert(misc_storage, :hub_nodes, [node()])
-
-      hub = %ProcessHub.Hub{
-        hub_id: hub_id,
-        storage: %{misc: misc_storage, hook: nil}
-      }
-
-      on_exit(fn ->
-        try do
-          :ets.delete(misc_storage)
-        rescue
-          _ -> :ok
-        end
-      end)
-
-      %{hub: hub}
-    end
-
-    test "creates request for each target node", %{hub: hub} do
-      grouped = %{
-        :node1@host => [{%{id: :child1}, %{meta: true}}, {%{id: :child2}, %{}}],
-        :node2@host => [{%{id: :child3}, %{}}]
-      }
-
-      requests = SwapMigration.create_migration_requests(hub, grouped, nil)
-
-      assert length(requests) == 2
-
-      nodes = Enum.map(requests, & &1.node)
-      assert :node1@host in nodes
-      assert :node2@host in nodes
-    end
-
-    test "skips nodes with empty children_data", %{hub: hub} do
-      grouped = %{
-        :node1@host => [{%{id: :child1}, %{}}],
-        :node2@host => []
-      }
-
-      requests = SwapMigration.create_migration_requests(hub, grouped, nil)
-      assert length(requests) == 1
-      assert hd(requests).node == :node1@host
-    end
-
-    test "returns empty for empty grouped", %{hub: hub} do
-      assert SwapMigration.create_migration_requests(hub, %{}, nil) == []
-    end
-  end
-
   describe "handle_shutdown/6" do
     setup do
       hub_id = :"test_sm_shutdown_#{:erlang.unique_integer([:positive])}"

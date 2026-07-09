@@ -35,18 +35,21 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   > strategy. With replication, multiple instances of a process run across the cluster, making
   > state handover semantics undefined. If you attempt to use `handover: true` with replication,
   > the hub will fail to start with `{:error, {:invalid_config, :handover_with_replication_not_supported}}`.
+
+  ## Migration Consent
+
+  Set `consent_settings` to let processes postpone their own migration.
+  See `ProcessHub.Strategy.Migration.MigrationConsent`.
   """
 
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Migration.SwapMigration
+  alias ProcessHub.Strategy.Migration.MigrationConsent
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
-  alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Utility.Extractor
   alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
-  alias ProcessHub.Request.PostAction
 
   @typedoc """
   The cold swap migration struct.
@@ -55,16 +58,19 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   - `:handover` - Enable state handover before termination (default: false)
   - `:state_ttl` - TTL for stored states in milliseconds (default: 30000)
   - `:state_query_timeout` - Timeout for querying state from dying process (default: 5000)
+  - `:consent_settings` - `MigrationConsent` struct enabling migration consent (default: nil)
   """
   @type t() :: %__MODULE__{
           handover: boolean(),
           state_ttl: pos_integer(),
-          state_query_timeout: pos_integer()
+          state_query_timeout: pos_integer(),
+          consent_settings: MigrationConsent.t() | nil
         }
 
   defstruct handover: false,
             state_ttl: 30000,
-            state_query_timeout: 5000
+            state_query_timeout: 5000,
+            consent_settings: nil
 
   @doc """
   Options:
@@ -236,99 +242,13 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     def init(strategy, _hub), do: strategy
 
     @impl MigrationStrategy
-    def handle_topology_expansion(
-          %ColdSwap{handover: handover, state_ttl: ttl, state_query_timeout: timeout} = _struct,
-          hub,
-          nodes,
-          handler
-        ) do
-      {handler, processable, migration_candidates} =
-        SwapMigration.compute_processable(hub, handler)
-
-      %{stop_local: to_stop_locally, forward_to: to_send_to_nodes} = processable
-
-      # ColdSwap: terminate local children BEFORE sending start requests.
-      if length(to_stop_locally) > 0 do
-        if handover do
-          local_pids = Extractor.local_cid_pid_pairs(migration_candidates)
-          query_and_store_states(hub, to_stop_locally, local_pids, ttl, timeout)
-        end
-
-        Distributor.children_terminate(hub, to_stop_locally, handler.sync_strat)
-      end
-
-      migrated = Enum.map(to_send_to_nodes, fn {cspec, _meta, _target_nodes} -> cspec end)
-
-      # Group by target node and create/send requests.
-      grouped = SwapMigration.group_children_by_node(to_send_to_nodes)
-
-      requests =
-        if handover do
-          create_handover_requests(hub, grouped)
-        else
-          SwapMigration.create_migration_requests(hub, grouped, nil)
-        end
-
-      SwapMigration.send_start_requests(hub, requests)
-      SwapMigration.dispatch_migration_hook(hub, migrated, nodes)
-
-      handler
+    def handle_topology_expansion(%ColdSwap{} = strategy, hub, nodes, handler) do
+      SwapMigration.handle_expansion(hub, strategy, nodes, handler)
     end
 
     @impl MigrationStrategy
     def handle_topology_contraction(%ColdSwap{} = _struct, hub, _removed_nodes, handler) do
       SwapMigration.handle_contraction(hub, handler)
-    end
-
-    # Creates per-node migration requests with handover post-actions.
-    # Each node gets its own post_action containing only its child_ids.
-    defp create_handover_requests(hub, grouped_by_node) do
-      Enum.flat_map(grouped_by_node, fn {target_node, children_data} ->
-        if children_data != [] do
-          child_ids = Enum.map(children_data, fn {cspec, _meta} -> cspec.id end)
-
-          post_action =
-            PostAction.new(ColdSwap, :handle_post_action_state_fetch, [node(), child_ids])
-
-          [
-            ProcessHub.Request.Handler.StartChildrenRequest.for_migration(
-              hub,
-              target_node,
-              children_data,
-              post_action: post_action
-            )
-          ]
-        else
-          []
-        end
-      end)
-    end
-
-    defp query_and_store_states(hub, children_to_stop, local_pids, ttl, timeout) do
-      self_pid = self()
-
-      child_ids =
-        Enum.reduce(children_to_stop, [], fn cid, acc ->
-          pid = Map.get(local_pids, cid)
-
-          if is_pid(pid) && Process.alive?(pid) do
-            send(pid, {:process_hub, :query_cold_handover_state, self_pid, cid})
-            [cid | acc]
-          else
-            acc
-          end
-        end)
-
-      states = SwapMigration.collect_states(child_ids, timeout, [], :coldswap_state)
-
-      Enum.each(states, fn {child_id, state} ->
-        Storage.insert(
-          hub.storage.misc,
-          {:coldswap_state, child_id},
-          state,
-          ttl: ttl
-        )
-      end)
     end
   end
 end
