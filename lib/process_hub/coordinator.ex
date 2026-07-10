@@ -403,16 +403,6 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({:nodeup, node}, state) do
-    LoggerService.info(
-      "nodeup @node | external cluster_join members @ext | connected @connected",
-      %{
-        "node" => node,
-        "ext" => external_hub_nodes(state),
-        "connected" => Node.list()
-      },
-      prefix: "Coordinator"
-    )
-
     # pg scopes aren't synced yet at :nodeup; defer the merge to a fail-safe
     # timer that re-runs it once pg has settled, covering a missed :join.
     {:noreply, schedule_nodeup_reconcile(state, node)}
