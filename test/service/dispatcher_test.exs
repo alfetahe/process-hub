@@ -15,8 +15,8 @@ defmodule Test.Service.DispatcherTest do
     Dispatcher.reply_respondents([self()], :test_msg, :test_child, :ok, :test_node)
     Dispatcher.reply_respondents([self()], :test_msg, :test_child, :ok, :test_node)
 
-    assert_received {:test_msg, :test_child, :ok, :test_node}, @default_receive_timeout
-    assert_received {:test_msg, :test_child, :ok, :test_node}, @default_receive_timeout
+    assert_received {:test_msg, :test_child, :ok, :test_node}
+    assert_received {:test_msg, :test_child, :ok, :test_node}
   end
 
   test "dispatch_event", %{hub: hub} = _context do
