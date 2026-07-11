@@ -79,6 +79,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
     {:reply, with_storage(fn -> handle_clear_all(hub_id) end), state}
   end
 
+  @impl GenServer
+  def handle_call({:delete_if_expired, hub_id, child_id}, _from, state) do
+    {:reply, handle_delete_if_expired(hub_id, child_id), state}
+  end
+
   # Drops mutation requests that race against hub teardown: Coordinator.terminate
   # closes the registry backend, so a still-queued bulk_delete/insert can land
   # after the ETS table is gone and crash on `:ets.insert/2`.
@@ -410,6 +415,24 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @doc """
+  Deletes a TTL registry entry, but only if it is still expired.
+
+  Expiry is re-validated inside the registry process. If the entry was
+  re-populated since the caller observed it (re-population clears the TTL,
+  turning the row into a permanent 2-tuple) or was given a fresh TTL lease,
+  the delete is skipped. This closes a race where the janitor's `:ets.match`
+  scan sees an expired tombstone, but an incoming registration re-populates
+  the entry before the delete is applied — without this guard the cleanup
+  would wipe a freshly re-registered live process.
+
+  Returns `true` if the entry was removed, `false` otherwise.
+  """
+  @spec delete_if_expired(ProcessHub.hub_id(), ProcessHub.child_id()) :: boolean()
+  def delete_if_expired(hub_id, child_id) do
+    GenServer.call(via(hub_id), {:delete_if_expired, hub_id, child_id})
+  end
+
+  @doc """
   Updates the row on the registry.
 
   ## Hook Behavior
@@ -509,6 +532,20 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   defp handle_clear_all(hub_id) do
     Storage.clear_all(hub_id)
+  end
+
+  defp handle_delete_if_expired(hub_id, child_id) do
+    now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+
+    case :ets.lookup(hub_id, child_id) do
+      [{^child_id, _value, expire}] when is_integer(expire) and now > expire ->
+        Storage.remove(hub_id, child_id)
+        true
+
+      _ ->
+        # Entry was re-populated (TTL cleared) or re-leased since the scan; keep it.
+        false
+    end
   end
 
   defp handle_delete(hub_id, child_id, opts) do
