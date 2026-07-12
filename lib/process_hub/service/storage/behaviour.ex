@@ -67,6 +67,14 @@ defmodule ProcessHub.Service.Storage.Behaviour do
               :ok | {:error, term()}
 
   @doc """
+  Optional: inserts a batch of `{key, value, opts}` items with a single
+  write, so concurrent readers never observe a partially applied batch.
+  Backends that omit this callback get per-item inserts instead.
+  """
+  @callback insert_many(ref :: ref(), items :: [{term(), term(), insert_opts()}]) ::
+              :ok | {:error, term()}
+
+  @doc """
   Returns the value stored under `key`, or `nil` if the key is missing
   or expired.
   """
@@ -105,4 +113,6 @@ defmodule ProcessHub.Service.Storage.Behaviour do
   Removes all entries.
   """
   @callback clear_all(ref :: ref()) :: :ok
+
+  @optional_callbacks insert_many: 2
 end

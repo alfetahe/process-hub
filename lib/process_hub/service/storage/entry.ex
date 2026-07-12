@@ -21,6 +21,12 @@ defmodule ProcessHub.Service.Storage.Entry do
     end
   end
 
+  @doc "Builds entries for a batch of `{key, value, opts}` items (see `build/3`)."
+  @spec build_many([{term(), term(), keyword()}]) :: [tuple()]
+  def build_many(items) do
+    Enum.map(items, fn {key, value, opts} -> build(key, value, opts) end)
+  end
+
   @doc "Returns an entry's stored value, or `nil` if it has expired."
   @spec value(tuple()) :: term() | nil
   def value({_key, value}), do: value

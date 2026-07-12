@@ -560,52 +560,54 @@ defmodule ProcessHub.Service.ProcessRegistry do
     :ok
   end
 
+  # Stages all final rows first and commits them with a single
+  # `Storage.insert_many/2` write, so concurrent readers never observe a
+  # partially applied bulk.
   defp handle_bulk_insert(hub_id, children, opts) do
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
-    hooks =
-      Enum.map(children, fn {child_id, {child_spec, child_nodes, metadata}} ->
-        diff =
-          case lookup(hub_id, child_id) do
-            nil ->
-              handle_insert(
-                hub_id,
-                child_spec,
-                child_nodes,
-                metadata: metadata
-              )
+    {rows, hooks} =
+      Enum.reduce(children, {[], []}, fn {child_id, {child_spec, child_nodes, metadata}},
+                                         {rows, hooks} ->
+        case lookup(hub_id, child_id) do
+          nil ->
+            row = {child_id, {child_spec, child_nodes, metadata}, []}
+            {[row | rows], stage_registered_hook(hooks, child_id, child_nodes)}
 
-              child_nodes
-
-            {_child_spec, existing_nodes} ->
-              merge_insert(
-                child_nodes,
-                existing_nodes,
-                hub_id,
-                child_spec,
-                metadata: metadata
-              )
-          end
-
-        if is_list(diff) && length(diff) > 0 do
-          {Hook.child_registered(), %{child_id: child_spec.id, node_pids: diff}}
+          {_child_spec, existing_nodes} ->
+            if Enum.sort(child_nodes) !== Enum.sort(existing_nodes) do
+              merged_nodes = Keyword.merge(existing_nodes, child_nodes)
+              diff = get_insert_diff(child_nodes, existing_nodes)
+              row = {child_id, {child_spec, merged_nodes, metadata}, []}
+              {[row | rows], stage_registered_hook(hooks, child_id, diff)}
+            else
+              {rows, hooks}
+            end
         end
       end)
-      |> Enum.filter(&is_tuple/1)
+
+    Storage.insert_many(hub_id, rows)
 
     if hook_storage do
-      HookManager.dispatch_hooks(hook_storage, hooks)
+      HookManager.dispatch_hooks(hook_storage, Enum.reverse(hooks))
     end
 
     :ok
   end
 
+  defp stage_registered_hook(hooks, _child_id, []), do: hooks
+
+  defp stage_registered_hook(hooks, child_id, node_pids) do
+    [{Hook.child_registered(), %{child_id: child_id, node_pids: node_pids}} | hooks]
+  end
+
+  # Same stage-then-commit shape as `handle_bulk_insert/3`.
   defp handle_bulk_delete(hub_id, children, opts) do
-    hooks =
-      Enum.map(children, fn {child_id, rem_nodes} ->
+    {rows, hooks} =
+      Enum.reduce(children, {[], []}, fn {child_id, rem_nodes}, {rows, hooks} ->
         case lookup(hub_id, child_id, with_metadata: true) do
           nil ->
-            nil
+            {rows, hooks}
 
           {child_spec, nodes, metadata} ->
             new_nodes =
@@ -613,32 +615,24 @@ defmodule ProcessHub.Service.ProcessRegistry do
                 !Enum.member?(rem_nodes, node)
               end)
 
-            if length(new_nodes) > 0 do
-              handle_insert(
-                hub_id,
-                child_spec,
-                new_nodes,
-                metadata: metadata
-              )
-            else
-              # Keep the entry alive with a TTL instead of deleting immediately.
-              # This prevents a race condition where bulk_delete wipes the entry
-              # before an incoming PidsRegisterRequest can re-populate it with
-              # the new node's data. The TTL ensures cleanup if no re-population
-              # occurs.
-              handle_insert(
-                hub_id,
-                child_spec,
-                [],
-                metadata: metadata,
-                ttl: 30_000
-              )
-            end
+            row =
+              if new_nodes != [] do
+                {child_id, {child_spec, new_nodes, metadata}, []}
+              else
+                # Keep the entry alive with a TTL instead of deleting immediately.
+                # This prevents a race condition where bulk_delete wipes the entry
+                # before an incoming PidsRegisterRequest can re-populate it with
+                # the new node's data. The TTL ensures cleanup if no re-population
+                # occurs.
+                {child_id, {child_spec, [], metadata}, [ttl: 30_000]}
+              end
 
-            {Hook.child_unregistered(), %{child_id: child_id}}
+            {[row | rows], [{Hook.child_unregistered(), %{child_id: child_id}} | hooks]}
         end
       end)
-      |> Enum.reject(&is_nil/1)
+
+    Storage.insert_many(hub_id, rows)
+    hooks = Enum.reverse(hooks)
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
@@ -665,25 +659,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
       _any ->
         {:error, "Invalid arguments returned from the update function"}
-    end
-  end
-
-  defp merge_insert(nodes_new, nodes_existing, hub_id, child_spec, opts) do
-    cond do
-      Enum.sort(nodes_new) !== Enum.sort(nodes_existing) ->
-        merged_data = Keyword.merge(nodes_existing, nodes_new)
-
-        handle_insert(
-          hub_id,
-          child_spec,
-          merged_data,
-          opts
-        )
-
-        get_insert_diff(nodes_new, nodes_existing)
-
-      true ->
-        nil
     end
   end
 

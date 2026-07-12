@@ -83,6 +83,21 @@ defmodule Test.ProcessHub.Service.Storage.DurableEtsTest do
       Backend.close(ref)
     end
 
+    test "insert_many commits the batch to ETS and DETS", %{hub_id: hub_id, path: path} do
+      {:ok, ref} = Backend.open(hub_id, path: path)
+
+      assert :ok = Backend.insert_many(ref, [{:bulk_a, :v1, []}, {:bulk_b, :v2, [ttl: 60_000]}])
+      assert Backend.get(ref, :bulk_a) === :v1
+      assert Backend.get(ref, :bulk_b) === :v2
+
+      Backend.close(ref)
+
+      {:ok, ref} = Backend.open(hub_id, path: path)
+      assert Backend.get(ref, :bulk_a) === :v1
+      assert Backend.get(ref, :bulk_b) === :v2
+      Backend.close(ref)
+    end
+
     test "export_all and foldl mirror tab2list and ets foldl shape", %{
       hub_id: hub_id,
       path: path

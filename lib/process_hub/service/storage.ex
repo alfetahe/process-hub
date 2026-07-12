@@ -128,6 +128,30 @@ defmodule ProcessHub.Service.Storage do
   end
 
   @doc """
+  Inserts a batch of `{key, value, opts}` items.
+
+  Backends implementing the optional `insert_many/2` callback commit the
+  whole batch with a single write, so concurrent readers never observe a
+  partially applied batch. Other backends fall back to per-item inserts.
+  """
+  @spec insert_many(table_id(), [{term(), term(), keyword()}]) :: :ok | {:error, term()}
+  def insert_many(_table, []), do: :ok
+
+  def insert_many(table, items) do
+    case registered_backend(table) do
+      nil ->
+        EtsBackend.insert_many(table, items)
+
+      {module, ref} ->
+        if function_exported?(module, :insert_many, 2) do
+          module.insert_many(ref, items)
+        else
+          Enum.each(items, fn {key, value, opts} -> module.insert(ref, key, value, opts) end)
+        end
+    end
+  end
+
+  @doc """
   Removes an entry from the storage.
   """
   @spec remove(table_id(), term()) :: boolean() | :ok

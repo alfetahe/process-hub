@@ -82,13 +82,19 @@ defmodule ProcessHub.Service.Storage.Dets do
   @impl true
   @spec insert(atom(), term(), term()) :: :ok | {:error, term()}
   def insert(ref, key, value) do
-    do_insert(ref, key, {key, value})
+    do_insert(ref, {key, value})
   end
 
   @impl true
   @spec insert(atom(), term(), term(), keyword()) :: :ok | {:error, term()}
   def insert(ref, key, value, opts) do
-    do_insert(ref, key, Entry.build(key, value, opts))
+    do_insert(ref, Entry.build(key, value, opts))
+  end
+
+  @impl true
+  @spec insert_many(atom(), [{term(), term(), keyword()}]) :: :ok | {:error, term()}
+  def insert_many(ref, items) do
+    do_insert(ref, Entry.build_many(items))
   end
 
   @impl true
@@ -170,8 +176,10 @@ defmodule ProcessHub.Service.Storage.Dets do
 
   ## Helpers ----------------------------------------------------------------
 
-  defp do_insert(ref, _key, object) do
-    case :dets.insert(ref, object) do
+  # `:dets.insert/2` takes a single object or a list; either way one sync
+  # makes the whole write durable.
+  defp do_insert(ref, objects) do
+    case :dets.insert(ref, objects) do
       :ok ->
         :dets.sync(ref)
         :ok

@@ -17,7 +17,7 @@ defmodule Test.ProcessHub.Service.Storage.BehaviourComplianceTest do
       {:ok, %{module: EtsBackend, ref: ref}}
     end
 
-    test "compliance suite", ctx, do: run_compliance(ctx)
+    test("compliance suite", ctx, do: run_compliance(ctx))
   end
 
   describe "ProcessHub.Service.Storage.Dets" do
@@ -36,7 +36,7 @@ defmodule Test.ProcessHub.Service.Storage.BehaviourComplianceTest do
       {:ok, %{module: DetsBackend, ref: ref}}
     end
 
-    test "compliance suite", ctx, do: run_compliance(ctx)
+    test("compliance suite", ctx, do: run_compliance(ctx))
   end
 
   defp run_compliance(%{module: m, ref: ref}) do
@@ -70,5 +70,10 @@ defmodule Test.ProcessHub.Service.Storage.BehaviourComplianceTest do
 
     assert :ok = m.clear_all(ref)
     assert m.export_all(ref) === []
+
+    assert :ok = m.insert_many(ref, [{:m1, :v1, []}, {:m2, :v2, [ttl: 60_000]}])
+    assert m.get(ref, :m1) === :v1
+    assert m.get(ref, :m2) === :v2
+    assert {:m2, :v2, _expire} = List.keyfind(m.export_all(ref), :m2, 0)
   end
 end

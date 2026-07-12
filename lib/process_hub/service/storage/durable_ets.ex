@@ -107,13 +107,19 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   @impl true
   @spec insert(ref(), term(), term()) :: :ok | {:error, term()}
   def insert(ref, key, value) do
-    do_write(ref, key, {key, value})
+    do_write(ref, [{key, value}])
   end
 
   @impl true
   @spec insert(ref(), term(), term(), keyword()) :: :ok | {:error, term()}
   def insert(ref, key, value, opts) do
-    do_write(ref, key, Entry.build(key, value, opts))
+    do_write(ref, [Entry.build(key, value, opts)])
+  end
+
+  @impl true
+  @spec insert_many(ref(), [{term(), term(), keyword()}]) :: :ok | {:error, term()}
+  def insert_many(ref, items) do
+    do_write(ref, Entry.build_many(items))
   end
 
   @impl true
@@ -201,18 +207,19 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
   ## Helpers ----------------------------------------------------------------
 
-  defp do_write({ets_tid, dets_table}, key, object) do
-    prior = ETS.lookup(ets_tid, key)
-    ETS.insert(ets_tid, object)
+  defp do_write({ets_tid, dets_table}, objects) do
+    keys = Enum.map(objects, &elem(&1, 0))
+    prior = Enum.flat_map(keys, &ETS.lookup(ets_tid, &1))
+    ETS.insert(ets_tid, objects)
 
-    case :dets.insert(dets_table, object) do
+    case :dets.insert(dets_table, objects) do
       :ok ->
         :dets.sync(dets_table)
         :ok
 
       {:error, reason} ->
-        # Roll back the in-memory write to keep ETS and DETS consistent.
-        ETS.delete(ets_tid, key)
+        # Roll back the in-memory writes to keep ETS and DETS consistent.
+        Enum.each(keys, &ETS.delete(ets_tid, &1))
         Enum.each(prior, &ETS.insert(ets_tid, &1))
         {:error, reason}
     end

@@ -1,6 +1,11 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- `ProcessRegistry.bulk_insert/3` and `bulk_delete/3` now commit each bulk as a single atomic write (new optional `insert_many/2` backend callback), so readers can no longer observe half-applied bulks and disk-backed backends sync once per bulk instead of once per row.
+
 ## v0.6.0 - 2026-07-11
 This release is aimed at making the system more resilient: a pluggable registry backend (ETS stays the default, with on-disk and hybrid options today and room for further storage integrations), safe migration — processes can defer their own migration and a node can be drained before shutdown — and experimental recovery mechanisms. It also includes a few bug fixes.
 

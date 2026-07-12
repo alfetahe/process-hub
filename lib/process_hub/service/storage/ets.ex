@@ -34,7 +34,9 @@ defmodule ProcessHub.Service.Storage.Ets do
   @spec close(atom()) :: :ok
   def close(ref) do
     case :ets.info(ref) do
-      :undefined -> :ok
+      :undefined ->
+        :ok
+
       _ ->
         ETS.delete(ref)
         :ok
@@ -52,6 +54,13 @@ defmodule ProcessHub.Service.Storage.Ets do
   @spec insert(atom() | :ets.tid(), term(), term(), keyword()) :: :ok
   def insert(ref, key, value, opts) do
     ETS.insert(ref, Entry.build(key, value, opts))
+    :ok
+  end
+
+  @impl true
+  @spec insert_many(atom() | :ets.tid(), [{term(), term(), keyword()}]) :: :ok
+  def insert_many(ref, items) do
+    ETS.insert(ref, Entry.build_many(items))
     :ok
   end
 
