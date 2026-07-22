@@ -203,4 +203,16 @@ defmodule ProcessHub.Service.Storage do
       {module, ref} -> module.foldl(ref, acc, fun)
     end
   end
+
+  @doc """
+  Folds over all objects as `{key, value}`, dropping the trailing TTL element
+  that entries inserted with a `:ttl` carry.
+  """
+  @spec foldl_entries(table_id(), acc, ({term(), term()}, acc -> acc)) :: acc when acc: term()
+  def foldl_entries(table, acc, fun) do
+    foldl(table, acc, fn
+      {key, value}, acc -> fun.({key, value}, acc)
+      {key, value, _ttl}, acc -> fun.({key, value}, acc)
+    end)
+  end
 end

@@ -135,7 +135,7 @@ iex> ProcessHub.child_lookup(:my_hub, "my_process_1")
 
 Find `pid` of a process by `child_id`:
 ```elixir
-iex> ProcessHub.get_pid(:my_hub, :my_process_1)
+iex> ProcessHub.get_pid(:my_hub, "my_process_1")
 #PID<0.228.0>
 ```
 
@@ -161,9 +161,10 @@ ProcessHub.child_spec(%ProcessHub{
 })
 ```
 
-See [guides/Configuration.md](guides/Configuration.md) for the full set of
-options, and [guides/Persistence.md](guides/Persistence.md) for the optional
-disk-backed registry and coordinator recovery.
+See [guides/Configuration.md](guides/Configuration.md) for the configurable
+strategies, `t:ProcessHub.t/0` for the full set of hub options, and
+[guides/Persistence.md](guides/Persistence.md) for the optional disk-backed
+registry and coordinator recovery.
 
 ## Getting started 📚
 

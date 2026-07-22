@@ -156,11 +156,9 @@ defmodule Test.Service.DistributorTest do
 
     assert Keyword.get(result, :timeout) === 10_000
     assert Keyword.get(result, :awaitable) === false
-    assert Keyword.get(result, :async_wait) === false
     assert Keyword.get(result, :check_existing) === true
     assert Keyword.get(result, :on_failure) === :continue
     assert Keyword.get(result, :metadata) === %{}
-    assert Keyword.get(result, :await_timeout) === 60_000
     assert Keyword.get(result, :init_cids) === []
   end
 
@@ -181,9 +179,7 @@ defmodule Test.Service.DistributorTest do
     assert Keyword.get(result, :metadata) === %{custom: "value"}
 
     # Missing values should get defaults
-    assert Keyword.get(result, :async_wait) === false
     assert Keyword.get(result, :check_existing) === true
-    assert Keyword.get(result, :await_timeout) === 60_000
     assert Keyword.get(result, :init_cids) === []
   end
 

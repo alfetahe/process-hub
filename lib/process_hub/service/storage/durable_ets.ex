@@ -32,8 +32,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
   Same rotation behaviour as the DETS backend: on a corrupt file the
   original is moved aside as `<path>.corrupt-<system_monotonic>`,
-  telemetry `[:process_hub, :registry, :backend_corrupt]` is emitted,
-  and a fresh empty DETS file is opened. The ETS table is empty in
+  an error is logged, and a fresh empty DETS file is opened. The ETS table is empty in
   this case (the rows were not loadable).
 
   ### Crash semantics

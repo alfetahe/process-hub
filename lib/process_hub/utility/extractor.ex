@@ -34,20 +34,13 @@ defmodule ProcessHub.Utility.Extractor do
   def local_and_empty_children(hub_id) do
     local_node = node()
 
-    fold_handler = fn acc, child_id, child_spec, node_pids, metadata, local_node ->
-      if Keyword.has_key?(node_pids, local_node) || node_pids == [] do
-        Map.put(acc, child_id, {child_spec, node_pids, metadata})
-      else
-        acc
-      end
-    end
-
-    Storage.foldl(hub_id, %{}, fn
-      {child_id, {child_spec, node_pids, metadata}}, acc ->
-        fold_handler.(acc, child_id, child_spec, node_pids, metadata, local_node)
-
-      {child_id, {child_spec, node_pids, metadata}, _ttl}, acc ->
-        fold_handler.(acc, child_id, child_spec, node_pids, metadata, local_node)
+    Storage.foldl_entries(hub_id, %{}, fn
+      {child_id, {_child_spec, node_pids, _metadata} = value}, acc ->
+        if Keyword.has_key?(node_pids, local_node) || node_pids == [] do
+          Map.put(acc, child_id, value)
+        else
+          acc
+        end
     end)
   end
 end

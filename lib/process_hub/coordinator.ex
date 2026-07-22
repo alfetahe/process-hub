@@ -217,46 +217,18 @@ defmodule ProcessHub.Coordinator do
       |> Keyword.put(:init_cids, Enum.map(child_specs, & &1.id))
       |> Distributor.default_init_opts()
 
-    case Distributor.compose_start_operation(state, child_specs, opts) do
-      {:ok, operation} ->
-        new_state = RequestManager.store(state, operation)
-
-        # Return Future if awaitable: true or async_wait: true (deprecated)
-        result =
-          if Keyword.get(opts, :awaitable, false) or Keyword.get(opts, :async_wait, false) do
-            operation.future
-          else
-            :start_initiated
-          end
-
-        {:reply, {:ok, result}, new_state}
-
-      {:error, _reason} = error ->
-        {:reply, error, state}
-    end
+    init_children(state, opts, :start_initiated, fn ->
+      Distributor.compose_start_operation(state, child_specs, opts)
+    end)
   end
 
   @impl true
   def handle_call({:init_children_stop, child_ids, opts}, _from, state) do
-    opts = Distributor.default_init_opts(opts)
+    opts = Distributor.default_operation_opts(opts)
 
-    case Distributor.compose_stop_operation(state, child_ids, opts) do
-      {:ok, operation} ->
-        new_state = RequestManager.store(state, operation)
-
-        # Return Future if awaitable: true or async_wait: true (deprecated)
-        result =
-          if Keyword.get(opts, :awaitable, false) or Keyword.get(opts, :async_wait, false) do
-            operation.future
-          else
-            :stop_initiated
-          end
-
-        {:reply, {:ok, result}, new_state}
-
-      {:error, _reason} = error ->
-        {:reply, error, state}
-    end
+    init_children(state, opts, :stop_initiated, fn ->
+      Distributor.compose_stop_operation(state, child_ids, opts)
+    end)
   end
 
   @impl true
@@ -755,6 +727,23 @@ defmodule ProcessHub.Coordinator do
 
     new_batch = %{nodes: nodes, timer_ref: timer_ref, started_at: started_at}
     put_in(state.event_batches[event_type], new_batch)
+  end
+
+  # Stores a composed start/stop operation and replies with either the awaitable
+  # future or the initiated marker.
+  @spec init_children(Hub.t(), keyword(), atom(), (-> {:ok, RequestManager.t()} | {:error, term()})) ::
+          {:reply, term(), Hub.t()}
+  defp init_children(state, opts, initiated, compose) do
+    case compose.() do
+      {:ok, operation} ->
+        result =
+          if Keyword.get(opts, :awaitable, false), do: operation.future, else: initiated
+
+        {:reply, {:ok, result}, RequestManager.store(state, operation)}
+
+      {:error, _reason} = error ->
+        {:reply, error, state}
+    end
   end
 
   # Takes all nodes from a batch and resets it.

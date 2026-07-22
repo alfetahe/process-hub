@@ -42,27 +42,26 @@ defmodule MyApp.Application do
     {ProcessHub, %ProcessHub{
       hub_id: :my_hub,
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
-        retention: 3000,
-        handover: true
+        handover: true,
+        state_ttl: 30_000,
+        state_query_timeout: 5_000
       },
     }}
   end
 end
 ```
 
-Pay attention to the `retention` and `handover` options. The `retention` option is the max time in milliseconds that the old process will be kept alive when migrating. The `handover` option is a boolean that indicates whether the process state should be handed over to another node when the process is going to be stopped.
+Pay attention to the `handover`, `state_ttl` and `state_query_timeout` options. The `handover` option is a boolean that indicates whether the process state should be handed over to another node when the process is going to be stopped. The `state_ttl` option is the max time in milliseconds that a queried state is kept before it is discarded, and `state_query_timeout` is the max time to wait for the local process to reply with its state.
 
-The HotSwap module also supports a option called `:confirm_handover` which works togather with the `:handover` option. The `:confirm_handover` option is a boolean that indicates whether the migration handler should wait for the confirmation message from the new process about the handover. If this option is set to `true`, the `:migration_handled_hook` hook will be called once the handover is confirmed, making it possible to react to the handover process.
-The `:confirm_handover` option is triggered on node join or leave events but not on node shutdown events.
+Once the state has been delivered to the new process, the `handover_delivered` hook is
+dispatched, making it possible to react to the handover.
 
-> #### Retention option {: .info}
-> The `retention` option does not mean that the old process will be kept that long alive.
-> It is used to limit the time the old processes can stay alive in the handover process
-> before they are killed.
-
+> #### State TTL {: .info}
+> The `state_ttl` option does not keep the old process alive. It only limits how long
+> the handed-over state is retained before it is dropped.
 
 ### 2. Implement the neccessary callbacks
-In order to handover the state our `MyProcess` have to implement the `ProcessHub.Strategy.Migration.Handover` behaviour or define the necessary callbacks.
+In order to handover the state our `MyProcess` have to implement the `ProcessHub.Strategy.Migration.HandoverBehaviour` behaviour or define the necessary callbacks.
 
 This can be achieved by using the `ProcessHub.Strategy.Migration.HotSwap` module that provides the necessary callbacks and the default implementation of the `prepare_handover_state/1` and `alter_handover_state/2` callbacks
 

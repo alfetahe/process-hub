@@ -23,8 +23,7 @@ defmodule ProcessHub.Service.Storage.Dets do
 
   On open the file is passed `repair: true`. If `:dets.open_file/2`
   still returns `{:error, _}`, the corrupt file is rotated to
-  `<path>.corrupt-<system_monotonic>`, telemetry
-  `[:process_hub, :registry, :backend_corrupt]` is emitted, and a fresh
+  `<path>.corrupt-<system_monotonic>`, an error is logged, and a fresh
   empty file is opened at the original path.
 
   ### TTL

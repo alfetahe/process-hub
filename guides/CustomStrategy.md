@@ -55,7 +55,7 @@ defimpl DistributionStrategy, for: CustomStrategy.Compare do
     alias ProcessHub.Constant.Hook
 
     @impl true
-    def init(_struct, %ProcessHub.Hub{} = hub) do
+    def init(strategy, %ProcessHub.Hub{} = hub) do
       handler = %HookManager{
         id: :some_id_here,
         m: CustomStrategy.Compare,
@@ -63,25 +63,30 @@ defimpl DistributionStrategy, for: CustomStrategy.Compare do
         a: [hub, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_join(), handler)
+
+      # The protocol requires the strategy struct back - it is stored as the
+      # hub's distribution strategy.
+      strategy
     end
 end
 ...
 ```
 
-Let's also define the handler function!
+Let's also define the handler function! The `pre_node_join` hook data is a map,
+so we pattern match the node out of it.
 
 ```elixir
 defmodule CustomStrategy.Compare do
 ...
-    def handle_node_join(hub, node) do
+    def handle_node_join(hub, %{node: node}) do
         IO.puts("Node #{node} is joining the hub #{hub.hub_id}")
     end
 end
 ...
 ```
 
-At this point we only have 2 more functions to implement. Let's continue by 
+At this point we have 4 more functions to implement. Let's continue by
 overriding the `children_init/4` function which does nothing but return `:ok`.
 If we return anything else other than `:ok`, the startup will fail for this
 particular function.
@@ -93,17 +98,18 @@ def children_init(_struct, _hub, _child_specs, _opts), do: :ok
 ...
 ```
 
-We now have the last function to implement which is the `belongs_to/4` function. This function will determine the node that the process should be distributed to. In our case, we will select a node based on its name. 
+Next is the `belongs_to/4` function. This function will determine the node that the process should be distributed to. In our case, we will select a node based on its name.
 
 The very same function will also be used when processes are redistributed.
 
-We also return a list of nodes although we only select one. The reason for this is that the function can return multiple nodes in case the process should be replicated.
+It receives a list of child ids and returns a map of `child_id` to a list of nodes.
+We return a list of nodes although we only select one. The reason for this is that the function can return multiple nodes in case the process should be replicated.
 For the sake of simplicity, we will ignore the replication factor in this example.
 
 ```elixir
 ...
 @impl true
-def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_id, _replication_factor) do
+def belongs_to(struct, %ProcessHub.Hub{} = hub, child_ids, _replication_factor) do
     hub_nodes = ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
 
     selected_node = case struct.direction do
@@ -111,7 +117,26 @@ def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_id, _replication_factor) 
         :desc -> Enum.sort(hub_nodes) |> Enum.reverse() |> Enum.at(0)
     end
 
-    [selected_node] # Ignore the replication factor and just return one node
+    # Ignore the replication factor and just return one node
+    Map.new(child_ids, fn child_id -> {child_id, [selected_node]} end)
+end
+...
+```
+
+The last two functions tell `ProcessHub` whether the distribution depends only on the
+node topology. Our strategy does, so it is deterministic and its signature is derived
+from the sorted node list.
+
+```elixir
+...
+@impl true
+def deterministic?(_struct), do: true
+
+@impl true
+def distribution_signature(_struct, %ProcessHub.Hub{} = hub) do
+    ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
+    |> Enum.sort()
+    |> :erlang.phash2()
 end
 ...
 ```
@@ -131,7 +156,7 @@ defmodule CustomStrategy.Compare do
     direction: :asc
   ]
 
-  def handle_node_join(%ProcessHub.Hub{} = hub, node) do
+  def handle_node_join(%ProcessHub.Hub{} = hub, %{node: node}) do
       IO.puts("Node #{node} is joining the hub #{hub.hub_id}")
   end
 
@@ -140,7 +165,7 @@ defmodule CustomStrategy.Compare do
     alias ProcessHub.Constant.Hook
 
     @impl true
-    def init(_struct, %ProcessHub.Hub{} = hub) do
+    def init(strategy, %ProcessHub.Hub{} = hub) do
       handler = %HookManager{
         id: :some_id_here,
         m: CustomStrategy.Compare,
@@ -148,25 +173,35 @@ defmodule CustomStrategy.Compare do
         a: [hub, :_]
       }
 
-      HookManager.register_handler(hub.storage.hook, Hook.pre_cluster_join(), handler)
+      HookManager.register_handler(hub.storage.hook, Hook.pre_node_join(), handler)
+
+      strategy
     end
 
     @impl true
     def children_init(_struct, _hub, _child_specs, _opts), do: :ok
 
     @impl true
-    def belongs_to(struct, %ProcessHub.Hub{} = hub, _child_ids, _replication_factor) do
+    def belongs_to(struct, %ProcessHub.Hub{} = hub, child_ids, _replication_factor) do
         hub_nodes = ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
 
-        Enum.map(child_ids, fn child_id ->
-          selected_node = case struct.direction do
-            :asc -> Enum.sort(hub_nodes) |> Enum.at(0)
-            :desc -> Enum.sort(hub_nodes) |> Enum.reverse() |> Enum.at(0)
-          end
+        selected_node = case struct.direction do
+          :asc -> Enum.sort(hub_nodes) |> Enum.at(0)
+          :desc -> Enum.sort(hub_nodes) |> Enum.reverse() |> Enum.at(0)
+        end
 
-          # Ignore the replication factor and just return one node
-          {child_id, [selected_node]}
-        end)
+        # Ignore the replication factor and just return one node
+        Map.new(child_ids, fn child_id -> {child_id, [selected_node]} end)
+    end
+
+    @impl true
+    def deterministic?(_struct), do: true
+
+    @impl true
+    def distribution_signature(_struct, %ProcessHub.Hub{} = hub) do
+        ProcessHub.Service.Cluster.nodes(hub.storage.misc, [:include_local])
+        |> Enum.sort()
+        |> :erlang.phash2()
     end
   end
 end

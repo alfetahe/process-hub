@@ -84,8 +84,8 @@ iex> ProcessHub.registry_dump(:my_hub)
 ```
 
 
-There's also a third option `ProcessHub.which_children/2` but is highly discouraged to use and may 
-be deprecated in the future.
+There's also a third option `ProcessHub.which_children/2`, which is deprecated and highly
+discouraged to use.
 
 This function does network calls to all nodes in the cluster to get the list of processes and
 also may lead to memory and performance issues when used with large nuber of processes.
@@ -147,7 +147,7 @@ iex> ProcessHub.get_pids(:my_hub, :my_process_10)
 [#PID<0.228.0>]
 ```
 
-We may also query the whole child info by using the `ProcessHub.which_children/2` function.
+We may also query the whole child info by using the `ProcessHub.child_lookup/2` function.
 This function also gives us the `child_spec`.
 
 ```elixir
@@ -204,10 +204,8 @@ to query the processes by tags.
 ```elixir
 iex> ProcessHub.tag_query(:my_hub, "MY_TAG")
 [
-  my_process_1: {%{id: :my_process_1, start: {MyProcess, :start_link, [nil]}},
-   [one@anuar: #PID<0.228.0>]},
-  my_process_2: {%{id: :my_process_2, start: {MyProcess, :start_link, [nil]}},
-   [one@anuar: #PID<0.250.0>]}
+  my_process_1: [one@anuar: #PID<0.228.0>],
+  my_process_2: [one@anuar: #PID<0.250.0>]
 ]
 ```
 

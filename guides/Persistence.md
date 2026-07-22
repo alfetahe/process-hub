@@ -95,7 +95,7 @@ The gate is a per-node zero-byte **marker file**, consulted at coordinator
 
 - **Marker present** → `:normal`. The backend opens without loading any
   rows; the synchronization strategy populates the registry from peers.
-- **Marker absent** → `:recovery`. The coordinator replays its persisted
+- **Marker absent** → `:recovering`. The coordinator replays its persisted
   registry (child specs only), then transitions to `:normal` and writes
   the marker.
 
@@ -158,7 +158,7 @@ The recovery/operator API lives on `ProcessHub.Service.Recovery`:
 
 ```elixir
 Recovery.recovery_state(:my_hub)         # :recovering | :normal
-Recovery.await_normal(:my_hub, 30_000)   # :ok | {:error, :timeout}
+Recovery.await_normal(:my_hub, 60_000)   # :ok | {:error, :timeout} (default timeout: 60_000)
 
 # Arm the local node (delete the marker) for recovery on next boot.
 Recovery.prepare_recovery(:my_hub)       # :ok | {:error, term}

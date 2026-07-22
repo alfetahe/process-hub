@@ -75,12 +75,14 @@ alias ProcessHub.Constant.Hook
 ProcessHub.register_hook_handlers(
   :my_hub,
   Hook.post_node_join(),
-  %HookManager{
-    id: :hook_id_30,
-    m: MyModule,
-    f: :my_function,
-    a: [:some_data, :_]
-  }
+  [
+    %HookManager{
+      id: :hook_id_30,
+      m: MyModule,
+      f: :my_function,
+      a: [:some_data, :_]
+    }
+  ]
 )
 ```
 
@@ -99,7 +101,7 @@ end
 Sometimes when starting a child process, it is necessary to know when the child process has been
 started and is ready to receive messages. We could use the `:awaitable` option with the `ProcessHub.Future.await/1` but that would
 block the process that is starting the child process. Instead, we can use hooks to react to the
-`:pre_children_start` event asynchronously.
+`:child_registered` event asynchronously.
 
 Example:
 ```elixir
@@ -170,23 +172,25 @@ alias ProcessHub.Service.Storage
 alias ProcessHub.Service.HookManager
 
 # Register hook handlers to update the hash ring when node joins or leaves the cluster.
-def init(_strategy, hub) do
-  hub_nodes = Storage.get(hub.storage.misc, :hub_nodes)
+def init(strategy, hub) do
+  hub_nodes = Storage.get(hub.storage.misc, StorageKey.hn())
 
-  Storage.insert(hub.storage.misc, StorageKey.hr, Ring.create_ring(hub_nodes))
+  Storage.insert(hub.storage.misc, StorageKey.hr(), Ring.create_ring(hub_nodes))
 
   join_handler = %HookManager{
     id: :ch_join,
     m: ProcessHub.Strategy.Distribution.ConsistentHashing,
     f: :handle_node_join,
-    a: [hub, :_]
+    a: [hub, :_],
+    p: 100
   }
 
   leave_handler = %HookManager{
     id: :ch_leave,
     m: ProcessHub.Strategy.Distribution.ConsistentHashing,
     f: :handle_node_leave,
-    a: [hub, :_]
+    a: [hub, :_],
+    p: 100
   }
 
   shutdown_handler = %HookManager{
@@ -200,6 +204,9 @@ def init(_strategy, hub) do
   HookManager.register_handler(hub.storage.hook, Hook.pre_node_join(), join_handler)
   HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), leave_handler)
   HookManager.register_handler(hub.storage.hook, Hook.coordinator_shutdown(), shutdown_handler)
+
+  # The distribution protocol requires the strategy struct back.
+  strategy
 end
 
 
@@ -239,7 +246,7 @@ hook_handler = %HookManager{
   p: 15 # here we set the priority level to 15.
 }
 
-ProcessHub.register_hook_handlers(:my_hub, Hook.pre_node_leave(), hook_handler)
+ProcessHub.register_hook_handlers(:my_hub, Hook.pre_node_leave(), [hook_handler])
 ```
 
 ## Hook handler arguments
@@ -283,7 +290,7 @@ Example:
 ```elixir
 iex> alias ProcessHub.Service.HookManager
 iex> alias ProcessHub.Constant.Hook
-iex> HookManager.registered_handlers :my_hub, Hook.child_registered()
+iex> HookManager.registered_handlers(hub.storage.hook, Hook.child_registered())
 [
   %ProcessHub.Service.HookManager{
     id: :handler_id_2,
@@ -296,18 +303,17 @@ iex> HookManager.registered_handlers :my_hub, Hook.child_registered()
 ```
 
 ## Removing hook handlers
-You can remove a specific hook handler by calling the `cancel_handler/3` function.
+You can remove specific hook handlers by calling the `ProcessHub.cancel_hook_handlers/3` function.
 
 Example:
 ```elixir
-iex> alias ProcessHub.Service.HookManager
 iex> alias ProcessHub.Constant.Hook
-iex> HookManager.cancel_handler(:my_hub, Hook.child_registered(), :handler_id_1)
+iex> ProcessHub.cancel_hook_handlers(:my_hub, Hook.child_registered(), [:handler_id_1])
 :ok
 ```
 
 It's also possible to dispatch hooks manually by calling the `dispatch_hook/3` or
-`dispatch_hooks/3` functions from the `ProcessHub.Service.HookManager` module.
+`dispatch_hooks/2` functions from the `ProcessHub.Service.HookManager` module.
 Although, it's not recommended to dispatch hooks manually as it can lead to unexpected behavior.
 
 ## Child start flow dispatch order
@@ -341,6 +347,11 @@ When children are started, hooks fire in this order:
 | `:child_pid_updated_hook`           | Child process restarted with new pid        | `%{node: node(), pid: pid()}`                      |
 | `:handover_delivered_hook`          | Handover states delivered to migrated procs | `%{child_ids: [child_id()], target_node: node()}`  |
 | `:scoreboard_updated_hook`          | Load balancer scoreboard updated            | `%{scoreboard: term(), node: node()}`              |
+| `:migration_deferred_hook`          | Children parked by migration consent        | `%{child_ids: [child_id()]}`                       |
+| `:drain_completed_hook`             | Node drain completed                        | `%{migrated: non_neg_integer(), forced: non_neg_integer()}` |
+| `:recovery_state_changed_hook`      | Coordinator recovery lifecycle moment       | `%{hub_id: atom(), from: atom(), to: atom(), reason: atom(), measurements: map()}` |
+| `:pre_recovery_replay_hook`         | Before recovery replay (**synchronous**)    | `%{hub_id: atom(), child_count: non_neg_integer()}` |
+| `:post_recovery_replay_hook`        | After recovery replay                       | `%{hub_id: atom(), child_count: non_neg_integer(), succeeded: non_neg_integer(), failed: non_neg_integer(), reason: atom()}` |
 
 
 ## Alter hooks

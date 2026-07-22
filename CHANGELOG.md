@@ -3,6 +3,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Changed
+- Documentation updated and corrected throughout. `ProcessHub.await/1` is no longer deprecated as it runs on `ProcessHub.Future` underneath, and the deprecated `:async_wait` option was removed from the `ProcessHub` public API.
+
 ### Fixed
 - `ProcessRegistry.bulk_insert/3` and `bulk_delete/3` now commit each bulk as a single atomic write (new optional `insert_many/2` backend callback), so readers can no longer observe half-applied bulks and disk-backed backends sync once per bulk instead of once per row.
 

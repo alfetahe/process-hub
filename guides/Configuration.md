@@ -2,7 +2,7 @@
 
 ## Configurable strategies
 
-ProcessHub comes with 12 different strategies that can be used to configure the hub.
+ProcessHub comes with 14 different strategies that can be used to configure the hub.
 All strategies are Elixir structs that implement their own base protocol.
 
 In fact, you can define your own strategies by implementing the base protocols.
@@ -34,8 +34,8 @@ defmodule MyApp.Application do
       },
       # Configure the migration strategy.
       migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
-        retention: 2000,
-        handover: true
+        handover: true,
+        state_ttl: 30_000
       },
       # Configure the synchronization strategy.
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{
@@ -82,14 +82,22 @@ When a node leaves the cluster, it is possible that some processes are still run
 node, so these need to be migrated to another node. Also, when a new node joins the
 cluster, other nodes may migrate some processes over to the new node.
 
-At the moment, there are 2 migration strategies available:
+At the moment, there are 3 migration strategies available:
 - `ProcessHub.Strategy.Migration.ColdSwap` - migrate processes by stopping the process
-on the old node before starting it on the new node. This is the default strategy and defines no special configuration options.
+on the old node before starting it on the new node. This is the default strategy.
 - `ProcessHub.Strategy.Migration.HotSwap` - this strategy is used to migrate processes
 by starting the process on the new node before stopping it on the old node.
 This strategy is useful when we want to avoid any downtime. This strategy is also
 useful when the process is stateful, and we want to avoid any data loss by handing over
 the state from the old process to the new process. See the module for handover examples.
+- `ProcessHub.Strategy.Migration.Autonomous` - each node independently reconciles its local
+children against the distribution strategy, without any inter-node coordination or state
+handover. **Experimental.**
+
+Both swap strategies share the same options: `:handover`, `:state_ttl`,
+`:state_query_timeout` and `:consent_settings`. The last one takes a
+`ProcessHub.Strategy.Migration.MigrationConsent` struct, which lets a process be asked
+before it is migrated.
 
 ### Synchronization Strategy
 `ProcessHub.Strategy.Synchronization.Base` - defines the base protocol for synchronization

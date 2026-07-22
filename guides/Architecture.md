@@ -46,6 +46,10 @@ These processes are started by external library `blockade`.
 
 - `worker_queue` - The worker queue process is used to synchronize the operations that may introduce race conditions.
 
+- `bootstrap_worker` - The bootstrap worker performs the hub's startup work, such as starting the statically configured `child_specs`.
+
+- `process_registry` - The process registry process owns the registry storage and serializes writes to it.
+
 ## Cluster Discovery and Formation
 ProcessHub monitors connecting and disconnecting nodes and forms a cluster automatically
 from the connected nodes that share the same `hub_id`. It's not required to start
@@ -64,12 +68,12 @@ it's started on the right node that the process belongs to.
 If the process is being started on the wrong node, the initialization request will be forwarded
 to the correct node.
 
-## Locking Mechanism
-ProcessHub utilizes the `:blockade` library to provide event-driven communication
-and a locking mechanism.
-It locks the local event queue by increasing its priority for some operations.
-This allows the system to queue events and process them in order to preserve data integrity.
-Other events can be processed once the priority level is set back to default.
+## Work Serialization
+ProcessHub utilizes the `:blockade` library to provide event-driven communication.
 
-To avoid deadlocks, the system places a timeout on the event queue priority and
-restores it to its original value if the timeout is reached.
+Operations that must not interleave are delegated to the worker queue
+(`ProcessHub.Worker.WorkerQueue`), which runs them one at a time in the order they were
+received. This preserves data integrity without blocking the coordinator itself.
+
+`ProcessHub.is_locked?/1` reports whether the coordinator has delegated work that has
+not completed yet. It is informational only and does not block event processing.

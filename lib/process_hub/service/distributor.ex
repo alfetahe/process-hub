@@ -244,11 +244,9 @@ defmodule ProcessHub.Service.Distributor do
   ## Default Values Applied
   - `:timeout` - `#{@default_init_timeout}` ms (#{@default_init_timeout / 1000} seconds) - Maximum time to wait for process initialization
   - `:awaitable` - `false` - Whether to return an awaitable `ProcessHub.Future.t()` struct
-  - `:async_wait` - `false` - **Deprecated** - Use `:awaitable` instead
   - `:check_existing` - `true` - Whether to check if processes already exist before starting
   - `:on_failure` - `:continue` - Action on failure (`:continue` or `:rollback`)
   - `:metadata` - `%{}` - Additional metadata to attach to processes
-  - `:await_timeout` - `60000` ms (60 seconds) - Maximum lifetime for collector processes
   - `:init_cids` - `[]` - List of child IDs expected to be initialized
 
   ## Examples
@@ -256,25 +254,34 @@ defmodule ProcessHub.Service.Distributor do
       [
         timeout: 5000,
         awaitable: true,
-        async_wait: false,
         check_existing: true,
         on_failure: :continue,
         metadata: %{},
-        await_timeout: 60000,
         init_cids: []
       ]
 
   """
   @spec default_init_opts(keyword()) :: keyword()
   def default_init_opts(opts) do
-    Keyword.put_new(opts, :timeout, @default_init_timeout)
-    |> Keyword.put_new(:awaitable, false)
-    |> Keyword.put_new(:async_wait, false)
+    opts
+    |> default_operation_opts()
     |> Keyword.put_new(:check_existing, true)
     |> Keyword.put_new(:on_failure, :continue)
     |> Keyword.put_new(:metadata, %{})
-    |> Keyword.put_new(:await_timeout, 60000)
     |> Keyword.put_new(:init_cids, [])
+  end
+
+  @doc """
+  Applies the default options shared by every start and stop operation.
+
+  Stop operations use this directly - the start-only defaults applied by
+  `default_init_opts/1` are not read on the stop path.
+  """
+  @spec default_operation_opts(keyword()) :: keyword()
+  def default_operation_opts(opts) do
+    opts
+    |> Keyword.put_new(:timeout, @default_init_timeout)
+    |> Keyword.put_new(:awaitable, false)
   end
 
   defp init_distribution(hub, child_specs, opts, %{distribution: strategy}) do

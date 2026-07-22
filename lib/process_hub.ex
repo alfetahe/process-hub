@@ -55,10 +55,8 @@ defmodule ProcessHub do
 
   - `:awaitable` - is optional and can be used to specify if the returned value should be an awaitable struct `ProcessHub.Future.t()`.
   The awaitable struct provides a way to handle the result of the operation synchronously by passing it to the `ProcessHub.Future.await/1` function.
-  - `:async_wait` - (**deprecated** use `:awaitable`) is optional and is used to define whether the function should return a function that
-  can be used to wait for the children to start or stop. The default is `false`.
   - `:timeout` - is optional and is used to define the timeout for the function. This timeout option
-  should be used with `async_wait: true`. The default is `5000` (5 seconds).
+  should be used with `awaitable: true`. The default is `10000` (10 seconds).
   - `:check_existing` - is optional and is used to define whether the function should check if the children
   are already started. The default is `true`.
   - `:on_failure` - is optional and is used to define the action to take when the start operation fails.
@@ -73,9 +71,6 @@ defmodule ProcessHub do
   fall back to the global `:metadata` value.
   - `:disable_logging` - is optional and is used to define whether logging should be disabled for the child process
   startup or shutdown. Mostly used for testing purposes.
-  - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
-  After this time, the collector process will be terminated and attempts to collect the results using `ProcessHub.await/1` will fail.
-  The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
   - `:call_timeout` - is optional and is used to override the auto-calculated GenServer.call timeout
   for the initial request to the coordinator. This timeout applies to bulk operations such as starting children,
   stopping children, and migrations. By default, the timeout is calculated as `5000ms + (1ms × child_count)`,
@@ -83,14 +78,12 @@ defmodule ProcessHub do
   """
   @type init_opts() :: [
           awaitable: boolean(),
-          async_wait: boolean(),
           timeout: non_neg_integer(),
           check_existing: boolean(),
           on_failure: :continue | :rollback,
           metadata: child_metadata(),
           child_metadata: child_metadata_map(),
           disable_logging: boolean(),
-          await_timeout: non_neg_integer(),
           call_timeout: timeout()
         ]
 
@@ -99,13 +92,8 @@ defmodule ProcessHub do
 
   - `:awaitable` - is optional and can be used to specify if the returned value should be an awaitable struct `ProcessHub.Future.t()`.
   The awaitable struct provides a way to handle the result of the operation synchronously by passing it to the `ProcessHub.Future.await/1` function.
-  - `:async_wait` - (**deprecated** use `:awaitable`) is optional and is used to define whether the function should return a function that
-  can be used to wait for the children to stop. The default is `false`.
   - `:timeout` - is optional and is used to define the maximum time for the function to complete.
-  This timeout option should be used with `async_wait: true`. The default is `5000` (5 seconds).
-  - `:await_timeout` - is optional and is used to define the maximum lifetime for the spawned collector process.
-  After this time, the collector process will be terminated and attempts to collect the results using `ProcessHub.await/1` will fail.
-  The await_timeout option should be used with `awaitable: true`. The default is `60000` (60 seconds).
+  This timeout option should be used with `awaitable: true`. The default is `10000` (10 seconds).
   - `:call_timeout` - is optional and is used to override the auto-calculated GenServer.call timeout
   for the initial request to the coordinator. This timeout applies to bulk operations such as starting children,
   stopping children, and migrations. By default, the timeout is calculated as `5000ms + (1ms × child_count)`,
@@ -113,9 +101,7 @@ defmodule ProcessHub do
   """
   @type stop_opts() :: [
           awaitable: boolean(),
-          async_wait: boolean(),
           timeout: non_neg_integer(),
-          await_timeout: non_neg_integer(),
           call_timeout: timeout()
         ]
 
@@ -209,8 +195,8 @@ defmodule ProcessHub do
     - `{Module, opts}` — a custom module implementing
       `ProcessHub.Service.Storage.Behaviour`.
 
-    See `guides/Persistence.md` for the recovery semantics, telemetry
-    events, and operational profile.
+    See `guides/Persistence.md` for the recovery semantics and
+    operational profile.
   - `:auto_recovery` is optional and enables a marker-gated coordinator
     boot lifecycle (`:recovering → :normal`). **Experimental** and may
     change in future releases. The default is `false`. Requires a
@@ -362,7 +348,7 @@ defmodule ProcessHub do
           | {:ok, Future.t()}
           | {:error, :no_children | {:already_started, [atom | binary, ...]}}
   def start_child(hub_id, child_spec, opts \\ []) do
-    start_children(hub_id, [child_spec], Keyword.put(opts, :return_first, true))
+    start_children(hub_id, [child_spec], opts)
   end
 
   @doc """
@@ -497,7 +483,7 @@ defmodule ProcessHub do
   @spec stop_child(hub_id(), child_id(), stop_opts()) ::
           {:ok, :stop_initiated} | {:ok, Future.t()}
   def stop_child(hub_id, child_id, opts \\ []) do
-    stop_children(hub_id, [child_id], Keyword.put(opts, :return_first, true))
+    stop_children(hub_id, [child_id], opts)
   end
 
   @doc """
@@ -550,7 +536,7 @@ defmodule ProcessHub do
   - `:local` - returns a list of all child processes started by the local node.
     The return result will be in the format of `{:node, children}`.
   """
-  @deprecated "Will be removed from the next minor release. Use `ProcessHub.process_list/2` instead."
+  @deprecated "Use ProcessHub.process_list/2 instead"
   @spec which_children(hub_id(), [:global | :local] | nil) ::
           list()
           | {node(),
@@ -571,33 +557,30 @@ defmodule ProcessHub do
   """
   @spec is_alive?(hub_id()) :: boolean
   def is_alive?(hub_id) do
-    case Process.whereis(hub_id) do
-      nil -> false
-      _ -> true
-    end
+    Process.whereis(hub_id) !== nil
   end
 
-  @deprecated "Use `ProcessHub.Future.await/1` instead. The implementation of this function will be replaced in the 0.5.x version. The `:rollback` option does not work with this function."
   @doc """
   This function can be used to wait for the `ProcessHub` child start or stop
   functions to complete.
 
-  The `await/1` function should only be used with the `async_wait: true` option.
+  The `await/1` function should only be used with the `awaitable: true` option.
 
   Keep in mind that the `await/1` function will block the calling process until
   the response is received. If the response is not received within the timeout
   period, the function will return `{:error, term()}`.
 
   ## Example
-      iex> {:ok, future} = ProcessHub.start_child(:my_hub, child_spec, [async_wait: true])
+      iex> {:ok, future} = ProcessHub.start_child(:my_hub, child_spec, [awaitable: true])
       iex> ProcessHub.await(future)
-      {:ok, {:my_child, [{:mynode, #PID<0.123.0>}]}}
+      %ProcessHub.StartResult{
+        status: :ok,
+        started: [{"my_child", ["mynode@127.0.0.1": #PID<0.123.0>]}],
+        errors: [],
+        rollback: false
+      }
   """
-  @spec await(Future.t() | {:ok, Future.t()} | {:error, term()} | term()) ::
-          {:ok, start_result() | [start_result() | stop_result()]}
-          | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]}}
-          | {:error, {[start_failure() | stop_failure()], [start_result() | stop_result()]},
-             :rollback}
+  @spec await(Future.future_input()) :: Future.await_result()
   def await({:ok, future}) when is_struct(future) do
     Future.await(future)
   end
@@ -743,7 +726,7 @@ defmodule ProcessHub do
       iex> # get the processes by tag name.
       iex> ProcessHub.tag_query(:my_hub, "my_tag")
       [
-        {:my_child, [{:mynode, #PID<0.123.0>}],
+        {:my_child, [{:mynode, #PID<0.123.0>}]},
         {:my_child2, [{:mynode2, #PID<0.124.0>}]}
       ]
   """
@@ -784,12 +767,8 @@ defmodule ProcessHub do
   Returns all information stored in the process registry.
 
   This function performs a local query against the `ets` table and does not make any network calls.
-
-  > #### Deprecation Notice {: .warning}
-  >
-  > This function is deprecated and will be removed in a future version.
   """
-  @deprecated "Use `ProcessHub.registry_dump/1` instead"
+  @deprecated "Use ProcessHub.registry_dump/1 instead"
   @spec process_registry(hub_id()) :: ProcessHub.Service.ProcessRegistry.registry()
   defdelegate process_registry(hub_id), to: ProcessRegistry, as: :registry
 

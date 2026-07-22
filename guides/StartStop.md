@@ -123,7 +123,7 @@ end
 
 ## Asynchronous operations
 All process starting and stopping operations are asynchronous by default and can be made synchronous by passing the `awaitable: true` option. 
-By doing so, the operation returns a `ProcessHub.Future` struct that can be awaited.
+By doing so, the operation returns `{:ok, %ProcessHub.Future{}}` which can be awaited.
 
 ### Example of starting a process and awaiting the result
 ```elixir
@@ -293,5 +293,5 @@ ProcessHub.StopResult.format(result)
 {:ok, [{"child1", [:"node1@127.0.0.1"]}]}
 
 # For error cases
-{:error, {[{"child1", :"node1@127.0.0.1", :not_found}], []}}
+{:error, {[{"child1", {:error, :not_found}}], []}}
 ```

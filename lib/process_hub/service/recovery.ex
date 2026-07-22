@@ -28,8 +28,7 @@ defmodule ProcessHub.Service.Recovery do
     - replaying the persisted registry into
       `Distributor.compose_start_operation/3` (best-effort, partial-success
       tolerant)
-    - emitting `[:process_hub, :recovery, _]` telemetry and dispatching the
-      recovery hooks
+    - dispatching the recovery hooks
 
   The coordinator stays the GenServer; this module is stateless aside
   from the data passed in.
@@ -358,8 +357,8 @@ defmodule ProcessHub.Service.Recovery do
     do: %{state | recovery_event_queue: q ++ [msg]}
 
   @doc """
-  Reports the `cspec_count` currently persisted, used for telemetry
-  measurements at recovery boot.
+  Reports the `cspec_count` currently persisted, used for the recovery
+  hook measurements at boot.
   """
   @spec cspec_count(ProcessHub.hub_id()) :: non_neg_integer()
   def cspec_count(hub_id) do

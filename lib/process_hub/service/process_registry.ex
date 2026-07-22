@@ -95,21 +95,13 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end
   end
 
-  @doc "Returns information about all registered processes. Will be deprecated in the future."
+  @doc "Returns information about all registered processes. Deprecated, use `dump/1` instead."
   @spec registry(ProcessHub.hub_id()) :: registry()
   def registry(hub_id) do
-    Storage.foldl(hub_id, %{}, fn
-      {_child_id, {_child_spec, [], _metadata}}, acc ->
-        acc
-
-      {_child_id, {_child_spec, [], _metadata}, _ttl}, acc ->
-        acc
-
-      {child_id, {child_spec, nodes, _metadata}}, acc ->
-        Map.put(acc, child_id, {child_spec, nodes})
-
-      {child_id, {child_spec, nodes, _metadata}, _ttl}, acc ->
-        Map.put(acc, child_id, {child_spec, nodes})
+    hub_id
+    |> dump()
+    |> Map.new(fn {child_id, {child_spec, nodes, _metadata}} ->
+      {child_id, {child_spec, nodes}}
     end)
   end
 
@@ -121,13 +113,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
   @spec dump(ProcessHub.hub_id()) :: registry_dump()
   def dump(hub_id) do
-    hub_id
-    |> Storage.export_all()
-    |> Enum.reduce(%{}, fn
-      {_key, {_spec, [], _meta}}, acc -> acc
-      {_key, {_spec, [], _meta}, _ttl}, acc -> acc
-      {key, values}, acc -> Map.put(acc, key, values)
-      {key, values, _ttl}, acc -> Map.put(acc, key, values)
+    Storage.foldl_entries(hub_id, %{}, fn
+      {_child_id, {_spec, [], _meta}}, acc -> acc
+      {child_id, value}, acc -> Map.put(acc, child_id, value)
     end)
   end
 
@@ -139,24 +127,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
   @spec dump_all(ProcessHub.hub_id()) :: registry_dump()
   def dump_all(hub_id) do
-    hub_id
-    |> Storage.export_all()
-    |> Enum.map(fn
-      {key, values} -> {key, values}
-      {key, values, _ttl} -> {key, values}
+    Storage.foldl_entries(hub_id, %{}, fn {child_id, value}, acc ->
+      Map.put(acc, child_id, value)
     end)
-    |> Map.new()
   end
 
   @spec process_list(atom(), :global | :local) :: [
           {ProcessHub.child_id(), [{node(), pid()}] | pid()}
         ]
   def process_list(hub_id, :global) do
-    Storage.foldl(hub_id, [], fn
+    Storage.foldl_entries(hub_id, [], fn
       {child_id, {_child_spec, nodes, _metadata}}, acc when nodes != [] ->
-        [{child_id, nodes} | acc]
-
-      {child_id, {_child_spec, nodes, _metadata}, _ttl}, acc when nodes != [] ->
         [{child_id, nodes} | acc]
 
       _, acc ->
@@ -179,17 +160,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def contains_children(hub_id, child_ids) do
     child_id_set = MapSet.new(child_ids)
 
-    Storage.foldl(hub_id, [], fn
+    Storage.foldl_entries(hub_id, [], fn
       {_child_id, {_spec, [], _meta}}, acc ->
         acc
 
-      {_child_id, {_spec, [], _meta}, _ttl}, acc ->
-        acc
-
       {child_id, _}, acc ->
-        if MapSet.member?(child_id_set, child_id), do: [child_id | acc], else: acc
-
-      {child_id, _, _ttl}, acc ->
         if MapSet.member?(child_id_set, child_id), do: [child_id | acc], else: acc
     end)
     |> Enum.reverse()
@@ -218,11 +193,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def local_data(hub_id) do
     local_node = node()
 
-    Storage.foldl(hub_id, [], fn
+    Storage.foldl_entries(hub_id, [], fn
       {child_id, {_, nodes, _} = value}, acc ->
-        if Keyword.has_key?(nodes, local_node), do: [{child_id, value} | acc], else: acc
-
-      {child_id, {_, nodes, _} = value, _ttl}, acc ->
         if Keyword.has_key?(nodes, local_node), do: [{child_id, value} | acc], else: acc
     end)
   end
@@ -270,15 +242,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
           ProcessHub.child_id() => {ProcessHub.child_spec(), [{node(), pid()}], metadata()}
         }
   def local_children(hub_id) do
-    local_node = node()
-
-    Storage.foldl(hub_id, %{}, fn
-      {child_id, {_, nodes, _} = value}, acc ->
-        if Keyword.has_key?(nodes, local_node), do: Map.put(acc, child_id, value), else: acc
-
-      {child_id, {_, nodes, _} = value, _ttl}, acc ->
-        if Keyword.has_key?(nodes, local_node), do: Map.put(acc, child_id, value), else: acc
-    end)
+    hub_id
+    |> local_data()
+    |> Map.new()
   end
 
   @doc """
