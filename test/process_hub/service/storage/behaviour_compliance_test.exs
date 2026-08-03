@@ -8,6 +8,7 @@ defmodule Test.ProcessHub.Service.Storage.BehaviourComplianceTest do
 
   alias ProcessHub.Service.Storage.Ets, as: EtsBackend
   alias ProcessHub.Service.Storage.Dets, as: DetsBackend
+  alias ProcessHub.Service.Storage.DurableEts, as: DurableEtsBackend
 
   describe "ProcessHub.Service.Storage.Ets" do
     setup do
@@ -34,6 +35,27 @@ defmodule Test.ProcessHub.Service.Storage.BehaviourComplianceTest do
       end)
 
       {:ok, %{module: DetsBackend, ref: ref}}
+    end
+
+    test("compliance suite", ctx, do: run_compliance(ctx))
+  end
+
+  describe "ProcessHub.Service.Storage.DurableEts" do
+    setup do
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "compl_durable_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(tmp_dir)
+      hub_id = :"compl_durable_#{System.unique_integer([:positive])}"
+      path = Path.join(tmp_dir, "registry.dets")
+      {:ok, ref} = DurableEtsBackend.open(hub_id, path: path)
+
+      on_exit(fn ->
+        DurableEtsBackend.close(ref)
+        File.rm_rf!(tmp_dir)
+      end)
+
+      {:ok, %{module: DurableEtsBackend, ref: ref}}
     end
 
     test("compliance suite", ctx, do: run_compliance(ctx))
@@ -75,5 +97,11 @@ defmodule Test.ProcessHub.Service.Storage.BehaviourComplianceTest do
     assert m.get(ref, :m1) === :v1
     assert m.get(ref, :m2) === :v2
     assert {:m2, :v2, _expire} = List.keyfind(m.export_all(ref), :m2, 0)
+
+    # Expired rows stay visible to match/2 — the janitor's scan and the
+    # guarded delete_if_expired re-check both depend on this.
+    assert :ok = m.insert(ref, :ttl_expired, :vx, ttl: -1)
+    assert [{expire}] = m.match(ref, {:ttl_expired, :_, :"$1"})
+    assert is_integer(expire)
   end
 end

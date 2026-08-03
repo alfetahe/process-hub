@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - `ProcessRegistry.bulk_insert/3` and `bulk_delete/3` now commit each bulk as a single atomic write (new optional `insert_many/2` backend callback), so readers can no longer observe half-applied bulks and disk-backed backends sync once per bulk instead of once per row.
+- Janitor TTL sweep now works on non-default registry backends. `ProcessRegistry.delete_if_expired/2` re-validated expiry with a raw `:ets.lookup` that only exists on the `:ets` backend; on `{:dets, _}`, `{:durable_ets, _}`, and custom backends it crashed the registry process (and the janitor with it) every purge interval once any TTL entry expired, so the dead-child stubs written by `bulk_delete` were never removed and the on-disk registry file grew without bound. The re-check now dispatches through the configured storage backend, and a sweep racing hub teardown degrades to a no-op instead of a crash.
 
 ## v0.6.0 - 2026-07-11
 This release is aimed at making the system more resilient: a pluggable registry backend (ETS stays the default, with on-disk and hybrid options today and room for further storage integrations), safe migration — processes can defer their own migration and a node can be drained before shutdown — and experimental recovery mechanisms. It also includes a few bug fixes.

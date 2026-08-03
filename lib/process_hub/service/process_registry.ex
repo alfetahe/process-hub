@@ -81,17 +81,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
   @impl GenServer
   def handle_call({:delete_if_expired, hub_id, child_id}, _from, state) do
-    {:reply, handle_delete_if_expired(hub_id, child_id), state}
+    {:reply, with_storage(fn -> handle_delete_if_expired(hub_id, child_id) end, false), state}
   end
 
   # Drops mutation requests that race against hub teardown: Coordinator.terminate
   # closes the registry backend, so a still-queued bulk_delete/insert can land
   # after the ETS table is gone and crash on `:ets.insert/2`.
-  defp with_storage(fun) do
+  defp with_storage(fun, fallback \\ :ok) do
     try do
       fun.()
     rescue
-      ArgumentError -> :ok
+      ArgumentError -> fallback
     end
   end
 
@@ -386,7 +386,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Expiry is re-validated inside the registry process. If the entry was
   re-populated since the caller observed it (re-population clears the TTL,
   turning the row into a permanent 2-tuple) or was given a fresh TTL lease,
-  the delete is skipped. This closes a race where the janitor's `:ets.match`
+  the delete is skipped. This closes a race where the janitor's registry
   scan sees an expired tombstone, but an incoming registration re-populates
   the entry before the delete is applied — without this guard the cleanup
   would wipe a freshly re-registered live process.
@@ -503,8 +503,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
   defp handle_delete_if_expired(hub_id, child_id) do
     now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
-    case :ets.lookup(hub_id, child_id) do
-      [{^child_id, _value, expire}] when is_integer(expire) and now > expire ->
+    case Storage.match(hub_id, {child_id, :_, :"$1"}) do
+      [{expire}] when is_integer(expire) and now > expire ->
         Storage.remove(hub_id, child_id)
         true
 

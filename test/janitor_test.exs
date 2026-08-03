@@ -94,6 +94,16 @@ defmodule Test.JanitorTest do
       assert Janitor.purge_pending_registry(hub_id) == :ok
     end
 
+    test "delete_if_expired returns false for a re-populated entry", %{hub_id: hub_id} do
+      child_spec = %{id: :repop_guard, start: {TestModule, :start_link, []}}
+      ProcessRegistry.insert(hub_id, child_spec, [], metadata: %{}, ttl: -1000)
+      # Re-registration clears the TTL, turning the row into a permanent 2-tuple.
+      ProcessRegistry.insert(hub_id, child_spec, [{:node1, self()}], metadata: %{})
+
+      refute ProcessRegistry.delete_if_expired(hub_id, :repop_guard)
+      assert ProcessRegistry.lookup(hub_id, :repop_guard) != nil
+    end
+
     test "handles malformed 3-tuple entries gracefully" do
       # Create a public ETS table with a malformed 3-tuple that matches {$1, $2, $3}
       # but does NOT match [child_id, {child_spec, _nodes, metadata}, ttl_expire]
