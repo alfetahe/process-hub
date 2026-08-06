@@ -1,7 +1,8 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.6.1 - 2026-08-06
+Fixes `Janitor` TTL sweep bug and minor documentation issues.
 
 ### Changed
 - Documentation updated and corrected throughout. `ProcessHub.await/1` is no longer deprecated as it runs on `ProcessHub.Future` underneath, and the deprecated `:async_wait` option was removed from the `ProcessHub` public API.
