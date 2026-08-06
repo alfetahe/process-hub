@@ -89,7 +89,9 @@ defmodule ProcessHub.MixProject do
             ProcessHub.Strategy.Migration.ColdSwap,
             ProcessHub.Strategy.Migration.HotSwap,
             ProcessHub.Strategy.Migration.SwapMigration,
-            ProcessHub.Strategy.Migration.HandoverBehaviour
+            ProcessHub.Strategy.Migration.HandoverBehaviour,
+            ProcessHub.Strategy.Migration.Autonomous,
+            ProcessHub.Strategy.Migration.MigrationConsent
           ],
           "Synchronization Strategies": [
             ProcessHub.Strategy.Synchronization.Base,
@@ -113,7 +115,12 @@ defmodule ProcessHub.MixProject do
             ProcessHub.Service.Storage.Behaviour,
             ProcessHub.Service.Storage.Ets,
             ProcessHub.Service.Storage.Dets,
+            ProcessHub.Service.Storage.DetsFile,
+            ProcessHub.Service.Storage.DurableEts,
+            ProcessHub.Service.Storage.Entry,
             ProcessHub.Service.ProcessRegistry,
+            ProcessHub.Service.Migration,
+            ProcessHub.Service.Recovery,
             ProcessHub.Service.Distributor,
             ProcessHub.Service.RequestManager,
             ProcessHub.Service.Dispatcher,
@@ -159,8 +166,12 @@ defmodule ProcessHub.MixProject do
           Utilities: [
             ProcessHub.Utility.Bag,
             ProcessHub.Utility.Extractor,
-            ProcessHub.Utility.Injector
-          ]
+            ProcessHub.Utility.Injector,
+            ProcessHub.Utility.TimerMap
+          ],
+          # Catch-all keeps unlisted modules at the bottom; without a group they
+          # would sort above "Public API".
+          Other: ~r/.*/
         ]
       ]
     ]

@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 - Documentation updated and corrected throughout. `ProcessHub.await/1` is no longer deprecated as it runs on `ProcessHub.Future` underneath, and the deprecated `:async_wait` option was removed from the `ProcessHub` public API.
 
 ### Fixed
+- The `ProcessHub` module is now the first entry in the generated docs sidebar. Eight modules were missing from `:groups_for_modules`, and ExDoc sorts ungrouped modules above every named group, pushing the public API below them. The missing modules were filed under their groups and a trailing catch-all group keeps any future unlisted module at the bottom.
 - `ProcessRegistry.bulk_insert/3` and `bulk_delete/3` now commit each bulk as a single atomic write (new optional `insert_many/2` backend callback), so readers can no longer observe half-applied bulks and disk-backed backends sync once per bulk instead of once per row.
 - Janitor TTL sweep now works on non-default registry backends. `ProcessRegistry.delete_if_expired/2` re-validated expiry with a raw `:ets.lookup` that only exists on the `:ets` backend; on `{:dets, _}`, `{:durable_ets, _}`, and custom backends it crashed the registry process (and the janitor with it) every purge interval once any TTL entry expired, so the dead-child stubs written by `bulk_delete` were never removed and the on-disk registry file grew without bound. The re-check now dispatches through the configured storage backend, and a sweep racing hub teardown degrades to a no-op instead of a crash.
 
