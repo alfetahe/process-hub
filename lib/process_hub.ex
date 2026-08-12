@@ -197,30 +197,36 @@ defmodule ProcessHub do
 
     See `guides/Persistence.md` for the recovery semantics and
     operational profile.
-  - `:auto_recovery` is optional and enables a marker-gated coordinator
-    boot lifecycle (`:recovering → :normal`). **Experimental** and may
-    change in future releases. The default is `false`. Requires a
-    persistent `:registry_backend` (e.g. `{:dets, _}`) to be useful; with
-    the default `:ets` backend the replay step finds an empty registry.
+  - `:auto_recovery` is optional and enables the orphan reconcile: each node
+    periodically starts the difference between its durable registry and what the
+    cluster is observed to hold, so a whole-cluster outage restores itself and a
+    single node rejoining a live cluster starts nothing. **Experimental** and may
+    change in future releases. The default is `false`. Requires a persistent
+    `:registry_backend` (e.g. `{:durable_ets, _}`) to be useful; with the default
+    `:ets` backend there are no durable candidates and no child is ever started.
     Accepted shapes:
-    - `false` — disabled (default).
+    - `false` — disabled (default). No reconcile round runs and
+      `recovery_state/1` is `:normal` from `init/1`.
     - `true` — enabled with default options.
     - `keyword()` — explicit options:
-      - `:marker_path` — operator override for the marker file location.
-        `nil` (default) resolves to
-        `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
-        Marker present on boot → straight to `:normal`; absent →
-        `:recovering` with a cspecs-only replay, then `:normal`.
-      - `:recovery_timeout_ms` — safety ceiling on the `:recovering` state:
-        bounds the replay loop and force-opens the cluster-event queue gate
-        after this many ms. Default `30_000`. Range `[1_000, 600_000]`.
+      - `:reconcile_grace_ms` — delay before the first round, which runs whether
+        or not any peer has joined. Default `30_000`. Range `[1_000, 600_000]`.
+        Set it above the synchronization strategy's `sync_interval`.
+      - `:reconcile_interval_ms` — minimum spacing between subsequent rounds, and
+        the per-handler budget for the blocking `pre_recovery_replay` hook.
+        Default `15_000`. Range `[1_000, 600_000]`.
+      - `:stopped_row_ttl_ms` — how long a deliberately stopped child's registry
+        row survives past its `stopped_at`, bounding how long a node may be absent
+        and still be prevented from resurrecting it. Default `86_400_000`
+        (24 hours). Range `[60_000, 31_536_000_000]`.
 
-    See `ProcessHub.Service.Recovery` (`recovery_state/1`, `await_normal/2`,
-    `prepare_recovery/1`, `prepare_recovery_cluster/1`) for the
-    recovery/operator API.
+    The keys `:marker_path`, `:replay_timeout_ms`, and `:recovery_timeout_ms` are
+    **deprecated**: accepted with a warning, ignored, and rejected in a future
+    release. See `migration-guide.md`.
 
-    See `guides/Persistence.md` for the full state-machine, the marker
-    gate, the hooks, and the recommended pairing with
+    See `ProcessHub.Service.Recovery` (`recovery_state/1`, `await_normal/2`) for
+    the introspection API, and `guides/Persistence.md` for the epoch merge rule,
+    the lifecycle/expiry model, the hooks, and the recommended pairing with
     `registry_backend: {:dets, _}` or `{:durable_ets, _}` for full
     restart-survival.
   """

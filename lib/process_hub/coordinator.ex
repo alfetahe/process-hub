@@ -86,16 +86,12 @@ defmodule ProcessHub.Coordinator do
   end
 
   defp do_init(hub_conf, procs, storage, recovery_config) do
-    {marker, recovery_state, resolved_mode} =
-      Recovery.init_marker(hub_conf.hub_id, recovery_config.marker_path, recovery_config.enabled?)
-
     state = %Hub{
       hub_id: hub_conf.hub_id,
       procs: procs,
       storage: storage,
       recovery_config: recovery_config,
-      recovery_state: recovery_state,
-      recovery_marker: marker
+      recovery_state: if(recovery_config.enabled?, do: :recovering, else: :normal)
     }
 
     hub_conf = init_strategies(state, hub_conf)
@@ -121,14 +117,14 @@ defmodule ProcessHub.Coordinator do
       %{
         "nodes" => handler_nodes(boot_handlers),
         "connected" => Node.list(),
-        "rs" => recovery_state
+        "rs" => state.recovery_state
       },
       prefix: "Coordinator"
     )
 
     state = join_handlers(boot_handlers, state)
 
-    state = Recovery.start(state, resolved_mode)
+    state = Recovery.schedule_first_round(state)
 
     boot_token = Cluster.boot_token()
     Storage.insert(storage.misc, StorageKey.sbt(), boot_token)
@@ -307,23 +303,13 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_cluster_leave, node} = msg, state) do
-    if Recovery.gate_closed?(state) do
-      {:noreply, Recovery.enqueue(state, msg)}
-    else
-      {:noreply, batch_event(state, :cluster_leave, node)}
-    end
+  def handle_info({@event_cluster_leave, node}, state) do
+    {:noreply, batch_event(state, :cluster_leave, node)}
   end
 
   @impl true
-  def handle_info({:nodedown, node} = msg, state) do
-    state = cancel_nodeup_reconcile(state, node)
-
-    if Recovery.gate_closed?(state) do
-      {:noreply, Recovery.enqueue(state, msg)}
-    else
-      {:noreply, batch_event(state, :nodedown, node)}
-    end
+  def handle_info({:nodedown, node}, state) do
+    {:noreply, state |> cancel_nodeup_reconcile(node) |> batch_event(:nodedown, node)}
   end
 
   @impl true
@@ -400,15 +386,9 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_node_restarted, {peer, token}} = msg, state) when is_atom(peer) do
-    # Defer while a local recovery replay is in flight so the purge does not race
-    # the registry rebuild; the drained queue re-runs it once the gate opens.
-    if Recovery.gate_closed?(state) do
-      {:noreply, Recovery.enqueue(state, msg)}
-    else
-      Cluster.handle_boot_announcement(state, peer, token)
-      {:noreply, state}
-    end
+  def handle_info({@event_node_restarted, {peer, token}}, state) when is_atom(peer) do
+    Cluster.handle_boot_announcement(state, peer, token)
+    {:noreply, state}
   end
 
   @impl true
@@ -438,30 +418,26 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info(:start_marker_replay, %Hub{recovery_state: :recovering} = state),
-    do: {:noreply, Recovery.spawn_replay(state)}
+  # "Run a round if one is allowed". The grace timer sends this once to open the
+  # first round; afterwards completed synchronisation rounds drive it (see
+  # `:sync_processes`), and `round_due?/1` applies the rate limit.
+  def handle_info(:reconcile_round, %Hub{recovery_state: :recovering} = state),
+    do: {:noreply, Recovery.spawn_round(state)}
 
-  def handle_info(:start_marker_replay, state), do: {:noreply, state}
-
-  @impl true
-  def handle_info({:marker_replay_done, result}, %Hub{recovery_state: :recovering} = state) do
-    measurements = Recovery.replay_measurements(result)
-
-    {:noreply,
-     state |> Recovery.open_gate(:replay_complete, measurements) |> reply_normal_waiters()}
+  def handle_info(:reconcile_round, state) do
+    {:noreply, if(Recovery.round_due?(state), do: Recovery.spawn_round(state), else: state)}
   end
 
-  def handle_info({:marker_replay_done, _result}, state), do: {:noreply, state}
-
   @impl true
-  def handle_info(:recovery_timeout_elapsed, %Hub{recovery_state: :recovering} = state) do
-    measurements = Recovery.timeout_measurements(state)
+  def handle_info({:reconcile_done, result}, state) do
+    state = %{
+      state
+      | reconcile_running?: false,
+        reconcile_last_at: System.monotonic_time(:millisecond)
+    }
 
-    {:noreply,
-     state |> Recovery.open_gate(:recovery_timeout, measurements) |> reply_normal_waiters()}
+    {:noreply, state |> Recovery.complete_first_round(result) |> reply_normal_waiters()}
   end
-
-  def handle_info(:recovery_timeout_elapsed, state), do: {:noreply, state}
 
   @impl true
   def handle_info({:await_normal_timeout, from}, state) do
@@ -490,6 +466,8 @@ defmodule ProcessHub.Coordinator do
     state.storage.misc
     |> Storage.get(StorageKey.strsyn())
     |> schedule_sync()
+
+    state = if Recovery.round_due?(state), do: Recovery.spawn_round(state), else: state
 
     {:noreply, state}
   end
@@ -650,10 +628,10 @@ defmodule ProcessHub.Coordinator do
   # A presence announce merges only a node we don't already track, so a
   # steady-state heartbeat is a silent no-op.
   defp reconcile_presence(state, peer) do
-    cond do
-      not Cluster.new_node?(Cluster.nodes(state.storage.misc, [:include_local]), peer) -> state
-      Recovery.gate_closed?(state) -> Recovery.enqueue(state, {@event_cluster_heartbeat, peer})
-      true -> batch_event(state, :cluster_join, peer)
+    if Cluster.new_node?(Cluster.nodes(state.storage.misc, [:include_local]), peer) do
+      batch_event(state, :cluster_join, peer)
+    else
+      state
     end
   end
 

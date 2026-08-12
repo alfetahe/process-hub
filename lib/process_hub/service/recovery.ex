@@ -1,63 +1,79 @@
 defmodule ProcessHub.Service.Recovery do
   @moduledoc """
-  State-machine logic for the coordinator boot-recovery lifecycle.
+  Orphan reconcile: the continuously computed difference that replaces boot-time
+  replay.
 
   > #### Experimental {: .warning}
   >
-  > Coordinator boot recovery is experimental and may change in future releases.
+  > The orphan reconcile (the `:auto_recovery` lifecycle) is experimental and may
+  > change in future releases.
   > Use in production at your own discretion.
 
-  When `:auto_recovery` is enabled the coordinator transitions through
-  `:recovering → :normal` on start-up, driven by the marker gate: the
-  mode is resolved from the marker at `init/1`. Marker present → straight
-  to `:normal`. Marker absent → `:recovering` with a cspecs-only replay,
-  then `:normal`. While the gate is closed cluster events are queued and
-  drained in FIFO order on gate open. The marker is rewritten on every
-  successful boot.
+  A node cannot answer "does the cluster already hold my children?" from its own
+  disk — the disk records how *this* node died, not what the cluster currently
+  holds. So nothing asks it. Instead, every round computes
 
-  Replay only produces work with a persistent `:registry_backend` (e.g.
-  `{:dets, _}`); with `:ets` the dump is empty. Replay is **cspecs-only**:
-  `node_pids` and metadata are not restored — bindings are recomputed
-  by the first migration tick after the cluster forms.
+      orphans = durable candidates − children observed running anywhere − stopped rows
 
-  This module owns the pure helpers used by the coordinator:
+  and submits the remainder through the normal
+  `ProcessHub.Service.Distributor.compose_start_operation/3` with
+  `check_existing: true`. Because it is a difference rather than a mode, the same
+  code covers both directions: after a whole-cluster power loss the live registry
+  is empty and everything returns; after a single-node rejoin the peers already
+  hold the children and the difference is empty.
 
-    - parsing/validating the `:auto_recovery` config (including `:marker_path`)
-    - resolving the recovery mode (`resolve_mode/2`) from the marker
-    - marker IO (`marker_exists?/1`, `write_marker/1`, `delete_marker/1`)
-    - replaying the persisted registry into
-      `Distributor.compose_start_operation/3` (best-effort, partial-success
-      tolerant)
+  The first round runs `reconcile_grace_ms` after coordinator start — with or
+  without peers, so `:normal` is always reached in bounded time — and thereafter
+  on synchronisation-round completion, rate-limited to one per
+  `reconcile_interval_ms`.
+
+  This module owns:
+
+    - parsing/validating the `:auto_recovery` config
+    - running a round (`reconcile/2`) and its scheduling helpers
+    - duplicate-binding resolution
     - dispatching the recovery hooks
 
-  The coordinator stays the GenServer; this module is stateless aside
-  from the data passed in.
+  The coordinator stays the GenServer; this module is stateless aside from the
+  data passed in and the per-hub orphan-pending map it keeps in misc storage.
   """
 
-  alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.LoggerService
+  alias ProcessHub.Service.Migration
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.ProcessRegistry.Row
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Hub
 
-  use Event
+  @default_reconcile_grace_ms 30_000
+  @default_reconcile_interval_ms 15_000
+  @default_stopped_row_ttl_ms 86_400_000
 
-  @default_recovery_timeout_ms 30_000
+  @reconcile_ms_min 1_000
+  @reconcile_ms_max 600_000
+  @stopped_row_ttl_min 60_000
+  @stopped_row_ttl_max 31_536_000_000
 
-  @recovery_timeout_min 1_000
-  @recovery_timeout_max 600_000
+  # Keys from the marker-gated design. Still accepted so an existing deployment
+  # keeps starting, but they no longer drive anything and are dropped in a future
+  # release.
+  @deprecated_keys [:marker_path, :replay_timeout_ms, :recovery_timeout_ms]
 
-  @typedoc "Result of a recovery-replay run."
-  @type replay_result() :: %{
-          child_count: non_neg_integer(),
-          succeeded: non_neg_integer(),
-          failed: non_neg_integer(),
-          skipped: non_neg_integer(),
-          attempted: non_neg_integer(),
+  @typedoc "Result of one orphan reconcile round."
+  @type round_result() :: %{
+          candidates: non_neg_integer(),
+          orphans: non_neg_integer(),
+          started: non_neg_integer(),
+          skipped_pending: non_neg_integer(),
+          duplicates: non_neg_integer(),
           elapsed_ms: non_neg_integer(),
-          reason: :completed | :replay_timeout | :empty
+          reason: :completed | :read_error | :draining | :crashed
         }
 
   @doc """
@@ -65,47 +81,56 @@ defmodule ProcessHub.Service.Recovery do
 
   Accepts the documented shapes:
 
-    * `false` — disabled.
+    * `false` — disabled (the default).
     * `true` — enabled with defaults.
-    * `keyword()` — explicit `:recovery_timeout_ms` and the optional
-      `:marker_path` override.
+    * `keyword()` — `:reconcile_grace_ms`, `:reconcile_interval_ms`, and
+      `:stopped_row_ttl_ms`.
 
-  Returns `{:ok, recovery_config}` or `{:error, reason}` for out-of-range
-  values. Unknown shapes return `{:error, :invalid_auto_recovery}` so the
-  caller can decide whether to fall back to disabled or to refuse to
-  start.
+  The marker-era keys `:marker_path`, `:replay_timeout_ms`, and
+  `:recovery_timeout_ms` are **deprecated**: they are accepted with a WARN and
+  ignored, and will be rejected in a future release.
+
+  Returns `{:ok, recovery_config}`, or `{:error, {:invalid_auto_recovery, reason}}`
+  for out-of-range values. Unknown shapes return `{:error, :invalid_auto_recovery}`
+  so the caller can decide whether to fall back to disabled or to refuse to start.
   """
   @spec parse_config(false | true | keyword() | term()) ::
           {:ok, Hub.recovery_config()}
-          | {:error,
-             :invalid_auto_recovery
-             | {:invalid_auto_recovery, atom()}}
+          | {:error, :invalid_auto_recovery | {:invalid_auto_recovery, atom()}}
   def parse_config(false), do: {:ok, disabled_config()}
 
-  def parse_config(true) do
-    {:ok,
-     %{
-       enabled?: true,
-       recovery_timeout_ms: @default_recovery_timeout_ms,
-       marker_path: nil
-     }}
-  end
+  def parse_config(true), do: {:ok, %{disabled_config() | enabled?: true}}
 
   def parse_config(opts) when is_list(opts) do
-    with {:ok, recovery_timeout} <-
+    warn_deprecated_keys(opts)
+
+    with {:ok, grace} <-
            validate_int(
-             Keyword.get(opts, :recovery_timeout_ms, @default_recovery_timeout_ms),
-             @recovery_timeout_min,
-             @recovery_timeout_max,
-             :recovery_timeout_ms_out_of_range
+             Keyword.get(opts, :reconcile_grace_ms, @default_reconcile_grace_ms),
+             @reconcile_ms_min,
+             @reconcile_ms_max,
+             :reconcile_grace_ms_out_of_range
            ),
-         {:ok, marker_path} <-
-           validate_marker_path(Keyword.get(opts, :marker_path)) do
+         {:ok, interval} <-
+           validate_int(
+             Keyword.get(opts, :reconcile_interval_ms, @default_reconcile_interval_ms),
+             @reconcile_ms_min,
+             @reconcile_ms_max,
+             :reconcile_interval_ms_out_of_range
+           ),
+         {:ok, stopped_row_ttl} <-
+           validate_int(
+             Keyword.get(opts, :stopped_row_ttl_ms, @default_stopped_row_ttl_ms),
+             @stopped_row_ttl_min,
+             @stopped_row_ttl_max,
+             :stopped_row_ttl_ms_out_of_range
+           ) do
       {:ok,
        %{
          enabled?: true,
-         recovery_timeout_ms: recovery_timeout,
-         marker_path: marker_path
+         reconcile_grace_ms: grace,
+         reconcile_interval_ms: interval,
+         stopped_row_ttl_ms: stopped_row_ttl
        }}
     end
   end
@@ -117,292 +142,386 @@ defmodule ProcessHub.Service.Recovery do
   def disabled_config do
     %{
       enabled?: false,
-      recovery_timeout_ms: @default_recovery_timeout_ms,
-      marker_path: nil
+      reconcile_grace_ms: @default_reconcile_grace_ms,
+      reconcile_interval_ms: @default_reconcile_interval_ms,
+      stopped_row_ttl_ms: @default_stopped_row_ttl_ms
     }
   end
 
-  defp validate_marker_path(nil), do: {:ok, nil}
-  defp validate_marker_path(path) when is_binary(path), do: {:ok, path}
-  defp validate_marker_path(path) when is_list(path), do: {:ok, List.to_string(path)}
-  defp validate_marker_path(_), do: {:error, {:invalid_auto_recovery, :invalid_marker_path}}
-
   @doc """
-  Resolves the absolute marker path for a hub.
-
-  If `path` is non-nil, returns it as-is. Otherwise resolves to
-  `<:filename.basedir(:user_data, "process_hub")>/<hub_id>/cluster.healthy`.
+  Returns the parsed `:auto_recovery` config for a settings struct, falling back to
+  the disabled config for any shape the coordinator would reject.
   """
-  @spec resolve_marker_path(atom(), nil | String.t()) :: String.t()
-  def resolve_marker_path(_hub_id, path) when is_binary(path) and byte_size(path) > 0, do: path
-
-  def resolve_marker_path(hub_id, _) do
-    base =
-      :filename.basedir(:user_data, ~c"process_hub")
-      |> to_string()
-
-    Path.join([base, Atom.to_string(hub_id), "cluster.healthy"])
-  end
-
-  @doc """
-  Returns whether the marker file at `path` exists.
-
-  `nil` paths and unreadable parents return `false` (selecting recovery
-  mode is the safe direction).
-  """
-  @spec marker_exists?(nil | String.t()) :: boolean()
-  def marker_exists?(nil), do: false
-
-  def marker_exists?(path) when is_binary(path) do
-    try do
-      File.exists?(path)
-    rescue
-      _ -> false
+  @spec config_or_disabled(map() | struct()) :: Hub.recovery_config()
+  def config_or_disabled(hub_conf) do
+    case parse_config(Map.get(hub_conf, :auto_recovery, false)) do
+      {:ok, config} -> config
+      {:error, _} -> disabled_config()
     end
   end
 
-  def marker_exists?(_), do: false
-
-  @doc """
-  Writes a zero-byte marker file at `path`, creating parent directories.
-  Idempotent on success; returns `{:error, posix()}` on IO failure.
-  """
-  @spec write_marker(nil | String.t()) :: :ok | {:error, term()}
-  def write_marker(nil), do: :ok
-
-  def write_marker(path) when is_binary(path) do
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.touch(path) do
-      :ok
-    end
+  defp warn_deprecated_keys(opts) do
+    Enum.each(@deprecated_keys, fn key ->
+      if Keyword.has_key?(opts, key) do
+        LoggerService.warning(
+          ":auto_recovery key @key is deprecated and ignored; it will be rejected in a " <>
+            "future release. See migration-guide.md",
+          %{"key" => inspect(key)},
+          prefix: "Recovery"
+        )
+      end
+    end)
   end
 
-  @doc """
-  Deletes the marker file at `path`. Returns `:ok` if the marker is
-  absent (no-op). Returns `{:error, posix()}` on permission/IO failure.
-  """
-  @spec delete_marker(nil | String.t()) :: :ok | {:error, term()}
-  def delete_marker(nil), do: :ok
+  defp validate_int(value, min, max, _err)
+       when is_integer(value) and value >= min and value <= max,
+       do: {:ok, value}
 
-  def delete_marker(path) when is_binary(path) do
-    case File.rm(path) do
-      :ok -> :ok
-      {:error, :enoent} -> :ok
-      {:error, _} = err -> err
-    end
-  end
+  defp validate_int(_value, _min, _max, err), do: {:error, {:invalid_auto_recovery, err}}
+
+  # --- scheduling -------------------------------------------------------------
 
   @doc """
-  Resolves the effective recovery mode at coordinator init from the marker.
+  Schedules the first reconcile round `reconcile_grace_ms` after coordinator start.
 
-    * `marker_enabled?` is `false` → `:normal`
-    * `marker_exists?` is `true` → `:normal` (trust peers)
-    * otherwise → `:recovery` (rebuild from disk)
+  The timer fires whether or not any peer joined, so `:normal` is reached in
+  bounded time on every boot. Disabled hubs schedule nothing.
   """
-  @spec resolve_mode(boolean(), boolean()) :: :normal | :recovery
-  def resolve_mode(marker_exists?, marker_enabled?)
-      when is_boolean(marker_exists?) and is_boolean(marker_enabled?) do
-    cond do
-      not marker_enabled? -> :normal
-      marker_exists? -> :normal
-      true -> :recovery
-    end
-  end
+  @spec schedule_first_round(Hub.t()) :: Hub.t()
+  def schedule_first_round(%Hub{recovery_config: %{enabled?: false}} = hub), do: hub
 
-  # --- marker-driven boot orchestration --------------------------------------
-
-  @doc """
-  Injects `recovery_replay: bool` into backend opts when `:auto_recovery`
-  is enabled. Honours an explicitly set value if the caller already
-  provided one.
-  """
-  @spec maybe_inject_replay_flag(keyword(), atom(), map() | struct()) :: keyword()
-  def maybe_inject_replay_flag(opts, hub_id, hub_conf) do
-    cond do
-      Keyword.has_key?(opts, :recovery_replay) ->
-        opts
-
-      true ->
-        case parse_config(Map.get(hub_conf, :auto_recovery, false)) do
-          {:ok, %{enabled?: true, marker_path: marker_path}} ->
-            path = resolve_marker_path(hub_id, marker_path)
-            replay? = resolve_mode(marker_exists?(path), true) == :recovery
-            Keyword.put(opts, :recovery_replay, replay?)
-
-          _ ->
-            opts
-        end
-    end
+  def schedule_first_round(%Hub{} = hub) do
+    Process.send_after(self(), :reconcile_round, hub.recovery_config.reconcile_grace_ms)
+    hub
   end
 
   @doc """
-  Builds the marker config for a hub: resolves the absolute path and
-  computes the initial `recovery_state` from the marker + filesystem.
+  Returns whether a round triggered by a completed synchronisation round may run.
 
-  Returns `{marker, initial_state, resolved_mode}`. The caller (the
-  coordinator's `init/1`) stamps the marker onto `%Hub{}` and decides
-  what to do next via `start/2`.
+  Rounds are rate-limited to one per `reconcile_interval_ms`, are never started
+  before the first (grace-scheduled) round, and never overlap.
   """
-  @spec init_marker(atom(), nil | String.t(), boolean()) ::
-          {Hub.recovery_marker(), Hub.recovery_state(), :normal | :recovery}
-  def init_marker(hub_id, marker_path, auto_recovery_enabled?) do
-    path = if auto_recovery_enabled?, do: resolve_marker_path(hub_id, marker_path), else: nil
-    mode = resolve_mode(marker_exists?(path), auto_recovery_enabled?)
+  @spec round_due?(Hub.t()) :: boolean()
+  def round_due?(%Hub{recovery_config: %{enabled?: false}}), do: false
+  def round_due?(%Hub{reconcile_running?: true}), do: false
+  def round_due?(%Hub{recovery_state: :recovering}), do: false
 
-    initial = if auto_recovery_enabled? and mode == :recovery, do: :recovering, else: :normal
-
-    {%{enabled?: auto_recovery_enabled?, path: path}, initial, mode}
+  def round_due?(%Hub{reconcile_last_at: last, recovery_config: config}) do
+    last === nil or
+      System.monotonic_time(:millisecond) - last >= config.reconcile_interval_ms
   end
 
   @doc """
-  Drives the marker-gated lifecycle from coordinator init.
-
-    * marker disabled → no-op.
-    * mode `:normal` → emit `:skipped`, write the marker.
-    * mode `:recovery` → emit `:started`, schedule the timeout, and
-      send `self() :start_marker_replay` so the replay runs after init
-      returns.
-
-  Returns the updated state.
+  Runs a round in a separate process; replies to the coordinator with
+  `{:reconcile_done, result}`.
   """
-  @spec start(Hub.t(), :normal | :recovery) :: Hub.t()
-  def start(%Hub{recovery_marker: %{enabled?: false}} = state, _), do: state
-
-  def start(%Hub{} = state, :normal) do
-    reason = if marker_exists?(state.recovery_marker.path), do: :marker_present, else: :disabled
-    dispatch_state_changed_hook(state, :init, :normal, reason)
-    persist_marker(state)
-    state
-  end
-
-  def start(%Hub{} = state, :recovery) do
-    dispatch_state_changed_hook(state, :init, :recovering, :marker_absent, %{
-      cspec_count: cspec_count(state.hub_id)
-    })
-
-    timer =
-      Process.send_after(self(), :recovery_timeout_elapsed, state.recovery_config.recovery_timeout_ms)
-
-    Process.send_after(self(), :start_marker_replay, 0)
-    %{state | recovery_timeout_timer: timer}
-  end
-
-  @doc "Builds the `recovering → :normal` hook measurements from a replay result."
-  @spec replay_measurements(map()) :: map()
-  def replay_measurements(result) do
-    %{
-      cspec_count: result.child_count,
-      succeeded: result.succeeded,
-      failed: result.failed,
-      skipped: result.skipped,
-      elapsed_ms: result.elapsed_ms
-    }
-  end
-
-  @doc "Builds the `recovering → :normal` hook measurements for the timeout ceiling."
-  @spec timeout_measurements(Hub.t()) :: map()
-  def timeout_measurements(%Hub{} = state) do
-    %{
-      cspec_count: cspec_count(state.hub_id),
-      attempted: 0,
-      elapsed_ms: state.recovery_config.recovery_timeout_ms
-    }
-  end
-
-  @doc "Runs the replay in a separate process; replies with `{:marker_replay_done, result}`."
-  @spec spawn_replay(Hub.t()) :: Hub.t()
-  def spawn_replay(%Hub{} = state) do
-    coord = self()
+  @spec spawn_round(Hub.t()) :: Hub.t()
+  def spawn_round(%Hub{} = hub) do
+    coordinator = self()
+    first_round? = hub.recovery_state === :recovering
 
     spawn(fn ->
+      # The reply is what clears `reconcile_running?` and, on the first round,
+      # reaches `:normal` — so every exit path must still send one. A registry or
+      # peer call that times out exits rather than raising, hence the catch.
       result =
         try do
-          replay(state, state.recovery_config)
+          reconcile(hub, first_round?)
         rescue
-          _ -> empty_result()
+          error -> crashed_result(error)
+        catch
+          kind, reason -> crashed_result({kind, reason})
         end
 
-      send(coord, {:marker_replay_done, result})
+      send(coordinator, {:reconcile_done, result})
     end)
 
-    state
+    %{hub | reconcile_running?: true}
   end
 
-  @doc "Opens the recovery gate, dispatches the transition hook, and drains queued events."
-  @spec open_gate(Hub.t(), atom(), map()) :: Hub.t()
-  def open_gate(state, reason, measurements \\ %{})
+  # --- the round --------------------------------------------------------------
 
-  def open_gate(%Hub{recovery_state: :recovering} = state, reason, measurements) do
-    if state.recovery_timeout_timer, do: Process.cancel_timer(state.recovery_timeout_timer)
+  # One round: read the durable candidates, subtract what is accounted for, start
+  # the rest, resolve duplicates, report. A read error yields no starts and no
+  # duplicate resolution — a transient failure must never be mistaken for
+  # "everything was deliberately removed".
+  defp reconcile(%Hub{} = hub, first_round?) do
+    started_at = System.monotonic_time(:millisecond)
 
-    state = %{state | recovery_state: :normal, recovery_timeout_timer: nil}
-    dispatch_state_changed_hook(state, :recovering, :normal, reason, measurements)
-    persist_marker(state)
+    # A draining node must start nothing, and no other node's ring owner can be
+    # draining: draining removes the node from every peer's membership before
+    # children move, so it never owns a candidate.
+    result =
+      if Migration.draining?(hub),
+        do: empty_result(:draining),
+        else: run_round(hub, first_round?)
 
-    drain_queue(state)
+    result = %{result | elapsed_ms: System.monotonic_time(:millisecond) - started_at}
+
+    HookManager.dispatch_hook(hub.storage.hook, Hook.reconcile_round(), %{
+      hub_id: hub.hub_id,
+      first_round: first_round?,
+      measurements: Map.delete(result, :reason)
+    })
+
+    result
   end
 
-  def open_gate(state, _, _), do: state
+  defp run_round(hub, first_round?) do
+    case Storage.read_durable(hub.hub_id) do
+      {:error, reason} ->
+        LoggerService.warning(
+          "Reconcile skipped: durable registry unreadable (@reason)",
+          %{"reason" => inspect(reason)},
+          prefix: "Recovery"
+        )
 
-  @doc "Returns `true` when cluster events must be deferred (gate closed)."
-  @spec gate_closed?(Hub.t()) :: boolean()
-  def gate_closed?(%Hub{recovery_marker: %{enabled?: true}, recovery_state: :recovering}),
-    do: true
+        empty_result(:read_error)
 
-  def gate_closed?(_), do: false
+      {:ok, rows} ->
+        candidates = candidate_rows(rows)
+        live = ProcessRegistry.dump(hub.hub_id)
+        registered = ProcessRegistry.dump_all(hub.hub_id)
 
-  @doc "Appends a deferred cluster event to the queue."
-  @spec enqueue(Hub.t(), term()) :: Hub.t()
-  def enqueue(%Hub{recovery_event_queue: q} = state, msg),
-    do: %{state | recovery_event_queue: q ++ [msg]}
+        {orphans, skipped_pending} = orphan_set(hub, candidates, live, registered)
+        started = start_orphans(hub, orphans, map_size(candidates), first_round?)
+        duplicates = resolve_duplicates(hub, live)
 
-  @doc """
-  Reports the `cspec_count` currently persisted, used for the recovery
-  hook measurements at boot.
-  """
-  @spec cspec_count(ProcessHub.hub_id()) :: non_neg_integer()
-  def cspec_count(hub_id) do
-    try do
-      hub_id |> ProcessRegistry.dump_all() |> map_size()
-    rescue
-      _ -> 0
+        %{
+          empty_result(:completed)
+          | candidates: map_size(candidates),
+            orphans: length(orphans),
+            started: started,
+            skipped_pending: skipped_pending,
+            duplicates: duplicates
+        }
     end
   end
 
-  defp empty_result do
+  # `read_durable/1` returns raw storage rows; keep the well-formed registry ones.
+  defp candidate_rows(rows) do
+    Enum.reduce(rows, %{}, fn
+      {child_id, {%{} = child_spec, node_pids, metadata}}, acc
+      when is_list(node_pids) and is_map(metadata) ->
+        Map.put(acc, child_id, {child_spec, metadata})
+
+      _row, acc ->
+        acc
+    end)
+  end
+
+  # orphans = candidates − observed running anywhere − stopped − not-yet-confirmed.
+  #
+  # The two-consecutive-rounds rule applies only to children the live registry
+  # still knows about: those are the ones a migration can leave momentarily
+  # unbound. A candidate with no live row at all — the whole-cluster restart case —
+  # has nothing in flight to wait for and is restored on the first round.
+  defp orphan_set(hub, candidates, live, registered) do
+    unaccounted =
+      Enum.reject(candidates, fn {child_id, {_child_spec, metadata}} ->
+        Map.has_key?(live, child_id) or stopped?(child_id, metadata, registered)
+      end)
+
+    pending = Storage.get(hub.storage.misc, StorageKey.rop()) || MapSet.new()
+
+    {confirmed, deferred} =
+      Enum.split_with(unaccounted, fn {child_id, _row} ->
+        not Map.has_key?(registered, child_id) or MapSet.member?(pending, child_id)
+      end)
+
+    Storage.insert(
+      hub.storage.misc,
+      StorageKey.rop(),
+      MapSet.new(unaccounted, fn {child_id, _row} -> child_id end)
+    )
+
+    {Enum.map(confirmed, fn {_child_id, {child_spec, _metadata}} -> child_spec end),
+     length(deferred)}
+  end
+
+  # A stopped row is excluded on every node, including one whose durable copy
+  # still shows the child running at a lower epoch.
+  defp stopped?(child_id, durable_metadata, registered) do
+    live_metadata =
+      case Map.get(registered, child_id) do
+        {_child_spec, _node_pids, metadata} -> metadata
+        _ -> nil
+      end
+
+    if Row.wins_merge?(live_metadata, durable_metadata) do
+      Row.stopped?(live_metadata)
+    else
+      Row.stopped?(durable_metadata)
+    end
+  end
+
+  defp start_orphans(_hub, [], _candidate_count, _first_round?), do: 0
+
+  defp start_orphans(hub, child_specs, candidate_count, first_round?) do
+    if first_round? do
+      HookManager.dispatch_hook_blocking(
+        hub.storage.hook,
+        Hook.pre_recovery_replay(),
+        %{hub_id: hub.hub_id, child_count: candidate_count},
+        hub.recovery_config.reconcile_interval_ms
+      )
+    end
+
+    submit_orphans(hub, child_specs, true)
+  end
+
+  # `check_existing: true` rejects the whole batch when any child raced into the
+  # registry between the difference and the submit; drop the racers and retry once.
+  defp submit_orphans(_hub, [], _retry?), do: 0
+
+  defp submit_orphans(hub, child_specs, retry?) do
+    opts =
+      [
+        {:auto_recovery_replay, true},
+        {:awaitable, false},
+        {:check_existing, true},
+        {:disable_logging, true},
+        {:init_cids, Enum.map(child_specs, & &1.id)}
+      ]
+      |> Distributor.default_init_opts()
+
+    case Distributor.compose_start_operation(hub, child_specs, opts) do
+      {:ok, _operation} ->
+        length(child_specs)
+
+      {:error, {:already_started, child_ids}} when retry? ->
+        submit_orphans(hub, Enum.reject(child_specs, &(&1.id in child_ids)), false)
+
+      {:error, reason} ->
+        LoggerService.warning(
+          "Reconcile could not start @count orphans: @reason",
+          %{"count" => Integer.to_string(length(child_specs)), "reason" => inspect(reason)},
+          prefix: "Recovery"
+        )
+
+        0
+    end
+  end
+
+  # --- duplicate bindings -----------------------------------------------------
+
+  # Each node resolves only its own instance: the decision is a pure function of
+  # the (converged) registry and the ring, so every node reaches the same verdict
+  # and exactly the non-keepers act.
+  defp resolve_duplicates(hub, live) do
+    case Enum.filter(live, fn {_child_id, {_cs, node_pids, _m}} -> length(node_pids) > 1 end) do
+      [] -> 0
+      multi_bound -> stop_local_duplicates(hub, multi_bound, keeper_map(hub, multi_bound))
+    end
+  end
+
+  defp stop_local_duplicates(hub, multi_bound, keepers) do
+    Enum.reduce(multi_bound, 0, fn {child_id, {_child_spec, node_pids, _metadata}}, acc ->
+      observed = Keyword.keys(node_pids)
+      kept = Map.fetch!(keepers, child_id)
+      stopped_nodes = observed -- kept
+
+      cond do
+        stopped_nodes === [] -> acc
+        node() not in stopped_nodes -> acc + 1
+        true -> stop_duplicate(hub, child_id, observed, kept, stopped_nodes) + acc
+      end
+    end)
+  end
+
+  defp keeper_map(hub, multi_bound) do
+    dist_strategy = Storage.get(hub.storage.misc, StorageKey.strdist())
+    redun_strategy = Storage.get(hub.storage.misc, StorageKey.strred())
+    replication = RedundancyStrategy.replication_factor(redun_strategy)
+    child_ids = Enum.map(multi_bound, fn {child_id, _row} -> child_id end)
+    assigned = DistributionStrategy.belongs_to(dist_strategy, hub, child_ids, replication)
+
+    Map.new(multi_bound, fn {child_id, {_child_spec, node_pids, _metadata}} ->
+      observed = Keyword.keys(node_pids)
+
+      case Enum.filter(observed, &(&1 in Map.get(assigned, child_id, []))) do
+        [] -> {child_id, [Enum.min(observed)]}
+        owners -> {child_id, owners}
+      end
+    end)
+  end
+
+  defp stop_duplicate(hub, child_id, observed, kept, stopped_nodes) do
+    LoggerService.warning(
+      "Reconcile: @cid bound on @observed; keeping @kept, stopping local instance",
+      %{
+        "cid" => inspect(child_id),
+        "observed" => inspect(observed),
+        "kept" => inspect(kept)
+      },
+      prefix: "Recovery"
+    )
+
+    Distributor.children_terminate(hub, [child_id])
+
+    HookManager.dispatch_hook(hub.storage.hook, Hook.reconcile_duplicate(), %{
+      hub_id: hub.hub_id,
+      child_id: child_id,
+      instance_count: length(observed),
+      kept_node: List.first(kept),
+      stopped_nodes: stopped_nodes
+    })
+
+    1
+  end
+
+  defp crashed_result(error) do
+    LoggerService.warning(
+      "Reconcile round crashed: @error",
+      %{"error" => inspect(error)},
+      prefix: "Recovery"
+    )
+
+    empty_result(:crashed)
+  end
+
+  defp empty_result(reason) do
     %{
-      child_count: 0,
-      succeeded: 0,
-      failed: 0,
-      skipped: 0,
-      attempted: 0,
+      candidates: 0,
+      orphans: 0,
+      started: 0,
+      skipped_pending: 0,
+      duplicates: 0,
       elapsed_ms: 0,
-      reason: :completed
+      reason: reason
     }
   end
 
-  defp persist_marker(%Hub{recovery_marker: %{path: path}, hub_id: hub_id}) do
-    case write_marker(path) do
-      :ok ->
-        :ok
+  # --- coordinator transition -------------------------------------------------
 
-      {:error, reason} ->
-        LoggerService.error(
-          "Failed to write recovery marker at @path: @reason",
-          %{"path" => inspect(path), "reason" => inspect(reason)},
-          prefix: "Coordinator",
-          hub_id: hub_id
-        )
+  @doc """
+  Completes the first round: moves the coordinator to `:normal`, dispatches the
+  transition hook, and fires the async `post_recovery_replay`.
+  """
+  @spec complete_first_round(Hub.t(), round_result()) :: Hub.t()
+  def complete_first_round(%Hub{recovery_state: :recovering} = hub, result) do
+    hub = %{hub | recovery_state: :normal}
 
-        :ok
-    end
+    HookManager.dispatch_hook(hub.storage.hook, Hook.recovery_state_changed(), %{
+      hub_id: hub.hub_id,
+      from: :recovering,
+      to: :normal,
+      reason: :reconcile_complete,
+      measurements: Map.take(result, [:candidates, :orphans, :started, :duplicates, :elapsed_ms])
+    })
+
+    HookManager.dispatch_hook(hub.storage.hook, Hook.post_recovery_replay(), %{
+      hub_id: hub.hub_id,
+      child_count: result.candidates,
+      succeeded: result.started,
+      failed: 0,
+      reason: result.reason
+    })
+
+    hub
   end
 
-  defp drain_queue(%Hub{recovery_event_queue: queue} = state) do
-    Enum.each(queue, &send(self(), &1))
-    %{state | recovery_event_queue: []}
-  end
-
+  def complete_first_round(hub, _result), do: hub
 
   @doc """
   Returns the coordinator's current `:recovery_state`.
@@ -429,7 +548,9 @@ defmodule ProcessHub.Service.Recovery do
   Blocks until the coordinator reaches `:normal` or `timeout_ms` elapses.
 
   Returns `:ok` on reaching `:normal` (immediately when the hub does not exist
-  or has no recovery), or `{:error, :timeout}` otherwise.
+  or has no recovery), or `{:error, :timeout}` otherwise. `:normal` means the
+  first reconcile round has completed, so callers SHOULD size the timeout above
+  `reconcile_grace_ms`.
   """
   @spec await_normal(ProcessHub.hub_id(), non_neg_integer()) :: :ok | {:error, :timeout}
   def await_normal(hub_id, timeout_ms \\ 60_000) do
@@ -447,380 +568,50 @@ defmodule ProcessHub.Service.Recovery do
   end
 
   @doc """
-  Deletes the recovery marker on the local node so the next coordinator
-  boot selects recovery mode.
+  Deprecated. Armed the next boot for marker-driven replay by deleting the local
+  marker file.
 
-  Safe to call on a running hub — only the marker file is touched.
-  Idempotent (returns `:ok` even when the marker is absent). Hubs started
-  without `:auto_recovery` are no-ops.
+  There is no marker any more: every node reconciles its durable registry against
+  the cluster continuously, so recovery after an outage needs no pre-boot step.
+  The function is kept so existing operator tooling keeps running — it logs a
+  warning and returns `:ok` without touching the filesystem.
 
-  See `prepare_recovery_cluster/1` for the RPC fan-out variant.
+  Scheduled for removal in a future release.
   """
-  @spec prepare_recovery(ProcessHub.hub_id()) :: :ok | {:error, term()}
+  @deprecated "The recovery marker is no longer used; this is a no-op. See migration-guide.md"
+  @spec prepare_recovery(ProcessHub.hub_id()) :: :ok
   def prepare_recovery(hub_id) do
-    with {:ok, hub} <- fetch_hub_state(hub_id) do
-      if hub.recovery_marker.enabled? do
-        delete_marker(hub.recovery_marker.path)
-      else
-        :ok
-      end
-    end
+    warn_marker_api("prepare_recovery/1", hub_id)
+    :ok
   end
 
   @doc """
-  Fans out `prepare_recovery/1` to every member of the hub via
-  `:rpc.multicall/4`.
+  Deprecated. Fanned `prepare_recovery/1` out to every hub member.
 
-  Returns:
+  A no-op for the same reason as `prepare_recovery/1`; it still reports the hub's
+  members so existing callers keep matching on `{:ok, nodes}`. Returns
+  `{:error, :not_alive}` when the hub is not running, as before.
 
-    * `{:ok, [node]}` — every member acked.
-    * `{:partial, [acked], [unreachable]}` — at least one peer failed.
-    * `{:error, reason}` — cluster API itself failed (hub not running).
+  Scheduled for removal in a future release.
   """
-  @spec prepare_recovery_cluster(ProcessHub.hub_id()) ::
-          {:ok, [node()]} | {:partial, [node()], [node()]} | {:error, term()}
+  @deprecated "The recovery marker is no longer used; this is a no-op. See migration-guide.md"
+  @spec prepare_recovery_cluster(ProcessHub.hub_id()) :: {:ok, [node()]} | {:error, :not_alive}
   def prepare_recovery_cluster(hub_id) do
-    with {:ok, _hub} <- fetch_hub_state(hub_id) do
-      nodes = ProcessHub.nodes(hub_id, [:include_local])
+    warn_marker_api("prepare_recovery_cluster/1", hub_id)
 
-      {replies, bad_nodes} =
-        :rpc.multicall(nodes, __MODULE__, :prepare_recovery, [hub_id], 5_000)
-
-      {acked, errored} = partition_rpc_results(nodes, replies, bad_nodes)
-      unreachable = bad_nodes ++ errored
-
-      cond do
-        unreachable == [] -> {:ok, acked}
-        true -> {:partial, acked, unreachable}
-      end
-    end
-  end
-
-  defp fetch_hub_state(hub_id) do
     case Process.whereis(hub_id) do
-      nil ->
-        {:error, :not_alive}
-
-      _pid ->
-        try do
-          {:ok, GenServer.call(hub_id, :get_state)}
-        catch
-          :exit, reason -> {:error, reason}
-        end
+      nil -> {:error, :not_alive}
+      _pid -> {:ok, ProcessHub.nodes(hub_id, [:include_local])}
     end
   end
 
-  defp partition_rpc_results(nodes, replies, bad_nodes) do
-    reachable = nodes -- bad_nodes
-
-    Enum.zip(reachable, replies)
-    |> Enum.reduce({[], []}, fn
-      {node, :ok}, {acked, errored} -> {[node | acked], errored}
-      {node, _other}, {acked, errored} -> {acked, [node | errored]}
-    end)
-  end
-
-  defp validate_int(value, min, max, _err)
-       when is_integer(value) and value >= min and value <= max,
-       do: {:ok, value}
-
-  defp validate_int(_value, _min, _max, err), do: {:error, {:invalid_auto_recovery, err}}
-
-  @doc """
-  Dispatches the `recovery_state_changed` hook.
-
-  Fires on every lifecycle moment: `:init → :recovering` (`:marker_absent`),
-  `:init → :normal` (`:marker_present`/`:disabled`), and `:recovering → :normal`
-  (`:replay_complete`/`:recovery_timeout`). `measurements` carries the
-  per-moment counts (e.g. `cspec_count`, `succeeded`, `elapsed_ms`).
-  """
-  @spec dispatch_state_changed_hook(Hub.t(), atom(), atom(), atom(), map()) :: :ok
-  def dispatch_state_changed_hook(%Hub{} = state, from, to, reason, measurements \\ %{}) do
-    HookManager.dispatch_hook(state.storage.hook, Hook.recovery_state_changed(), %{
-      hub_id: state.hub_id,
-      from: from,
-      to: to,
-      reason: reason,
-      measurements: measurements
-    })
-
-    :ok
-  end
-
-  @doc """
-  Runs the persisted-registry replay synchronously inside the calling
-  process (the coordinator).
-
-  Sequence:
-
-    1. dispatch the `pre_recovery_replay` hook synchronously (blocking),
-    2. iterate `ProcessRegistry.dump/1`,
-    3. call `Distributor.compose_start_operation/3` once with all child specs,
-    4. wait up to `recovery_timeout_ms` for completion (best effort),
-    5. dispatch `post_recovery_replay` (async).
-
-  Returns a `replay_result/0` summary that the coordinator uses to update
-  state and dispatch the `recovery_state_changed` hook.
-
-  Per-child failures during replay are logged at WARN and surface in the
-  `failed` count; they never abort the replay loop. If `recovery_timeout_ms`
-  elapses before completion, the function returns with
-  `reason: :replay_timeout`. Replay continues in the background.
-  """
-  @spec replay(Hub.t(), Hub.recovery_config()) :: replay_result()
-  def replay(%Hub{} = state, %{recovery_timeout_ms: replay_timeout_ms}) do
-    started_at = System.monotonic_time(:millisecond)
-    dump = ProcessRegistry.dump(state.hub_id)
-    child_count = map_size(dump)
-
-    dispatch_blocking_hook(
-      state.storage.hook,
-      Hook.pre_recovery_replay(),
-      %{hub_id: state.hub_id, child_count: child_count},
-      replay_timeout_ms
-    )
-
-    {succeeded, failed, skipped, reason} =
-      case child_count do
-        0 ->
-          {0, 0, 0, :empty}
-
-        _ ->
-          execute_replay(state, dump, replay_timeout_ms, started_at)
-      end
-
-    elapsed_ms = System.monotonic_time(:millisecond) - started_at
-    attempted = succeeded + failed + skipped
-
-    HookManager.dispatch_hook(state.storage.hook, Hook.post_recovery_replay(), %{
-      hub_id: state.hub_id,
-      child_count: child_count,
-      succeeded: succeeded,
-      failed: failed,
-      skipped: skipped,
-      reason: reason
-    })
-
-    %{
-      child_count: child_count,
-      succeeded: succeeded,
-      failed: failed,
-      skipped: skipped,
-      attempted: attempted,
-      elapsed_ms: elapsed_ms,
-      reason: reason
-    }
-  end
-
-  defp execute_replay(state, dump, replay_timeout_ms, started_at) do
-    # Project every persisted row to its cspec only. Recovery does not
-    # restore node_pids or metadata — bindings are recomputed by the
-    # migration tick after the cluster forms (see design.md §D7).
-    {child_specs, skipped} = project_cspecs(dump)
-
-    case child_specs do
-      [] ->
-        {0, 0, skipped, :completed}
-
-      _ ->
-        run_replay_task(state, child_specs, skipped, replay_timeout_ms, started_at)
-    end
-  end
-
-  defp project_cspecs(dump) do
-    Enum.reduce(dump, {[], 0}, fn {child_id, value}, {specs, skipped} ->
-      case extract_cspec(value) do
-        {:ok, cspec} ->
-          {[cspec | specs], skipped}
-
-        :skip ->
-          LoggerService.warning(
-            "Recovery replay: skipping invalid persisted row for @cid",
-            %{"cid" => inspect(child_id)},
-            prefix: "Recovery"
-          )
-
-          {specs, skipped + 1}
-      end
-    end)
-  end
-
-  defp extract_cspec(%{} = cspec), do: {:ok, cspec}
-  defp extract_cspec({cspec, _node_pids}) when is_map(cspec), do: {:ok, cspec}
-  defp extract_cspec({cspec, _node_pids, _metadata}) when is_map(cspec), do: {:ok, cspec}
-  defp extract_cspec(_), do: :skip
-
-  defp run_replay_task(state, child_specs, skipped, replay_timeout_ms, started_at) do
-    n = length(child_specs)
-    elapsed = System.monotonic_time(:millisecond) - started_at
-    remaining = max(replay_timeout_ms - elapsed, 0)
-
-    worker = fn ->
-      try do
-        Distributor.compose_start_operation(state, child_specs, [
-          {:auto_recovery_replay, true},
-          {:awaitable, false},
-          {:check_existing, false},
-          {:disable_logging, true}
-        ])
-      rescue
-        err -> {:error, err}
-      end
-    end
-
-    case await_task(worker, remaining) do
-      {:ok, {:ok, _operation}} ->
-        {n, 0, skipped, :completed}
-
-      {:ok, {:error, reason}} ->
-        LoggerService.warning(
-          "Recovery replay returned error: @reason",
-          %{"reason" => inspect(reason)},
-          prefix: "Recovery"
-        )
-
-        {0, n, skipped, :completed}
-
-      {:down, reason} ->
-        LoggerService.warning(
-          "Recovery replay task crashed: @reason",
-          %{"reason" => inspect(reason)},
-          prefix: "Recovery"
-        )
-
-        {0, n, skipped, :completed}
-
-      :timeout ->
-        LoggerService.warning(
-          "Recovery replay timed out after @ms ms; continuing in background",
-          %{"ms" => Integer.to_string(replay_timeout_ms)},
-          prefix: "Recovery"
-        )
-
-        {0, n, skipped, :replay_timeout}
-    end
-  end
-
-  # Runs `worker_fun` in a monitored process and waits up to `timeout` ms for it
-  # to send back its result. Returns `{:ok, result}` when the worker replies,
-  # `{:down, reason}` if it dies first, or `:timeout`. With
-  # `kill_on_timeout: true` a still-running worker is killed on timeout.
-  defp await_task(worker_fun, timeout, opts \\ []) do
-    parent = self()
-    ref = make_ref()
-
-    {pid, mon_ref} = spawn_monitor(fn -> send(parent, {ref, worker_fun.()}) end)
-
-    receive do
-      {^ref, result} ->
-        Process.demonitor(mon_ref, [:flush])
-        {:ok, result}
-
-      {:DOWN, ^mon_ref, :process, ^pid, reason} ->
-        {:down, reason}
-    after
-      timeout ->
-        Process.demonitor(mon_ref, [:flush])
-        if Keyword.get(opts, :kill_on_timeout, false), do: Process.exit(pid, :kill)
-        :timeout
-    end
-  end
-
-  @doc """
-  Dispatches a hook synchronously, awaiting each handler's reply. Each
-  handler is wrapped in `try/catch` so a misbehaving handler can neither
-  crash the coordinator nor (via the per-handler timeout) hang it past
-  the overall `recovery_timeout_ms`.
-
-  Handlers are executed in registered order; per-handler timeouts are
-  computed as the remaining slice of the total budget. A handler raising
-  is logged at WARN and the dispatch continues to the next handler.
-  """
-  @spec dispatch_blocking_hook(:ets.tid(), HookManager.hook_key(), term(), pos_integer()) :: :ok
-  def dispatch_blocking_hook(hook_table, hook_key, hook_data, total_timeout_ms) do
-    handlers = HookManager.registered_handlers(hook_table, hook_key)
-    started_at = System.monotonic_time(:millisecond)
-
-    Enum.each(handlers, fn handler ->
-      elapsed = System.monotonic_time(:millisecond) - started_at
-      remaining = max(total_timeout_ms - elapsed, 0)
-
-      run_handler_blocking(handler, hook_data, remaining)
-    end)
-
-    :ok
-  end
-
-  defp run_handler_blocking(_handler, _hook_data, 0) do
+  defp warn_marker_api(function, hub_id) do
     LoggerService.warning(
-      "Skipping recovery hook handler — total budget exhausted",
-      %{},
-      prefix: "Recovery"
-    )
-
-    :ok
-  end
-
-  defp run_handler_blocking(%HookManager{m: module, f: func, a: args} = handler, hook_data, timeout) do
-    args = substitute_wildcard(args, hook_data)
-
-    worker = fn ->
-      try do
-        apply(module, func, args)
-      rescue
-        e -> {:__hook_raised__, e, __STACKTRACE__}
-      catch
-        kind, value -> {:__hook_caught__, kind, value, __STACKTRACE__}
-      end
-    end
-
-    case await_task(worker, timeout, kill_on_timeout: true) do
-      {:ok, {:__hook_raised__, e, st}} -> log_handler_error(:raised, handler.id, {e, st})
-      {:ok, {:__hook_caught__, kind, value, _st}} -> log_handler_error(:caught, handler.id, {kind, value})
-      {:ok, _ok} -> :ok
-      {:down, :normal} -> :ok
-      {:down, reason} -> log_handler_error(:crashed, handler.id, reason)
-      :timeout -> log_handler_error(:timeout, handler.id, timeout)
-    end
-  end
-
-  defp log_handler_error(:raised, id, {e, st}) do
-    LoggerService.warning(
-      "Recovery hook handler @id raised: @error",
-      %{"id" => inspect(id), "error" => Exception.format(:error, e, st)},
-      prefix: "Recovery"
+      "@function is deprecated and does nothing: there is no recovery marker to " <>
+        "arm. It will be removed in a future release. See migration-guide.md",
+      %{"function" => function},
+      prefix: "Recovery",
+      hub_id: hub_id
     )
   end
-
-  defp log_handler_error(:caught, id, {kind, value}) do
-    LoggerService.warning(
-      "Recovery hook handler @id caught @kind: @value",
-      %{"id" => inspect(id), "kind" => Atom.to_string(kind), "value" => inspect(value)},
-      prefix: "Recovery"
-    )
-  end
-
-  defp log_handler_error(:crashed, id, reason) do
-    LoggerService.warning(
-      "Recovery hook handler @id task crashed: @reason",
-      %{"id" => inspect(id), "reason" => inspect(reason)},
-      prefix: "Recovery"
-    )
-  end
-
-  defp log_handler_error(:timeout, id, timeout) do
-    LoggerService.warning(
-      "Recovery hook handler @id timed out after @ms ms",
-      %{"id" => inspect(id), "ms" => Integer.to_string(timeout)},
-      prefix: "Recovery"
-    )
-  end
-
-  defp substitute_wildcard(args, hook_data) do
-    Enum.map(args, fn
-      :_ -> hook_data
-      other -> other
-    end)
-  end
-
 end

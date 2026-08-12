@@ -10,27 +10,25 @@ defmodule ProcessHub.Hub do
           started_at: integer() | nil
         }
 
-  @typedoc "Coordinator boot-recovery state."
+  @typedoc """
+  Coordinator boot-recovery state. `:recovering` means the first orphan reconcile
+  round has not completed; `:normal` means it has and is terminal.
+  """
   @type recovery_state() :: :recovering | :normal
 
   @typedoc """
   Parsed `:auto_recovery` config. `enabled?` gates the lifecycle;
-  `recovery_timeout_ms` caps the recovery loop and the cluster-event
-  queue gate; `marker_path` is the operator override for the marker file
-  location (`nil` resolves to the default).
+  `reconcile_grace_ms` delays the first reconcile round after coordinator start;
+  `reconcile_interval_ms` rate-limits subsequent rounds and bounds each blocking
+  hook handler; `stopped_row_ttl_ms` is how long a stopped row survives past its
+  `stopped_at`.
   """
   @type recovery_config() :: %{
           enabled?: boolean(),
-          recovery_timeout_ms: pos_integer(),
-          marker_path: nil | String.t()
+          reconcile_grace_ms: pos_integer(),
+          reconcile_interval_ms: pos_integer(),
+          stopped_row_ttl_ms: pos_integer()
         }
-
-  @typedoc """
-  Resolved marker state derived from `:auto_recovery`. `enabled?` mirrors
-  the recovery config; `path` holds the *resolved absolute* marker path
-  after coordinator init (or `nil` while disabled).
-  """
-  @type recovery_marker() :: %{enabled?: boolean(), path: nil | String.t()}
 
   @type t() :: %__MODULE__{
           hub_id: atom(),
@@ -55,10 +53,9 @@ defmodule ProcessHub.Hub do
           migration_retry_timer: reference() | {:running, reference()} | nil,
           recovery_state: recovery_state(),
           recovery_config: recovery_config(),
-          recovery_marker: recovery_marker(),
-          recovery_event_queue: [term()],
-          recovery_timeout_timer: reference() | nil,
-          recovery_normal_waiters: %{GenServer.from() => reference()}
+          recovery_normal_waiters: %{GenServer.from() => reference()},
+          reconcile_running?: boolean(),
+          reconcile_last_at: integer() | nil
         }
 
   @doc "Returns the default event batch state."
@@ -79,12 +76,12 @@ defmodule ProcessHub.Hub do
     recovery_state: :normal,
     recovery_config: %{
       enabled?: false,
-      recovery_timeout_ms: 30_000,
-      marker_path: nil
+      reconcile_grace_ms: 30_000,
+      reconcile_interval_ms: 15_000,
+      stopped_row_ttl_ms: 86_400_000
     },
-    recovery_marker: %{enabled?: false, path: nil},
-    recovery_event_queue: [],
-    recovery_timeout_timer: nil,
-    recovery_normal_waiters: %{}
+    recovery_normal_waiters: %{},
+    reconcile_running?: false,
+    reconcile_last_at: nil
   ]
 end

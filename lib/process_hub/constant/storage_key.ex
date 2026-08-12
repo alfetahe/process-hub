@@ -50,4 +50,6 @@ defmodule ProcessHub.Constant.StorageKey do
   def sbt, do: :self_boot_token
   @spec nbt() :: :node_boot_tokens
   def nbt, do: :node_boot_tokens
+  @spec rop() :: :reconcile_orphans_pending
+  def rop, do: :reconcile_orphans_pending
 end
