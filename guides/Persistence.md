@@ -77,119 +77,127 @@ lifecycle is observable via the `recovery_state_changed` hook (see below);
 registry-file corruption is logged at ERROR. There are no per-mutation
 events on the hot path.
 
-## Coordinator recovery
+## Registry convergence and orphan recovery
 
 > #### Experimental {: .warning}
 >
-> Coordinator recovery (the `:auto_recovery` lifecycle) is **experimental**
-> and may change. The persistence backends above are not affected by this
-> notice.
+> The `:auto_recovery` lifecycle is **experimental** and may change. The
+> persistence backends above are not affected by this notice.
 
-Recovery is **operator-controlled**. A returning node only rebuilds from
-its local disk when the operator has armed it to; otherwise it trusts its
-peers. This prevents a rejoining node from re-asserting stale local rows
-(dead pids, obsolete metadata) into a healthy cluster.
+A node cannot answer "does the cluster already hold my children?" from its own
+disk. So nothing asks it. Instead each node periodically computes a difference:
 
-The gate is a per-node zero-byte **marker file**, consulted at coordinator
-`init/1` before the backend opens:
+```
+orphans = durable candidates − children observed running anywhere − stopped rows
+```
 
-- **Marker present** → `:normal`. The backend opens without loading any
-  rows; the synchronization strategy populates the registry from peers.
-- **Marker absent** → `:recovering`. The coordinator replays its persisted
-  registry (child specs only), then transitions to `:normal` and writes
-  the marker.
+and starts the remainder through the normal start path with
+`check_existing: true`. The same code covers both directions: after a
+whole-cluster outage the live registry is empty and everything returns; after a
+single-node rejoin the peers already hold the children and the difference is
+empty; a child stopped during the absence has a `:stopped` row and stays dead.
 
-A successful boot always writes the marker, so steady-state restarts skip
-replay. To arm a node for disk recovery, the operator deletes the marker.
+### Row bookkeeping
 
-### Recovery states
+Every row carries hub-owned state under the reserved metadata key
+`:__process_hub__`: `epoch`, `lifecycle` (`:running | :stopped`), `changed_by`,
+`changed_at` (diagnostics only), and `stopped_at` while stopped.
 
-`:recovery_state` is `:recovering` (replaying from disk) or `:normal`
-(operational). With `auto_recovery: false` (the default) it is `:normal`
-from `init/1` and never transitions.
+Every write that *authors* a row increments `epoch`. Merges resolve by higher
+epoch, ties by the lexicographically lower `changed_by`, and adopt the winner
+verbatim — so every node converges on the same value in any order. The epoch is a
+counter, never a wall clock: hardware without a battery-backed clock boots with a
+bogus time exactly when it rejoins and merges. Caller metadata cannot set the key.
+
+`node_pids` is not part of that resolution. It is a set of per-node observations,
+each owned by the node it names — a payload from node `N` only touches the
+`{N, pid}` entry, and a child missing from `N`'s payload removes nothing else.
+**No absence observation deletes durable state.**
+
+### Stopped is a row, not a deletion
+
+`stop_children/3` marks the row `:stopped` with `node_pids: []` rather than
+deleting it, so a node that was down during the stop adopts the row on its return
+instead of resurrecting the child. Starting the same child_id again flips it back.
+A `:temporary` or `:transient` child the supervisor declines to restart gets the
+same treatment.
+
+The row expires at `stopped_at + stopped_row_ttl_ms` — an absolute deadline every
+node recomputes identically, so re-synchronisation cannot extend it — and is swept
+by the janitor. That TTL is also the bound on how long a node may be absent and
+still be prevented from resurrecting a child stopped meanwhile.
+
+### Rounds and states
+
+`:recovery_state` is `:recovering` until the first round completes, then `:normal`
+(terminal). With `auto_recovery: false` it is `:normal` from `init/1`.
+
+The first round runs `reconcile_grace_ms` after start, with or without peers, so
+`:normal` is always reached. Later rounds follow completed synchronisation rounds,
+rate-limited to one per `reconcile_interval_ms`.
+
+Every node holding a candidate submits it — a candidate's only durable copy may
+live on a non-owner node. Duplicates are prevented by `check_existing: true` and
+by the ring routing concurrent submissions to the same owner, where the supervisor
+rejects the second. A round also reduces a child observed on more than one node to
+its ring owner's instance.
 
 ### Configuration
 
 ```elixir
 %ProcessHub{
   hub_id: :my_hub,
-  registry_backend: {:dets, []},
+  registry_backend: {:durable_ets, []},
   auto_recovery: [
-    marker_path: "/var/lib/process_hub/my_hub/cluster.healthy",
-    recovery_timeout_ms: 30_000
+    reconcile_grace_ms: 30_000,
+    reconcile_interval_ms: 15_000,
+    stopped_row_ttl_ms: 86_400_000
   ]
 }
 ```
 
-`:auto_recovery` accepts `false` (default), `true` (default path and
-timeout), or a keyword list:
+- `:reconcile_grace_ms` — delay before the first round. Default `30_000`, range
+  `[1_000, 600_000]`. **Set it above your synchronization strategy's
+  `sync_interval`**; ProcessHub warns at init when it is not.
+- `:reconcile_interval_ms` — minimum spacing between rounds, and the per-handler
+  budget for the blocking `pre_recovery_replay` hook. Default `15_000`, same range.
+- `:stopped_row_ttl_ms` — how long a stopped row survives past `stopped_at`.
+  Default `86_400_000` (24 h), range `[60_000, 31_536_000_000]`.
 
-- `:marker_path` — override; defaults to
-  `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
-- `:recovery_timeout_ms` — safety ceiling on the `:recovering` state:
-  bounds the replay loop and force-opens the cluster-event queue gate.
-  Default `30_000`, range `[1_000, 600_000]`.
+The marker-era keys `:marker_path`, `:replay_timeout_ms` and
+`:recovery_timeout_ms` are deprecated: accepted with a WARN, ignored, and rejected
+in a later release. So are `Recovery.prepare_recovery/1` and
+`prepare_recovery_cluster/1`, now no-ops. See `migration-guide.md`.
 
-Out-of-range values fail startup with `{:invalid_auto_recovery, _}`.
-
-### Cspecs-only replay
-
-Replay loads `child_spec` only — `node_pids` and metadata are dropped and
-recomputed by the first migration tick, so a recovered row routes through
-exactly the same path as a freshly-registered child (this is what closes
-the stale-binding leak). While recovering, the coordinator queues incoming
-cluster events and drains them FIFO once the gate opens.
-
-Stale bindings for a returning node are reaped separately by the general
-per-boot token mechanism (see
-[Fast-restart stale-binding reaping](#fast-restart-stale-binding-reaping)),
-independent of `:auto_recovery`.
+An opted-in hub opens its backend with `recovery_replay: false`: durable rows
+reach the cluster through the reconcile, never through the backend open, so a
+returning node cannot republish its stale view as fact. A hub on `:ets` has no
+durable candidates and starts nothing.
 
 ### Hooks
 
-- `recovery_state_changed` — every transition (async); `%{from, to, reason}`.
-- `pre_recovery_replay` — once before replay (**synchronous** — the
-  coordinator awaits each handler; use to wait on prerequisite services).
-- `post_recovery_replay` — once after replay (async).
+- `recovery_state_changed` — the `:recovering → :normal` transition (async).
+- `pre_recovery_replay` — once, before the **first** round issues any start.
+  **Synchronous**: use it to wait on prerequisite services.
+- `post_recovery_replay` — once, after the first round completes (async).
+- `reconcile_round` — every round, including quiet ones, with `candidates`,
+  `orphans`, `started`, `skipped_pending`, `duplicates`, `elapsed_ms`.
+- `reconcile_duplicate` — emitted by the node stopping its own duplicate instance.
 
-### Operator API
-
-The recovery/operator API lives on `ProcessHub.Service.Recovery`:
+### Introspection and failure modes
 
 ```elixir
 Recovery.recovery_state(:my_hub)         # :recovering | :normal
-Recovery.await_normal(:my_hub, 60_000)   # :ok | {:error, :timeout} (default timeout: 60_000)
-
-# Arm the local node (delete the marker) for recovery on next boot.
-Recovery.prepare_recovery(:my_hub)       # :ok | {:error, term}
-
-# Arm every hub member via :rpc.multicall/4.
-Recovery.prepare_recovery_cluster(:my_hub)
-# => {:ok, [node]} | {:partial, acked, unreachable} | {:error, term}
+Recovery.await_normal(:my_hub, 60_000)   # :ok | {:error, :timeout}
 ```
 
-`prepare_recovery/1` only deletes the marker; the running coordinator is
-not interrupted. Wrap `prepare_recovery_cluster/1` in your ops CLI for a
-planned "drain & rebuild from disk" restart — for a rolling restart, leave
-the markers in place and let peers dominate. On hubs with
-`auto_recovery: false` these calls are no-ops returning `:ok`.
+`await_normal/2` returns once the first round has completed. Size the timeout
+above `reconcile_grace_ms`.
 
-Recommended with a persistent backend: with the default `:ets` backend the
-registry is empty on every restart, so recovery replays zero rows and
-provides no restart-survival.
-
-### Failure modes
-
-- **Corrupt DETS in recovery mode** — file is rotated, recovery runs
-  against an empty registry and reaches `:normal` with `cspec_count: 0`.
-- **Marker write failure** — logged at ERROR; the coordinator continues as
-  `:normal`, and the next boot recovers again (fail-safe: a node that
-  cannot record "I am healthy" defaults to "I might not be").
-- **Ephemeral storage** — the marker and DETS paths must share the same
-  persistent volume; ephemeral pods cannot use these backends anyway.
-
-To disable recovery entirely, set `auto_recovery: false`: the coordinator
-reaches `:normal` at `init/1` with no marker IO, exactly as before.
+- **Unreadable durable medium** — the round performs no starts and no duplicate
+  resolution; a transient failure is never read as "everything was removed".
+- **A child mid-migration** — a registered row that is momentarily unbound must be
+  an orphan in two consecutive rounds before it is started.
 
 ## Hybrid backend (`:durable_ets`)
 

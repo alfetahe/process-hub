@@ -1,6 +1,23 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+- **Experimental:** orphan reconcile. Each node periodically starts the difference between its durable registry and what the cluster is observed to hold, so a whole-cluster outage restores itself and a node rejoining a live cluster starts nothing. Configured through `:auto_recovery` (`:reconcile_grace_ms`, `:reconcile_interval_ms`, `:stopped_row_ttl_ms`). New hooks: `reconcile_round`, `reconcile_duplicate`.
+- Per-child epoch on every registry row, under the reserved metadata key `:__process_hub__`. Merges resolve by higher epoch, ties by the lower authoring node name.
+- `read_durable/1`, an optional `Storage.Behaviour` callback reading the durable medium without touching the live view.
+
+### Changed
+- `stop_children/3` marks the row `:stopped` instead of deleting it, so a stop survives a node's absence. The row expires 24 h after `stopped_at` (`:stopped_row_ttl_ms`). `lookup/3` and `registry_dump/1` still report a stopped child as absent.
+- **Deprecated, removed in a later release:** the recovery marker. `:marker_path`, `:replay_timeout_ms` and `:recovery_timeout_ms` are accepted with a warning and ignored; `prepare_recovery/1` and `prepare_recovery_cluster/1` are no-ops.
+
+### Fixed
+- A peer's absence no longer deletes durable state. `Synchronizer.detach_data/2` deleted a registry row, and its on-disk copy, for any child a peer's payload did not mention — so a peer reporting an empty registry erased state cluster-wide. Absence now withdraws only that peer's pid entry.
+- Replicas converge. Sync kept the local child spec and metadata unconditionally, so two nodes that disagreed about a child never did.
+- `Storage.Dets.open/2` with `recovery_replay: false` deleted every row in the file.
+- Placement no longer treats stopped rows as unbound children to restart.
+
 ## v0.6.1 - 2026-08-06
 Fixes `Janitor` TTL sweep bug and minor documentation issues.
 
