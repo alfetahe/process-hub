@@ -12,6 +12,45 @@ defmodule Test.Helper.Common do
 
   use ExUnit.Case, async: false
 
+  @doc "Drops the hub-owned `:__process_hub__` bookkeeping from a metadata map."
+  def caller_meta(metadata) when is_map(metadata), do: Map.delete(metadata, :__process_hub__)
+
+  @doc """
+  Drops the hub-owned bookkeeping from a `{child_spec, node_pids, metadata}` row,
+  or from every row of a registry dump (map) or `{child_id, row}` list.
+  """
+  def caller_rows({child_spec, node_pids, metadata}),
+    do: {child_spec, node_pids, caller_meta(metadata)}
+
+  def caller_rows(rows) when is_map(rows),
+    do: Map.new(rows, fn {child_id, row} -> {child_id, caller_rows(row)} end)
+
+  def caller_rows(rows) when is_list(rows),
+    do: Enum.map(rows, fn {child_id, row} -> {child_id, caller_rows(row)} end)
+
+  @doc """
+  Starts `child_spec` under `node`'s distributed supervisor and registers the
+  binding, bypassing distribution.
+
+  Forces the double-binding a ring change between two concurrent submissions
+  would produce, so the reconcile's duplicate resolution has something to resolve.
+  """
+  def bind_child_locally(node, hub_id, child_spec) when node === node() do
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    {:ok, pid} = ProcessHub.DistributedSupervisor.start_child(hub.procs.dist_sup, child_spec)
+
+    ProcessHub.Service.ProcessRegistry.bulk_insert(
+      hub_id,
+      %{child_spec.id => {child_spec, [{node(), pid}], %{}}},
+      hook_storage: hub.storage.hook
+    )
+
+    :ok
+  end
+
+  def bind_child_locally(node, hub_id, child_spec),
+    do: :erpc.call(node, __MODULE__, :bind_child_locally, [node, hub_id, child_spec])
+
   def even_sum_sequence(start, total) do
     Enum.reduce(start..total, 2, fn num, acc ->
       2 * num + acc
@@ -79,7 +118,7 @@ defmodule Test.Helper.Common do
 
     Enum.each(registry, fn {child_id, {_, nodes, metadata}} ->
       if vm do
-        assert metadata === %{tag: hub_id |> Atom.to_string()}
+        assert caller_meta(metadata) === %{tag: hub_id |> Atom.to_string()}
       end
 
       ring = Ring.get_ring(hub.storage.misc)
@@ -237,7 +276,7 @@ defmodule Test.Helper.Common do
 
       Enum.each(registry_data, fn {id, {child_spec, nodes, metadata}} ->
         if validate_metadata do
-          assert metadata === %{tag: hub_id |> Atom.to_string()}
+          assert caller_meta(metadata) === %{tag: hub_id |> Atom.to_string()}
         end
 
         if remote_registry[id] do

@@ -52,7 +52,7 @@ defmodule Test.Request.Handler.PidUpdateRequestTest do
       {cs, nodes, metadata} = ProcessRegistry.lookup(hub_id, :update_child, with_metadata: true)
       assert cs == child_spec
       assert Keyword.get(nodes, :node1) == :new_pid
-      assert metadata == %{some: "meta"}
+      assert Test.Helper.Common.caller_meta(metadata) == %{some: "meta"}
 
       # Verify hook fired
       assert_receive :pid_updated

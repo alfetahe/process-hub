@@ -1,6 +1,8 @@
 defmodule Test.ProcessHubNodePurgeTest do
   @moduledoc """
-  Increment 1 — delete-only dead-node registry purge primitives.
+  Dead-node registry purge primitives. Purging withdraws a node's observations; a
+  child left with no observation keeps its row and becomes an orphan-reconcile
+  candidate rather than being erased.
   """
   use ExUnit.Case
 
@@ -28,7 +30,8 @@ defmodule Test.ProcessHubNodePurgeTest do
     assert Keyword.keys(nodes) == [node()]
   end
 
-  test "purge_node deletes entries left with no remaining locations", %{hub_id: hub_id} do
+  test "purge_node unbinds entries left with no remaining locations but keeps the row",
+       %{hub_id: hub_id} do
     fake = :"fake2@127.0.0.1"
 
     ProcessRegistry.bulk_insert(hub_id, %{
@@ -37,8 +40,16 @@ defmodule Test.ProcessHubNodePurgeTest do
 
     assert Cluster.purge_node(hub_id, fake) == ["only_fake"]
 
+    # Unbound, so invisible to placement lookups...
     assert ProcessRegistry.lookup(hub_id, "only_fake") == nil
-    refute ProcessRegistry.entry_exists?(hub_id, "only_fake")
+    # ...but still registered, so the reconcile can restore it.
+    assert ProcessRegistry.entry_exists?(hub_id, "only_fake")
+
+    assert {_spec, [], _meta} =
+             ProcessRegistry.lookup(hub_id, "only_fake",
+               with_metadata: true,
+               include_empty: true
+             )
   end
 
   test "purge_node returns [] when the node is not referenced", %{hub_id: hub_id} do
@@ -68,8 +79,9 @@ defmodule Test.ProcessHubNodePurgeTest do
     {_spec, n1} = ProcessRegistry.lookup(hub_id, "c1")
     assert Keyword.keys(n1) == [node()]
 
-    # c2 had only a dead node, so it is removed entirely.
+    # c2 had only a dead node, so it is left unbound.
     assert ProcessRegistry.lookup(hub_id, "c2") == nil
+    assert ProcessRegistry.entry_exists?(hub_id, "c2")
   end
 
   test "purge_node then purge_dead_nodes leaves a fully-scrubbed registry", %{hub_id: hub_id} do

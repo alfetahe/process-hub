@@ -51,7 +51,7 @@ defmodule Test.Request.Handler.PidsRegisterRequestTest do
       # Verify all 3 children are in the registry
       registry = ProcessRegistry.dump(hub_id)
       assert map_size(registry) == 3
-      assert registry == children_data
+      assert Test.Helper.Common.caller_rows(registry) == children_data
 
       # Verify hook fired for each child
       Enum.each(1..3, fn _ ->

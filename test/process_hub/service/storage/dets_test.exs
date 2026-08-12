@@ -16,7 +16,7 @@ defmodule Test.ProcessHub.Service.Storage.DetsTest do
 
   test "open creates file at custom path", %{hub_id: hub_id, path: path} do
     {:ok, ref} = Backend.open(hub_id, path: path)
-    assert ref === hub_id
+    assert {^hub_id, _shadow} = ref
     assert File.exists?(path)
     Backend.close(ref)
   end

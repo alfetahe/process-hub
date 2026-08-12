@@ -1,4 +1,6 @@
 defmodule ProcessHubTest do
+  alias Test.Helper.Common
+
   use ExUnit.Case
   # doctest ProcessHub
 
@@ -590,13 +592,13 @@ defmodule ProcessHubTest do
     assert length(nodepids1) === 1
     assert Enum.at(nodepids1, 0) |> elem(0) === node()
     assert Enum.at(nodepids1, 0) |> elem(1) |> is_pid()
-    assert metadata1 === metadata
+    assert Common.caller_meta(metadata1) === metadata
 
     assert is_list(nodepids2)
     assert length(nodepids2) === 1
     assert Enum.at(nodepids2, 0) |> elem(0) === node()
     assert Enum.at(nodepids2, 0) |> elem(1) |> is_pid()
-    assert metadata2 === metadata
+    assert Common.caller_meta(metadata2) === metadata
   end
 
   test "get pids", %{hub_id: hub_id} = _context do
@@ -844,9 +846,9 @@ defmodule ProcessHubTest do
     %{"child2" => {^cs2, _nodepids2, metadata2}} = ProcessHub.registry_dump(hub_id)
     %{"child3" => {^cs3, _nodepids3, metadata3}} = ProcessHub.registry_dump(hub_id)
 
-    assert metadata1 === %{tag: "tag1"}
-    assert metadata2 === %{tag: "tag2"}
-    assert metadata3 === %{tag: "tag3"}
+    assert Common.caller_meta(metadata1) === %{tag: "tag1"}
+    assert Common.caller_meta(metadata2) === %{tag: "tag2"}
+    assert Common.caller_meta(metadata3) === %{tag: "tag3"}
 
     # Verify tag_query works with per-child metadata
     tag1_result = ProcessHub.tag_query(hub_id, "tag1")
@@ -885,12 +887,12 @@ defmodule ProcessHubTest do
     %{"child1" => {^cs1, _nodepids1, metadata1}} = ProcessHub.registry_dump(hub_id)
     %{"child2" => {^cs2, _nodepids2, metadata2}} = ProcessHub.registry_dump(hub_id)
 
-    assert metadata1 === %{tag: "specific_tag1"}
-    assert metadata2 === %{tag: "specific_tag2"}
+    assert Common.caller_meta(metadata1) === %{tag: "specific_tag1"}
+    assert Common.caller_meta(metadata2) === %{tag: "specific_tag2"}
 
     # Verify child3 falls back to global metadata
     %{"child3" => {^cs3, _nodepids3, metadata3}} = ProcessHub.registry_dump(hub_id)
-    assert metadata3 === %{tag: "global_tag"}
+    assert Common.caller_meta(metadata3) === %{tag: "global_tag"}
 
     # Verify tag_query works correctly
     tag1_result = ProcessHub.tag_query(hub_id, "specific_tag1")
@@ -967,8 +969,8 @@ defmodule ProcessHubTest do
     %{"child2" => {^cs2, _nodepids2, metadata2}} = dump1
 
     # Both should have global metadata since child_metadata is empty
-    assert metadata1 === %{tag: "fallback_tag"}
-    assert metadata2 === %{tag: "fallback_tag"}
+    assert Common.caller_meta(metadata1) === %{tag: "fallback_tag"}
+    assert Common.caller_meta(metadata2) === %{tag: "fallback_tag"}
 
     # Stop children for next test
     ProcessHub.stop_children(hub_id, [cs1.id, cs2.id], awaitable: true)
@@ -999,9 +1001,9 @@ defmodule ProcessHubTest do
     %{"child2" => {^cs4, _nodepids4, metadata4}} = dump2
 
     # child1 should have specific metadata
-    assert metadata3 === %{tag: "only_tag1"}
+    assert Common.caller_meta(metadata3) === %{tag: "only_tag1"}
     # child2 should have empty metadata (no global fallback)
-    assert metadata4 === %{}
+    assert Common.caller_meta(metadata4) === %{}
   end
 
   test "cancel_hook_handlers error branch" do

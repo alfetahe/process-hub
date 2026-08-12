@@ -713,7 +713,7 @@ defmodule Test.IntegrationTest do
       assert Map.get(state, :shutdown, false) === true,
              "Child #{child_id} invalid state: #{inspect(state)}"
 
-      assert metadata === default_metadata
+      assert Common.caller_meta(metadata) === default_metadata
     end)
   end
 

@@ -3,6 +3,7 @@ defmodule Test.Service.ProcessRegistryTest do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
+  alias Test.Helper.Common
 
   use ExUnit.Case
 
@@ -100,7 +101,7 @@ defmodule Test.Service.ProcessRegistryTest do
       assert_receive :bulk_insert_test
     end)
 
-    assert ProcessRegistry.dump(hub_id) === insert_data |> Map.new()
+    assert Common.caller_rows(ProcessRegistry.dump(hub_id)) === insert_data |> Map.new()
   end
 
   test "bulk delete", %{hub_id: hub_id, hub: hub} = _context do
@@ -190,7 +191,7 @@ defmodule Test.Service.ProcessRegistryTest do
       assert_receive :insert_test
     end)
 
-    assert ProcessRegistry.dump(hub_id) === children
+    assert Common.caller_rows(ProcessRegistry.dump(hub_id)) === children
   end
 
   test "delete child", %{hub_id: hub_id, hub: hub} = _context do
@@ -267,7 +268,7 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: metadata)
     end)
 
-    assert ProcessRegistry.dump(hub_id) === children
+    assert Common.caller_rows(ProcessRegistry.dump(hub_id)) === children
   end
 
   test "dump", %{hub_id: hub_id} = _context do
@@ -287,7 +288,7 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: metadata)
     end)
 
-    assert ProcessRegistry.dump(hub_id) === children
+    assert Common.caller_rows(ProcessRegistry.dump(hub_id)) === children
   end
 
   test "process list local", %{hub_id: hub_id} = _context do
@@ -358,7 +359,7 @@ defmodule Test.Service.ProcessRegistryTest do
       ProcessRegistry.insert(hub_id, child_spec, child_nodes, metadata: metadata)
     end)
 
-    assert Enum.sort(ProcessRegistry.local_data(hub_id)) ===
+    assert Enum.sort(Common.caller_rows(ProcessRegistry.local_data(hub_id))) ===
              Map.merge(local, local_n_remote) |> Map.to_list()
   end
 
@@ -589,12 +590,12 @@ defmodule Test.Service.ProcessRegistryTest do
 
     {cs, cn, m} = ProcessRegistry.lookup(hub_id, cid, with_metadata: true)
 
-    assert init_res === {child_spec, child_nodes, %{}}
+    assert Common.caller_rows(init_res) === {child_spec, child_nodes, %{}}
     assert err === {:error, "No child found"}
 
     assert result === :ok
     assert cs === %{id: cid, start_link: {:mod2, :fn2, [3, 4]}}
     assert cn === [{:node1, :pid1}, child_nodes]
-    assert m === %{update: "hello world"}
+    assert Common.caller_meta(m) === %{update: "hello world"}
   end
 end

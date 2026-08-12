@@ -1,10 +1,10 @@
 defmodule Test.ProcessHubRecoveryTest do
   @moduledoc """
-  Covers the opt-in coordinator boot-recovery feature end to end: the pure
-  `ProcessHub.Service.Recovery` helpers (config, marker IO, mode resolution) and
-  the live `:recovering → :normal` lifecycle driven through a real hub via the
-  `recovery_state_changed` hook. Multi-node scenarios live in
-  `test/integration_test.exs`.
+  Covers the opt-in orphan reconcile end to end: `:auto_recovery` config parsing,
+  the two-state `:recovering → :normal` lifecycle, the reconcile hooks, and the
+  orphan arithmetic (durable candidates − observed − stopped) driven through a
+  real hub on a durable backend. Multi-node scenarios live in
+  `test/process_hub_reconcile_multinode_test.exs`.
   """
 
   use ExUnit.Case, async: false
@@ -14,347 +14,421 @@ defmodule Test.ProcessHubRecoveryTest do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.ProcessRegistry.Row
   alias ProcessHub.Service.Recovery
+  alias ProcessHub.Strategy.Synchronization.PubSub
+  alias Test.Helper.SetupHelper
 
-  defp unique_id(prefix), do: :"#{prefix}_#{System.unique_integer([:positive])}"
+  # Rounds are triggered explicitly with `reconcile_now/1` rather than waited for,
+  # so the grace window is set beyond any test's lifetime. Tests that assert the
+  # *timer* path say so locally.
+  @no_timer_grace_ms 600_000
+  # The lowest interval the config accepts; only the two tests that genuinely need
+  # a second round pay it.
+  @interval_ms 1_000
+  @sync_strategy %PubSub{sync_interval: 300}
 
-  defp tmp_path(suffix \\ "") do
-    Path.join(System.tmp_dir!(), "phub_rec_#{System.unique_integer([:positive])}#{suffix}")
-  end
+  # Asks the coordinator to run a round now. `round_due?/1` still applies, so this
+  # cannot produce a round the running system would not have allowed.
+  defp reconcile_now(hub_id), do: send(hub_id, :reconcile_round)
 
-  defp tmp_marker do
-    path = tmp_path()
-    on_exit(fn -> File.rm_rf(path) end)
-    path
-  end
-
-  # ---------------------------------------------------------------------------
-  # Pure helpers
-  # ---------------------------------------------------------------------------
-
-  describe "parse_config/1" do
-    test "false / true / keyword shapes" do
-      assert {:ok, %{enabled?: false, recovery_timeout_ms: 30_000, marker_path: nil}} =
-               Recovery.parse_config(false)
-
-      assert {:ok, %{enabled?: true, recovery_timeout_ms: 30_000, marker_path: nil}} =
-               Recovery.parse_config(true)
-
-      assert {:ok, %{enabled?: true, recovery_timeout_ms: 45_000, marker_path: "/x"}} =
-               Recovery.parse_config(recovery_timeout_ms: 45_000, marker_path: "/x")
-    end
-
-    test "rejects out-of-range timeout, bad marker_path, and unknown shapes" do
-      assert {:error, {:invalid_auto_recovery, :recovery_timeout_ms_out_of_range}} =
-               Recovery.parse_config(recovery_timeout_ms: 100)
-
-      assert {:error, {:invalid_auto_recovery, :recovery_timeout_ms_out_of_range}} =
-               Recovery.parse_config(recovery_timeout_ms: 10_000_000)
-
-      assert {:error, {:invalid_auto_recovery, :invalid_marker_path}} =
-               Recovery.parse_config(marker_path: 123)
-
-      assert {:error, :invalid_auto_recovery} = Recovery.parse_config(:bad)
-    end
-  end
-
-  describe "init_marker/3 and resolve_mode/2" do
-    test "disabled → :normal; absent → :recovering; present → :normal" do
-      assert {%{enabled?: false, path: nil}, :normal, :normal} =
-               Recovery.init_marker(:hub, nil, false)
-
-      path = tmp_marker()
-
-      assert {%{enabled?: true, path: ^path}, :recovering, :recovery} =
-               Recovery.init_marker(:hub, path, true)
-
-      File.touch!(path)
-      assert {%{enabled?: true, path: ^path}, :normal, :normal} = Recovery.init_marker(:hub, path, true)
-    end
-
-    test "resolve_mode gates on the marker; disabled always :normal" do
-      assert :recovery = Recovery.resolve_mode(false, true)
-      assert :normal = Recovery.resolve_mode(true, true)
-      assert :normal = Recovery.resolve_mode(false, false)
-    end
-
-    test "nil marker_path resolves under :user_data + hub_id" do
-      assert Recovery.resolve_marker_path(:my_hub, nil) =~ "/my_hub/cluster.healthy"
-      assert Recovery.resolve_marker_path(:hub, "/var/lib/x") == "/var/lib/x"
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # Live lifecycle
-  # ---------------------------------------------------------------------------
-
-  defp start_hub!(opts) do
-    hub_id = Keyword.fetch!(opts, :hub_id)
-    {:ok, pid} = ProcessHub.Initializer.start_link(struct(ProcessHub, opts))
-    :erlang.unlink(pid)
-    on_exit(fn -> ProcessHub.Initializer.stop(hub_id) end)
-    hub_id
-  end
-
-  # Forwards recovery_state_changed payloads to the test pid as {:sc, data}.
-  defp sc_hook do
-    [
-      hooks: %{
-        Hook.recovery_state_changed() => [
-          %HookManager{id: :sc, m: __MODULE__, f: :forward_to, a: [self(), :sc, :_]}
-        ]
-      }
-    ]
-  end
-
-  defp start_recovery_hub!(prefix, opts \\ []) do
-    hub_id = unique_id(prefix)
-    auto_recovery = Keyword.merge([marker_path: tmp_marker(), recovery_timeout_ms: 5_000], opts)
-    start_hub!([hub_id: hub_id, auto_recovery: auto_recovery] ++ sc_hook())
-    hub_id
+  setup do
+    tmp_dir = Path.join(System.tmp_dir!(), "ph_reconcile_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp_dir)
+    on_exit(fn -> File.rm_rf!(tmp_dir) end)
+    {:ok, %{tmp_dir: tmp_dir, dets: Path.join(tmp_dir, "registry.dets")}}
   end
 
   def forward_to(pid, tag, payload), do: send(pid, {tag, payload})
 
-  describe "disabled / non-existent hub" do
-    test "recovery_state is :normal, await_normal is :ok, and no hook fires" do
-      hub_id = start_hub!([hub_id: unique_id(:rec_default)] ++ sc_hook())
+  # Drops hook messages from a previous hub incarnation so a restart's own
+  # reports are the only ones in the mailbox.
+  defp flush_hooks do
+    receive do
+      {tag, _payload} when tag in [:sc, :round, :pre_replay, :post_replay] -> flush_hooks()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp forwarding_hooks(tags) do
+    Map.new(tags, fn {hook_key, tag} ->
+      {hook_key, [%HookManager{id: tag, m: __MODULE__, f: :forward_to, a: [self(), tag, :_]}]}
+    end)
+  end
+
+  defp default_hooks do
+    forwarding_hooks(%{
+      Hook.recovery_state_changed() => :sc,
+      Hook.reconcile_round() => :round,
+      Hook.pre_recovery_replay() => :pre_replay,
+      Hook.post_recovery_replay() => :post_replay
+    })
+  end
+
+  defp opt_in(hub_id, opts) do
+    auto_recovery =
+      Keyword.merge(
+        [reconcile_grace_ms: @no_timer_grace_ms, reconcile_interval_ms: @interval_ms],
+        opts
+      )
+
+    [
+      hub_id: hub_id,
+      auto_recovery: auto_recovery,
+      hooks: default_hooks(),
+      synchronization_strategy: @sync_strategy
+    ]
+  end
+
+  defp cspec(id), do: %{id: id, start: {Test.Helper.TestServer, :start_link, [%{name: id}]}}
+
+  # ---------------------------------------------------------------------------
+  # Configuration
+  # ---------------------------------------------------------------------------
+
+  describe "parse_config/1" do
+    test "false / true / keyword shapes" do
+      assert {:ok,
+              %{
+                enabled?: false,
+                reconcile_grace_ms: 30_000,
+                reconcile_interval_ms: 15_000,
+                stopped_row_ttl_ms: 86_400_000
+              }} = Recovery.parse_config(false)
+
+      assert {:ok, %{enabled?: true, reconcile_grace_ms: 30_000}} = Recovery.parse_config(true)
+
+      assert {:ok,
+              %{
+                enabled?: true,
+                reconcile_grace_ms: 60_000,
+                reconcile_interval_ms: 30_000,
+                stopped_row_ttl_ms: 604_800_000
+              }} =
+               Recovery.parse_config(
+                 reconcile_grace_ms: 60_000,
+                 reconcile_interval_ms: 30_000,
+                 stopped_row_ttl_ms: 604_800_000
+               )
+    end
+
+    test "rejects out-of-range values and unknown shapes" do
+      assert {:error, {:invalid_auto_recovery, :reconcile_grace_ms_out_of_range}} =
+               Recovery.parse_config(reconcile_grace_ms: 100)
+
+      assert {:error, {:invalid_auto_recovery, :reconcile_interval_ms_out_of_range}} =
+               Recovery.parse_config(reconcile_interval_ms: 10_000_000)
+
+      assert {:error, {:invalid_auto_recovery, :stopped_row_ttl_ms_out_of_range}} =
+               Recovery.parse_config(stopped_row_ttl_ms: 99_999_999_999)
+
+      assert {:error, :invalid_auto_recovery} = Recovery.parse_config(:bad)
+    end
+
+    test "accepts the deprecated marker-era keys with a warning and ignores them" do
+      for key <- [:marker_path, :replay_timeout_ms, :recovery_timeout_ms] do
+        log =
+          capture_log(fn ->
+            assert {:ok, config} = Recovery.parse_config([{key, "whatever"}])
+            assert config.enabled?
+            assert config.reconcile_grace_ms == 30_000
+            refute Map.has_key?(config, key)
+          end)
+
+        assert log =~ Atom.to_string(key)
+        assert log =~ "deprecated"
+        assert log =~ "future release"
+      end
+    end
+
+    test "a deprecated key still starts the hub" do
+      hub_id = SetupHelper.unique_id(:rec_deprecated_key)
+
+      log =
+        capture_log(fn ->
+          {^hub_id, _pid} =
+            SetupHelper.start_hub!(
+              hub_id: hub_id,
+              auto_recovery: [marker_path: "/srv/hub/cluster.healthy"]
+            )
+
+          assert ProcessHub.is_alive?(hub_id)
+        end)
+
+      assert log =~ ":marker_path"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Deprecated marker-era operator API
+  # ---------------------------------------------------------------------------
+
+  describe "deprecated operator API" do
+    # Called through apply/3 so the intentional @deprecated attribute does not
+    # emit a compile warning for the suite.
+    defp deprecated(fun, args), do: apply(Recovery, fun, args)
+
+    test "prepare_recovery/1 is a no-op that warns" do
+      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:rec_prep))
+
+      log = capture_log(fn -> assert deprecated(:prepare_recovery, [hub_id]) == :ok end)
+
+      assert log =~ "prepare_recovery/1"
+      assert log =~ "deprecated"
+      assert log =~ "future release"
+    end
+
+    test "prepare_recovery_cluster/1 still reports the hub members" do
+      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:rec_prep_cluster))
+
+      capture_log(fn ->
+        assert {:ok, members} = deprecated(:prepare_recovery_cluster, [hub_id])
+        assert node() in members
+      end)
+
+      capture_log(fn ->
+        assert deprecated(:prepare_recovery_cluster, [:no_such_hub]) == {:error, :not_alive}
+      end)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Back-compat: the default configuration
+  # ---------------------------------------------------------------------------
+
+  describe "auto_recovery: false (default)" do
+    test "recovery_state is :normal, await_normal is :ok, and nothing reconciles",
+         %{dets: dets} do
+      {hub_id, _pid} =
+        SetupHelper.start_hub!(
+          hub_id: SetupHelper.unique_id(:rec_default),
+          registry_backend: {:durable_ets, path: dets},
+          hooks: default_hooks()
+        )
+
       assert Recovery.recovery_state(hub_id) == :normal
       assert Recovery.await_normal(hub_id, 100) == :ok
+
+      # Even asked directly, a disabled hub runs no round.
+      reconcile_now(hub_id)
       refute_receive {:sc, _}, 200
+      refute_receive {:round, _}, 100
+      refute_receive {:pre_replay, _}, 100
 
       assert Recovery.recovery_state(:no_such_hub) == :normal
       assert Recovery.await_normal(:no_such_hub, 50) == :ok
     end
+
+    test "durable rows are replayed into the live registry as before", %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_default_replay)
+      conf = [hub_id: hub_id, registry_backend: {:durable_ets, path: dets}]
+      {^hub_id, pid} = SetupHelper.start_hub!(conf)
+
+      ProcessRegistry.insert(hub_id, cspec(:kept), [{node(), self()}])
+
+      {^hub_id, _pid} = SetupHelper.restart_hub!(hub_id, pid, conf)
+      assert ProcessRegistry.entry_exists?(hub_id, :kept)
+    end
   end
 
-  describe "marker absent → recovery boot" do
-    test "fires init→recovering→normal, writes the marker, and await_normal unblocks" do
-      hub_id = start_recovery_hub!(:rec_absent)
+  # ---------------------------------------------------------------------------
+  # Lifecycle
+  # ---------------------------------------------------------------------------
 
-      assert_receive {:sc, %{hub_id: ^hub_id, from: :init, to: :recovering, reason: :marker_absent}},
-                     3_000
+  describe "opt-in lifecycle" do
+    test "starts :recovering and settles to :normal after the first round", %{dets: dets} do
+      {hub_id, _pid} =
+        SetupHelper.start_hub!(
+          opt_in(SetupHelper.unique_id(:rec_settle), []) ++
+            [registry_backend: {:durable_ets, path: dets}]
+        )
+
+      assert Recovery.recovery_state(hub_id) == :recovering
+      reconcile_now(hub_id)
 
       assert_receive {:sc,
-                      %{to: :normal, reason: :replay_complete, measurements: %{cspec_count: 0, succeeded: 0}}},
-                     3_000
-
-      assert Recovery.await_normal(hub_id, 5_000) == :ok
-      assert Recovery.recovery_state(hub_id) == :normal
-    end
-
-    test "pre/post_recovery_replay hooks fire on the replay path" do
-      parent = self()
-
-      hooks = %{
-        Hook.pre_recovery_replay() => [
-          %HookManager{id: :pre, m: __MODULE__, f: :forward_to, a: [parent, :pre_replay, :_]}
-        ],
-        Hook.post_recovery_replay() => [
-          %HookManager{id: :post, m: __MODULE__, f: :forward_to, a: [parent, :post_replay, :_]}
-        ]
-      }
-
-      hub_id = unique_id(:rec_hooks)
-      start_hub!(hub_id: hub_id, hooks: hooks, auto_recovery: [marker_path: tmp_marker()])
-
-      assert_receive {:pre_replay, %{hub_id: ^hub_id, child_count: 0}}, 3_000
-      assert_receive {:post_replay, %{hub_id: ^hub_id, child_count: 0, succeeded: 0, failed: 0}}, 3_000
-    end
-
-    test "pre_recovery_replay blocks until handlers return; a handler crash is isolated" do
-      parent = self()
-
-      hooks = %{
-        Hook.pre_recovery_replay() => [
-          %HookManager{id: :slow, m: __MODULE__, f: :slow_pre_replay, a: [parent, :_]},
-          %HookManager{id: :crash, m: __MODULE__, f: :crashing_pre_replay, a: [parent, :_]}
-        ],
-        Hook.post_recovery_replay() => [
-          %HookManager{id: :post, m: __MODULE__, f: :forward_to, a: [parent, :post_replay, :_]}
-        ]
-      }
-
-      hub_id = unique_id(:rec_block)
-
-      log =
-        capture_log(fn ->
-          start_hub!(hub_id: hub_id, hooks: hooks, auto_recovery: [marker_path: tmp_marker()])
-
-          assert_receive {:slow_entered, handler_pid}, 3_000
-          # The slow handler blocks, so replay must not complete yet.
-          refute_receive {:post_replay, _}, 100
-          send(handler_pid, :release)
-          assert_receive {:post_replay, _}, 3_000
-          assert Recovery.await_normal(hub_id, 2_000) == :ok
-        end)
-
-      assert log =~ "intentional handler crash"
-    end
-  end
-
-  describe "marker present → normal boot" do
-    test "skips replay, firing init→normal with :marker_present and never :recovering" do
-      marker = tmp_marker()
-      File.touch!(marker)
-      hub_id = unique_id(:rec_present)
-      start_hub!([hub_id: hub_id, auto_recovery: [marker_path: marker]] ++ sc_hook())
+                      %{
+                        hub_id: ^hub_id,
+                        from: :recovering,
+                        to: :normal,
+                        reason: :reconcile_complete
+                      }},
+                     5_000
 
       assert Recovery.recovery_state(hub_id) == :normal
-      assert_receive {:sc, %{from: :init, to: :normal, reason: :marker_present}}, 1_000
-      refute_receive {:sc, %{to: :recovering}}, 200
-    end
-  end
-
-  describe "failure / edge cases" do
-    test "marker write failure is logged but still reaches :normal" do
-      hub_id = unique_id(:rec_io_fail)
-
-      log =
-        capture_log(fn ->
-          start_hub!(hub_id: hub_id, auto_recovery: [marker_path: "/proc/1/cluster.healthy"])
-          assert Recovery.await_normal(hub_id, 5_000) == :ok
-        end)
-
-      assert log =~ "Failed to write recovery marker"
-    end
-
-    test "an out-of-range config refuses to start" do
-      Process.flag(:trap_exit, true)
-
-      assert {:error, _} =
-               ProcessHub.Initializer.start_link(%ProcessHub{
-                 hub_id: unique_id(:rec_bad),
-                 auto_recovery: [recovery_timeout_ms: 1]
-               })
-    end
-  end
-
-  describe "prepare_recovery/1" do
-    test "deletes the local marker, is idempotent, and no-ops when not applicable" do
-      marker = tmp_marker()
-      hub_id = start_recovery_hub!(:rec_prep, marker_path: marker)
       assert Recovery.await_normal(hub_id, 5_000) == :ok
-      assert File.exists?(marker)
 
-      assert :ok = Recovery.prepare_recovery(hub_id)
-      refute File.exists?(marker)
-      assert :ok = Recovery.prepare_recovery(hub_id)
+      # Terminal: no further transitions.
+      refute_receive {:sc, _}, 200
+    end
 
-      no_ar = start_hub!(hub_id: unique_id(:rec_prep_off))
-      assert :ok = Recovery.prepare_recovery(no_ar)
-      assert {:error, :not_alive} = Recovery.prepare_recovery(:no_such_hub_marker)
+    test "a node alone still reaches :normal on the :ets backend" do
+      {hub_id, _pid} = SetupHelper.start_hub!(opt_in(SetupHelper.unique_id(:rec_alone), []))
+
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 5_000) == :ok
+      assert_receive {:round, %{measurements: %{candidates: 0, orphans: 0, started: 0}}}, 5_000
+    end
+
+    test "await_normal below the grace window times out", %{dets: dets} do
+      {hub_id, _pid} =
+        SetupHelper.start_hub!(
+          opt_in(SetupHelper.unique_id(:rec_await_timeout), []) ++
+            [registry_backend: {:durable_ets, path: dets}]
+        )
+
+      assert Recovery.await_normal(hub_id, 200) == {:error, :timeout}
+      assert Recovery.recovery_state(hub_id) == :recovering
     end
   end
 
   # ---------------------------------------------------------------------------
-  # DETS-backed integration: the core "no stale replay into a healthy cluster"
-  # invariant and the prepare_recovery → replay round-trip.
+  # Hooks and telemetry
   # ---------------------------------------------------------------------------
 
-  describe "durable registry integration" do
-    defp start_dets_hub!(prefix) do
-      dir = tmp_path("_dir")
-      File.mkdir_p!(dir)
-      on_exit(fn -> File.rm_rf(dir) end)
-      dets = Path.join(dir, "registry.dets")
-      marker = Path.join(dir, "cluster.healthy")
-      hub_id = unique_id(prefix)
-      {hub_id, dets, marker}
-    end
-
-    defp boot_dets!(hub_id, dets, marker) do
-      {:ok, pid} =
-        ProcessHub.Initializer.start_link(%ProcessHub{
-          hub_id: hub_id,
-          registry_backend: {:durable_ets, path: dets},
-          auto_recovery: [marker_path: marker]
-        })
-
-      :erlang.unlink(pid)
-      on_exit(fn -> ProcessHub.Initializer.stop(hub_id) end)
-      pid
-    end
-
-    defp restart!(hub_id, pid, dets, marker) do
-      ref = Process.monitor(pid)
-      ProcessHub.Initializer.stop(hub_id)
-      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
-      boot_dets!(hub_id, dets, marker)
-    end
-
-    test "marker-present restart does NOT replay persisted rows into the registry" do
-      {hub_id, dets, marker} = start_dets_hub!(:mp)
-      pid = boot_dets!(hub_id, dets, marker)
-      assert Recovery.await_normal(hub_id, 5_000) == :ok
-
-      dead = spawn(fn -> :ok end)
-      Process.exit(dead, :kill)
-      cspec = %{id: "seeded", start: {Test.Helper.TestServer, :start_link, [%{name: "seeded"}]}}
-      :ok = ProcessRegistry.insert(hub_id, cspec, [{:"other@127.0.0.1", dead}])
-
-      # Marker still present → the returning node trusts peers, not local disk.
-      _pid = restart!(hub_id, pid, dets, marker)
-      assert Recovery.await_normal(hub_id, 5_000) == :ok
-      assert ProcessRegistry.lookup(hub_id, "seeded") == nil
-    end
-
-    test "prepare_recovery arms the next boot to replay cspecs from disk" do
-      {hub_id, dets, marker} = start_dets_hub!(:prep)
-      pid = boot_dets!(hub_id, dets, marker)
-      assert Recovery.await_normal(hub_id, 5_000) == :ok
-
-      dead = spawn(fn -> :ok end)
-      Process.exit(dead, :kill)
-      cspec = %{id: "keep", start: {Test.Helper.TestServer, :start_link, [%{name: "keep"}]}}
-      :ok = ProcessRegistry.insert(hub_id, cspec, [{node(), dead}])
-
-      assert :ok = Recovery.prepare_recovery(hub_id)
-      refute File.exists?(marker)
-
-      hooks = %{
-        Hook.recovery_state_changed() => [
-          %HookManager{id: :sc, m: __MODULE__, f: :forward_to, a: [self(), :sc, :_]}
-        ]
-      }
-
-      ref = Process.monitor(pid)
-      ProcessHub.Initializer.stop(hub_id)
-      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
-
-      {:ok, pid2} =
-        ProcessHub.Initializer.start_link(%ProcessHub{
-          hub_id: hub_id,
-          registry_backend: {:durable_ets, path: dets},
-          auto_recovery: [marker_path: marker],
-          hooks: hooks
-        })
-
-      :erlang.unlink(pid2)
-      on_exit(fn -> ProcessHub.Initializer.stop(hub_id) end)
-
-      assert_receive {:sc, %{to: :recovering, measurements: %{cspec_count: 1}}}, 3_000
+  describe "hooks" do
+    test "pre/post replay fire once, bracketing the first round", %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_hooks)
+      conf = opt_in(hub_id, []) ++ [registry_backend: {:durable_ets, path: dets}]
+      {^hub_id, pid} = SetupHelper.start_hub!(conf)
+      reconcile_now(hub_id)
       assert Recovery.await_normal(hub_id, 10_000) == :ok
-      assert File.exists?(marker)
+
+      assert %ProcessHub.StartResult{status: :ok} =
+               ProcessHub.start_children(hub_id, [cspec(:hooked)], awaitable: true)
+               |> ProcessHub.await()
+
+      # After the restart the child is a durable-only candidate, so the first
+      # round of the new coordinator issues a start.
+      {^hub_id, _pid} = SetupHelper.restart_hub!(hub_id, pid, conf)
+      flush_hooks()
+      reconcile_now(hub_id)
+
+      assert_receive {:pre_replay, %{hub_id: ^hub_id, child_count: 1}}, 10_000
+      assert_receive {:post_replay, %{hub_id: ^hub_id, child_count: 1, succeeded: 1}}, 10_000
+
+      # Subsequent rounds are per-round telemetry only.
+      assert_receive {:round, %{first_round: false}}, 10_000
+      refute_receive {:pre_replay, _}, 100
+      refute_receive {:post_replay, _}, 100
+    end
+
+    test "a quiet round is still reported" do
+      {hub_id, _pid} = SetupHelper.start_hub!(opt_in(SetupHelper.unique_id(:rec_quiet), []))
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 5_000) == :ok
+
+      # A round that finds nothing still reports, so a silent reconcile stays
+      # distinguishable from a stalled one. That later rounds keep reporting is
+      # covered by the two-round test, which is already paying the rate limit.
+      assert_receive {:round, %{first_round: true, measurements: %{orphans: 0, started: 0}}},
+                     5_000
     end
   end
 
   # ---------------------------------------------------------------------------
-  # Hook handlers
+  # Orphan arithmetic
   # ---------------------------------------------------------------------------
 
-  def slow_pre_replay(parent, _data) do
-    send(parent, {:slow_entered, self()})
+  describe "orphan reconcile" do
+    test "a cold boot restores every durable candidate exactly once", %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_cold_boot)
+      conf = opt_in(hub_id, []) ++ [registry_backend: {:durable_ets, path: dets}]
+      {^hub_id, pid} = SetupHelper.start_hub!(conf)
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 10_000) == :ok
 
-    receive do
-      :release -> :ok
-    after
-      5_000 -> :ok
+      specs = Enum.map([:cb_a, :cb_b, :cb_c], &cspec/1)
+
+      assert %ProcessHub.StartResult{status: :ok} =
+               ProcessHub.start_children(hub_id, specs, awaitable: true) |> ProcessHub.await()
+
+      assert map_size(ProcessRegistry.dump(hub_id)) == 3
+
+      {^hub_id, _pid} = SetupHelper.restart_hub!(hub_id, pid, conf)
+
+      # The live registry starts empty: durable rows reach the cluster through
+      # the reconcile, never through the backend open.
+      assert ProcessRegistry.dump(hub_id) == %{}
+
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 10_000) == :ok
+
+      assert_receive {:round, %{first_round: true, measurements: %{candidates: 3, started: 3}}},
+                     10_000
+
+      assert Test.Helper.Common.eventually(fn -> map_size(ProcessRegistry.dump(hub_id)) == 3 end)
+
+      for id <- [:cb_a, :cb_b, :cb_c] do
+        assert is_pid(ProcessHub.get_pid(hub_id, id))
+      end
     end
-  end
 
-  def crashing_pre_replay(parent, _data) do
-    send(parent, {:crash_entered, self()})
-    raise "intentional handler crash"
+    test "a child stopped before the restart is not resurrected", %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_stopped)
+      conf = opt_in(hub_id, []) ++ [registry_backend: {:durable_ets, path: dets}]
+      {^hub_id, pid} = SetupHelper.start_hub!(conf)
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 10_000) == :ok
+
+      specs = Enum.map([:st_keep, :st_stop], &cspec/1)
+
+      assert %ProcessHub.StartResult{status: :ok} =
+               ProcessHub.start_children(hub_id, specs, awaitable: true) |> ProcessHub.await()
+
+      assert %ProcessHub.StopResult{status: :ok} =
+               ProcessHub.stop_children(hub_id, [:st_stop], awaitable: true) |> ProcessHub.await()
+
+      assert %{lifecycle: :stopped} =
+               ProcessRegistry.lookup(hub_id, :st_stop,
+                 with_metadata: true,
+                 include_empty: true
+               )
+               |> elem(2)
+               |> Row.meta()
+
+      {^hub_id, _pid} = SetupHelper.restart_hub!(hub_id, pid, conf)
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 10_000) == :ok
+
+      assert_receive {:round, %{first_round: true, measurements: %{candidates: 2, started: 1}}},
+                     10_000
+
+      assert Test.Helper.Common.eventually(fn -> is_pid(ProcessHub.get_pid(hub_id, :st_keep)) end)
+      assert ProcessHub.get_pid(hub_id, :st_stop) == nil
+    end
+
+    test "a registered but unbound child waits for a second round", %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_two_rounds)
+
+      {^hub_id, _pid} =
+        SetupHelper.start_hub!(
+          opt_in(hub_id, []) ++ [registry_backend: {:durable_ets, path: dets}]
+        )
+
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 10_000) == :ok
+      # Drain the first round's report before seeding.
+      assert_receive {:round, %{first_round: true}}, 10_000
+
+      # A registered row with no observed pid: the mid-migration shape.
+      ProcessRegistry.insert(hub_id, cspec(:mid_migration), [])
+
+      # Two further rounds, spaced by the rate limit.
+      assert_receive {:round, %{measurements: %{orphans: 0, skipped_pending: 1, started: 0}}},
+                     @interval_ms * 3
+
+      assert_receive {:round, %{measurements: %{orphans: 1, started: 1}}}, @interval_ms * 3
+    end
+
+    test "the :ets backend has no candidates and starts nothing" do
+      {hub_id, _pid} = SetupHelper.start_hub!(opt_in(SetupHelper.unique_id(:rec_ets), []))
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 5_000) == :ok
+
+      assert_receive {:round, %{measurements: %{candidates: 0, started: 0}}}, 5_000
+      assert ProcessRegistry.dump(hub_id) == %{}
+    end
   end
 end
