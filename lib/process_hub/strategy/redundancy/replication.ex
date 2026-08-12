@@ -44,13 +44,13 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
 
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
-  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.RequestManager
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Utility.Extractor
   alias ProcessHub.Hub
@@ -396,7 +396,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
     local_node = node()
 
     # Get registry data for child_specs and current state
-    registry_data = ProcessRegistry.dump_all(hub.hub_id)
+    registry_data = ProcessRegistry.dump_all(hub.hub_id, include_stopped: false)
 
     # Fill in missing entries in calculated_cids.
     # The migration strategy's calculated_cids may be incomplete — e.g., on a
@@ -488,15 +488,8 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
         ProcessRegistry.bulk_insert(hub.hub_id, store_data, hook_storage: hub.storage.hook)
 
         # Single propagation for all started replicas
-        sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
         request = ProcessHub.Request.Handler.PidsRegisterRequest.new(store_data)
-
-        SynchronizationStrategy.propagate(
-          sync_strat,
-          hub,
-          RequestManager.split(request),
-          members: :external
-        )
+        Dispatcher.propagate_event(hub, request, members: :external)
 
         Enum.each(started, fn {cs, _meta, all_nodes, pid} ->
           send_mode_signal_if_needed(strategy, hub, cs.id, all_nodes, pid)
@@ -514,17 +507,7 @@ defmodule ProcessHub.Strategy.Redundancy.Replication do
       if stopped != [] do
         removable = Enum.map(stopped, &{&1, [local_node]})
 
-        ProcessRegistry.bulk_delete(hub.hub_id, removable, hook_storage: hub.storage.hook)
-
-        sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
-        request = ProcessHub.Request.Handler.PidsUnregisterRequest.new(removable)
-
-        SynchronizationStrategy.propagate(
-          sync_strat,
-          hub,
-          RequestManager.split(request),
-          members: :external
-        )
+        Distributor.unregister_bindings(hub, removable)
       end
     end
 

@@ -187,8 +187,12 @@ defmodule ProcessHub.DistributedSupervisor do
     end
   end
 
+  # Reached only when the supervisor declined to restart the child — a
+  # `:temporary` child, or a `:transient` one after a normal exit. Its restart
+  # policy has decided the child is done, so the row is stopped rather than left
+  # as a churn stub that the orphan reconcile would start again.
   defp handle_child_removal(hub, child_id) do
-    request = PidsUnregisterRequest.new([{child_id, [node()]}])
+    request = PidsUnregisterRequest.new([{child_id, [node()]}], on_empty: :stopped)
 
     Dispatcher.propagate_event(hub, request, members: :global)
 

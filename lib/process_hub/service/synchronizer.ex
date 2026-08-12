@@ -7,6 +7,7 @@ defmodule ProcessHub.Service.Synchronizer do
   alias ProcessHub.Coordinator
   alias ProcessHub.Task.SynchronizationTask
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.ProcessRegistry.Row
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
@@ -50,86 +51,132 @@ defmodule ProcessHub.Service.Synchronizer do
     |> Task.await()
   end
 
-  @doc "Returns local node's process registry data used for synchronization."
+  @doc """
+  Returns the local node's process registry data used for synchronization.
+
+  Carries two kinds of row:
+
+    * children bound locally, reported with the pid this node observes;
+    * stopped rows, reported with a `nil` pid.
+
+  A bound row travels with its holder. A stopped row has no holder, so every node
+  that has it reports it and the epoch merge converges them; without that, a stop
+  that happened while a node was away could never reach it and the returning
+  node's reconcile would resurrect the child.
+
+  Unbound `:running` rows are deliberately *not* carried. They are orphan
+  candidates, and each node computes those from its own durable registry — sending
+  them would grow every payload by the whole orphan set to tell peers something
+  they cannot act on.
+  """
   @spec local_sync_data(Hub.t()) :: [
-          {ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}
+          {ProcessHub.child_spec(), pid() | nil, ProcessHub.child_metadata()}
         ]
   def local_sync_data(hub) do
-    ProcessRegistry.local_children(hub.hub_id)
-    |> Enum.map(fn {_child_id, {child_spec, child_nodes, metadata}} ->
-      child_pid = child_nodes[node()]
-      {child_spec, child_pid, metadata}
+    local_node = node()
+
+    ProcessRegistry.dump_all(hub.hub_id)
+    |> Enum.reduce([], fn {_child_id, {child_spec, child_nodes, metadata}}, acc ->
+      cond do
+        pid = Keyword.get(child_nodes, local_node) -> [{child_spec, pid, metadata} | acc]
+        Row.stopped?(metadata) -> [{child_spec, nil, metadata} | acc]
+        true -> acc
+      end
     end)
   end
 
   @doc """
-  Appends remote data to the local process registry.
+  Merges a peer's registry rows into the local process registry.
+
+  The row itself — child spec, caller metadata, and hub bookkeeping — resolves by
+  higher epoch, ties broken by the lexicographically lower authoring node name, so
+  every node converges on the same value in any order and with any number of
+  repetitions. The winner is adopted verbatim: a merge does not author a row and
+  never increments an epoch.
+
+  `node_pids` is not part of that resolution. A payload from node `N` carries
+  observations `N` owns, so only the `{N, pid}` entry is touched; entries owned by
+  any other node are left alone.
   """
   @spec append_data(Hub.t(), %{
           node() => [{ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}]
         }) :: :ok
   def append_data(hub, remote_data) do
     Enum.each(remote_data, fn {remote_node, remote_children} ->
-      # TODO: may want to add some type of locking or transactions here.
       Enum.each(remote_children, fn {remote_cs, remote_pid, remote_meta} ->
-        # Check if local children contain remote node data.
-        case ProcessRegistry.lookup(hub.hub_id, remote_cs.id, with_metadata: true) do
-          nil ->
-            # We don't have data locally so add it.
-            ProcessRegistry.insert(
-              hub.hub_id,
-              remote_cs,
-              [{remote_node, remote_pid}],
-              hook_storage: hub.storage.hook,
-              metadata: remote_meta
-            )
-
-          {local_cs, local_child_nodes, local_meta} ->
-            # Sync reconciles placement, not spec/metadata: update the remote
-            # node's pid but keep the local (authoritative) spec and metadata.
-            if Keyword.get(local_child_nodes, remote_node, nil) !== remote_pid do
-              updated = Keyword.put(local_child_nodes, remote_node, remote_pid)
-
-              ProcessRegistry.insert(
-                hub.hub_id,
-                local_cs,
-                updated,
-                hook_storage: hub.storage.hook,
-                metadata: local_meta
-              )
-            end
-        end
+        merge_row(hub, remote_node, remote_cs, remote_pid, remote_meta)
       end)
     end)
   end
 
+  defp merge_row(hub, remote_node, remote_cs, remote_pid, remote_meta) do
+    case ProcessRegistry.lookup(hub.hub_id, remote_cs.id,
+           with_metadata: true,
+           include_empty: true
+         ) do
+      nil ->
+        ProcessRegistry.insert(
+          hub.hub_id,
+          remote_cs,
+          observe([], remote_node, remote_pid),
+          hook_storage: hub.storage.hook,
+          metadata: remote_meta,
+          adopt: true
+        )
+
+      {local_cs, local_child_nodes, local_meta} ->
+        {child_spec, metadata} =
+          if Row.wins_merge?(remote_meta, local_meta) do
+            {remote_cs, remote_meta}
+          else
+            {local_cs, local_meta}
+          end
+
+        child_nodes = observe(local_child_nodes, remote_node, remote_pid)
+
+        if child_nodes !== local_child_nodes or metadata !== local_meta or
+             child_spec !== local_cs do
+          ProcessRegistry.insert(hub.hub_id, child_spec, child_nodes,
+            hook_storage: hub.storage.hook,
+            metadata: metadata,
+            adopt: true
+          )
+        end
+    end
+  end
+
+  # A node owns exactly its own entry: a reported pid sets it, a `nil` pid (the
+  # node holds the row but runs nothing for it) clears it.
+  defp observe(child_nodes, node, nil), do: Keyword.delete(child_nodes, node)
+  defp observe(child_nodes, node, pid), do: Keyword.put(child_nodes, node, pid)
+
   @doc """
-  Detaches remote data from the local process registry.
+  Withdraws a peer's observations for children its payload does not mention.
+
+  Absence is an observation, never an authority: a child missing from node `N`'s
+  payload drops only the `{N, pid}` entry. The row survives an emptied node list —
+  it becomes a candidate for the next orphan reconcile round instead of being
+  deleted, so a peer reporting a partial or empty registry can never erase durable
+  state on any other node.
   """
   @spec detach_data(Hub.t(), %{node() => [{ProcessHub.child_spec(), pid()}]}) :: :ok
   def detach_data(hub, remote_children) do
-    local_registry = ProcessRegistry.dump_all(hub.hub_id)
+    ProcessRegistry.withdraw_observations(
+      hub.hub_id,
+      ProcessRegistry.dump_all(hub.hub_id),
+      fn child_id, node -> withdrawn?(remote_children[node], child_id) end,
+      hook_storage: hub.storage.hook
+    )
 
-    Enum.each(local_registry, fn {child_id, {child_spec, child_nodes, metadata}} ->
-      opts = [metadata: metadata, hook_storage: hub.storage.hook]
+    :ok
+  end
 
-      Enum.each(child_nodes, fn {child_node, _child_pid} ->
-        if remote_children[child_node] do
-          remote_child_spec =
-            Enum.find(remote_children[child_node], fn {cs, _pid, _m} -> cs.id == child_id end)
+  # A node that sent no payload at all made no observation, so it withdraws
+  # nothing.
+  defp withdrawn?(nil, _child_id), do: false
 
-          unless remote_child_spec do
-            new_child_nodes = Keyword.delete(child_nodes, child_node)
-
-            if length(new_child_nodes) > 0 do
-              ProcessRegistry.insert(hub.hub_id, child_spec, new_child_nodes, opts)
-            else
-              ProcessRegistry.delete(hub.hub_id, child_spec.id, opts)
-            end
-          end
-        end
-      end)
-    end)
+  defp withdrawn?(reported_children, child_id) do
+    not Enum.any?(reported_children, fn {cs, _pid, _m} -> cs.id == child_id end)
   end
 
   @doc """

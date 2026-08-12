@@ -18,11 +18,9 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.Storage
   alias ProcessHub.Request.Handler.StartChildrenRequest
 
   @typedoc """
@@ -36,10 +34,7 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
   @spec reconcile(ProcessHub.Hub.t(), map(), %{ProcessHub.child_id() => [node()]}) :: map()
   def reconcile(hub, handler, cid_node_map) do
     local_node = node()
-    registry_data = ProcessRegistry.dump_all(hub.hub_id)
-
-    sync_strat =
-      Map.get(handler, :sync_strat) || Storage.get(hub.storage.misc, StorageKey.strsyn())
+    registry_data = ProcessRegistry.dump_all(hub.hub_id, include_stopped: false)
 
     # Categorize children into to_stop and to_start.
     {to_stop, to_start} =
@@ -78,7 +73,7 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
 
     # Stop children that shouldn't be here.
     if to_stop != [] do
-      Distributor.children_terminate(hub, to_stop, sync_strat)
+      Distributor.children_terminate(hub, to_stop)
     end
 
     # Start children that should be here.
@@ -99,7 +94,7 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
     @impl MigrationStrategy
     def handle_topology_expansion(%Autonomous{}, hub, _nodes, handler) do
       # Compute distribution from ALL registry entries.
-      registry_data = ProcessRegistry.dump_all(hub.hub_id)
+      registry_data = ProcessRegistry.dump_all(hub.hub_id, include_stopped: false)
       cids = Enum.map(registry_data, fn {cid, _} -> cid end)
 
       cid_node_map =

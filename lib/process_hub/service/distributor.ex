@@ -14,7 +14,6 @@ defmodule ProcessHub.Service.Distributor do
   alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Service.Cluster
   alias ProcessHub.DistributedSupervisor
-  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Hub
@@ -164,13 +163,13 @@ defmodule ProcessHub.Service.Distributor do
   @doc """
   Terminates child processes locally and propagates all nodes in the cluster
   to remove the child processes from their registry.
+
+  ## Options
+    - `:on_empty` - see `unregister_bindings/3`.
   """
-  @spec children_terminate(
-          Hub.t(),
-          [ProcessHub.child_id()],
-          ProcessHub.Strategy.Synchronization.Base
-        ) :: [{ProcessHub.child_id(), term(), node()}]
-  def children_terminate(hub, child_ids, sync_strategy) do
+  @spec children_terminate(Hub.t(), [ProcessHub.child_id()], keyword()) ::
+          [{ProcessHub.child_id(), term(), node()}]
+  def children_terminate(hub, child_ids, opts \\ []) do
     dist_sup = hub.procs.dist_sup
 
     stop_results =
@@ -179,31 +178,41 @@ defmodule ProcessHub.Service.Distributor do
         {child_id, result, node()}
       end)
 
-    filtered_stop_results =
-      stop_results
-      |> Enum.filter(fn {_child_id, result, _node} -> result == :ok end)
-      |> Enum.map(fn {child_id, _result, node} ->
-        {child_id, [node]}
-      end)
+    stop_results
+    |> Enum.filter(fn {_child_id, result, _node} -> result == :ok end)
+    |> Enum.map(fn {child_id, _result, node} -> {child_id, [node]} end)
+    |> then(&unregister_bindings(hub, &1, opts))
 
-    # Locally clear registry entries.
-    if !Enum.empty?(filtered_stop_results) do
-      ProcessRegistry.bulk_delete(hub.hub_id, filtered_stop_results,
-        hook_storage: hub.storage.hook
-      )
-    end
+    stop_results
+  end
 
-    # Propagate unregister to all external nodes.
-    request = PidsUnregisterRequest.new(filtered_stop_results)
+  @doc """
+  Withdraws `[{child_id, [node]}]` bindings from the local registry and every
+  peer's.
 
-    SynchronizationStrategy.propagate(
-      sync_strategy,
-      hub,
-      RequestManager.split(request),
+  ## Options
+    - `:on_empty` - applied locally and on every peer; see
+      `ProcessHub.Service.ProcessRegistry.bulk_delete/3` for the values. Defaults
+      to `:churn`, which is what placement churn (migration, redistribution) wants.
+  """
+  @spec unregister_bindings(Hub.t(), [{ProcessHub.child_id(), [node()]}], keyword()) :: :ok
+  def unregister_bindings(hub, cid_nodes, opts \\ [])
+
+  def unregister_bindings(_hub, [], _opts), do: :ok
+
+  def unregister_bindings(hub, cid_nodes, opts) do
+    on_empty = Keyword.get(opts, :on_empty, :churn)
+
+    ProcessRegistry.bulk_delete(hub.hub_id, cid_nodes,
+      hook_storage: hub.storage.hook,
+      on_empty: on_empty
+    )
+
+    Dispatcher.propagate_event(hub, PidsUnregisterRequest.new(cid_nodes, on_empty: on_empty),
       members: :external
     )
 
-    stop_results
+    :ok
   end
 
   @doc """

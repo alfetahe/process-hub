@@ -21,10 +21,8 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.RequestManager
-  alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.HookManager
-  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Hub
 
@@ -110,15 +108,13 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
   @spec execute(t(), Hub.t()) :: :ok | {:error, :partitioned}
   def execute(%__MODULE__{} = request, hub) do
     RequestManager.with_partition_check(hub, fn ->
-      sync_strategy = Storage.get(hub.storage.misc, StorageKey.strsyn())
-
       # Validate which children are local, already stopped, or need forwarding
       {local, forward_data, already_stopped} = validate_children(request, hub)
 
       # Terminate only local children
       if local != [] do
         local_cids = Enum.map(local, & &1.child_id)
-        Distributor.children_terminate(hub, local_cids, sync_strategy)
+        Distributor.children_terminate(hub, local_cids, on_empty: :stopped)
       end
 
       # Forward misplaced children to their actual nodes

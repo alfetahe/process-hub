@@ -21,7 +21,6 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
 
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.DistributedSupervisor
-  alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Service.ProcessRegistry
@@ -203,7 +202,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       send_response(post_start_results, start_opts)
 
       # Sync propagate to other nodes
-      sync_propagate(hub, post_start_results, strategies.sync)
+      sync_propagate(hub, post_start_results)
 
       # Execute post-action if present
       if request.post_action do
@@ -610,17 +609,12 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     )
   end
 
-  defp sync_propagate(hub, post_start_results, sync_strategy) do
+  defp sync_propagate(hub, post_start_results) do
     if !Enum.empty?(post_start_results) do
       request =
         ProcessHub.Request.Handler.PidsRegisterRequest.new(store_format(post_start_results))
 
-      SynchronizationStrategy.propagate(
-        sync_strategy,
-        hub,
-        RequestManager.split(request),
-        members: :external
-      )
+      Dispatcher.propagate_event(hub, request, members: :external)
     end
   end
 

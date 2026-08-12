@@ -151,7 +151,6 @@ defmodule ProcessHub.MixProject do
             ProcessHub.Task.SynchronizationTask,
             ProcessHub.Task.SynchronizationTask.IntervalSyncInit,
             ProcessHub.Task.SynchronizationTask.IntervalSyncHandle,
-            ProcessHub.Task.SynchronizationTask.ProcessEmitHandle
           ],
           "Results & Futures": [
             ProcessHub.Future,

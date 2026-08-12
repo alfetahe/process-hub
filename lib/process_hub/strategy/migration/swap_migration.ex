@@ -140,11 +140,7 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
     if strategy.handover, do: handover_states(hub, strategy, stop_local)
 
     if match?(%ColdSwap{}, strategy) and stop_local !== [] do
-      Distributor.children_terminate(
-        hub,
-        stop_local,
-        Storage.get(hub.storage.misc, StorageKey.strsyn())
-      )
+      Distributor.children_terminate(hub, stop_local)
     end
 
     forward_to
@@ -339,7 +335,7 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   def handle_contraction(hub, handler) do
     local_node = node()
     cid_node_map = Map.get(handler, :calculated_cids, %{})
-    registry_data = ProcessRegistry.dump_all(hub.hub_id)
+    registry_data = ProcessRegistry.dump_all(hub.hub_id, include_stopped: false)
 
     # Find children that should be started locally as PRIMARY.
     children_to_start =
