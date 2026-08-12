@@ -390,3 +390,69 @@ The existing `path, hub_id, backend, repaired, row_count` fields are unchanged.
 - **WHEN** any backend supporting `recovery_replay` opens
 - **THEN** the emitted `[:process_hub, :registry, :backend_opened]` event's
   metadata contains a boolean `replayed` field
+
+### Requirement: Guarded TTL-expiry deletion dispatches through the storage backend
+
+`ProcessHub.Service.ProcessRegistry.delete_if_expired/2` SHALL re-check an entry's
+expiry through the configured `Storage.Behaviour` backend (via
+`ProcessHub.Service.Storage`) rather than through any backend-specific primitive such
+as a raw `:ets.lookup/2` on the `hub_id` table name. The guarded delete SHALL behave
+identically on the `:ets`, `{:dets, _}`, `{:durable_ets, _}`, and custom backends:
+
+- If the entry exists as a TTL row (`{child_id, value, expire}`) whose `expire` has
+  passed, the entry SHALL be removed through `Storage.remove/2` and the call SHALL
+  return `true`.
+- If the entry is absent, has no TTL (2-tuple form), or its `expire` has not passed
+  (the entry was re-populated or re-leased since the janitor's scan), the entry SHALL
+  be kept and the call SHALL return `false`.
+- If the registry backend has been closed or unregistered (hub teardown racing a
+  queued sweep), the call SHALL return `false` and SHALL NOT crash the
+  ProcessRegistry GenServer.
+
+#### Scenario: Expired stub is swept on the `:dets` backend
+
+- **GIVEN** a hub using `registry_backend: {:dets, path: <tmp>}` whose registry
+  contains a TTL row with an `expire` in the past (e.g. a dead-child stub
+  `{child_spec, [], metadata}` folded by `bulk_delete`)
+- **WHEN** `ProcessHub.Worker.Janitor.purge_pending_registry(hub_id)` runs
+- **THEN** `delete_if_expired/2` returns `true`; the row is absent from
+  `Storage.match/2` and from the DETS file after re-open
+- **AND** the ProcessRegistry GenServer pid is unchanged (no crash)
+
+#### Scenario: Expired stub is swept on the `:durable_ets` backend
+
+- **GIVEN** a hub using `registry_backend: {:durable_ets, path: <tmp>}` whose
+  registry contains a TTL row with an `expire` in the past
+- **WHEN** `ProcessHub.Worker.Janitor.purge_pending_registry(hub_id)` runs
+- **THEN** the row is removed from both the ETS table and the DETS file, and the
+  ProcessRegistry GenServer does not crash
+
+#### Scenario: Re-populated entry survives the guarded delete on every backend
+
+- **GIVEN** the janitor's scan observed an expired TTL row for `child_id`
+- **AND** the entry has since been re-registered without a TTL (2-tuple form) before
+  the guarded delete executes
+- **WHEN** `delete_if_expired(hub_id, child_id)` is called
+- **THEN** it returns `false` and the entry remains in the registry
+
+#### Scenario: Sweep racing hub teardown degrades to a no-op
+
+- **GIVEN** the hub's registry backend has been closed and unregistered
+- **WHEN** `delete_if_expired(hub_id, child_id)` is called
+- **THEN** it returns `false` and the ProcessRegistry GenServer does not crash
+
+### Requirement: Backend `match/2` returns TTL-expired rows
+
+The `match/2` callback of every registry backend SHALL return matching rows without
+filtering TTL-expired entries. (Value-reading callbacks — `get/2`, `exists?/2`,
+`foldl/3`, `export_all/1` — retain their existing per-backend semantics.) The
+janitor's expired-row scan and the guarded expiry re-check both depend on `match/2`
+seeing expired rows; a backend that filters them would silently re-introduce
+unbounded stub accumulation.
+
+#### Scenario: Expired row is visible to `match/2` on all built-in backends
+
+- **GIVEN** a registry row `{key, value, expire}` whose `expire` is in the past, on
+  each of `Storage.Ets`, `Storage.Dets`, and `Storage.DurableEts`
+- **WHEN** `match/2` is called with a pattern matching 3-tuple rows for that key
+- **THEN** the expired row is included in the result
