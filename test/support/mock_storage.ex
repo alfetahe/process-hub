@@ -130,6 +130,12 @@ defmodule Test.Support.MockStorage do
     :ok
   end
 
+  @impl true
+  def read_durable(ref) do
+    record_for_ref(ref, :read_durable)
+    {:ok, []}
+  end
+
   defp record_for_ref(ref, op) do
     ensure_ops_table()
     # Reverse-look-up hub_id from ref via the {:opened, hub_id} entries.

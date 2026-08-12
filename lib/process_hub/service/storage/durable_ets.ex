@@ -191,6 +191,10 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   end
 
   @impl true
+  @spec read_durable(ref()) :: {:ok, [{term(), term()}]} | {:error, term()}
+  def read_durable({_ets_tid, dets_table}), do: DetsFile.read_durable(dets_table)
+
+  @impl true
   @spec clear_all(ref()) :: :ok | {:error, term()}
   def clear_all({ets_tid, dets_table} = _ref) do
     case :dets.delete_all_objects(dets_table) do

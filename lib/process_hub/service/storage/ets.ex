@@ -121,4 +121,8 @@ defmodule ProcessHub.Service.Storage.Ets do
     ETS.delete_all_objects(ref)
     :ok
   end
+
+  @impl true
+  @spec read_durable(atom() | :ets.tid()) :: {:ok, []}
+  def read_durable(_ref), do: {:ok, []}
 end

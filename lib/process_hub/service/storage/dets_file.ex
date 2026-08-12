@@ -3,9 +3,12 @@ defmodule ProcessHub.Service.Storage.DetsFile do
   On-disk DETS file management shared by the DETS-file storage backends
   (`ProcessHub.Service.Storage.Dets` and `ProcessHub.Service.Storage.DurableEts`).
 
-  Covers path resolution and corruption rotation. It is specific to persisting
-  through a DETS file; in-memory or remote backends do not use it.
+  Covers path resolution, corruption rotation, and the durable-medium read. It is
+  specific to persisting through a DETS file; in-memory or remote backends do not
+  use it.
   """
+
+  alias ProcessHub.Service.Storage.Entry
 
   require Logger
 
@@ -35,6 +38,35 @@ defmodule ProcessHub.Service.Storage.DetsFile do
       {:ok, table} -> {{:ok, table}, true}
       {:error, _} = err -> {err, false}
     end
+  end
+
+  @doc """
+  Folds `table` into its non-expired `{key, value}` rows.
+
+  This is the `read_durable/1` implementation shared by both DETS-file backends:
+  it reads the file only, never the live in-memory view either backend keeps
+  beside it. An unreadable file returns `{:error, reason}` — never an empty set,
+  which callers would mistake for "everything was deliberately removed".
+  """
+  @spec read_durable(atom()) :: {:ok, [{term(), term()}]} | {:error, term()}
+  def read_durable(table) do
+    folded =
+      :dets.foldl(
+        fn entry, acc ->
+          if Entry.expired?(entry), do: acc, else: [{elem(entry, 0), elem(entry, 1)} | acc]
+        end,
+        [],
+        table
+      )
+
+    case folded do
+      {:error, reason} -> {:error, reason}
+      rows when is_list(rows) -> {:ok, rows}
+    end
+  rescue
+    error -> {:error, error}
+  catch
+    :exit, reason -> {:error, reason}
   end
 
   defp default_path(hub_id) do

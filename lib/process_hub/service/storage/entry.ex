@@ -8,13 +8,25 @@ defmodule ProcessHub.Service.Storage.Entry do
   (ETS, DETS, a future remote store, ...).
   """
 
-  @doc "Builds the entry for `key`/`value`, attaching an ms expiry when `opts` has an integer `:ttl`."
+  @doc """
+  Builds the entry for `key`/`value`, attaching an ms expiry when `opts` carries one.
+
+  Two forms are accepted, `:expire_at` taking precedence:
+
+    * `:expire_at` — an absolute deadline in ms since the unix epoch. Used where
+      the deadline is derived from a replicated field (a stopped row's
+      `stopped_at`), so every node computes the same value and re-writing the
+      entry cannot extend its lifetime.
+    * `:ttl` — a duration in ms, resolved against the current time.
+  """
   @spec build(term(), term(), keyword()) :: {term(), term()} | {term(), term(), integer()}
   def build(key, value, opts) do
-    case Keyword.get(opts, :ttl) do
-      ttl when is_integer(ttl) ->
-        expire = DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel.+(ttl)
+    case {Keyword.get(opts, :expire_at), Keyword.get(opts, :ttl)} do
+      {expire, _} when is_integer(expire) ->
         {key, value, expire}
+
+      {_, ttl} when is_integer(ttl) ->
+        {key, value, now_ms() + ttl}
 
       _ ->
         {key, value}
@@ -37,10 +49,11 @@ defmodule ProcessHub.Service.Storage.Entry do
   def expired?({_key, _value, expire}), do: past?(expire)
   def expired?(_other), do: false
 
-  defp past?(expire) when is_integer(expire) do
-    now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
-    now > expire
-  end
+  @doc "Current time in ms since the unix epoch, the unit every expiry is expressed in."
+  @spec now_ms() :: integer()
+  def now_ms, do: DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+
+  defp past?(expire) when is_integer(expire), do: now_ms() > expire
 
   defp past?(_), do: false
 end

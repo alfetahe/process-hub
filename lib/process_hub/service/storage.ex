@@ -181,6 +181,29 @@ defmodule ProcessHub.Service.Storage do
     end
   end
 
+  @doc """
+  Returns every non-expired row held in the backend's durable medium, without
+  touching its live view. `{:ok, []}` for backends without one; `{:error, reason}`
+  when the medium is unreadable.
+
+  `read_durable/1` is an optional backend callback: a backend that does not
+  implement it is treated as having no durable medium.
+  """
+  @spec read_durable(table_id()) :: {:ok, [{term(), term()}]} | {:error, term()}
+  def read_durable(table) do
+    case registered_backend(table) do
+      nil ->
+        EtsBackend.read_durable(table)
+
+      {module, ref} ->
+        if function_exported?(module, :read_durable, 1) do
+          module.read_durable(ref)
+        else
+          {:ok, []}
+        end
+    end
+  end
+
   @doc "Exports all objects from the storage table."
   @spec export_all(table_id()) :: [{atom() | binary(), term(), pos_integer() | nil}]
   def export_all(table) do

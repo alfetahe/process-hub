@@ -114,5 +114,26 @@ defmodule ProcessHub.Service.Storage.Behaviour do
   """
   @callback clear_all(ref :: ref()) :: :ok
 
-  @optional_callbacks insert_many: 2
+  @doc """
+  Returns every non-expired row held in the backend's **durable medium**, as
+  `{key, value}` pairs, without inserting into, mutating, or otherwise affecting
+  the backend's live in-memory view.
+
+  Backends without a durable medium return `{:ok, []}`. A backend whose durable
+  medium is unreadable returns `{:error, reason}`; callers MUST treat an error as
+  "no candidates" rather than as an empty durable set, so a transient read
+  failure is never mistaken for "everything was deliberately removed".
+
+  Safe to call at any time on a running hub; it MUST NOT block mutations for
+  longer than a single fold.
+
+  Optional: a backend that omits it is treated as having no durable medium, so
+  backends written against earlier releases keep working.
+
+  Part of the **experimental** `:auto_recovery` feature; may change in future
+  releases.
+  """
+  @callback read_durable(ref :: ref()) :: {:ok, [{term(), term()}]} | {:error, term()}
+
+  @optional_callbacks insert_many: 2, read_durable: 1
 end
