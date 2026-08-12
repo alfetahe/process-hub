@@ -3,8 +3,9 @@ defmodule ProcessHub.Utility.Extractor do
   Utility module for extracting information from datasets.
   """
 
-  alias ProcessHub.Service.Storage
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.ProcessRegistry.Row
+  alias ProcessHub.Service.Storage
 
   @doc """
   Extracts child_ids with their PIDs of the local nodes.
@@ -25,7 +26,12 @@ defmodule ProcessHub.Utility.Extractor do
   end
 
   @doc """
-  Extracts child_ids with their child_spec, node_pids, and metadata for local nodes or empty node_pids.
+  Extracts child_ids with their child_spec, node_pids, and metadata for local nodes
+  or empty node_pids.
+
+  Deliberately stopped rows are excluded: they are unbound like any other
+  migration candidate, but placement must not resurrect a child the cluster
+  stopped.
   """
   @spec local_and_empty_children(ProcessHub.hub_id()) :: %{
           ProcessHub.child_id() =>
@@ -35,8 +41,9 @@ defmodule ProcessHub.Utility.Extractor do
     local_node = node()
 
     Storage.foldl_entries(hub_id, %{}, fn
-      {child_id, {_child_spec, node_pids, _metadata} = value}, acc ->
-        if Keyword.has_key?(node_pids, local_node) || node_pids == [] do
+      {child_id, {_child_spec, node_pids, metadata} = value}, acc ->
+        if (Keyword.has_key?(node_pids, local_node) or node_pids == []) and
+             not Row.stopped?(metadata) do
           Map.put(acc, child_id, value)
         else
           acc
