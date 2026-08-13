@@ -113,9 +113,18 @@ defmodule Test.ProcessHubRecoveryTest do
                )
     end
 
+    test "the grace floor is lower than the interval floor" do
+      # The grace is a one-shot startup delay, so it may be short; the interval
+      # is recurring and each round diffs the registry, so it keeps the 1 s floor.
+      assert {:ok, %{reconcile_grace_ms: 50}} = Recovery.parse_config(reconcile_grace_ms: 50)
+
+      assert {:error, {:invalid_auto_recovery, :reconcile_interval_ms_out_of_range}} =
+               Recovery.parse_config(reconcile_interval_ms: 50)
+    end
+
     test "rejects out-of-range values and unknown shapes" do
       assert {:error, {:invalid_auto_recovery, :reconcile_grace_ms_out_of_range}} =
-               Recovery.parse_config(reconcile_grace_ms: 100)
+               Recovery.parse_config(reconcile_grace_ms: 49)
 
       assert {:error, {:invalid_auto_recovery, :reconcile_interval_ms_out_of_range}} =
                Recovery.parse_config(reconcile_interval_ms: 10_000_000)

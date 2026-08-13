@@ -210,8 +210,10 @@ defmodule ProcessHub do
     - `true` — enabled with default options.
     - `keyword()` — explicit options:
       - `:reconcile_grace_ms` — delay before the first round, which runs whether
-        or not any peer has joined. Default `30_000`. Range `[1_000, 600_000]`.
-        Set it above the synchronization strategy's `sync_interval`.
+        or not any peer has joined. Default `30_000`. Range `[50, 600_000]` — it
+        is a one-shot delay, so the floor is low enough for a suite that boots a
+        hub per test. Set it above the synchronization strategy's `sync_interval`
+        in production.
       - `:reconcile_interval_ms` — minimum spacing between subsequent rounds, and
         the per-handler budget for the blocking `pre_recovery_replay` hook.
         Default `15_000`. Range `[1_000, 600_000]`.

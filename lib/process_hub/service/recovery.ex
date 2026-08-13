@@ -55,6 +55,11 @@ defmodule ProcessHub.Service.Recovery do
   @default_reconcile_interval_ms 15_000
   @default_stopped_row_ttl_ms 86_400_000
 
+  # The grace is a one-shot delay before the first round, so a small value costs
+  # nothing beyond starting sooner — and a suite that boots a hub per test pays
+  # it every time. The interval keeps the higher floor: it is recurring, and each
+  # round diffs the durable registry against the cluster.
+  @reconcile_grace_ms_min 50
   @reconcile_ms_min 1_000
   @reconcile_ms_max 600_000
   @stopped_row_ttl_min 60_000
@@ -107,7 +112,7 @@ defmodule ProcessHub.Service.Recovery do
     with {:ok, grace} <-
            validate_int(
              Keyword.get(opts, :reconcile_grace_ms, @default_reconcile_grace_ms),
-             @reconcile_ms_min,
+             @reconcile_grace_ms_min,
              @reconcile_ms_max,
              :reconcile_grace_ms_out_of_range
            ),
