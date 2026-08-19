@@ -110,7 +110,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @doc """
   Commits the list additions a `durable: true` start requires, before any
   process starts. Refuses when the gate is off, the list is parked, a spec is
-  not `:permanent`, or no leader is reachable. `:ok` for non-durable starts.
+  `:temporary`, or no leader is reachable. `:ok` for non-durable starts.
   """
   @spec precommit_start(Hub.t(), [ProcessHub.child_spec()], keyword()) :: :ok | {:error, term()}
   def precommit_start(hub, child_specs, opts) do
@@ -118,7 +118,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
       not Keyword.get(opts, :durable, false) -> :ok
       not hub.recovery_config.enabled? -> {:error, :durable_requires_auto_recovery}
       parked?(hub) -> {:error, :declared_list_parked}
-      not Enum.all?(child_specs, &permanent?/1) -> {:error, :durable_requires_permanent}
+      not Enum.all?(child_specs, &restartable?/1) -> {:error, :durable_requires_restartable}
       true -> mutate(hub, {:add, child_specs})
     end
   end
@@ -153,8 +153,12 @@ defmodule ProcessHub.Service.DeclaredChildren do
     end
   end
 
-  defp permanent?(%{restart: restart}), do: restart === :permanent
-  defp permanent?(%{}), do: true
+  # `:transient` is durable-compatible: a normal exit keeps the declared
+  # entry, so the reconcile restarts the child at round cadence — the list
+  # stays authoritative. Only `:temporary` — never restarted, spec removed on
+  # exit — contradicts declaring the child durable.
+  defp restartable?(%{restart: restart}), do: restart in [:permanent, :transient]
+  defp restartable?(%{}), do: true
 
   # --- leader -----------------------------------------------------------------
 

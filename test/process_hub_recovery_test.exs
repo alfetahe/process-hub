@@ -373,27 +373,35 @@ defmodule Test.ProcessHubRecoveryTest do
       assert %{version: 2} = DeclaredChildren.declared_children(hub_id)
     end
 
-    test "durable requires a :permanent restart type", %{dets: dets} do
+    test "durable requires a restartable restart type", %{dets: dets} do
       hub_id = SetupHelper.unique_id(:rec_permanent)
 
       {^hub_id, _pid} = SetupHelper.start_hub!(durable_conf(hub_id, dets))
 
-      transient = Map.put(cspec(:transient_child), :restart, :transient)
+      temporary = Map.put(cspec(:temporary_child), :restart, :temporary)
 
-      assert {:error, :durable_requires_permanent} =
-               ProcessHub.start_child(hub_id, transient, durable: true)
+      assert {:error, :durable_requires_restartable} =
+               ProcessHub.start_child(hub_id, temporary, durable: true)
 
       assert DeclaredChildren.declared_children(hub_id) == %{version: 0, children: []}
-      assert ProcessHub.get_pid(hub_id, :transient_child) == nil
+      assert ProcessHub.get_pid(hub_id, :temporary_child) == nil
 
-      # An explicit :permanent and the default both pass.
+      # `:transient`, an explicit `:permanent`, and the default all pass: a
+      # normal exit of a transient durable child keeps its declared entry, and
+      # the reconcile restarts it — the list stays authoritative.
+      transient = Map.put(cspec(:transient_child), :restart, :transient)
+
+      assert %ProcessHub.StartResult{status: :ok} =
+               ProcessHub.start_child(hub_id, transient, awaitable: true, durable: true)
+               |> ProcessHub.await()
+
       permanent = Map.put(cspec(:perm_child), :restart, :permanent)
 
       assert %ProcessHub.StartResult{status: :ok} =
                ProcessHub.start_child(hub_id, permanent, awaitable: true, durable: true)
                |> ProcessHub.await()
 
-      assert declared_ids(hub_id) == [:perm_child]
+      assert declared_ids(hub_id) == [:perm_child, :transient_child]
     end
 
     test "an unreachable leader refuses durable commands but not plain ones", %{dets: dets} do

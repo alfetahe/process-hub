@@ -79,8 +79,9 @@ defmodule ProcessHub do
   are started. The list is persisted on disk, so when a node goes down — or the whole
   cluster does — the orphan reconcile restores the children from it once the node is back
   up, while a deliberate stop is remembered forever (list absence never expires).
-  **Experimental.** Requires `:auto_recovery` to be enabled and a `:permanent` restart type
-  (the default); the list mutation is serialized through the hub's leader node, so the call
+  **Experimental.** Requires `:auto_recovery` to be enabled and a restartable type —
+  `:permanent` (the default) or `:transient`; a `:temporary` spec is refused. The list
+  mutation is serialized through the hub's leader node, so the call
   can also return `{:error, :no_leader}`. The default is `false`.
   """
   @type init_opts() :: [
