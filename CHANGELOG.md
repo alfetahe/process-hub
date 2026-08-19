@@ -1,6 +1,11 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- `awaitable: true` no longer loses the result when `await/1` arrives **after** the operation has completed. The coordinator dropped a finalized operation as soon as the last node responded, and only replied if an awaiter had already registered. Since `await/1` is a separate round trip made after `start_child/3` returns, the two race and a late await got `{:error, :pending_request_not_found}` for a child that started without error. A completed awaitable operation now retains its finalized result until an awaiter claims it or the `:timeout` window (plus the await grace period) elapses and the existing expiry sweep reaps it.
+
 ## v0.6.1 - 2026-08-06
 Fixes `Janitor` TTL sweep bug and minor documentation issues.
 

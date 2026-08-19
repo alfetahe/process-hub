@@ -417,6 +417,88 @@ defmodule Test.Service.RequestManagerTest do
       refute MapSet.member?(updated_op.completed_nodes, :node2)
     end
 
+    test "retains the finalized result when awaitable and nobody is awaiting yet" do
+      sub_req = %StartChildrenRequest{
+        node: node(),
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{node(), [%{child_id: :child1}]}])
+      op = %{op | sub_requests: [sub_req], options: [awaitable: true, timeout: 5000]}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:noreply, new_state} =
+               RequestManager.handle_response(state, op.transaction_id, node(), [
+                 {:child1, {:ok, self()}}
+               ])
+
+      retained = new_state.pending_operations[op.transaction_id]
+      assert {:ok, %ProcessHub.StartResult{}} = retained.result
+
+      # A late await gets the retained result and evicts the operation.
+      from = {self(), make_ref()}
+
+      assert {:reply, %ProcessHub.StartResult{status: :ok}, awaited_state} =
+               RequestManager.handle_await(new_state, op.transaction_id, from)
+
+      assert awaited_state.pending_operations == %{}
+    end
+
+    test "does not retain the result when the operation is not awaitable" do
+      sub_req = %StartChildrenRequest{
+        node: node(),
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{node(), [%{child_id: :child1}]}])
+      op = %{op | sub_requests: [sub_req], options: [awaitable: false]}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:noreply, new_state} =
+               RequestManager.handle_response(state, op.transaction_id, node(), [
+                 {:child1, {:ok, self()}}
+               ])
+
+      assert new_state.pending_operations == %{}
+    end
+
+    test "retained results are reaped by cleanup_expired/1" do
+      sub_req = %StartChildrenRequest{
+        node: node(),
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{node(), [%{child_id: :child1}]}])
+      op = %{op | sub_requests: [sub_req], options: [awaitable: true, timeout: 0]}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:noreply, new_state} =
+               RequestManager.handle_response(state, op.transaction_id, node(), [
+                 {:child1, {:ok, self()}}
+               ])
+
+      retained = new_state.pending_operations[op.transaction_id]
+      # Retention is bounded by the future timeout plus the await grace period.
+      assert retained.expires_at <= System.monotonic_time(:millisecond) + 1000
+      refute RequestManager.expired?(retained)
+
+      expired = %{retained | expires_at: System.monotonic_time(:millisecond) - 1}
+
+      swept =
+        RequestManager.cleanup_expired(%{
+          new_state
+          | pending_operations: %{op.transaction_id => expired}
+        })
+
+      assert swept.pending_operations == %{}
+    end
+
     test "replies to awaiter on complete" do
       ref = make_ref()
       from = {self(), ref}

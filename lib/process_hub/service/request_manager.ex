@@ -25,6 +25,7 @@ defmodule ProcessHub.Service.RequestManager do
   @max_pids_per_request 10_000
 
   @default_timeout :timer.minutes(10)
+  @result_retention_grace 1000
 
   @type t :: %__MODULE__{
           transaction_id: reference(),
@@ -36,6 +37,7 @@ defmodule ProcessHub.Service.RequestManager do
           expires_at: integer(),
           awaiter: {pid(), reference()} | nil,
           future: ProcessHub.Future.t() | nil,
+          result: {:ok, struct()} | nil,
           options: keyword()
         }
 
@@ -47,6 +49,7 @@ defmodule ProcessHub.Service.RequestManager do
     :expires_at,
     :awaiter,
     :future,
+    :result,
     sub_requests: [],
     completed_nodes: MapSet.new(),
     options: []
@@ -176,8 +179,21 @@ defmodule ProcessHub.Service.RequestManager do
         case process_response(operation, response_node, results) do
           {:complete, updated} ->
             result = finalize(updated, state)
-            if updated.awaiter, do: GenServer.reply(updated.awaiter, result)
-            {:noreply, remove(state, transaction_id)}
+
+            cond do
+              updated.awaiter ->
+                GenServer.reply(updated.awaiter, result)
+                {:noreply, remove(state, transaction_id)}
+
+              awaitable?(updated) ->
+                # Nobody is awaiting yet. `await/1` is a separate round trip made
+                # after the operation was dispatched, so it can arrive late.
+                # Hold the finalized result until it is claimed or expires.
+                {:noreply, update(state, retain_result(updated, result))}
+
+              true ->
+                {:noreply, remove(state, transaction_id)}
+            end
 
           {:pending, updated} ->
             {:noreply, update(state, updated)}
@@ -191,6 +207,9 @@ defmodule ProcessHub.Service.RequestManager do
     case get(state, transaction_id) do
       nil ->
         {:reply, {:error, :pending_request_not_found}, state}
+
+      %__MODULE__{result: {:ok, already_completed_result}} ->
+        {:reply, already_completed_result, remove(state, transaction_id)}
 
       operation ->
         timeout = Keyword.get(operation.options, :timeout, 5000)
@@ -482,6 +501,16 @@ defmodule ProcessHub.Service.RequestManager do
   ##############################################################################
   # Private
   ##############################################################################
+
+  defp awaitable?(%__MODULE__{options: options}) do
+    Keyword.get(options, :awaitable, false)
+  end
+
+  defp retain_result(%__MODULE__{} = operation, result) do
+    retention = Keyword.get(operation.options, :timeout, 5000) + @result_retention_grace
+    incipient_expires_at = System.monotonic_time(:millisecond) + retention
+    %{operation | result: {:ok, result}, sub_requests: [], expires_at: incipient_expires_at}
+  end
 
   defp handler_action(handler_module) do
     module_name = handler_module |> Module.split() |> List.last()
