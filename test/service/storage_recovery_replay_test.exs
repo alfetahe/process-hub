@@ -10,7 +10,12 @@ defmodule Test.Service.StorageRecoveryReplayTest do
   alias ProcessHub.Service.Storage.DurableEts
 
   defp tmp_dets_path(prefix) do
-    base = Path.join([System.tmp_dir!(), "process_hub_recreplay_#{prefix}_#{System.unique_integer([:positive])}"])
+    base =
+      Path.join([
+        System.tmp_dir!(),
+        "process_hub_recreplay_#{prefix}_#{System.unique_integer([:positive])}"
+      ])
+
     File.mkdir_p!(base)
     on_exit(fn -> File.rm_rf(base) end)
     Path.join(base, "registry.dets")
@@ -73,5 +78,4 @@ defmodule Test.Service.StorageRecoveryReplayTest do
       DurableEts.close(ref)
     end
   end
-
 end

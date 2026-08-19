@@ -19,7 +19,7 @@ defmodule Test.Service.MigrationTest do
   alias ProcessHub.Strategy.Synchronization.PubSub
   alias Test.Helper.ConsentServer
 
-  @remote_node :"ph_fake_remote@localhost"
+  @remote_node :ph_fake_remote@localhost
 
   # Stands in for the coordinator: resolves the hub, serializes deferred-list
   # writes, and forwards the messages it would receive to the test process.

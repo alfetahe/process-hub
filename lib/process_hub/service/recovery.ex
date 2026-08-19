@@ -281,7 +281,11 @@ defmodule ProcessHub.Service.Recovery do
     })
 
     timer =
-      Process.send_after(self(), :recovery_timeout_elapsed, state.recovery_config.recovery_timeout_ms)
+      Process.send_after(
+        self(),
+        :recovery_timeout_elapsed,
+        state.recovery_config.recovery_timeout_ms
+      )
 
     Process.send_after(self(), :start_marker_replay, 0)
     %{state | recovery_timeout_timer: timer}
@@ -402,7 +406,6 @@ defmodule ProcessHub.Service.Recovery do
     Enum.each(queue, &send(self(), &1))
     %{state | recovery_event_queue: []}
   end
-
 
   @doc """
   Returns the coordinator's current `:recovery_state`.
@@ -761,7 +764,11 @@ defmodule ProcessHub.Service.Recovery do
     :ok
   end
 
-  defp run_handler_blocking(%HookManager{m: module, f: func, a: args} = handler, hook_data, timeout) do
+  defp run_handler_blocking(
+         %HookManager{m: module, f: func, a: args} = handler,
+         hook_data,
+         timeout
+       ) do
     args = substitute_wildcard(args, hook_data)
 
     worker = fn ->
@@ -775,12 +782,23 @@ defmodule ProcessHub.Service.Recovery do
     end
 
     case await_task(worker, timeout, kill_on_timeout: true) do
-      {:ok, {:__hook_raised__, e, st}} -> log_handler_error(:raised, handler.id, {e, st})
-      {:ok, {:__hook_caught__, kind, value, _st}} -> log_handler_error(:caught, handler.id, {kind, value})
-      {:ok, _ok} -> :ok
-      {:down, :normal} -> :ok
-      {:down, reason} -> log_handler_error(:crashed, handler.id, reason)
-      :timeout -> log_handler_error(:timeout, handler.id, timeout)
+      {:ok, {:__hook_raised__, e, st}} ->
+        log_handler_error(:raised, handler.id, {e, st})
+
+      {:ok, {:__hook_caught__, kind, value, _st}} ->
+        log_handler_error(:caught, handler.id, {kind, value})
+
+      {:ok, _ok} ->
+        :ok
+
+      {:down, :normal} ->
+        :ok
+
+      {:down, reason} ->
+        log_handler_error(:crashed, handler.id, reason)
+
+      :timeout ->
+        log_handler_error(:timeout, handler.id, timeout)
     end
   end
 
@@ -822,5 +840,4 @@ defmodule ProcessHub.Service.Recovery do
       other -> other
     end)
   end
-
 end

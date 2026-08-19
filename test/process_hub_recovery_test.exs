@@ -69,7 +69,9 @@ defmodule Test.ProcessHubRecoveryTest do
                Recovery.init_marker(:hub, path, true)
 
       File.touch!(path)
-      assert {%{enabled?: true, path: ^path}, :normal, :normal} = Recovery.init_marker(:hub, path, true)
+
+      assert {%{enabled?: true, path: ^path}, :normal, :normal} =
+               Recovery.init_marker(:hub, path, true)
     end
 
     test "resolve_mode gates on the marker; disabled always :normal" do
@@ -132,11 +134,16 @@ defmodule Test.ProcessHubRecoveryTest do
     test "fires init→recovering→normal, writes the marker, and await_normal unblocks" do
       hub_id = start_recovery_hub!(:rec_absent)
 
-      assert_receive {:sc, %{hub_id: ^hub_id, from: :init, to: :recovering, reason: :marker_absent}},
+      assert_receive {:sc,
+                      %{hub_id: ^hub_id, from: :init, to: :recovering, reason: :marker_absent}},
                      3_000
 
       assert_receive {:sc,
-                      %{to: :normal, reason: :replay_complete, measurements: %{cspec_count: 0, succeeded: 0}}},
+                      %{
+                        to: :normal,
+                        reason: :replay_complete,
+                        measurements: %{cspec_count: 0, succeeded: 0}
+                      }},
                      3_000
 
       assert Recovery.await_normal(hub_id, 5_000) == :ok
@@ -159,7 +166,9 @@ defmodule Test.ProcessHubRecoveryTest do
       start_hub!(hub_id: hub_id, hooks: hooks, auto_recovery: [marker_path: tmp_marker()])
 
       assert_receive {:pre_replay, %{hub_id: ^hub_id, child_count: 0}}, 3_000
-      assert_receive {:post_replay, %{hub_id: ^hub_id, child_count: 0, succeeded: 0, failed: 0}}, 3_000
+
+      assert_receive {:post_replay, %{hub_id: ^hub_id, child_count: 0, succeeded: 0, failed: 0}},
+                     3_000
     end
 
     test "pre_recovery_replay blocks until handlers return; a handler crash is isolated" do

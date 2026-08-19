@@ -204,5 +204,7 @@ defmodule ProcessHub.MixProject do
   end
 
   defp elixirc_paths(:prod), do: ["lib"]
-  defp elixirc_paths(_), do: ["lib", "test/helper", "test/fixture", "test/support", "priv/mix/tasks"]
+
+  defp elixirc_paths(_),
+    do: ["lib", "test/helper", "test/fixture", "test/support", "priv/mix/tasks"]
 end
