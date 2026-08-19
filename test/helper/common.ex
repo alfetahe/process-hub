@@ -65,8 +65,12 @@ defmodule Test.Helper.Common do
 
   defp do_eventually(fun, deadline) do
     cond do
-      fun.() -> true
-      System.monotonic_time(:millisecond) > deadline -> false
+      fun.() ->
+        true
+
+      System.monotonic_time(:millisecond) > deadline ->
+        false
+
       true ->
         receive after: (50 -> :ok)
         do_eventually(fun, deadline)

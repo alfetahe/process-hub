@@ -135,21 +135,29 @@ defmodule ProcessHub.Initializer do
     children =
       [
         {Registry, keys: :unique, name: procs.system_registry},
-        {ProcessHub.Service.ProcessRegistry, {hub_id, procs.process_registry, recovery_config}},
+        {ProcessHub.Service.ProcessRegistry, {hub_id, procs.process_registry}},
         {Blockade, %{name: procs.event_queue, priority_sync: false}},
         dist_sup(hub_conf, procs),
-        {Task.Supervisor, name: procs.task_sup},
-        {ProcessHub.Coordinator, {hub_conf, procs, storage}},
-        {ProcessHub.Worker.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
-        {ProcessHub.Worker.BootstrapWorker, {hub_id, procs.bootstrap_worker, storage.misc}},
-        {ProcessHub.Worker.Janitor,
-         {
-           hub_id,
-           procs.janitor,
-           storage.misc,
-           hub_conf.storage_purge_interval
-         }}
-      ]
+        {Task.Supervisor, name: procs.task_sup}
+      ] ++
+        ProcessHub.Storage.RemoteManifest.Shipper.child_specs(
+          hub_id,
+          recovery_config,
+          procs.manifest_shipper,
+          storage.hook
+        ) ++
+        [
+          {ProcessHub.Coordinator, {hub_conf, procs, storage}},
+          {ProcessHub.Worker.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
+          {ProcessHub.Worker.BootstrapWorker, {hub_id, procs.bootstrap_worker, storage.misc}},
+          {ProcessHub.Worker.Janitor,
+           {
+             hub_id,
+             procs.janitor,
+             storage.misc,
+             hub_conf.storage_purge_interval
+           }}
+        ]
 
     opts = [strategy: :one_for_one]
 
@@ -171,10 +179,10 @@ defmodule ProcessHub.Initializer do
     }
   end
 
-  # An opted-in hub never populates the live registry from disk: durable rows reach
-  # the cluster through the orphan reconcile round, which starts only the
-  # difference against what the cluster is observed to hold. Loading them here
-  # would republish a returning node's stale view as fact.
+  # An opted-in hub never populates the live registry from disk: restoration
+  # flows through the orphan reconcile round, which starts only the difference
+  # between the declared list and what the cluster is observed to hold. Loading
+  # rows here would republish a returning node's stale view as fact.
   defp setup_storage(hub_id, hub_conf, recovery_config) do
     {backend_module, backend_opts} = resolve_registry_backend(hub_conf.registry_backend)
 
@@ -191,13 +199,30 @@ defmodule ProcessHub.Initializer do
       misc: :ets.new(hub_id, [:set, :public]),
       registry_backend: {backend_module, backend_ref}
     }
+    |> setup_declared_storage(hub_id, hub_conf, recovery_config)
   end
+
+  defp setup_declared_storage(storage, hub_id, hub_conf, %{enabled?: true}) do
+    Map.merge(
+      storage,
+      ProcessHub.Service.DeclaredChildren.open_storage(hub_id, hub_conf.registry_backend)
+    )
+  end
+
+  defp setup_declared_storage(storage, _hub_id, _hub_conf, _recovery_config), do: storage
 
   defp resolve_registry_backend(:ets), do: {ProcessHub.Service.Storage.Ets, []}
   defp resolve_registry_backend(nil), do: {ProcessHub.Service.Storage.Ets, []}
-  defp resolve_registry_backend({:dets, opts}) when is_list(opts), do: {ProcessHub.Service.Storage.Dets, opts}
-  defp resolve_registry_backend({:durable_ets, opts}) when is_list(opts), do: {ProcessHub.Service.Storage.DurableEts, opts}
-  defp resolve_registry_backend({module, opts}) when is_atom(module) and is_list(opts), do: {module, opts}
+
+  defp resolve_registry_backend({:dets, opts}) when is_list(opts),
+    do: {ProcessHub.Service.Storage.Dets, opts}
+
+  defp resolve_registry_backend({:durable_ets, opts}) when is_list(opts),
+    do: {ProcessHub.Service.Storage.DurableEts, opts}
+
+  defp resolve_registry_backend({module, opts}) when is_atom(module) and is_list(opts),
+    do: {module, opts}
+
   defp resolve_registry_backend(module) when is_atom(module), do: {module, []}
 
   defp setup_procs(hub_id) do
@@ -212,7 +237,8 @@ defmodule ProcessHub.Initializer do
       task_sup: {:via, Registry, {system_registry, "task_sup"}},
       worker_queue: {:via, Registry, {system_registry, "worker_queue"}},
       bootstrap_worker: {:via, Registry, {system_registry, "bootstrap_worker"}},
-      janitor: {:via, Registry, {system_registry, "janitor"}}
+      janitor: {:via, Registry, {system_registry, "janitor"}},
+      manifest_shipper: {:via, Registry, {system_registry, "manifest_shipper"}}
     }
   end
 end

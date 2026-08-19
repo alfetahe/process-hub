@@ -196,13 +196,13 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       dispatch_post_start_hook(hub, post_start_results)
 
       # Update local registry and send response
-      update_registry(hub, post_start_results)
+      update_registry(hub, post_start_results, start_opts)
 
       # Build and send response
       send_response(post_start_results, start_opts)
 
       # Sync propagate to other nodes
-      sync_propagate(hub, post_start_results)
+      sync_propagate(hub, post_start_results, start_opts)
 
       # Execute post-action if present
       if request.post_action do
@@ -590,12 +590,13 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     HookManager.dispatch_hook(hub.storage.hook, Hook.post_children_start(), %{children: post_data})
   end
 
-  defp update_registry(hub, post_start_results) do
+  defp update_registry(hub, post_start_results, start_opts) do
     # Insert into local registry
     ProcessRegistry.bulk_insert(
       hub.hub_id,
       store_format(post_start_results),
-      hook_storage: hub.storage.hook
+      hook_storage: hub.storage.hook,
+      durable: Keyword.get(start_opts, :durable, false)
     )
   end
 
@@ -609,10 +610,13 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     )
   end
 
-  defp sync_propagate(hub, post_start_results) do
+  defp sync_propagate(hub, post_start_results, start_opts) do
     if !Enum.empty?(post_start_results) do
       request =
-        ProcessHub.Request.Handler.PidsRegisterRequest.new(store_format(post_start_results))
+        ProcessHub.Request.Handler.PidsRegisterRequest.new(
+          store_format(post_start_results),
+          durable: Keyword.get(start_opts, :durable, false)
+        )
 
       Dispatcher.propagate_event(hub, request, members: :external)
     end

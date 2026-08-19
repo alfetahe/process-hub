@@ -4,7 +4,9 @@ defmodule Test.ProcessHub.Service.Storage.DetsTest do
   alias ProcessHub.Service.Storage.Dets, as: Backend
 
   setup do
-    tmp_dir = Path.join(System.tmp_dir!(), "process_hub_dets_test_#{System.unique_integer([:positive])}")
+    tmp_dir =
+      Path.join(System.tmp_dir!(), "process_hub_dets_test_#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(tmp_dir)
     on_exit(fn -> File.rm_rf!(tmp_dir) end)
 

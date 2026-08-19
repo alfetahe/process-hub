@@ -253,4 +253,45 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec reconcile_duplicate() :: atom()
   def reconcile_duplicate(), do: :reconcile_duplicate_hook
+
+  @doc """
+  Hook dispatched when two declared-list copies carry the same version with
+  different content and the deterministic tiebreak (lexicographically lowest
+  mutating node) resolves them. Reachable only when both partition sides mutated
+  the list under a non-locking partition strategy.
+
+  Part of the **experimental** declared-children feature; may change in future
+  releases.
+
+  Data: `%{hub_id: atom(), version: pos_integer(), kept_mutated_by: node(), discarded_mutated_by: node()}`
+  """
+  @spec declared_tiebreak() :: atom()
+  def declared_tiebreak(), do: :declared_tiebreak_hook
+
+  @doc """
+  Alarm-grade hook dispatched when a hub's declared list is missing or corrupt
+  while durable evidence of declared children exists and no remote manifest copy
+  could restore it. The hub's reconcile is parked — no child is started or
+  stopped by it — until an operator intervenes.
+
+  Part of the **experimental** declared-children feature; may change in future
+  releases.
+
+  Data: `%{hub_id: atom(), reason: atom()}`
+  """
+  @spec declared_parked() :: atom()
+  def declared_parked(), do: :declared_parked_hook
+
+  @doc """
+  Hook dispatched when shipping the declared list to the configured remote
+  manifest adapter fails. The originating command already committed locally;
+  the shipper retries with backoff.
+
+  Part of the **experimental** declared-children feature; may change in future
+  releases.
+
+  Data: `%{hub_id: atom(), version: pos_integer(), error: term(), attempt: pos_integer()}`
+  """
+  @spec manifest_ship_failed() :: atom()
+  def manifest_ship_failed(), do: :manifest_ship_failed_hook
 end

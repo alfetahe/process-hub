@@ -54,33 +54,22 @@ defmodule ProcessHub.Service.Synchronizer do
   @doc """
   Returns the local node's process registry data used for synchronization.
 
-  Carries two kinds of row:
-
-    * children bound locally, reported with the pid this node observes;
-    * stopped rows, reported with a `nil` pid.
-
-  A bound row travels with its holder. A stopped row has no holder, so every node
-  that has it reports it and the epoch merge converges them; without that, a stop
-  that happened while a node was away could never reach it and the returning
-  node's reconcile would resurrect the child.
-
-  Unbound `:running` rows are deliberately *not* carried. They are orphan
-  candidates, and each node computes those from its own durable registry — sending
-  them would grow every payload by the whole orphan set to tell peers something
-  they cannot act on.
+  Carries the children bound locally, each reported with the pid this node
+  observes — a bound row travels with its holder. Stop knowledge does not travel
+  here: for declared children it lives in the declared list, and unbound rows
+  are deliberately not carried, because peers cannot act on them.
   """
   @spec local_sync_data(Hub.t()) :: [
-          {ProcessHub.child_spec(), pid() | nil, ProcessHub.child_metadata()}
+          {ProcessHub.child_spec(), pid(), ProcessHub.child_metadata()}
         ]
   def local_sync_data(hub) do
     local_node = node()
 
     ProcessRegistry.dump_all(hub.hub_id)
     |> Enum.reduce([], fn {_child_id, {child_spec, child_nodes, metadata}}, acc ->
-      cond do
-        pid = Keyword.get(child_nodes, local_node) -> [{child_spec, pid, metadata} | acc]
-        Row.stopped?(metadata) -> [{child_spec, nil, metadata} | acc]
-        true -> acc
+      case Keyword.get(child_nodes, local_node) do
+        nil -> acc
+        pid -> [{child_spec, pid, metadata} | acc]
       end
     end)
   end

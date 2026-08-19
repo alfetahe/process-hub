@@ -24,6 +24,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
+  alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.State
   alias ProcessHub.Service.HookManager
@@ -40,6 +41,10 @@ defmodule ProcessHub.Coordinator do
 
   use Event
   use GenServer
+
+  # Retry interval for the boot-time remote-manifest comparison after the remote
+  # was unreachable at boot.
+  @declared_refetch_ms 30_000
 
   def start_link({settings, _, _} = arg) do
     GenServer.start_link(__MODULE__, arg, name: settings.hub_id)
@@ -124,13 +129,40 @@ defmodule ProcessHub.Coordinator do
 
     state = join_handlers(boot_handlers, state)
 
-    state = Recovery.schedule_first_round(state)
+    case declared_children_boot(state) do
+      {:ok, state} ->
+        state = Recovery.schedule_first_round(state)
 
-    boot_token = Cluster.boot_token()
-    Storage.insert(storage.misc, StorageKey.sbt(), boot_token)
-    Cluster.announce_boot(state, boot_token)
+        boot_token = Cluster.boot_token()
+        Storage.insert(storage.misc, StorageKey.sbt(), boot_token)
+        Cluster.announce_boot(state, boot_token)
 
-    {:ok, state, {:continue, :additional_setup}}
+        {:ok, state, {:continue, :additional_setup}}
+
+      {:stop, reason} ->
+        {:stop, reason}
+    end
+  end
+
+  # Resolves the declared list before the first reconcile round can be
+  # scheduled; a remote outage at boot falls back to the local copy and retries
+  # the comparison on a timer.
+  defp declared_children_boot(%Hub{recovery_config: %{enabled?: false}} = state), do: {:ok, state}
+
+  defp declared_children_boot(state) do
+    DeclaredChildren.ensure_election()
+
+    case DeclaredChildren.boot(state) do
+      {:ok, {:remote_error, _reason}} ->
+        Process.send_after(self(), :declared_remote_refetch, @declared_refetch_ms)
+        {:ok, state}
+
+      {:ok, _} ->
+        {:ok, state}
+
+      {:error, reason} ->
+        {:stop, reason}
+    end
   end
 
   @impl true
@@ -178,6 +210,11 @@ defmodule ProcessHub.Coordinator do
       _ ->
         :ok
     end
+
+    case Map.get(state.storage, :declared_backend) do
+      {module, ref} -> module.close(ref)
+      _ -> :ok
+    end
   end
 
   @impl true
@@ -213,18 +250,44 @@ defmodule ProcessHub.Coordinator do
       |> Keyword.put(:init_cids, Enum.map(child_specs, & &1.id))
       |> Distributor.default_init_opts()
 
-    init_children(state, opts, :start_initiated, fn ->
-      Distributor.compose_start_operation(state, child_specs, opts)
-    end)
+    # The declared-list addition commits before any process starts, so a crash
+    # in between converges through the reconcile instead of losing the intent.
+    case DeclaredChildren.precommit_start(state, child_specs, opts) do
+      :ok ->
+        init_children(state, opts, :start_initiated, fn ->
+          Distributor.compose_start_operation(state, child_specs, opts)
+        end)
+
+      {:error, _reason} = error ->
+        {:reply, error, state}
+    end
   end
 
   @impl true
   def handle_call({:init_children_stop, child_ids, opts}, _from, state) do
     opts = Distributor.default_operation_opts(opts)
 
-    init_children(state, opts, :stop_initiated, fn ->
-      Distributor.compose_stop_operation(state, child_ids, opts)
-    end)
+    # The declared-list removal commits before any child terminates; the reverse
+    # order would let the reconcile resurrect a half-completed stop.
+    case DeclaredChildren.precommit_stop(state, child_ids) do
+      :ok ->
+        init_children(state, opts, :stop_initiated, fn ->
+          Distributor.compose_stop_operation(state, child_ids, opts)
+        end)
+
+      {:error, _reason} = error ->
+        {:reply, error, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:declared_mutate, mutation}, _from, state) do
+    {:reply, DeclaredChildren.apply_mutation(state, mutation), state}
+  end
+
+  @impl true
+  def handle_call(:declared_clear, _from, state) do
+    {:reply, DeclaredChildren.handle_clear(state), state}
   end
 
   @impl true
@@ -467,7 +530,34 @@ defmodule ProcessHub.Coordinator do
     |> Storage.get(StorageKey.strsyn())
     |> schedule_sync()
 
+    DeclaredChildren.announce_version(state)
+
     state = if Recovery.round_due?(state), do: Recovery.spawn_round(state), else: state
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({@event_declared_adopt, manifest}, state) do
+    if state.recovery_config.enabled?, do: DeclaredChildren.adopt(state, manifest)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({@event_declared_version, {from_node, version}}, state) do
+    DeclaredChildren.maybe_pull(state, from_node, version)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:declared_remote_refetch, state) do
+    case DeclaredChildren.remote_recompare(state) do
+      {:error, _reason} ->
+        Process.send_after(self(), :declared_remote_refetch, @declared_refetch_ms)
+
+      _ ->
+        :ok
+    end
 
     {:noreply, state}
   end
@@ -652,8 +742,11 @@ defmodule ProcessHub.Coordinator do
         prefix: "Coordinator"
       )
 
-      # Broadcast local registry data to joining nodes.
+      # Broadcast local registry data to joining nodes, and the declared-list
+      # version so a rejoining node catches up on stops it missed before its
+      # first reconcile round.
       Synchronizer.broadcast_local_registry(hub, new_nodes)
+      DeclaredChildren.announce_version(hub)
 
       delegate_work(hub, {:handle_node_up, %{joined_nodes: new_nodes, hub: hub}})
     else
@@ -855,6 +948,8 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_cluster_leave_batch)
     Blockade.add_handler(eq, @event_node_registry_broadcast)
     Blockade.add_handler(eq, @event_requests_handle)
+    Blockade.add_handler(eq, @event_declared_adopt)
+    Blockade.add_handler(eq, @event_declared_version)
   end
 
   defp register_handlers(hook_storage, hooks) when is_map(hooks) do

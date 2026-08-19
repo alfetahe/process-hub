@@ -34,7 +34,7 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
   @spec reconcile(ProcessHub.Hub.t(), map(), %{ProcessHub.child_id() => [node()]}) :: map()
   def reconcile(hub, handler, cid_node_map) do
     local_node = node()
-    registry_data = ProcessRegistry.dump_all(hub.hub_id, include_stopped: false)
+    registry_data = ProcessRegistry.dump_all(hub.hub_id)
 
     # Categorize children into to_stop and to_start.
     {to_stop, to_start} =
@@ -94,7 +94,7 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
     @impl MigrationStrategy
     def handle_topology_expansion(%Autonomous{}, hub, _nodes, handler) do
       # Compute distribution from ALL registry entries.
-      registry_data = ProcessRegistry.dump_all(hub.hub_id, include_stopped: false)
+      registry_data = ProcessRegistry.dump_all(hub.hub_id)
       cids = Enum.map(registry_data, fn {cid, _} -> cid end)
 
       cid_node_map =

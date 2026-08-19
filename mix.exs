@@ -150,7 +150,7 @@ defmodule ProcessHub.MixProject do
             ProcessHub.Task.ClusterUpdateTask.NodeDown,
             ProcessHub.Task.SynchronizationTask,
             ProcessHub.Task.SynchronizationTask.IntervalSyncInit,
-            ProcessHub.Task.SynchronizationTask.IntervalSyncHandle,
+            ProcessHub.Task.SynchronizationTask.IntervalSyncHandle
           ],
           "Results & Futures": [
             ProcessHub.Future,
@@ -203,5 +203,7 @@ defmodule ProcessHub.MixProject do
   end
 
   defp elixirc_paths(:prod), do: ["lib"]
-  defp elixirc_paths(_), do: ["lib", "test/helper", "test/fixture", "test/support", "priv/mix/tasks"]
+
+  defp elixirc_paths(_),
+    do: ["lib", "test/helper", "test/fixture", "test/support", "priv/mix/tasks"]
 end

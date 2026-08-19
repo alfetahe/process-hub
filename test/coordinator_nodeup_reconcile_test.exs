@@ -28,7 +28,10 @@ defmodule Test.CoordinatorNodeupReconcileTest do
   defp hub(id), do: Coordinator.get_hub(id)
 
   test "the configured interval is wired into misc storage; default is 3000" do
-    assert Storage.get(hub(start_hub(nodeup_reconcile_interval: 1234)).storage.misc, StorageKey.nri()) ===
+    assert Storage.get(
+             hub(start_hub(nodeup_reconcile_interval: 1234)).storage.misc,
+             StorageKey.nri()
+           ) ===
              1234
 
     assert Storage.get(hub(start_hub([])).storage.misc, StorageKey.nri()) === 3000

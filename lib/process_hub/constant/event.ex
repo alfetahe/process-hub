@@ -35,6 +35,18 @@ defmodule ProcessHub.Constant.Event do
   """
   @type event_requests_handle() :: :requests_handle_event
 
+  @typedoc """
+  Full declared-list push from the hub leader after a mutation; receivers adopt
+  it when its version is higher than their local copy's.
+  """
+  @type event_declared_adopt() :: :declared_adopt_event
+
+  @typedoc """
+  Declared-list version announce sent after a synchronisation round; a receiver
+  holding a lower version pulls the full list from the announcer.
+  """
+  @type event_declared_version() :: :declared_version_event
+
   defmacro __using__(_) do
     quote do
       @event_cluster_join :cluster_join_event
@@ -44,6 +56,8 @@ defmodule ProcessHub.Constant.Event do
       @event_cluster_leave_batch :cluster_leave_batch_event
       @event_node_registry_broadcast :node_registry_broadcast_event
       @event_requests_handle :requests_handle_event
+      @event_declared_adopt :declared_adopt_event
+      @event_declared_version :declared_version_event
     end
   end
 end

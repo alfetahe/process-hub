@@ -18,8 +18,6 @@ defmodule ProcessHub.Service.ProcessRegistry do
   # a slow peer must not stall the caller for the full local timeout.
   @propagate_timeout 2_000
 
-  @default_stopped_row_ttl_ms 86_400_000
-
   @type registry() :: %{
           ProcessHub.child_id() => {
             ProcessHub.child_spec(),
@@ -40,23 +38,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
           optional(:__process_hub__) => Row.t()
         }
 
-  def start_link({hub_id, via_tuple}), do: start_link({hub_id, via_tuple, %{}})
-
-  def start_link({hub_id, via_tuple, settings}) do
-    GenServer.start_link(__MODULE__, {hub_id, settings}, name: via_tuple)
+  def start_link({hub_id, via_tuple}) do
+    GenServer.start_link(__MODULE__, hub_id, name: via_tuple)
   end
 
   @impl GenServer
-  def init({hub_id, settings}) do
+  def init(hub_id) do
     # The registry table is opened by the Coordinator (via the
     # configured Storage.Behaviour backend). This GenServer exists to
     # serialise mutations through `handle_call/3`; it does not own the
     # underlying storage handle.
-    {:ok,
-     %{
-       hub_id: hub_id,
-       stopped_row_ttl_ms: Map.get(settings, :stopped_row_ttl_ms) || @default_stopped_row_ttl_ms
-     }}
+    {:ok, %{hub_id: hub_id}}
   end
 
   @impl GenServer
@@ -128,26 +120,21 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Dumps the whole registry including entries with empty node lists.
 
   Unlike `dump/1`, this includes all entries regardless of their node list,
-  such as pending forwarding entries and TTL tombstone entries.
+  such as pending forwarding entries and churn stubs.
 
   ## Options
   - `:include_unbound` - when `false`, rows with an empty node list are left out
     (default: `true`). This is what `dump/1` asks for.
-  - `:include_stopped` - when `false`, deliberately stopped rows are left out
-    (default: `true`). A stopped child has no placement, so every caller that
-    decides *where a child belongs* — redistribution, migration, redundancy —
-    must exclude them or it would resurrect a child the cluster stopped.
   """
   @spec dump_all(ProcessHub.hub_id(), keyword()) :: registry_dump()
   def dump_all(hub_id, opts \\ []) do
     include_unbound = Keyword.get(opts, :include_unbound, true)
-    include_stopped = Keyword.get(opts, :include_stopped, true)
 
-    Storage.foldl_entries(hub_id, %{}, fn {child_id, {_spec, nodes, metadata} = value}, acc ->
-      cond do
-        not include_unbound and nodes === [] -> acc
-        not include_stopped and Row.stopped?(metadata) -> acc
-        true -> Map.put(acc, child_id, value)
+    Storage.foldl_entries(hub_id, %{}, fn {child_id, {_spec, nodes, _metadata} = value}, acc ->
+      if not include_unbound and nodes === [] do
+        acc
+      else
+        Map.put(acc, child_id, value)
       end
     end)
   end
@@ -271,7 +258,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Checks whether an entry exists in the registry for the given child_id.
 
   Unlike `lookup/2`, this returns `true` even for entries with empty node lists
-  (e.g., pending forwarding entries or TTL tombstone entries).
+  (e.g., pending forwarding entries or churn stubs).
   """
   @spec entry_exists?(ProcessHub.hub_id(), ProcessHub.child_id()) :: boolean()
   def entry_exists?(hub_id, child_id) do
@@ -284,8 +271,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
   ## Options
   - `:table` - alternative table to read from (default: `hub_id`)
   - `:with_metadata` - include the metadata map in the returned tuple (default: `false`)
-  - `:include_empty` - also return rows whose `node_pids` list is empty — stopped
-    rows, pending-forward rows, and rows whose last observation was withdrawn
+  - `:include_empty` - also return rows whose `node_pids` list is empty —
+    pending-forward rows and rows whose last observation was withdrawn
     (default: `false`, which reports them as absent)
   """
   @spec lookup(
@@ -336,8 +323,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
     written verbatim instead of being re-authored. Reserved for the replica merge,
     which adopts the winner of an epoch comparison rather than authoring a new
     value (default: `false`).
-  - `:lifecycle` - Forces the row's lifecycle (`:running | :stopped`) instead of
-    deriving it from the node list.
+  - `:durable` - Marks the row's child as declared (`durable: true` start); the
+    flag is carried in the hub-owned bookkeeping and survives subsequent writes.
   """
   @spec insert(ProcessHub.hub_id(), ProcessHub.child_spec(), [{node(), pid()}], keyword() | nil) ::
           :ok
@@ -406,11 +393,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
   - `:on_empty` - what becomes of a row that just lost its last node entry:
     - `:churn` (default) - a stub with a 30 s expiry. For placement churn, where
       a re-registration from the child's new node is expected imminently.
-    - `:stopped` - a durable stopped row carrying the stopped-row expiry, for a
-      deliberate stop. The child stays stopped across a node's absence.
-    - `:keep` - an unbound `:running` row with no expiry, for a withdrawn
-      observation. The child becomes a candidate for the next orphan reconcile
-      round rather than being erased on someone else's say-so.
+    - `:delete` - the row is removed entirely, for a deliberate stop. Stop
+      memory for declared children lives in the declared list, not in the row.
+    - `:keep` - an unbound row with no expiry, for a withdrawn observation.
+      The row is kept rather than erased on someone else's say-so.
 
   ## Parameters
   - `hub_id` - The hub identifier
@@ -467,7 +453,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   re-populated since the caller observed it (re-population clears the TTL,
   turning the row into a permanent 2-tuple) or was given a fresh TTL lease,
   the delete is skipped. This closes a race where the janitor's registry
-  scan sees an expired tombstone, but an incoming registration re-populates
+  scan sees an expired stub, but an incoming registration re-populates
   the entry before the delete is applied — without this guard the cleanup
   would wipe a freshly re-registered live process.
 
@@ -666,16 +652,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
     [{Hook.child_registered(), %{child_id: child_id, node_pids: node_pids}} | hooks]
   end
 
-  # Same stage-then-commit shape as `handle_bulk_insert/3`.
+  # Same stage-then-commit shape as `handle_bulk_insert/3`. Rows emptied under
+  # `on_empty: :delete` are removed instead of re-staged.
   defp handle_bulk_delete(state, children, opts) do
     hub_id = state.hub_id
-    empty_row_opts = empty_row_opts(Keyword.get(opts, :on_empty) || :churn)
+    on_empty = Keyword.get(opts, :on_empty) || :churn
 
-    {rows, hooks} =
-      Enum.reduce(children, {[], []}, fn {child_id, rem_nodes}, {rows, hooks} ->
+    {rows, deletes, hooks} =
+      Enum.reduce(children, {[], [], []}, fn {child_id, rem_nodes}, {rows, deletes, hooks} ->
         case lookup(hub_id, child_id, with_metadata: true) do
           nil ->
-            {rows, hooks}
+            {rows, deletes, hooks}
 
           {child_spec, nodes, metadata} ->
             new_nodes =
@@ -683,23 +670,30 @@ defmodule ProcessHub.Service.ProcessRegistry do
                 !Enum.member?(rem_nodes, node)
               end)
 
-            row_opts = if new_nodes != [], do: [], else: empty_row_opts
+            hooks = [{Hook.child_unregistered(), %{child_id: child_id}} | hooks]
 
-            row =
-              staged_row(
-                state,
-                hub_id,
-                child_id,
-                child_spec,
-                new_nodes,
-                Keyword.put(row_opts, :metadata, metadata)
-              )
+            if new_nodes === [] and on_empty === :delete do
+              {rows, [child_id | deletes], hooks}
+            else
+              row_opts = if new_nodes != [], do: [], else: empty_row_opts(on_empty)
 
-            {[row | rows], [{Hook.child_unregistered(), %{child_id: child_id}} | hooks]}
+              row =
+                staged_row(
+                  state,
+                  hub_id,
+                  child_id,
+                  child_spec,
+                  new_nodes,
+                  Keyword.put(row_opts, :metadata, metadata)
+                )
+
+              {[row | rows], deletes, hooks}
+            end
         end
       end)
 
     Storage.insert_many(hub_id, rows)
+    Enum.each(deletes, &Storage.remove(hub_id, &1))
     hooks = Enum.reverse(hooks)
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
@@ -734,20 +728,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
   # The churn expiry closes a race where a bulk_delete would wipe the entry
   # before the new node's PidsRegisterRequest re-populates it.
   defp empty_row_opts(:churn), do: [ttl: 30_000]
-  defp empty_row_opts(:stopped), do: [lifecycle: :stopped]
   defp empty_row_opts(:keep), do: []
 
-  # The single row builder: every write stamps its bookkeeping here and derives its
-  # expiry from the resulting lifecycle, whether it is committed alone or in a bulk.
+  # The single row builder: every write stamps its bookkeeping here, whether it
+  # is committed alone or in a bulk.
   defp staged_row(state, table, child_id, child_spec, child_nodes, opts) do
-    metadata = stamped_metadata(state, table, child_id, child_nodes, opts)
-    entry_opts = Keyword.take(opts, [:ttl, :expire_at])
+    metadata = stamped_metadata(state, table, child_id, opts)
 
-    {child_id, {child_spec, child_nodes, metadata},
-     Row.expiry_opts(metadata, entry_opts, state.stopped_row_ttl_ms)}
+    {child_id, {child_spec, child_nodes, metadata}, Keyword.take(opts, [:ttl, :expire_at])}
   end
 
-  defp stamped_metadata(state, table, child_id, child_nodes, opts) do
+  defp stamped_metadata(state, table, child_id, opts) do
     previous =
       case Storage.get(table, child_id) do
         {_child_spec, _child_nodes, previous_metadata} -> Row.meta(previous_metadata)
@@ -755,7 +746,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
       end
 
     {metadata, forged?} =
-      Row.stamp(Keyword.get(opts, :metadata, %{}), previous, child_nodes, opts)
+      Row.stamp(Keyword.get(opts, :metadata, %{}), previous, opts)
 
     if forged?, do: warn_reserved_write(state.hub_id, child_id)
 

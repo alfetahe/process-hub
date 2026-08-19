@@ -4,6 +4,9 @@ defmodule Test.Helper.SetupHelper do
   @doc "Returns `prefix` suffixed with a unique integer, for a per-test hub id."
   def unique_id(prefix), do: :"#{prefix}_#{System.unique_integer([:positive])}"
 
+  @doc "Builds the `%ProcessHub{}` settings struct `start_hub!/1` would start."
+  def hub_struct(opts), do: struct(ProcessHub, opts)
+
   @doc """
   Starts a hub from `opts` (any `%ProcessHub{}` field), unlinks it, and registers
   its shutdown. Returns `{hub_id, initializer_pid}`.

@@ -2,7 +2,7 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
   @moduledoc """
   The cases the orphan reconcile exists for, driven across two real nodes:
 
-    * whole-cluster restart — every durable candidate returns, exactly once;
+    * whole-cluster restart — every declared child returns, exactly once;
     * rejoin into a live cluster — a returning node starts nothing;
     * a stop during a node's absence — the child stays stopped on its return;
     * a child bound on two nodes — the ring owner's instance is kept.
@@ -11,8 +11,8 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
   use ExUnit.Case, async: false
 
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.ProcessRegistry.Row
   alias ProcessHub.Service.Recovery
   alias ProcessHub.Strategy.Synchronization.PubSub
   alias ProcessHub.Utility.Bag
@@ -105,17 +105,32 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
   end
 
   # Runs each node's first round, but only once every node can see the whole
-  # cluster — a node that has not processed the join has not received its peers'
-  # registries either, and its round would compute against a half-empty view.
+  # cluster and the declared-list versions have converged — a node holding a
+  # stale list would reconcile against stops it has not heard of yet. This is
+  # the wait the production reconcile grace provides.
   defp settle(nodes, hub_id) do
     Enum.each(nodes, fn n ->
       assert Common.eventually(fn -> member_count(n, hub_id) == 2 end, 15_000),
              "#{inspect(n)} did not see the full cluster"
     end)
 
+    assert Common.eventually(
+             fn ->
+               nodes |> Enum.map(&declared_version(&1, hub_id)) |> Enum.uniq() |> length() == 1
+             end,
+             15_000
+           ),
+           "declared-list versions did not converge"
+
     Enum.each(nodes, &reconcile_now(hub_id, &1))
     Enum.each(nodes, fn n -> assert await_normal(n, hub_id) == :ok end)
   end
+
+  defp declared_version(node, hub_id) when node === node(),
+    do: DeclaredChildren.declared_children(hub_id).version
+
+  defp declared_version(node, hub_id),
+    do: :erpc.call(node, DeclaredChildren, :declared_children, [hub_id]).version
 
   defp member_count(node, hub_id) when node === node(),
     do: length(ProcessHub.nodes(hub_id, [:include_local]))
@@ -140,7 +155,10 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
     ids = [:wc_a, :wc_b, :wc_c, :wc_d]
 
     assert %ProcessHub.StartResult{status: :ok} =
-             ProcessHub.start_children(hub_id, Enum.map(ids, &cspec/1), awaitable: true)
+             ProcessHub.start_children(hub_id, Enum.map(ids, &cspec/1),
+               awaitable: true,
+               durable: true
+             )
              |> ProcessHub.await()
 
     assert started_ids(hub_id, ids) == ids
@@ -173,7 +191,10 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
     ids = [:rj_a, :rj_b, :rj_c, :rj_d]
 
     assert %ProcessHub.StartResult{status: :ok} =
-             ProcessHub.start_children(hub_id, Enum.map(ids, &cspec/1), awaitable: true)
+             ProcessHub.start_children(hub_id, Enum.map(ids, &cspec/1),
+               awaitable: true,
+               durable: true
+             )
              |> ProcessHub.await()
 
     assert started_ids(hub_id, ids) == ids
@@ -203,7 +224,10 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
     ids = [:sd_a, :sd_b, :sd_c, :sd_d]
 
     assert %ProcessHub.StartResult{status: :ok} =
-             ProcessHub.start_children(hub_id, Enum.map(ids, &cspec/1), awaitable: true)
+             ProcessHub.start_children(hub_id, Enum.map(ids, &cspec/1),
+               awaitable: true,
+               durable: true
+             )
              |> ProcessHub.await()
 
     assert started_ids(hub_id, ids) == ids
@@ -220,12 +244,11 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
     start_hub(peer, hub_conf(hub_id, tmp_dir, peer))
     settle([node(), peer], hub_id)
 
-    # The peer adopts the stopped row rather than resurrecting the child.
-    assert Common.eventually(fn ->
-             ProcessRegistry.lookup(hub_id, :sd_b, with_metadata: true, include_empty: true)
-             |> elem(2)
-             |> Row.stopped?()
-           end)
+    # The peer adopts the newer declared list rather than resurrecting the
+    # child: list absence is the stop record, and no row remains either.
+    declared = :erpc.call(peer, DeclaredChildren, :declared_children, [hub_id])
+    refute :sd_b in Enum.map(declared.children, & &1.id)
+    assert ProcessRegistry.lookup(hub_id, :sd_b, include_empty: true) == nil
 
     refute :sd_b in (local_ids(node(), hub_id) ++ local_ids(peer, hub_id))
     assert ProcessHub.get_pid(hub_id, :sd_b) == nil

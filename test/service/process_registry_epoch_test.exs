@@ -1,7 +1,8 @@
 defmodule Test.Service.ProcessRegistryEpochTest do
   @moduledoc """
   Row bookkeeping under the reserved `:__process_hub__` key: the per-child epoch,
-  the `:running`/`:stopped` lifecycle, and the absolute stopped-row expiry.
+  the durable flag, and what a deliberate delete or placement churn leaves
+  behind.
   """
 
   use ExUnit.Case, async: false
@@ -10,13 +11,9 @@ defmodule Test.Service.ProcessRegistryEpochTest do
 
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.ProcessRegistry.Row
-  alias ProcessHub.Service.Recovery
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Worker.Janitor
   alias Test.Helper.Common
   alias Test.Helper.SetupHelper
-
-  @stopped_row_ttl_ms 86_400_000
 
   setup do
     tmp_dir = Path.join(System.tmp_dir!(), "ph_epoch_#{System.unique_integer([:positive])}")
@@ -42,14 +39,14 @@ defmodule Test.Service.ProcessRegistryEpochTest do
     end
   end
 
-  # --- 8.1 epoch --------------------------------------------------------------
+  # --- epoch ------------------------------------------------------------------
 
   describe "epoch" do
     test "starts at 1 and increments on every authoring write" do
       {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:epoch_inc))
 
       ProcessRegistry.insert(hub_id, spec(:cid_a), [{node(), self()}])
-      assert %{epoch: 1, lifecycle: :running, changed_by: node_name} = hub_meta(hub_id, :cid_a)
+      assert %{epoch: 1, changed_by: node_name} = hub_meta(hub_id, :cid_a)
       assert node_name == node()
 
       for _ <- 1..2 do
@@ -92,56 +89,69 @@ defmodule Test.Service.ProcessRegistryEpochTest do
     end
   end
 
-  # --- 8.4 lifecycle ----------------------------------------------------------
+  # --- durable flag -----------------------------------------------------------
 
-  describe "lifecycle" do
-    test "a deliberate stop leaves a durable stopped row that survives re-open",
-         %{tmp_dir: tmp_dir} do
-      hub_id = SetupHelper.unique_id(:lifecycle_stop)
+  describe "durable flag" do
+    test "is stamped on registration and survives subsequent authored writes" do
+      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:durable_flag))
+
+      ProcessRegistry.bulk_insert(hub_id, %{cid_d: {spec(:cid_d), [{node(), self()}], %{}}},
+        durable: true
+      )
+
+      assert %{epoch: 1, durable: true} = hub_meta(hub_id, :cid_d)
+      assert Row.durable?(elem(row(hub_id, :cid_d), 2))
+
+      :ok =
+        ProcessRegistry.update(hub_id, :cid_d, fn cs, np, meta ->
+          {cs, np, Map.put(meta, :touched, true)}
+        end)
+
+      assert %{epoch: 2, durable: true} = hub_meta(hub_id, :cid_d)
+    end
+
+    test "a plain registration carries no flag" do
+      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:durable_plain))
+
+      ProcessRegistry.insert(hub_id, spec(:cid_p), [{node(), self()}])
+
+      meta = hub_meta(hub_id, :cid_p)
+      refute Map.has_key?(meta, :durable)
+      refute Row.durable?(elem(row(hub_id, :cid_p), 2))
+    end
+  end
+
+  # --- deliberate delete and churn -------------------------------------------
+
+  describe "row removal" do
+    test "a deliberate stop removes the row from memory and disk", %{tmp_dir: tmp_dir} do
+      hub_id = SetupHelper.unique_id(:delete_stop)
       path = Path.join(tmp_dir, "registry.dets")
       SetupHelper.start_hub!(hub_id: hub_id, registry_backend: {:durable_ets, path: path})
 
       ProcessRegistry.insert(hub_id, spec(:cid_s), [{node(), self()}])
-      assert %{epoch: 1, lifecycle: :running} = hub_meta(hub_id, :cid_s)
+      assert %{epoch: 1} = hub_meta(hub_id, :cid_s)
 
-      ProcessRegistry.bulk_delete(hub_id, [{:cid_s, [node()]}], on_empty: :stopped)
+      ProcessRegistry.bulk_delete(hub_id, [{:cid_s, [node()]}], on_empty: :delete)
 
-      assert {_cs, [], _meta} = row(hub_id, :cid_s)
-      assert %{epoch: 2, lifecycle: :stopped, stopped_at: stopped_at} = hub_meta(hub_id, :cid_s)
-      assert expiry(hub_id, :cid_s) == stopped_at + @stopped_row_ttl_ms
+      assert row(hub_id, :cid_s) == nil
 
-      :ok = ProcessHub.Initializer.stop(hub_id)
-
-      {:ok, pid} =
-        ProcessHub.Initializer.start_link(%ProcessHub{
-          hub_id: hub_id,
-          registry_backend: {:durable_ets, path: path}
-        })
-
-      :erlang.unlink(pid)
-      assert %{lifecycle: :stopped, stopped_at: ^stopped_at} = hub_meta(hub_id, :cid_s)
+      assert {:ok, rows} = Storage.read_durable(hub_id)
+      refute Enum.any?(rows, fn {key, _value} -> key == :cid_s end)
     end
 
-    test "starting the child again clears the stopped state and its expiry" do
-      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:lifecycle_restart))
+    test "a delete that only removes one node's entry keeps the row" do
+      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:delete_partial))
 
-      ProcessRegistry.insert(hub_id, spec(:cid_r), [{node(), self()}])
-      ProcessRegistry.bulk_delete(hub_id, [{:cid_r, [node()]}], on_empty: :stopped)
-      assert %{epoch: 2, lifecycle: :stopped} = hub_meta(hub_id, :cid_r)
-      assert expiry(hub_id, :cid_r)
+      ProcessRegistry.insert(hub_id, spec(:cid_m), [{node(), self()}, {:other@host, self()}])
+      ProcessRegistry.bulk_delete(hub_id, [{:cid_m, [node()]}], on_empty: :delete)
 
-      # A stopped row is invisible to placement, so a restart is not "already started".
-      assert ProcessRegistry.contains_children(hub_id, [:cid_r]) == []
-
-      ProcessRegistry.bulk_insert(hub_id, %{cid_r: {spec(:cid_r), [{node(), self()}], %{}}})
-
-      assert %{epoch: 3, lifecycle: :running} = meta = hub_meta(hub_id, :cid_r)
-      refute Map.has_key?(meta, :stopped_at)
-      refute expiry(hub_id, :cid_r)
+      assert {_cs, nodes, _meta} = row(hub_id, :cid_m)
+      assert Keyword.keys(nodes) == [:other@host]
     end
 
-    test "a child the supervisor declines to restart leaves a stopped row" do
-      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:lifecycle_selfstop))
+    test "a child the supervisor declines to restart is removed" do
+      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:delete_selfstop))
 
       child_spec = %{
         id: :cid_self,
@@ -153,99 +163,36 @@ defmodule Test.Service.ProcessRegistryEpochTest do
                ProcessHub.start_children(hub_id, [child_spec], awaitable: true)
                |> ProcessHub.await()
 
-      assert %{lifecycle: :running} = hub_meta(hub_id, :cid_self)
+      assert %{epoch: _} = hub_meta(hub_id, :cid_self)
 
-      # A `:temporary` child that stops itself is not restarted, so the row must
-      # not be left as a churn stub the reconcile would resurrect.
+      # A `:temporary` child that stops itself is not restarted; its restart
+      # policy has decided the child is done, so the row goes away rather than
+      # lingering as a stub.
       :ok = GenServer.stop(ProcessHub.get_pid(hub_id, :cid_self), :normal)
 
-      assert Common.eventually(fn -> Row.stopped?(elem(row(hub_id, :cid_self), 2)) end)
-      assert {_cs, [], _meta} = row(hub_id, :cid_self)
-      assert expiry(hub_id, :cid_self)
+      assert Common.eventually(fn -> row(hub_id, :cid_self) == nil end)
     end
 
-    test "placement churn leaves a short-lived stub, not a stopped row" do
-      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:lifecycle_churn))
+    test "placement churn leaves a short-lived stub, not a removal" do
+      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:delete_churn))
 
       ProcessRegistry.insert(hub_id, spec(:cid_c), [{node(), self()}])
       ProcessRegistry.bulk_delete(hub_id, [{:cid_c, [node()]}])
 
-      assert %{lifecycle: :running} = hub_meta(hub_id, :cid_c)
+      assert {_cs, [], _meta} = row(hub_id, :cid_c)
       churn_expiry = expiry(hub_id, :cid_c)
       assert churn_expiry
       assert churn_expiry < System.system_time(:millisecond) + 60_000
     end
-  end
 
-  # --- 8.5 expiry -------------------------------------------------------------
+    test "a withdrawn observation keeps the row with no expiry" do
+      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:delete_keep))
 
-  describe "stopped-row expiry" do
-    test "the deadline is stable across repeated sync re-writes" do
-      {hub_id, _pid} = SetupHelper.start_hub!(hub_id: SetupHelper.unique_id(:expiry_stable))
+      ProcessRegistry.insert(hub_id, spec(:cid_k), [{node(), self()}])
+      ProcessRegistry.bulk_delete(hub_id, [{:cid_k, [node()]}], on_empty: :keep)
 
-      ProcessRegistry.insert(hub_id, spec(:cid_e), [{node(), self()}])
-      ProcessRegistry.bulk_delete(hub_id, [{:cid_e, [node()]}], on_empty: :stopped)
-
-      %{stopped_at: stopped_at} = hub_meta(hub_id, :cid_e)
-      deadline = stopped_at + @stopped_row_ttl_ms
-      assert expiry(hub_id, :cid_e) == deadline
-
-      # 20 merge-style re-writes adopting the same row verbatim.
-      {cs, nodes, meta} = row(hub_id, :cid_e)
-
-      for _ <- 1..20 do
-        ProcessRegistry.insert(hub_id, cs, nodes, metadata: meta, adopt: true)
-      end
-
-      assert expiry(hub_id, :cid_e) == deadline
-      assert %{stopped_at: ^stopped_at} = hub_meta(hub_id, :cid_e)
-    end
-
-    test "an expired stopped row is swept from the durable file", %{tmp_dir: tmp_dir} do
-      for {backend, name} <- [{:dets, "dets"}, {:durable_ets, "durable_ets"}] do
-        hub_id = SetupHelper.unique_id(:"expiry_sweep_#{name}")
-        path = Path.join(tmp_dir, "#{name}.dets")
-
-        SetupHelper.start_hub!(
-          hub_id: hub_id,
-          registry_backend: {backend, path: path},
-          auto_recovery: [stopped_row_ttl_ms: 60_000, reconcile_grace_ms: 600_000]
-        )
-
-        ProcessRegistry.insert(hub_id, spec(:cid_x), [{node(), self()}])
-        ProcessRegistry.bulk_delete(hub_id, [{:cid_x, [node()]}], on_empty: :stopped)
-        assert %{lifecycle: :stopped} = hub_meta(hub_id, :cid_x)
-
-        # Age the row past its deadline by rewriting it with an elapsed stopped_at.
-        {cs, nodes, meta} = row(hub_id, :cid_x)
-        aged = Row.meta(meta) |> Map.put(:stopped_at, 0)
-
-        ProcessRegistry.insert(hub_id, cs, nodes,
-          metadata: Map.put(meta, :__process_hub__, aged),
-          adopt: true
-        )
-
-        Janitor.purge_pending_registry(hub_id)
-
-        assert row(hub_id, :cid_x) == nil, "#{name}: expired stopped row still in the registry"
-        assert {:ok, rows} = Storage.read_durable(hub_id)
-
-        refute Enum.any?(rows, fn {key, _value} -> key == :cid_x end),
-               "#{name}: expired stopped row still on disk"
-      end
-    end
-
-    test "an out-of-range stopped_row_ttl_ms fails init" do
-      Process.flag(:trap_exit, true)
-
-      assert {:error, {:invalid_auto_recovery, :stopped_row_ttl_ms_out_of_range}} =
-               Recovery.parse_config(stopped_row_ttl_ms: 1_000)
-
-      assert {:error, _} =
-               ProcessHub.Initializer.start_link(%ProcessHub{
-                 hub_id: SetupHelper.unique_id(:expiry_bad_ttl),
-                 auto_recovery: [stopped_row_ttl_ms: 1_000]
-               })
+      assert {_cs, [], _meta} = row(hub_id, :cid_k)
+      refute expiry(hub_id, :cid_k)
     end
   end
 end

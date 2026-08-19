@@ -124,163 +124,103 @@ cspecs-only replay contract already requires.
 - **THEN** the row is present with `node_pids: []` and `lifecycle: :running`
 - **AND** it is a candidate for the next orphan reconcile round
 
-### Requirement: Stopping a child preserves its row
-
-A deliberate stop SHALL transition the child's row to `lifecycle: :stopped` rather than
-deleting it. This applies to `ProcessHub.stop_children/3` and to every internal path
-that deliberately terminates a child:
-
-- `node_pids` is cleared,
-- `epoch` is incremented,
-- `:__process_hub__.stopped_at` is set to the current system time in milliseconds,
-- the row is given the expiry described in the stopped-row-expiry requirement.
-
-Starting the same child_id again SHALL transition the row back to `lifecycle: :running`
-with an incremented epoch, clear `stopped_at`, and remove the expiry.
-
-A `:stopped` row SHALL be excluded from the orphan candidate set on every node,
-including nodes whose durable copy still shows the child as `:running` at a lower
-epoch.
-
-#### Scenario: Stop leaves a durable stopped row
-
-- **GIVEN** `cid_a` running on a hub with a durable registry backend
-- **WHEN** `ProcessHub.stop_children(hub_id, ["cid_a"])` completes
-- **THEN** the row is present with `lifecycle: :stopped`, `node_pids: []`, and an
-  incremented epoch
-- **AND** the row is present in the on-disk registry file after close and re-open
-
-#### Scenario: A stop during a node's absence is honoured on its return
-
-- **GIVEN** node A is down and its durable registry holds `cid_a` as `:running` at
-  `epoch: 4`
-- **WHEN** `cid_a` is stopped on the surviving cluster (row moves to `:stopped` at
-  `epoch: 5`) and A then returns and syncs
-- **THEN** A adopts the `:stopped` row at `epoch: 5`
-- **AND** `cid_a` is absent from A's orphan candidate set
-- **AND** `cid_a` is not started anywhere
-
-#### Scenario: Restart clears the stopped state
-
-- **GIVEN** `cid_a` with a `:stopped` row at `epoch: 5`
-- **WHEN** `ProcessHub.start_children(hub_id, [cspec_a])` is called for the same
-  child_id
-- **THEN** the row is `lifecycle: :running` at `epoch: 6` with `stopped_at` cleared and
-  no expiry
-- **AND** the row's expiry no longer appears in the durable backend
-
-### Requirement: Stopped rows expire on an absolute deadline
-
-A `:stopped` row SHALL carry an expiry of `stopped_at + stopped_row_ttl_ms`, computed
-from the row's own `stopped_at` value rather than from the time of any individual
-write. Default `stopped_row_ttl_ms` is `86_400_000` (24 hours); the accepted range is
-`[60_000, 31_536_000_000]` (1 minute to 1 year).
-
-Because the deadline is derived from a merged field, every node that adopts the row
-SHALL compute the same absolute expiry, and re-writing the row during synchronisation
-SHALL NOT extend its lifetime. Expired rows SHALL be removed by the existing janitor
-sweep (`ProcessHub.Worker.Janitor.purge_pending_registry/1` →
-`ProcessRegistry.delete_if_expired/2`); this change adds no second sweeper.
-
-The TTL is the bound on how long a node may be absent and still be prevented from
-resurrecting a child stopped during its absence. Operators lengthening planned outages
-beyond the TTL SHALL raise it.
-
-#### Scenario: Expiry survives re-synchronisation unchanged
-
-- **GIVEN** a `:stopped` row with `stopped_at: T` and `stopped_row_ttl_ms: 86_400_000`
-- **WHEN** the row is exchanged and re-written by 20 subsequent sync rounds
-- **THEN** its expiry is `T + 86_400_000` after every round
-- **AND** it is swept by the janitor at that deadline, not later
-
-#### Scenario: Expired stopped row is removed
-
-- **GIVEN** a `:stopped` row whose expiry has passed, on a `{:durable_ets, _}` backend
-- **WHEN** the janitor sweep runs
-- **THEN** the row is absent from both the live registry and the on-disk file
-
-#### Scenario: Out-of-range TTL rejected
-
-- **GIVEN** `auto_recovery: [stopped_row_ttl_ms: 1_000]` (below the `60_000` minimum)
-- **WHEN** the coordinator initialises
-- **THEN** init fails with
-  `{:error, {:invalid_auto_recovery, :stopped_row_ttl_ms_out_of_range}}`
-
 ### Requirement: Orphan reconcile round
 
-When `:auto_recovery` is enabled, a node SHALL periodically reconcile its durable
-registry against the cluster's live registry. A round SHALL:
+When `:auto_recovery` is enabled, a node SHALL periodically reconcile the
+hub's declared list against the cluster's live registry. A round SHALL:
 
-1. Read the durable candidate set through the backend's durable-read callback, without
-   populating or mutating the live registry.
-2. Compute
-   `orphans = candidates − children observed running anywhere − rows with lifecycle :stopped`.
-3. Exclude any child whose row has been an orphan for fewer than two consecutive
+1. Take the declared list as the candidate set. Durable registry rows are no
+   longer a candidate source.
+2. Compute `orphans = declared children − children observed running
+   anywhere`.
+3. Stop any child observed running whose row is marked durable but whose id
+   is absent from the declared list (a stop that crashed between list removal
+   and terminate); children never declared are untouched.
+4. Remove registry rows marked durable that are undeclared and observed
+   running nowhere for two consecutive rounds (hygiene against stale
+   rejoining peers re-introducing deleted rows).
+5. Exclude any child that has been an orphan for fewer than two consecutive
    rounds, so a child that is merely mid-migration is not restarted.
-4. Exclude any child whose ring owner is a node currently draining.
-5. Dispatch the `pre_recovery_replay` hook (synchronously, blocking) before the first
-   round of a coordinator's lifetime issues any start.
-6. Submit the remaining orphans through `Distributor.compose_start_operation/3` with
-   `check_existing: true` and `auto_recovery_replay: true`.
-7. Dispatch the `post_recovery_replay` hook (async) after the first round completes.
+6. Exclude any child whose ring owner is a node currently draining.
+7. Dispatch the `pre_recovery_replay` hook (synchronously, blocking) before
+   the first round of a coordinator's lifetime issues any start.
+8. Submit the remaining orphans through
+   `Distributor.compose_start_operation/3` with `check_existing: true` and
+   `auto_recovery_replay: true`.
+9. Dispatch the `post_recovery_replay` hook (async) after the first round
+   completes.
 
-Every node that holds a candidate on disk SHALL submit it; submission SHALL NOT be
-restricted to the ring owner, because a candidate's only durable copy may live on a
-non-owner node. Duplicate submissions are resolved by `check_existing: true` and by the
-ring routing both submissions to the same owner, where the supervisor rejects the
-second with `already_started`.
+Every node SHALL submit from its adopted copy of the list; submission SHALL
+NOT be restricted to the ring owner. Duplicate submissions are resolved by
+`check_existing: true` and by the ring routing both submissions to the same
+owner, where the supervisor rejects the second with `already_started`.
 
-The first round SHALL run no earlier than `reconcile_grace_ms` (default `30_000`) after
-coordinator start, and thereafter at most once per `reconcile_interval_ms` (default
-`15_000`), triggered by the completion of a synchronisation round. The first round
-SHALL run when the grace elapses whether or not any peer has joined.
+The first round SHALL run no earlier than `reconcile_grace_ms` (default
+`30_000`) after coordinator start, and thereafter at most once per
+`reconcile_interval_ms` (default `15_000`), triggered by the completion of a
+synchronisation round. The first round SHALL run when the grace elapses
+whether or not any peer has joined. When the declared list is parked
+(missing/corrupt with durable evidence and no remote copy), the round SHALL
+start and stop nothing for that hub.
 
-A hub whose registry backend is `:ets` has no durable candidates and SHALL perform no
+A hub whose declared list is empty has no candidates and SHALL perform no
 starts.
 
-#### Scenario: Whole-cluster restart restores every child
+#### Scenario: Whole-cluster restart restores every declared child
 
-- **GIVEN** a 2-node cluster where A's durable registry holds `cid_a`, `cid_b` and B's
-  holds `cid_c`, all `lifecycle: :running`, and both nodes are restarted with no
-  children running
-- **WHEN** the first reconcile round runs on each node after the grace window
-- **THEN** the orphan set on A is `{cid_a, cid_b}` and on B is `{cid_c}`
-- **AND** all three children are started exactly once, each on its ring owner
+- **GIVEN** a 2-node cluster whose declared list (version-adopted on both
+  nodes) holds `cid_a`, `cid_b`, `cid_c`, and both nodes are restarted with
+  no children running
+- **WHEN** the first reconcile round runs on each node after the grace
+  window
+- **THEN** all three children are started exactly once, each on its ring
+  owner
 - **AND** no operator action was required
 
 #### Scenario: Rejoining a live cluster starts nothing
 
-- **GIVEN** node A crashed, B migrated `cid_a` and `cid_b` to itself, and A returns
-  with both still `:running` on its disk
+- **GIVEN** node A crashed, B migrated `cid_a` and `cid_b` to itself, and A
+  returns with a declared list still containing both
 - **WHEN** A's first reconcile round runs
-- **THEN** both children are observed running on B, so the orphan set is empty
+- **THEN** both children are observed running on B, so the orphan set is
+  empty
 - **AND** A starts no child
 
 #### Scenario: A child mid-migration is not restarted
 
-- **GIVEN** `cid_a` is unbound at the moment of a round because a migration is in
-  flight
+- **GIVEN** `cid_a` is unbound at the moment of a round because a migration
+  is in flight
 - **WHEN** that round computes the orphan set
 - **THEN** `cid_a` is recorded as a first-round orphan but not started
-- **AND** it is started only if it is still unaccounted for in the next round
+- **AND** it is started only if it is still unaccounted for in the next
+  round
 
-#### Scenario: Stopped children are never orphans
+#### Scenario: Stopped declared children are never orphans, without tombstones
 
-- **GIVEN** a durable registry with 5 rows, of which 2 are `lifecycle: :stopped`
+- **GIVEN** a declared list of 3 children after 2 further children were
+  deliberately stopped (list entries removed)
 - **WHEN** a reconcile round runs on an otherwise empty cluster
-- **THEN** exactly 3 children are started
-- **AND** the 2 stopped rows are untouched, retaining their expiry
+- **THEN** exactly 3 children are started and the 2 stopped ids are not
+  candidates, regardless of how long ago the stops happened
 
-#### Scenario: Reconcile is a no-op on the `:ets` backend
+#### Scenario: Undeclared running child is stopped
 
-- **GIVEN** a hub with `registry_backend: :ets` and `auto_recovery: true`
-- **WHEN** reconcile rounds run
-- **THEN** the durable candidate set is empty and no child is started
+- **GIVEN** a child observed running whose id was previously declared but is
+  absent from the current declared list
+- **WHEN** a reconcile round runs
+- **THEN** the round stops that child
+
+#### Scenario: Stale peer's ghost row is cleaned up
+
+- **GIVEN** a rejoining node whose sync payload re-introduced a row for a
+  child that was stopped (list entry and row both removed) while it was down
+- **WHEN** a reconcile round observes the row undeclared and running nowhere
+- **THEN** the row is removed and the child is not started
 
 #### Scenario: Grace window elapses with no peers
 
-- **GIVEN** a single node booting alone with `reconcile_grace_ms: 30_000` and 3 durable
-  candidates
+- **GIVEN** a single node booting alone with `reconcile_grace_ms: 30_000`
+  and 3 declared children
 - **WHEN** 30 s elapse with no peer joining
 - **THEN** the first round runs and starts all 3 children
 - **AND** `recovery_state/1` returns `:normal` afterwards

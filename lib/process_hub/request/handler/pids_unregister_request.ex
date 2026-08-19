@@ -10,7 +10,7 @@ defmodule ProcessHub.Request.Handler.PidsUnregisterRequest do
           removable_cid_nodes: [
             {ProcessHub.child_id(), [node()]}
           ],
-          on_empty: :churn | :stopped
+          on_empty: :churn | :keep | :delete
         }
   defstruct [
     :removable_cid_nodes,

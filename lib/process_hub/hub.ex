@@ -20,14 +20,14 @@ defmodule ProcessHub.Hub do
   Parsed `:auto_recovery` config. `enabled?` gates the lifecycle;
   `reconcile_grace_ms` delays the first reconcile round after coordinator start;
   `reconcile_interval_ms` rate-limits subsequent rounds and bounds each blocking
-  hook handler; `stopped_row_ttl_ms` is how long a stopped row survives past its
-  `stopped_at`.
+  hook handler; `remote_manifest` is the optional off-cluster declared-list
+  adapter (`{module, opts}`).
   """
   @type recovery_config() :: %{
           enabled?: boolean(),
           reconcile_grace_ms: pos_integer(),
           reconcile_interval_ms: pos_integer(),
-          stopped_row_ttl_ms: pos_integer()
+          remote_manifest: {module(), keyword()} | nil
         }
 
   @type t() :: %__MODULE__{
@@ -38,10 +38,13 @@ defmodule ProcessHub.Hub do
             dist_sup: {:via, Registry, {pid(), binary()}},
             worker_queue: {:via, Registry, {pid(), binary()}},
             janitor: {:via, Registry, {pid(), binary()}},
+            manifest_shipper: {:via, Registry, {pid(), binary()}},
             event_queue: atom()
           },
           storage: %{
             optional(:registry_backend) => {module(), term()},
+            optional(:declared_backend) => {module(), term()},
+            optional(:declared_path) => String.t(),
             misc: :ets.tid(),
             hook: :ets.tid()
           },
@@ -78,7 +81,7 @@ defmodule ProcessHub.Hub do
       enabled?: false,
       reconcile_grace_ms: 30_000,
       reconcile_interval_ms: 15_000,
-      stopped_row_ttl_ms: 86_400_000
+      remote_manifest: nil
     },
     recovery_normal_waiters: %{},
     reconcile_running?: false,

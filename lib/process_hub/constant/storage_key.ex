@@ -52,4 +52,10 @@ defmodule ProcessHub.Constant.StorageKey do
   def nbt, do: :node_boot_tokens
   @spec rop() :: :reconcile_orphans_pending
   def rop, do: :reconcile_orphans_pending
+  @spec rsp() :: :reconcile_stale_pending
+  def rsp, do: :reconcile_stale_pending
+  @spec dcl() :: :declared_list
+  def dcl, do: :declared_list
+  @spec dclp() :: :declared_list_parked
+  def dclp, do: :declared_list_parked
 end

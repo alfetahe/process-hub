@@ -111,10 +111,11 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
       # Validate which children are local, already stopped, or need forwarding
       {local, forward_data, already_stopped} = validate_children(request, hub)
 
-      # Terminate only local children
+      # Terminate only local children. A deliberate stop removes the row; stop
+      # memory for declared children lives in the declared list.
       if local != [] do
         local_cids = Enum.map(local, & &1.child_id)
-        Distributor.children_terminate(hub, local_cids, on_empty: :stopped)
+        Distributor.children_terminate(hub, local_cids, on_empty: :delete)
       end
 
       # Forward misplaced children to their actual nodes

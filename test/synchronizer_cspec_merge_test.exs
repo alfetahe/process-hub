@@ -40,7 +40,6 @@ defmodule Test.SynchronizerCspecMergeTest do
       tag: tag,
       __process_hub__: %{
         epoch: epoch,
-        lifecycle: :running,
         changed_at: 0,
         changed_by: changed_by
       }
@@ -165,7 +164,7 @@ defmodule Test.SynchronizerCspecMergeTest do
       {_cs, nodes, meta} = row(id)
       assert Keyword.keys(nodes) == [b]
       assert Keyword.get(nodes, b) == pid_b
-      assert %{lifecycle: :running} = Row.meta(meta)
+      assert %{epoch: _} = Row.meta(meta)
     end
 
     test "a row survives losing its last observation and stays a reconcile candidate",
@@ -179,7 +178,7 @@ defmodule Test.SynchronizerCspecMergeTest do
       assert ProcessRegistry.lookup(@hub_id, id) == nil
       assert ProcessRegistry.entry_exists?(@hub_id, id)
       assert {_cs, [], _meta} = row(id)
-      assert %{lifecycle: :running} = hub_meta(id)
+      assert %{epoch: _} = hub_meta(id)
     end
 
     # Regression for the absence-driven delete that `detach_data/2` used to

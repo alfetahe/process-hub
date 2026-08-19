@@ -9,21 +9,20 @@ defmodule ProcessHub.Service.ProcessRegistry.Row do
 
       %{
         epoch: pos_integer(),          # per-child counter, never a wall clock
-        lifecycle: :running | :stopped,
         changed_at: integer(),         # diagnostics only
         changed_by: node(),
-        stopped_at: integer()          # only while :stopped
+        durable: true                  # only for children started durable: true
       }
 
   This module is the algebra over that key: who wins a merge, what an authored
-  write stamps, when a row expires. It is pure — reads and writes belong to
+  write stamps. It is pure — reads and writes belong to
   `ProcessHub.Service.ProcessRegistry`, which owns the table.
 
   > #### Experimental {: .warning}
   >
-  > The lifecycle and expiry rules are part of the experimental `:auto_recovery`
-  > feature and may change in future releases. The epoch and merge ordering apply
-  > to every hub.
+  > The `durable` flag is part of the experimental declared-children feature and
+  > may change in future releases. The epoch and merge ordering apply to every
+  > hub.
   """
 
   alias ProcessHub.Service.Storage.Entry
@@ -33,13 +32,10 @@ defmodule ProcessHub.Service.ProcessRegistry.Row do
   @typedoc "The reserved bookkeeping map carried by every row's metadata."
   @type t() :: %{
           :epoch => pos_integer(),
-          :lifecycle => lifecycle(),
           :changed_at => integer(),
           :changed_by => node(),
-          optional(:stopped_at) => integer()
+          optional(:durable) => true
         }
-
-  @type lifecycle() :: :running | :stopped
 
   @doc "The reserved metadata key. Hub-owned: caller metadata cannot set it."
   @spec reserved_key() :: :__process_hub__
@@ -58,11 +54,11 @@ defmodule ProcessHub.Service.ProcessRegistry.Row do
     end
   end
 
-  @doc "Returns whether a row has been deliberately stopped."
-  @spec stopped?(map() | nil) :: boolean()
-  def stopped?(metadata) do
+  @doc "Returns whether a row belongs to a child declared with `durable: true`."
+  @spec durable?(map() | nil) :: boolean()
+  def durable?(metadata) do
     case meta(metadata) do
-      %{lifecycle: :stopped} -> true
+      %{durable: true} -> true
       _ -> false
     end
   end
@@ -93,8 +89,8 @@ defmodule ProcessHub.Service.ProcessRegistry.Row do
   `opts[:adopt]` marks a merge — the caller-supplied bookkeeping already won an
   epoch comparison and is written verbatim, because a merge adopts a value rather
   than authoring one. Every other write authors: the epoch advances by one and the
-  local node stamps itself. `opts[:lifecycle]` forces the resulting lifecycle;
-  without it a bound row is `:running` and an unbound one keeps what it had.
+  local node stamps itself. `opts[:durable]` marks the row's child as declared;
+  once set, the flag survives every subsequent authored write.
 
   `forged?` reports on *shape*, not equality. Passing the stored bookkeeping
   straight back is the norm — every read-modify-write does it, and a concurrent
@@ -102,8 +98,8 @@ defmodule ProcessHub.Service.ProcessRegistry.Row do
   not a whole bookkeeping map could have been hand-written. Either way the
   supplied value is ignored.
   """
-  @spec stamp(map(), t() | nil, [{node(), pid()}], keyword()) :: {map(), boolean()}
-  def stamp(caller_metadata, previous, child_nodes, opts) do
+  @spec stamp(map(), t() | nil, keyword()) :: {map(), boolean()}
+  def stamp(caller_metadata, previous, opts) do
     supplied = meta(caller_metadata)
     metadata = strip(caller_metadata)
 
@@ -112,37 +108,17 @@ defmodule ProcessHub.Service.ProcessRegistry.Row do
         {Map.put(metadata, @reserved_key, adopted), false}
 
       _ ->
-        lifecycle = Keyword.get(opts, :lifecycle) || implied_lifecycle(child_nodes, previous)
+        durable? = Keyword.get(opts, :durable, false) or match?(%{durable: true}, previous)
 
-        {Map.put(metadata, @reserved_key, author(previous, lifecycle)),
+        {Map.put(metadata, @reserved_key, author(previous, durable?)),
          not is_nil(supplied) and not whole?(supplied)}
-    end
-  end
-
-  @doc """
-  Returns the storage entry options for a row: a stopped row expires
-  `stopped_row_ttl_ms` after its own `stopped_at`, every other row keeps `opts`
-  unchanged.
-
-  The deadline is absolute and derived from a replicated field, so every node that
-  adopts the row computes the same value and re-writing it during synchronisation
-  cannot extend its lifetime.
-  """
-  @spec expiry_opts(map(), keyword(), pos_integer()) :: keyword()
-  def expiry_opts(metadata, opts, stopped_row_ttl_ms) do
-    case meta(metadata) do
-      %{lifecycle: :stopped, stopped_at: stopped_at} ->
-        Keyword.put(opts, :expire_at, stopped_at + stopped_row_ttl_ms)
-
-      _ ->
-        opts
     end
   end
 
   defp strip(metadata) when is_map(metadata), do: Map.delete(metadata, @reserved_key)
   defp strip(_), do: %{}
 
-  defp whole?(%{epoch: _, lifecycle: _, changed_at: _, changed_by: _}), do: true
+  defp whole?(%{epoch: _, changed_at: _, changed_by: _}), do: true
   defp whole?(_), do: false
 
   defp changed_by(metadata) do
@@ -152,26 +128,13 @@ defmodule ProcessHub.Service.ProcessRegistry.Row do
     end
   end
 
-  # A bound node is the definition of running, so a start needs no explicit
-  # transition to clear a `:stopped` row. Writes that leave the row unbound keep
-  # whatever lifecycle it already had.
-  defp implied_lifecycle([_ | _], _previous), do: :running
-  defp implied_lifecycle(_empty, %{lifecycle: lifecycle}), do: lifecycle
-  defp implied_lifecycle(_empty, _previous), do: :running
-
-  defp author(previous, lifecycle) do
+  defp author(previous, durable?) do
     authored = %{
       epoch: (previous[:epoch] || 0) + 1,
-      lifecycle: lifecycle,
       changed_at: Entry.now_ms(),
       changed_by: node()
     }
 
-    case lifecycle do
-      # Re-stamping an already-stopped row keeps the original deadline rather
-      # than pushing it out.
-      :stopped -> Map.put(authored, :stopped_at, previous[:stopped_at] || Entry.now_ms())
-      _ -> authored
-    end
+    if durable?, do: Map.put(authored, :durable, true), else: authored
   end
 end
