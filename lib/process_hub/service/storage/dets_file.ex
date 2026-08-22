@@ -13,9 +13,9 @@ defmodule ProcessHub.Service.Storage.DetsFile do
   require Logger
 
   @doc "Syncs `table` unless the write asked for `sync: false` (a group commit syncs later)."
-  @spec maybe_sync(atom(), keyword()) :: :ok | {:error, term()} | nil
+  @spec maybe_sync(atom(), keyword()) :: :ok | {:error, term()}
   def maybe_sync(table, write_opts) do
-    if Keyword.get(write_opts, :sync, true), do: :dets.sync(table)
+    if Keyword.get(write_opts, :sync, true), do: :dets.sync(table), else: :ok
   end
 
   @doc "Resolves the on-disk path for `hub_id` (`:path` option, else `priv/process_hub/<hub_id>/registry.dets`)."

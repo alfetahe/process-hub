@@ -150,11 +150,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
     {:noreply, state}
   end
 
-  # Group commit. The write is applied before this runs; its reply rides the
-  # next `:flush`, which is queued once and lands behind every request already
-  # in the mailbox — so concurrent callers share one sync instead of paying
-  # one each, and no caller is answered before the sync that covers its write.
-  # A result that wrote nothing (an error, a no-op expiry) is answered at once.
+  # Group commit: the write is applied before this runs and its reply rides
+  # the batch's `:flush`, so no caller is answered before the sync that covers
+  # its write. A result that wrote nothing (an error, a no-op expiry) is
+  # answered at once.
   defp commit(state, from, table, result) when result in [:ok, true] do
     {:noreply,
      %{
