@@ -111,23 +111,27 @@ defmodule ProcessHub.Service.Recovery.Round do
     unaccounted =
       Enum.reject(entries, fn {child_id, _child_spec} -> Map.has_key?(live, child_id) end)
 
-    pending =
-      pending_swap(hub, StorageKey.rop(), Enum.map(unaccounted, fn {child_id, _} -> child_id end))
-
     {confirmed, deferred} =
-      Enum.split_with(unaccounted, fn {child_id, _child_spec} ->
-        not Map.has_key?(registered, child_id) or MapSet.member?(pending, child_id)
-      end)
+      confirm_over_two_rounds(
+        hub,
+        StorageKey.rop(),
+        Enum.map(unaccounted, fn {child_id, _child_spec} -> child_id end),
+        &(not Map.has_key?(registered, &1))
+      )
 
-    {Enum.map(confirmed, fn {_child_id, child_spec} -> child_spec end), length(deferred)}
+    specs = Map.new(unaccounted)
+    {Enum.map(confirmed, &Map.fetch!(specs, &1)), length(deferred)}
   end
 
-  # The two-consecutive-rounds memory: returns the previous round's set under
-  # `key` and stores `ids` for the next one.
-  defp pending_swap(hub, key, ids) do
+  # The two-consecutive-rounds rule, shared by the orphans, the undeclared
+  # stops and the stale rows: an id is confirmed when the previous round saw
+  # it too — or when `immediate?` says it has nothing in flight to wait for —
+  # and deferred otherwise; this round's set is stored under `key` for the
+  # next one. Answers `{confirmed, deferred}` in the order given.
+  defp confirm_over_two_rounds(hub, key, ids, immediate? \\ fn _id -> false end) do
     pending = Storage.get(hub.storage.misc, key) || MapSet.new()
     Storage.insert(hub.storage.misc, key, MapSet.new(ids))
-    pending
+    Enum.split_with(ids, &(immediate?.(&1) or MapSet.member?(pending, &1)))
   end
 
   # A stop that crashed between list removal and terminate leaves the child
@@ -148,8 +152,7 @@ defmodule ProcessHub.Service.Recovery.Round do
           Keyword.has_key?(node_pids, local_node),
           do: child_id
 
-    pending = pending_swap(hub, StorageKey.rup(), undeclared)
-    {confirmed, deferred} = Enum.split_with(undeclared, &MapSet.member?(pending, &1))
+    {confirmed, deferred} = confirm_over_two_rounds(hub, StorageKey.rup(), undeclared)
 
     case confirmed do
       [] ->
@@ -178,8 +181,7 @@ defmodule ProcessHub.Service.Recovery.Round do
           not Map.has_key?(entries, child_id),
           do: child_id
 
-    pending = pending_swap(hub, StorageKey.rsp(), stale)
-    ripe = Enum.filter(stale, &MapSet.member?(pending, &1))
+    {ripe, _waiting} = confirm_over_two_rounds(hub, StorageKey.rsp(), stale)
 
     Enum.each(ripe, &ProcessRegistry.delete(hub.hub_id, &1, hook_storage: hub.storage.hook))
     length(ripe)
