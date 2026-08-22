@@ -107,9 +107,17 @@ defmodule ProcessHub.Service.Storage.Dets do
 
   @impl true
   @spec insert_many(ref(), [{term(), term(), keyword()}]) :: :ok | {:error, term()}
-  def insert_many(ref, items) do
-    do_insert(ref, Entry.build_many(items))
+  def insert_many(ref, items), do: insert_many(ref, items, [])
+
+  @impl true
+  @spec insert_many(ref(), [{term(), term(), keyword()}], keyword()) :: :ok | {:error, term()}
+  def insert_many(ref, items, write_opts) do
+    do_insert(ref, Entry.build_many(items), write_opts)
   end
+
+  @impl true
+  @spec sync(ref()) :: :ok | {:error, term()}
+  def sync({table, _shadow}), do: :dets.sync(table)
 
   @impl true
   @spec get(ref(), term()) :: term() | nil
@@ -131,12 +139,16 @@ defmodule ProcessHub.Service.Storage.Dets do
 
   @impl true
   @spec remove(ref(), term()) :: :ok | {:error, term()}
-  def remove({table, shadow}, key) do
+  def remove(ref, key), do: remove(ref, key, [])
+
+  @impl true
+  @spec remove(ref(), term(), keyword()) :: :ok | {:error, term()}
+  def remove({table, shadow}, key, write_opts) do
     :ets.delete(shadow, key)
 
     case :dets.delete(table, key) do
       :ok ->
-        :dets.sync(table)
+        maybe_sync(table, write_opts)
         :ok
 
       {:error, reason} ->
@@ -198,18 +210,22 @@ defmodule ProcessHub.Service.Storage.Dets do
 
   # `:dets.insert/2` takes a single object or a list; either way one sync
   # makes the whole write durable.
-  defp do_insert({table, shadow}, objects) do
+  defp do_insert({table, shadow}, objects, write_opts \\ []) do
     objects = List.wrap(objects)
     Enum.each(objects, &:ets.delete(shadow, elem(&1, 0)))
 
     case :dets.insert(table, objects) do
       :ok ->
-        :dets.sync(table)
+        maybe_sync(table, write_opts)
         :ok
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp maybe_sync(table, write_opts) do
+    if Keyword.get(write_opts, :sync, true), do: :dets.sync(table)
   end
 
   defp shadow_existing_keys(table, shadow) do

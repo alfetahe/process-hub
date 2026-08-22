@@ -134,6 +134,24 @@ defmodule Test.ProcessHub.Service.Storage.DurableEtsTest do
     end
   end
 
+  describe "deferred sync" do
+    test "writes made with sync: false become durable on sync/1", %{hub_id: hub_id, path: path} do
+      {:ok, ref} = Backend.open(hub_id, path: path)
+
+      assert :ok = Backend.insert_many(ref, [{:a, 1, []}, {:b, 2, []}], sync: false)
+      assert Backend.get(ref, :a) === 1
+      assert :ok = Backend.remove(ref, :b, sync: false)
+      assert :ok = Backend.sync(ref)
+      assert {:ok, [{:a, 1}]} = Backend.read_durable(ref)
+      Backend.close(ref)
+
+      {:ok, ref2} = Backend.open(hub_id, path: path)
+      assert Backend.get(ref2, :a) === 1
+      refute Backend.exists?(ref2, :b)
+      Backend.close(ref2)
+    end
+  end
+
   describe "ETS is the read source-of-truth" do
     test "reads do not consult DETS — confirmed via DETS-bypass write", %{
       hub_id: hub_id,

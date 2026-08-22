@@ -13,6 +13,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
   use GenServer
 
   @default_timeout 10_000
+
+  # Registry writes are applied on the spot and synced in a group: see `commit/4`.
+  @deferred [sync: false]
   # Per-peer budget for opt-in update propagation. Kept short: propagation
   # runs in the caller (e.g. inside a heal/rebind path) and is best-effort —
   # a slow peer must not stall the caller for the full local timeout.
@@ -48,32 +51,54 @@ defmodule ProcessHub.Service.ProcessRegistry do
     # configured Storage.Behaviour backend). This GenServer exists to
     # serialise mutations through `handle_call/3`; it does not own the
     # underlying storage handle.
-    {:ok, %{hub_id: hub_id}}
+    {:ok, %{hub_id: hub_id, pending: [], dirty: MapSet.new(), flush_scheduled: false}}
   end
 
   @impl GenServer
-  def handle_call({:insert, _hub_id, child_spec, child_nodes, opts}, _from, state) do
-    {:reply, with_storage(fn -> handle_insert(state, child_spec, child_nodes, opts) end), state}
+  def handle_call({:insert, _hub_id, child_spec, child_nodes, opts}, from, state) do
+    table = Keyword.get(opts, :table, state.hub_id)
+
+    commit(
+      state,
+      from,
+      table,
+      with_storage(fn -> handle_insert(state, child_spec, child_nodes, opts) end)
+    )
   end
 
   @impl GenServer
-  def handle_call({:delete, hub_id, child_id, opts}, _from, state) do
-    {:reply, with_storage(fn -> handle_delete(hub_id, child_id, opts) end), state}
+  def handle_call({:delete, hub_id, child_id, opts}, from, state) do
+    commit(state, from, hub_id, with_storage(fn -> handle_delete(hub_id, child_id, opts) end))
   end
 
   @impl GenServer
-  def handle_call({:bulk_insert, _hub_id, children, opts}, _from, state) do
-    {:reply, with_storage(fn -> handle_bulk_insert(state, children, opts) end), state}
+  def handle_call({:bulk_insert, _hub_id, children, opts}, from, state) do
+    commit(
+      state,
+      from,
+      state.hub_id,
+      with_storage(fn -> handle_bulk_insert(state, children, opts) end)
+    )
   end
 
   @impl GenServer
-  def handle_call({:bulk_delete, _hub_id, children, opts}, _from, state) do
-    {:reply, with_storage(fn -> handle_bulk_delete(state, children, opts) end), state}
+  def handle_call({:bulk_delete, _hub_id, children, opts}, from, state) do
+    commit(
+      state,
+      from,
+      state.hub_id,
+      with_storage(fn -> handle_bulk_delete(state, children, opts) end)
+    )
   end
 
   @impl GenServer
-  def handle_call({:update, _hub_id, child_id, update_fn}, _from, state) do
-    {:reply, with_storage(fn -> handle_update(state, child_id, update_fn) end), state}
+  def handle_call({:update, _hub_id, child_id, update_fn}, from, state) do
+    commit(
+      state,
+      from,
+      state.hub_id,
+      with_storage(fn -> handle_update(state, child_id, update_fn) end)
+    )
   end
 
   @impl GenServer
@@ -82,9 +107,70 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @impl GenServer
-  def handle_call({:delete_if_expired, hub_id, child_id}, _from, state) do
-    {:reply, with_storage(fn -> handle_delete_if_expired(hub_id, child_id) end, false), state}
+  def handle_call({:delete_if_expired, hub_id, child_id}, from, state) do
+    commit(
+      state,
+      from,
+      hub_id,
+      with_storage(fn -> handle_delete_if_expired(hub_id, child_id) end, false)
+    )
   end
+
+  # One durable sync per dirty table covers every write queued ahead of this
+  # message, then each caller gets its reply. A sync failure is reported, not
+  # turned into a caller error: the rows are already applied, and the backend
+  # syncs again on the next write.
+  @impl GenServer
+  def handle_info(:flush, state) do
+    Enum.each(state.dirty, fn table ->
+      case with_storage(fn -> Storage.sync(table) end) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "ProcessRegistry: durable sync of #{inspect(table)} failed: #{inspect(reason)}"
+          )
+      end
+    end)
+
+    state.pending
+    |> Enum.reverse()
+    |> Enum.each(fn {from, result} -> GenServer.reply(from, result) end)
+
+    {:noreply, %{state | pending: [], dirty: MapSet.new(), flush_scheduled: false}}
+  end
+
+  # The catch-all `use GenServer` provided before `:flush` existed: a stray
+  # message (a late reply to a call made from inside a hook) is noted, never
+  # fatal to the registry.
+  @impl GenServer
+  def handle_info(message, state) do
+    Logger.debug("ProcessRegistry received an unexpected message: #{inspect(message)}")
+    {:noreply, state}
+  end
+
+  # Group commit. The write is applied before this runs; its reply rides the
+  # next `:flush`, which is queued once and lands behind every request already
+  # in the mailbox — so concurrent callers share one sync instead of paying
+  # one each, and no caller is answered before the sync that covers its write.
+  # A result that wrote nothing (an error, a no-op expiry) is answered at once.
+  defp commit(state, from, table, result) when result in [:ok, true] do
+    state = %{
+      state
+      | pending: [{from, result} | state.pending],
+        dirty: MapSet.put(state.dirty, table)
+    }
+
+    if state.flush_scheduled do
+      {:noreply, state}
+    else
+      send(self(), :flush)
+      {:noreply, %{state | flush_scheduled: true}}
+    end
+  end
+
+  defp commit(state, _from, _table, result), do: {:reply, result, state}
 
   # Drops mutation requests that race against hub teardown: Coordinator.terminate
   # closes the registry backend, so a still-queued bulk_delete/insert can land
@@ -546,7 +632,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   defp handle_insert(state, child_spec, child_nodes, opts) do
     table = Keyword.get(opts, :table, state.hub_id)
     row = staged_row(state, table, child_spec.id, child_spec, child_nodes, opts)
-    Storage.insert_many(table, [row])
+    Storage.insert_many(table, [row], @deferred)
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
@@ -570,7 +656,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
     case Storage.match(hub_id, {child_id, :_, :"$1"}) do
       [{expire}] when is_integer(expire) and now > expire ->
-        Storage.remove(hub_id, child_id)
+        Storage.remove(hub_id, child_id, @deferred)
         true
 
       _ ->
@@ -580,7 +666,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   defp handle_delete(hub_id, child_id, opts) do
-    Storage.remove(hub_id, child_id)
+    Storage.remove(hub_id, child_id, @deferred)
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
@@ -637,7 +723,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
         end
       end)
 
-    Storage.insert_many(hub_id, rows)
+    Storage.insert_many(hub_id, rows, @deferred)
 
     if hook_storage do
       HookManager.dispatch_hooks(hook_storage, Enum.reverse(hooks))
@@ -692,8 +778,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
         end
       end)
 
-    Storage.insert_many(hub_id, rows)
-    Enum.each(deletes, &Storage.remove(hub_id, &1))
+    Storage.insert_many(hub_id, rows, @deferred)
+    Enum.each(deletes, &Storage.remove(hub_id, &1, @deferred))
     hooks = Enum.reverse(hooks)
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
