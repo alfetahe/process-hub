@@ -44,11 +44,11 @@ defmodule ProcessHub.Service.DeclaredChildren.Store do
   end
 
   @doc "Persists `manifest`, refreshes the read cache, and sets the seeded marker."
-  @spec write(Hub.t(), DeclaredChildren.manifest(), keyword()) :: :ok | {:error, term()}
-  def write(hub, manifest, write_opts \\ []) do
+  @spec write(Hub.t(), DeclaredChildren.manifest()) :: :ok | {:error, term()}
+  def write(hub, manifest) do
     {module, ref} = hub.storage.declared_backend
 
-    case module.insert_many(ref, [{:manifest, manifest, []}], write_opts) do
+    case module.insert(ref, :manifest, manifest) do
       :ok ->
         cache(hub, manifest)
         mark_seeded(hub)
@@ -57,13 +57,6 @@ defmodule ProcessHub.Service.DeclaredChildren.Store do
       {:error, _} = error ->
         error
     end
-  end
-
-  @doc "Makes every manifest written with `sync: false` durable."
-  @spec sync(Hub.t()) :: :ok | {:error, term()}
-  def sync(hub) do
-    {module, ref} = hub.storage.declared_backend
-    module.sync(ref)
   end
 
   @doc "Refreshes the misc-storage read cache for an already-persisted manifest."

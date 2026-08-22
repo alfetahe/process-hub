@@ -68,6 +68,26 @@ defmodule ProcessHub.Hub do
   @doc "Returns the default event batch state."
   def default_batch_state, do: %{nodes: [], timer_ref: nil, started_at: nil}
 
+  @doc """
+  The hub a worker needs — identity, processes, storage, configuration — with
+  the coordinator's transient bookkeeping blanked. That bookkeeping (every
+  in-flight operation, the declared-list batch, event batches, waiters) grows
+  with the load; handed to the worker queue and copied into every request task
+  it made each start cost as much as every start in flight.
+  """
+  @spec for_workers(t()) :: t()
+  def for_workers(%__MODULE__{} = hub) do
+    %{
+      hub
+      | pending_operations: %{},
+        declared_unsynced: nil,
+        declared_pending: [],
+        event_batches: %{nodedown: default_batch_state(), cluster_join: default_batch_state()},
+        nodeup_reconcile_timers: %{},
+        recovery_normal_waiters: %{}
+    }
+  end
+
   defstruct [
     :hub_id,
     :procs,

@@ -751,6 +751,18 @@ defmodule ProcessHub do
   defdelegate tag_query(hub_id, tag), to: ProcessRegistry, as: :match_tag
 
   @doc """
+  Returns every child whose registry metadata carries `key`, as
+  `{child_id, node_pids, value}` — the metadata given at start (`:metadata`)
+  or set through `ProcessHub.Service.ProcessRegistry.update/4`.
+
+  ## Examples
+      iex> ProcessHub.metadata_query(:my_hub, :shard)
+      [{:my_child, [{:mynode, #PID<0.123.0>}], 3}]
+  """
+  @spec metadata_query(hub_id(), term()) :: [{child_id(), [{node(), pid()}], term()}]
+  defdelegate metadata_query(hub_id, key), to: ProcessRegistry, as: :match_metadata
+
+  @doc """
   Dumps all information currently stored in the process registry.
 
   This function returns a comprehensive view of the registry, including child specifications,

@@ -299,6 +299,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_call(:declared_clear, _from, state) do
+    state = DeclaredChildren.flush(state)
     {:reply, DeclaredChildren.handle_clear(state), state}
   end
 
@@ -374,7 +375,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_requests_handle, requests}, state) do
-    {:noreply, delegate_work(state, {:handle_requests, requests, state})}
+    {:noreply, delegate_work(state, {:handle_requests, requests, Hub.for_workers(state)})}
   end
 
   @impl true
@@ -541,7 +542,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(:sync_processes, state) do
-    state = delegate_work(state, {:handle_work, fn -> Synchronizer.trigger_sync(state) end})
+    worker_hub = Hub.for_workers(state)
+    state = delegate_work(state, {:handle_work, fn -> Synchronizer.trigger_sync(worker_hub) end})
 
     state.storage.misc
     |> Storage.get(StorageKey.strsyn())
@@ -554,20 +556,26 @@ defmodule ProcessHub.Coordinator do
     {:noreply, state}
   end
 
+  # A batch of declared-list commands in flight is written and dispatched
+  # before a peer's copy is considered, so an adoption never overwrites it.
   @impl true
   def handle_info({@event_declared_adopt, manifest}, state) do
+    state = DeclaredChildren.flush(state)
     if state.recovery_config.enabled?, do: DeclaredChildren.adopt(state, manifest)
     {:noreply, state}
   end
 
   @impl true
   def handle_info({@event_declared_version, {from_node, version}}, state) do
+    state = DeclaredChildren.flush(state)
     DeclaredChildren.maybe_pull(state, from_node, version)
     {:noreply, state}
   end
 
   @impl true
   def handle_info(:declared_remote_refetch, state) do
+    state = DeclaredChildren.flush(state)
+
     case DeclaredChildren.remote_recompare(state) do
       {:error, _reason} ->
         Process.send_after(self(), :declared_remote_refetch, @declared_refetch_ms)

@@ -42,6 +42,22 @@ defmodule Test.Service.ProcessRegistryTest do
              end)
   end
 
+  test "match_metadata answers rows carrying the key with that key's value", %{hub_id: hub_id} do
+    ProcessRegistry.insert(hub_id, %{id: :mm_a, start: {:m, :f, []}}, [{:node1, self()}],
+      metadata: %{shard: 1, tag: "t"}
+    )
+
+    ProcessRegistry.insert(hub_id, %{id: :mm_b, start: {:m, :f, []}}, [{:node1, self()}],
+      metadata: %{shard: 2}
+    )
+
+    ProcessRegistry.insert(hub_id, %{id: :mm_c, start: {:m, :f, []}}, [{:node1, self()}])
+
+    found = ProcessRegistry.match_metadata(hub_id, :shard) |> Enum.sort()
+    assert found == [{:mm_a, [{:node1, self()}], 1}, {:mm_b, [{:node1, self()}], 2}]
+    assert ProcessRegistry.match_tag(hub_id, "t") == [{:mm_a, [{:node1, self()}]}]
+  end
+
   test "contains children", %{hub_id: hub_id} = _context do
     insert_data =
       [

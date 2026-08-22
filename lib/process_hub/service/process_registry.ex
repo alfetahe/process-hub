@@ -273,6 +273,18 @@ defmodule ProcessHub.Service.ProcessRegistry do
     Storage.match(hub_id, match_expr)
   end
 
+  @doc """
+  Returns every child whose registry metadata carries `key`, with that key's
+  value: `[{child_id, node_pids, value}]`. An ETS match over the rows, no row
+  decoding — `match_tag/2` generalised to any metadata key and any value.
+  """
+  @spec match_metadata(ProcessHub.hub_id(), term()) :: [
+          {ProcessHub.child_id(), [{node(), pid()}], term()}
+        ]
+  def match_metadata(hub_id, key) do
+    Storage.match(hub_id, {:"$1", {:_, :"$2", %{key => :"$3"}}})
+  end
+
   @doc "Deletes all objects from the process registry."
   @spec clear_all(ProcessHub.hub_id()) :: boolean()
   def clear_all(hub_id) do

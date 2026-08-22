@@ -135,7 +135,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
 
   def precommit_stop(hub, child_ids) do
     locally_declared? =
-      case manifest(hub) do
+      case working_manifest(hub) do
         nil -> false
         %{entries: entries} -> Enum.any?(child_ids, &Map.has_key?(entries, &1))
       end
@@ -242,9 +242,11 @@ defmodule ProcessHub.Service.DeclaredChildren do
   Applies a mutation as the leader; MUST run inside the coordinator process so
   writes serialize. A mutation that changes nothing does not bump the version.
 
-  A mutation that writes answers `{:pending, manifest}`: the list is updated
-  and on disk but not yet synced. The coordinator parks the command behind
-  `defer/4` and runs it from `flush/1`, after the one sync that covers it.
+  A mutation that changes the list answers `{:pending, manifest}`: the new
+  manifest is the batch's working copy, not yet written. The coordinator parks
+  the command behind `defer/4` and runs it from `flush/1`, after the one write
+  and sync that persists the whole batch — so N commands cost one manifest
+  write, not N rewrites of a list that grows with every child.
   """
   @spec apply_mutation(Hub.t(), {:add, [ProcessHub.child_spec()]} | {:remove, [term()]}) ::
           :ok | {:pending, manifest()} | {:error, term()}
@@ -257,13 +259,13 @@ defmodule ProcessHub.Service.DeclaredChildren do
         {:error, :declared_list_parked}
 
       true ->
-        manifest = manifest(hub) || new_manifest(0, %{})
+        manifest = working_manifest(hub) || new_manifest(0, %{})
         entries = mutate_entries(manifest.entries, mutation)
 
         if entries === manifest.entries do
           :ok
         else
-          commit(hub, new_manifest(manifest.version + 1, entries))
+          {:pending, new_manifest(manifest.version + 1, entries)}
         end
     end
   end
@@ -276,19 +278,16 @@ defmodule ProcessHub.Service.DeclaredChildren do
     Map.drop(entries, child_ids)
   end
 
-  defp commit(hub, manifest) do
-    case Store.write(hub, manifest, sync: false) do
-      :ok -> {:pending, manifest}
-      {:error, reason} -> {:error, {:declared_list_write_failed, reason}}
-    end
-  end
+  # The batch's working manifest while one is open, else the persisted one.
+  defp working_manifest(%Hub{declared_unsynced: nil} = hub), do: manifest(hub)
+  defp working_manifest(%Hub{declared_unsynced: manifest}), do: manifest
 
   @doc """
-  Parks `continuation` behind the sync of a manifest written with
-  `sync: false`. One `:flush_declared` is queued per batch and lands behind
-  every request already in the coordinator's mailbox, so concurrent durable
-  commands share one sync — and none of them runs before the sync that covers
-  its entry. MUST run inside the coordinator process.
+  Parks `continuation` behind the write of `manifest`, the batch's working
+  copy. One `:flush_declared` is queued per batch and lands behind every
+  request already in the coordinator's mailbox, so concurrent durable commands
+  share one write and sync — and none of them runs before the write that
+  covers its entry. MUST run inside the coordinator process.
   """
   @spec defer(Hub.t(), manifest(), GenServer.from(), (Hub.t() -> {:reply, term(), Hub.t()})) ::
           Hub.t()
@@ -303,38 +302,39 @@ defmodule ProcessHub.Service.DeclaredChildren do
   end
 
   @doc """
-  Syncs the declared list once, publishes the manifest that sync made durable
-  (peers adopt the newest version, so the batch's intermediate versions need
-  no broadcast of their own), then runs every parked command in arrival order
-  and replies to its caller. MUST run inside the coordinator process.
+  Writes and syncs the batch's working manifest once, publishes it (peers
+  adopt the newest version, so the batch's intermediate versions need no
+  broadcast of their own), then runs every parked command in arrival order
+  and replies to its caller. A write that fails answers every parked caller
+  with the error and runs none of them — no child starts on an intent that
+  did not persist. MUST run inside the coordinator process; the coordinator
+  flushes before it considers a peer's copy, so an adoption never overwrites
+  a batch in flight.
   """
   @spec flush(Hub.t()) :: Hub.t()
   def flush(%Hub{declared_unsynced: nil} = hub), do: hub
 
   def flush(%Hub{declared_unsynced: manifest, declared_pending: pending} = hub) do
-    case Store.sync(hub) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        LoggerService.warning(
-          "Declared list sync failed: @reason",
-          %{"reason" => inspect(reason)},
-          prefix: "DeclaredChildren"
-        )
-    end
-
-    broadcast(hub, manifest)
-    Store.ship(hub, manifest)
     hub = %{hub | declared_unsynced: nil, declared_pending: []}
 
-    pending
-    |> Enum.reverse()
-    |> Enum.reduce(hub, fn {from, continuation}, hub ->
-      {:reply, reply, hub} = continuation.(hub)
-      GenServer.reply(from, reply)
-      hub
-    end)
+    case Store.write(hub, manifest) do
+      :ok ->
+        broadcast(hub, manifest)
+        Store.ship(hub, manifest)
+
+        pending
+        |> Enum.reverse()
+        |> Enum.reduce(hub, fn {from, continuation}, hub ->
+          {:reply, reply, hub} = continuation.(hub)
+          GenServer.reply(from, reply)
+          hub
+        end)
+
+      {:error, reason} ->
+        error = {:error, {:declared_list_write_failed, reason}}
+        Enum.each(pending, fn {from, _continuation} -> GenServer.reply(from, error) end)
+        hub
+    end
   end
 
   # --- adoption ---------------------------------------------------------------
