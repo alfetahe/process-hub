@@ -373,6 +373,28 @@ defmodule Test.ProcessHubRecoveryTest do
       assert %{version: 2} = DeclaredChildren.declared_children(hub_id)
     end
 
+    test "concurrent durable starts share one sync and every entry survives a restart",
+         %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_concurrent)
+      {^hub_id, pid} = SetupHelper.start_hub!(durable_conf(hub_id, dets))
+      ids = Enum.map(1..12, &:"conc_child_#{&1}")
+
+      ids
+      |> Task.async_stream(
+        fn id ->
+          ProcessHub.start_child(hub_id, cspec(id), awaitable: true, durable: true)
+          |> ProcessHub.await()
+        end,
+        max_concurrency: 12
+      )
+      |> Enum.each(fn {:ok, result} -> assert %ProcessHub.StartResult{status: :ok} = result end)
+
+      assert declared_ids(hub_id) == Enum.sort(ids)
+
+      {^hub_id, _pid} = SetupHelper.restart_hub!(hub_id, pid, durable_conf(hub_id, dets))
+      assert declared_ids(hub_id) == Enum.sort(ids)
+    end
+
     test "durable requires a restartable restart type", %{dets: dets} do
       hub_id = SetupHelper.unique_id(:rec_permanent)
 

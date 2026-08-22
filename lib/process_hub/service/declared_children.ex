@@ -112,7 +112,8 @@ defmodule ProcessHub.Service.DeclaredChildren do
   process starts. Refuses when the gate is off, the list is parked, a spec is
   `:temporary`, or no leader is reachable. `:ok` for non-durable starts.
   """
-  @spec precommit_start(Hub.t(), [ProcessHub.child_spec()], keyword()) :: :ok | {:error, term()}
+  @spec precommit_start(Hub.t(), [ProcessHub.child_spec()], keyword()) ::
+          :ok | {:pending, manifest()} | {:error, term()}
   def precommit_start(hub, child_specs, opts) do
     cond do
       not Keyword.get(opts, :durable, false) -> :ok
@@ -128,7 +129,8 @@ defmodule ProcessHub.Service.DeclaredChildren do
   leader's copy is authoritative; with no leader reachable the stop is refused
   only when the local copy shows a declared child among `child_ids`.
   """
-  @spec precommit_stop(Hub.t(), [ProcessHub.child_id()]) :: :ok | {:error, term()}
+  @spec precommit_stop(Hub.t(), [ProcessHub.child_id()]) ::
+          :ok | {:pending, manifest()} | {:error, term()}
   def precommit_stop(%Hub{recovery_config: %{enabled?: false}}, _child_ids), do: :ok
 
   def precommit_stop(hub, child_ids) do
@@ -148,6 +150,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
   defp mutate_stop(hub, child_ids, locally_declared?) do
     case mutate(hub, {:remove, child_ids}) do
       :ok -> :ok
+      {:pending, _manifest} = pending -> pending
       {:error, :no_leader} when not locally_declared? -> :ok
       {:error, _} = error -> error
     end
@@ -238,9 +241,13 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @doc """
   Applies a mutation as the leader; MUST run inside the coordinator process so
   writes serialize. A mutation that changes nothing does not bump the version.
+
+  A mutation that writes answers `{:pending, manifest}`: the list is updated
+  and on disk but not yet synced. The coordinator parks the command behind
+  `defer/4` and runs it from `flush/1`, after the one sync that covers it.
   """
   @spec apply_mutation(Hub.t(), {:add, [ProcessHub.child_spec()]} | {:remove, [term()]}) ::
-          :ok | {:error, term()}
+          :ok | {:pending, manifest()} | {:error, term()}
   def apply_mutation(hub, mutation) do
     cond do
       not hub.recovery_config.enabled? ->
@@ -270,15 +277,64 @@ defmodule ProcessHub.Service.DeclaredChildren do
   end
 
   defp commit(hub, manifest) do
-    case Store.write(hub, manifest) do
+    case Store.write(hub, manifest, sync: false) do
+      :ok -> {:pending, manifest}
+      {:error, reason} -> {:error, {:declared_list_write_failed, reason}}
+    end
+  end
+
+  @doc """
+  Parks `continuation` behind the sync of a manifest written with
+  `sync: false`. One `:flush_declared` is queued per batch and lands behind
+  every request already in the coordinator's mailbox, so concurrent durable
+  commands share one sync — and none of them runs before the sync that covers
+  its entry. MUST run inside the coordinator process.
+  """
+  @spec defer(Hub.t(), manifest(), GenServer.from(), (Hub.t() -> {:reply, term(), Hub.t()})) ::
+          Hub.t()
+  def defer(%Hub{} = hub, manifest, from, continuation) do
+    if hub.declared_unsynced === nil, do: send(self(), :flush_declared)
+
+    %{
+      hub
+      | declared_unsynced: manifest,
+        declared_pending: [{from, continuation} | hub.declared_pending]
+    }
+  end
+
+  @doc """
+  Syncs the declared list once, publishes the manifest that sync made durable
+  (peers adopt the newest version, so the batch's intermediate versions need
+  no broadcast of their own), then runs every parked command in arrival order
+  and replies to its caller. MUST run inside the coordinator process.
+  """
+  @spec flush(Hub.t()) :: Hub.t()
+  def flush(%Hub{declared_unsynced: nil} = hub), do: hub
+
+  def flush(%Hub{declared_unsynced: manifest, declared_pending: pending} = hub) do
+    case Store.sync(hub) do
       :ok ->
-        broadcast(hub, manifest)
-        Store.ship(hub, manifest)
         :ok
 
       {:error, reason} ->
-        {:error, {:declared_list_write_failed, reason}}
+        LoggerService.warning(
+          "Declared list sync failed: @reason",
+          %{"reason" => inspect(reason)},
+          prefix: "DeclaredChildren"
+        )
     end
+
+    broadcast(hub, manifest)
+    Store.ship(hub, manifest)
+    hub = %{hub | declared_unsynced: nil, declared_pending: []}
+
+    pending
+    |> Enum.reverse()
+    |> Enum.reduce(hub, fn {from, continuation}, hub ->
+      {:reply, reply, hub} = continuation.(hub)
+      GenServer.reply(from, reply)
+      hub
+    end)
   end
 
   # --- adoption ---------------------------------------------------------------

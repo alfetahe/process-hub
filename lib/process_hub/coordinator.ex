@@ -244,7 +244,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_call({:init_children_start, child_specs, opts}, _from, state) do
+  def handle_call({:init_children_start, child_specs, opts}, from, state) do
     opts =
       opts
       |> Keyword.put(:init_cids, Enum.map(child_specs, & &1.id))
@@ -252,37 +252,49 @@ defmodule ProcessHub.Coordinator do
 
     # The declared-list addition commits before any process starts, so a crash
     # in between converges through the reconcile instead of losing the intent.
-    case DeclaredChildren.precommit_start(state, child_specs, opts) do
-      :ok ->
-        init_children(state, opts, :start_initiated, fn ->
-          Distributor.compose_start_operation(state, child_specs, opts)
-        end)
+    start = fn state ->
+      init_children(state, opts, :start_initiated, fn ->
+        Distributor.compose_start_operation(state, child_specs, opts)
+      end)
+    end
 
-      {:error, _reason} = error ->
-        {:reply, error, state}
+    case DeclaredChildren.precommit_start(state, child_specs, opts) do
+      :ok -> start.(state)
+      {:pending, manifest} -> {:noreply, DeclaredChildren.defer(state, manifest, from, start)}
+      {:error, _reason} = error -> {:reply, error, state}
     end
   end
 
   @impl true
-  def handle_call({:init_children_stop, child_ids, opts}, _from, state) do
+  def handle_call({:init_children_stop, child_ids, opts}, from, state) do
     opts = Distributor.default_operation_opts(opts)
 
     # The declared-list removal commits before any child terminates; the reverse
     # order would let the reconcile resurrect a half-completed stop.
-    case DeclaredChildren.precommit_stop(state, child_ids) do
-      :ok ->
-        init_children(state, opts, :stop_initiated, fn ->
-          Distributor.compose_stop_operation(state, child_ids, opts)
-        end)
+    stop = fn state ->
+      init_children(state, opts, :stop_initiated, fn ->
+        Distributor.compose_stop_operation(state, child_ids, opts)
+      end)
+    end
 
-      {:error, _reason} = error ->
-        {:reply, error, state}
+    case DeclaredChildren.precommit_stop(state, child_ids) do
+      :ok -> stop.(state)
+      {:pending, manifest} -> {:noreply, DeclaredChildren.defer(state, manifest, from, stop)}
+      {:error, _reason} = error -> {:reply, error, state}
     end
   end
 
+  # A follower's precommit, applied here on the leader; answered once synced.
   @impl true
-  def handle_call({:declared_mutate, mutation}, _from, state) do
-    {:reply, DeclaredChildren.apply_mutation(state, mutation), state}
+  def handle_call({:declared_mutate, mutation}, from, state) do
+    case DeclaredChildren.apply_mutation(state, mutation) do
+      {:pending, manifest} ->
+        {:noreply,
+         DeclaredChildren.defer(state, manifest, from, fn state -> {:reply, :ok, state} end)}
+
+      result ->
+        {:reply, result, state}
+    end
   end
 
   @impl true
@@ -500,6 +512,11 @@ defmodule ProcessHub.Coordinator do
     }
 
     {:noreply, state |> Recovery.complete_first_round(result) |> reply_normal_waiters()}
+  end
+
+  @impl true
+  def handle_info(:flush_declared, state) do
+    {:noreply, DeclaredChildren.flush(state)}
   end
 
   @impl true

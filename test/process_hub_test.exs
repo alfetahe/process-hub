@@ -9,6 +9,32 @@ defmodule ProcessHubTest do
   end
 
   @tag :start_children
+  test "concurrent starts are batched and a duplicate id still reports once", %{hub_id: hub_id} do
+    ids = Enum.map(1..12, &:"wq_child_#{&1}")
+    specs = Enum.map(ids, &%{id: &1, start: {Test.Helper.TestServer, :start_link, [%{name: &1}]}})
+
+    results =
+      (specs ++ [hd(specs)])
+      |> Task.async_stream(
+        fn spec ->
+          ProcessHub.start_child(hub_id, spec, awaitable: true) |> ProcessHub.await()
+        end,
+        max_concurrency: 13
+      )
+      |> Enum.map(fn {:ok, result} -> result end)
+
+    # The duplicate is refused by the coordinator when the first start has
+    # already registered, or answered from the batch when it has not.
+    Enum.each(results, fn
+      %ProcessHub.StartResult{} -> :ok
+      {:error, {:already_started, [:wq_child_1]}} -> :ok
+    end)
+
+    assert Enum.all?(ids, &is_pid(ProcessHub.get_pid(hub_id, &1)))
+
+    ProcessHub.stop_children(hub_id, ids, awaitable: true) |> ProcessHub.await()
+  end
+
   test "start children", %{hub_id: hub_id} do
     assert ProcessHub.start_children(hub_id, [], []) === {:error, :no_children}
 
