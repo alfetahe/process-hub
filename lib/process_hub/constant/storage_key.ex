@@ -52,6 +52,8 @@ defmodule ProcessHub.Constant.StorageKey do
   def nbt, do: :node_boot_tokens
   @spec rop() :: :reconcile_orphans_pending
   def rop, do: :reconcile_orphans_pending
+  @spec rup() :: :reconcile_undeclared_pending
+  def rup, do: :reconcile_undeclared_pending
   @spec rsp() :: :reconcile_stale_pending
   def rsp, do: :reconcile_stale_pending
   @spec dcl() :: :declared_list

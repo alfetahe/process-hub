@@ -28,6 +28,7 @@ defmodule ProcessHub.Service.Recovery.Round do
           skipped_pending: non_neg_integer(),
           duplicates: non_neg_integer(),
           stopped_undeclared: non_neg_integer(),
+          deferred_undeclared: non_neg_integer(),
           removed_stale: non_neg_integer(),
           elapsed_ms: non_neg_integer(),
           reason: :completed | :parked | :draining | :crashed
@@ -83,7 +84,7 @@ defmodule ProcessHub.Service.Recovery.Round do
 
     {orphans, skipped_pending} = orphan_set(hub, entries, live, registered)
     started = start_orphans(hub, orphans, map_size(entries), first_round?)
-    stopped_undeclared = stop_undeclared(hub, live, entries)
+    {stopped_undeclared, deferred_undeclared} = stop_undeclared(hub, live, entries)
     removed_stale = remove_stale_rows(hub, registered, entries)
     duplicates = resolve_duplicates(hub, live)
 
@@ -95,6 +96,7 @@ defmodule ProcessHub.Service.Recovery.Round do
         skipped_pending: skipped_pending,
         duplicates: duplicates,
         stopped_undeclared: stopped_undeclared,
+        deferred_undeclared: deferred_undeclared,
         removed_stale: removed_stale
     }
   end
@@ -131,6 +133,11 @@ defmodule ProcessHub.Service.Recovery.Round do
   # A stop that crashed between list removal and terminate leaves the child
   # running but undeclared; each node stops its own instance. Only rows marked
   # durable are considered — children never declared are not the reconcile's.
+  #
+  # Two consecutive rounds, like the orphans: a durable start registers its
+  # row before its declared entry commits (the entry rides the batch), so one
+  # round inside that window sees a live, durable, undeclared child that is
+  # merely young. Answers `{stopped, deferred}`.
   defp stop_undeclared(hub, live, entries) do
     local_node = node()
 
@@ -141,9 +148,12 @@ defmodule ProcessHub.Service.Recovery.Round do
           Keyword.has_key?(node_pids, local_node),
           do: child_id
 
-    case undeclared do
+    pending = pending_swap(hub, StorageKey.rup(), undeclared)
+    {confirmed, deferred} = Enum.split_with(undeclared, &MapSet.member?(pending, &1))
+
+    case confirmed do
       [] ->
-        0
+        {0, length(deferred)}
 
       child_ids ->
         LoggerService.warning(
@@ -153,7 +163,7 @@ defmodule ProcessHub.Service.Recovery.Round do
         )
 
         Distributor.children_terminate(hub, child_ids, on_empty: :delete)
-        length(child_ids)
+        {length(child_ids), length(deferred)}
     end
   end
 
@@ -309,6 +319,7 @@ defmodule ProcessHub.Service.Recovery.Round do
       skipped_pending: 0,
       duplicates: 0,
       stopped_undeclared: 0,
+      deferred_undeclared: 0,
       removed_stale: 0,
       elapsed_ms: 0,
       reason: reason

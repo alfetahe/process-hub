@@ -601,6 +601,11 @@ defmodule Test.ProcessHubRecoveryTest do
       # this state: running but undeclared.
       assert :ok = GenServer.call(hub_id, {:declared_mutate, {:remove, [:und_x]}})
 
+      # One round defers it — a durable start's declared entry can still be in
+      # flight — the next round stops it.
+      assert_receive {:round, %{measurements: %{deferred_undeclared: 1, stopped_undeclared: 0}}},
+                     @interval_ms * 3
+
       assert_receive {:round, %{measurements: %{stopped_undeclared: 1}}}, @interval_ms * 3
 
       assert Test.Helper.Common.eventually(fn ->
