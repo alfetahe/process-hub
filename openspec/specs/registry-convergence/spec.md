@@ -134,8 +134,11 @@ hub's declared list against the cluster's live registry. A round SHALL:
 2. Compute `orphans = declared children − children observed running
    anywhere`.
 3. Stop any child observed running whose row is marked durable but whose id
-   is absent from the declared list (a stop that crashed between list removal
-   and terminate); children never declared are untouched.
+   is absent from the declared list for two consecutive rounds (a stop that
+   crashed between list removal and terminate); children never declared are
+   untouched. One round is deferred because a durable start registers its
+   row before its declared entry commits on the batch — a child seen
+   undeclared once is merely young.
 4. Remove registry rows marked durable that are undeclared and observed
    running nowhere for two consecutive rounds (hygiene against stale
    rejoining peers re-introducing deleted rows).
@@ -260,7 +263,8 @@ ProcessHub SHALL emit `[:telemetry]`-compatible events for the reconcile lifecyc
 
 - `[:process_hub, :reconcile, :round]` — emitted at the end of every round.
   Measurements: `%{candidates, orphans, started, skipped_pending, duplicates,
-  elapsed_ms}`. Metadata: `%{hub_id, first_round: boolean()}`.
+  stopped_undeclared, deferred_undeclared, removed_stale, elapsed_ms}`.
+  Metadata: `%{hub_id, first_round: boolean()}`.
 - `[:process_hub, :reconcile, :duplicate]` — as specified in the duplicate-binding
   requirement.
 
@@ -273,6 +277,12 @@ distinguishable from a stalled one.
 - **WHEN** a reconcile round completes
 - **THEN** one `[:process_hub, :reconcile, :round]` event is emitted with
   `orphans: 0, started: 0`
+
+#### Scenario: An undeclared running child is deferred one round, then stopped
+
+- **GIVEN** a running child whose row is durable and whose declared entry is gone
+- **WHEN** two consecutive rounds complete
+- **THEN** the first emits `deferred_undeclared: 1, stopped_undeclared: 0` and the second `stopped_undeclared: 1`, and the child is stopped only then
 
 #### Scenario: Restoring round reports what it started
 
