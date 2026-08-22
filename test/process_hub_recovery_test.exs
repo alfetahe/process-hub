@@ -701,7 +701,7 @@ defmodule Test.ProcessHubRecoveryTest do
     test "a lost list with a seeded marker parks the reconcile", %{dets: dets, tmp_dir: tmp_dir} do
       hub_id = SetupHelper.unique_id(:rec_park)
       conf = durable_conf(hub_id, dets)
-      {^hub_id, pid} = SetupHelper.start_hub!(conf)
+      {^hub_id, _pid} = SetupHelper.start_hub!(conf)
       reconcile_now(hub_id)
       assert Recovery.await_normal(hub_id, 10_000) == :ok
 

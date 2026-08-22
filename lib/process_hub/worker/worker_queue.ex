@@ -84,6 +84,10 @@ defmodule ProcessHub.Worker.WorkerQueue do
 
   defp do_work({:handle_request_batch, []}, _state), do: :ok
 
+  defp do_work({:handle_node_down, arg}, _state), do: Cluster.handle_node_down(arg)
+
+  defp do_work({:handle_node_up, arg}, _state), do: Cluster.handle_node_up(arg)
+
   # Start operations already queued behind this one join its batch, so their
   # registrations share one registry sync instead of paying one each. The
   # first queued message that is not a start batch ends the merge and runs
@@ -119,8 +123,4 @@ defmodule ProcessHub.Worker.WorkerQueue do
     do: Enum.all?(requests, &match?(%StartChildrenRequest{}, &1))
 
   defp start_batch?(_requests), do: false
-
-  defp do_work({:handle_node_down, arg}, _state), do: Cluster.handle_node_down(arg)
-
-  defp do_work({:handle_node_up, arg}, _state), do: Cluster.handle_node_up(arg)
 end
