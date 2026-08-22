@@ -33,6 +33,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Service.DeclaredChildren.Boot
   alias ProcessHub.Service.DeclaredChildren.Store
+  alias ProcessHub.Service.Batch
   alias ProcessHub.Service.Storage
   alias ProcessHub.Hub
 
@@ -284,20 +285,18 @@ defmodule ProcessHub.Service.DeclaredChildren do
 
   @doc """
   Parks `continuation` behind the write of `manifest`, the batch's working
-  copy. One `:flush_declared` is queued per batch and lands behind every
-  request already in the coordinator's mailbox, so concurrent durable commands
-  share one write and sync — and none of them runs before the write that
-  covers its entry. MUST run inside the coordinator process.
+  copy. One `:flush_declared` is queued per batch (`Batch.add/3`) and lands
+  behind every request already in the coordinator's mailbox, so concurrent
+  durable commands share one write and sync — and none of them runs before
+  the write that covers its entry. MUST run inside the coordinator process.
   """
   @spec defer(Hub.t(), manifest(), GenServer.from(), (Hub.t() -> {:reply, term(), Hub.t()})) ::
           Hub.t()
   def defer(%Hub{} = hub, manifest, from, continuation) do
-    if hub.declared_unsynced === nil, do: send(self(), :flush_declared)
-
     %{
       hub
       | declared_unsynced: manifest,
-        declared_pending: [{from, continuation} | hub.declared_pending]
+        declared_batch: Batch.add(hub.declared_batch, :flush_declared, {from, continuation})
     }
   end
 
@@ -314,17 +313,16 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @spec flush(Hub.t()) :: Hub.t()
   def flush(%Hub{declared_unsynced: nil} = hub), do: hub
 
-  def flush(%Hub{declared_unsynced: manifest, declared_pending: pending} = hub) do
-    hub = %{hub | declared_unsynced: nil, declared_pending: []}
+  def flush(%Hub{declared_unsynced: manifest} = hub) do
+    {pending, batch} = Batch.take(hub.declared_batch)
+    hub = %{hub | declared_unsynced: nil, declared_batch: batch}
 
     case Store.write(hub, manifest) do
       :ok ->
         broadcast(hub, manifest)
         Store.ship(hub, manifest)
 
-        pending
-        |> Enum.reverse()
-        |> Enum.reduce(hub, fn {from, continuation}, hub ->
+        Enum.reduce(pending, hub, fn {from, continuation}, hub ->
           {:reply, reply, hub} = continuation.(hub)
           GenServer.reply(from, reply)
           hub

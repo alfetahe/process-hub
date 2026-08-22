@@ -161,7 +161,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
     case :dets.delete(dets_table, key) do
       :ok ->
-        maybe_sync(dets_table, write_opts)
+        DetsFile.maybe_sync(dets_table, write_opts)
         :ok
 
       {:error, reason} ->
@@ -231,7 +231,7 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
     case :dets.insert(dets_table, objects) do
       :ok ->
-        maybe_sync(dets_table, write_opts)
+        DetsFile.maybe_sync(dets_table, write_opts)
         :ok
 
       {:error, reason} ->
@@ -240,10 +240,6 @@ defmodule ProcessHub.Service.Storage.DurableEts do
         Enum.each(prior, &ETS.insert(ets_tid, &1))
         {:error, reason}
     end
-  end
-
-  defp maybe_sync(dets_table, write_opts) do
-    if Keyword.get(write_opts, :sync, true), do: :dets.sync(dets_table)
   end
 
   defp replay_into_ets(dets_table, ets_tid) do

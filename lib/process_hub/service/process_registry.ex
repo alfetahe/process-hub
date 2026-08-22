@@ -4,6 +4,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
 
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.Batch
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry.Row
   alias ProcessHub.Service.Storage
@@ -51,7 +52,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
     # configured Storage.Behaviour backend). This GenServer exists to
     # serialise mutations through `handle_call/3`; it does not own the
     # underlying storage handle.
-    {:ok, %{hub_id: hub_id, pending: [], dirty: MapSet.new(), flush_scheduled: false}}
+    {:ok, %{hub_id: hub_id, batch: Batch.new(), dirty: MapSet.new()}}
   end
 
   @impl GenServer
@@ -134,11 +135,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
       end
     end)
 
-    state.pending
-    |> Enum.reverse()
-    |> Enum.each(fn {from, result} -> GenServer.reply(from, result) end)
+    {replies, batch} = Batch.take(state.batch)
+    Enum.each(replies, fn {from, result} -> GenServer.reply(from, result) end)
 
-    {:noreply, %{state | pending: [], dirty: MapSet.new(), flush_scheduled: false}}
+    {:noreply, %{state | batch: batch, dirty: MapSet.new()}}
   end
 
   # The catch-all `use GenServer` provided before `:flush` existed: a stray
@@ -156,18 +156,12 @@ defmodule ProcessHub.Service.ProcessRegistry do
   # one each, and no caller is answered before the sync that covers its write.
   # A result that wrote nothing (an error, a no-op expiry) is answered at once.
   defp commit(state, from, table, result) when result in [:ok, true] do
-    state = %{
-      state
-      | pending: [{from, result} | state.pending],
-        dirty: MapSet.put(state.dirty, table)
-    }
-
-    if state.flush_scheduled do
-      {:noreply, state}
-    else
-      send(self(), :flush)
-      {:noreply, %{state | flush_scheduled: true}}
-    end
+    {:noreply,
+     %{
+       state
+       | batch: Batch.add(state.batch, :flush, {from, result}),
+         dirty: MapSet.put(state.dirty, table)
+     }}
   end
 
   defp commit(state, _from, _table, result), do: {:reply, result, state}

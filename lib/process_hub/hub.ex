@@ -59,10 +59,10 @@ defmodule ProcessHub.Hub do
           recovery_normal_waiters: %{GenServer.from() => reference()},
           reconcile_running?: boolean(),
           reconcile_last_at: integer() | nil,
-          # The latest declared-list manifest written but not yet synced, and
-          # the callers whose commands wait on that sync.
+          # The declared-list batch's working manifest, not yet written, and the
+          # commands parked behind its write.
           declared_unsynced: map() | nil,
-          declared_pending: [{GenServer.from(), (t() -> {:reply, term(), t()})}]
+          declared_batch: ProcessHub.Service.Batch.t()
         }
 
   @doc "Returns the default event batch state."
@@ -81,7 +81,7 @@ defmodule ProcessHub.Hub do
       hub
       | pending_operations: %{},
         declared_unsynced: nil,
-        declared_pending: [],
+        declared_batch: %ProcessHub.Service.Batch{},
         event_batches: %{nodedown: default_batch_state(), cluster_join: default_batch_state()},
         nodeup_reconcile_timers: %{},
         recovery_normal_waiters: %{}
@@ -111,6 +111,6 @@ defmodule ProcessHub.Hub do
     reconcile_running?: false,
     reconcile_last_at: nil,
     declared_unsynced: nil,
-    declared_pending: []
+    declared_batch: %ProcessHub.Service.Batch{}
   ]
 end

@@ -258,11 +258,12 @@ defmodule ProcessHub.Coordinator do
       end)
     end
 
-    case DeclaredChildren.precommit_start(state, child_specs, opts) do
-      :ok -> start.(state)
-      {:pending, manifest} -> {:noreply, DeclaredChildren.defer(state, manifest, from, start)}
-      {:error, _reason} = error -> {:reply, error, state}
-    end
+    after_precommit(
+      DeclaredChildren.precommit_start(state, child_specs, opts),
+      state,
+      from,
+      start
+    )
   end
 
   @impl true
@@ -277,24 +278,15 @@ defmodule ProcessHub.Coordinator do
       end)
     end
 
-    case DeclaredChildren.precommit_stop(state, child_ids) do
-      :ok -> stop.(state)
-      {:pending, manifest} -> {:noreply, DeclaredChildren.defer(state, manifest, from, stop)}
-      {:error, _reason} = error -> {:reply, error, state}
-    end
+    after_precommit(DeclaredChildren.precommit_stop(state, child_ids), state, from, stop)
   end
 
   # A follower's precommit, applied here on the leader; answered once synced.
   @impl true
   def handle_call({:declared_mutate, mutation}, from, state) do
-    case DeclaredChildren.apply_mutation(state, mutation) do
-      {:pending, manifest} ->
-        {:noreply,
-         DeclaredChildren.defer(state, manifest, from, fn state -> {:reply, :ok, state} end)}
-
-      result ->
-        {:reply, result, state}
-    end
+    after_precommit(DeclaredChildren.apply_mutation(state, mutation), state, from, fn state ->
+      {:reply, :ok, state}
+    end)
   end
 
   @impl true
@@ -703,6 +695,16 @@ defmodule ProcessHub.Coordinator do
   ##############################################################################
   ### Private functions
   ##############################################################################
+
+  # A declared-list command runs now when its precommit wrote nothing, is
+  # parked behind the batch's flush when it did, and is refused at once.
+  defp after_precommit(:ok, state, _from, command), do: command.(state)
+
+  defp after_precommit({:pending, manifest}, state, from, command),
+    do: {:noreply, DeclaredChildren.defer(state, manifest, from, command)}
+
+  defp after_precommit({:error, _reason} = error, state, _from, _command),
+    do: {:reply, error, state}
 
   defp delegate_work(state, message) do
     GenServer.cast(state.procs.worker_queue, {:tracked, message, self()})

@@ -148,7 +148,7 @@ defmodule ProcessHub.Service.Storage.Dets do
 
     case :dets.delete(table, key) do
       :ok ->
-        maybe_sync(table, write_opts)
+        DetsFile.maybe_sync(table, write_opts)
         :ok
 
       {:error, reason} ->
@@ -216,16 +216,12 @@ defmodule ProcessHub.Service.Storage.Dets do
 
     case :dets.insert(table, objects) do
       :ok ->
-        maybe_sync(table, write_opts)
+        DetsFile.maybe_sync(table, write_opts)
         :ok
 
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  defp maybe_sync(table, write_opts) do
-    if Keyword.get(write_opts, :sync, true), do: :dets.sync(table)
   end
 
   defp shadow_existing_keys(table, shadow) do
