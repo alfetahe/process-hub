@@ -10,6 +10,8 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
@@ -285,19 +287,23 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
            ),
            "the second binding never propagated"
 
-    Enum.each([node(), peer], &reconcile_now(hub_id, &1))
-
     dup_hook = Hook.reconcile_duplicate()
 
-    assert_receive {^dup_hook,
-                    %{
-                      hub_id: ^hub_id,
-                      child_id: :dup_a,
-                      instance_count: 2,
-                      kept_node: ^owner,
-                      stopped_nodes: [^intruder]
-                    }},
-                   20_000
+    # The intruder warns about the stop it makes. The hook payload is the
+    # assertion; the capture only keeps that warning off the console.
+    capture_log(fn ->
+      Enum.each([node(), peer], &reconcile_now(hub_id, &1))
+
+      assert_receive {^dup_hook,
+                      %{
+                        hub_id: ^hub_id,
+                        child_id: :dup_a,
+                        instance_count: 2,
+                        kept_node: ^owner,
+                        stopped_nodes: [^intruder]
+                      }},
+                     20_000
+    end)
 
     assert Common.eventually(
              fn ->

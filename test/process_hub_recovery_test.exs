@@ -606,7 +606,13 @@ defmodule Test.ProcessHubRecoveryTest do
       assert_receive {:round, %{measurements: %{deferred_undeclared: 1, stopped_undeclared: 0}}},
                      @interval_ms * 3
 
-      assert_receive {:round, %{measurements: %{stopped_undeclared: 1}}}, @interval_ms * 3
+      log =
+        capture_log(fn ->
+          assert_receive {:round, %{measurements: %{stopped_undeclared: 1}}}, @interval_ms * 3
+        end)
+
+      assert log =~ "undeclared running children"
+      assert log =~ ":und_x"
 
       assert Test.Helper.Common.eventually(fn ->
                ProcessHub.get_pid(hub_id, :und_x) == nil
@@ -725,10 +731,15 @@ defmodule Test.ProcessHubRecoveryTest do
       # Drain the first incarnation's hook messages before the restart so the
       # parked report cannot be swallowed with them.
       flush_hooks()
-      {:ok, new_pid} = ProcessHub.Initializer.start_link(SetupHelper.hub_struct(conf))
-      :erlang.unlink(new_pid)
 
-      assert_receive {:parked, %{hub_id: ^hub_id, reason: :local_list_lost}}, 5_000
+      park_log =
+        capture_log(fn ->
+          {:ok, new_pid} = ProcessHub.Initializer.start_link(SetupHelper.hub_struct(conf))
+          :erlang.unlink(new_pid)
+          assert_receive {:parked, %{hub_id: ^hub_id, reason: :local_list_lost}}, 5_000
+        end)
+
+      assert park_log =~ "missing or corrupt"
 
       # The round runs but starts and stops nothing.
       reconcile_now(hub_id)
@@ -741,7 +752,8 @@ defmodule Test.ProcessHubRecoveryTest do
                ProcessHub.start_child(hub_id, cspec(:park_b), durable: true)
 
       # Only the explicit operator call clears the state.
-      assert :ok = DeclaredChildren.clear(hub_id)
+      clear_log = capture_log(fn -> assert :ok = DeclaredChildren.clear(hub_id) end)
+      assert clear_log =~ "cleared by operator call"
       assert DeclaredChildren.declared_children(hub_id).children == []
 
       assert %ProcessHub.StartResult{status: :ok} =

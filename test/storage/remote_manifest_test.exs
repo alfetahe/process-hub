@@ -83,6 +83,8 @@ end
 defmodule Test.Storage.RemoteManifestShipperTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Storage.RemoteManifest.Shipper
@@ -140,10 +142,15 @@ defmodule Test.Storage.RemoteManifestShipperTest do
 
   test "retries with the failure hook and recovers", %{shipper: shipper, verdicts: verdicts} do
     Agent.update(verdicts, fn _ -> [{:error, :boom}] end)
-    GenServer.cast(shipper, {:ship, manifest(4)})
 
-    assert_receive {:store_attempt, :shipper_hub, 4, _blob}, 2_000
-    assert_receive {:ship_failed, %{version: 4, error: :boom, attempt: 1}}, 2_000
+    log =
+      capture_log(fn ->
+        GenServer.cast(shipper, {:ship, manifest(4)})
+        assert_receive {:store_attempt, :shipper_hub, 4, _blob}, 2_000
+        assert_receive {:ship_failed, %{version: 4, error: :boom, attempt: 1}}, 2_000
+      end)
+
+    assert log =~ "ship of v4 failed"
 
     # The retry (backoff 1 s) succeeds against the now-empty verdict list.
     assert_receive {:store_attempt, :shipper_hub, 4, _blob}, 3_000
@@ -152,18 +159,25 @@ defmodule Test.Storage.RemoteManifestShipperTest do
 
   test "a newer version replaces the pending one", %{shipper: shipper, verdicts: verdicts} do
     Agent.update(verdicts, fn _ -> [{:error, :boom}, {:error, :boom}] end)
-    GenServer.cast(shipper, {:ship, manifest(5)})
-    assert_receive {:store_attempt, :shipper_hub, 5, _}, 2_000
 
-    # While v5 waits out its backoff, v6 and then v7 arrive; each newer version
-    # replaces the pending one, and once v7 lands nothing is retried again.
-    GenServer.cast(shipper, {:ship, manifest(6)})
-    assert_receive {:store_attempt, :shipper_hub, 6, _}, 2_000
-    GenServer.cast(shipper, {:ship, manifest(7)})
-    assert_receive {:store_attempt, :shipper_hub, 7, _}, 2_000
+    log =
+      capture_log(fn ->
+        GenServer.cast(shipper, {:ship, manifest(5)})
+        assert_receive {:store_attempt, :shipper_hub, 5, _}, 2_000
 
-    # The stale backoff timers fire against an empty pending slot.
-    refute_receive {:store_attempt, _, _, _}, 1_500
+        # While v5 waits out its backoff, v6 and then v7 arrive; each newer version
+        # replaces the pending one, and once v7 lands nothing is retried again.
+        GenServer.cast(shipper, {:ship, manifest(6)})
+        assert_receive {:store_attempt, :shipper_hub, 6, _}, 2_000
+        GenServer.cast(shipper, {:ship, manifest(7)})
+        assert_receive {:store_attempt, :shipper_hub, 7, _}, 2_000
+
+        # The stale backoff timers fire against an empty pending slot.
+        refute_receive {:store_attempt, _, _, _}, 1_500
+      end)
+
+    assert log =~ "ship of v5 failed"
+    assert log =~ "ship of v6 failed"
   end
 
   test "a superseded version is dropped without an attempt", %{shipper: shipper} do

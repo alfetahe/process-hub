@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 - Replicas converge. Sync kept the local child spec and metadata unconditionally, so two nodes that disagreed about a child never did.
 - `Storage.Dets.open/2` with `recovery_replay: false` deleted every row in the file.
 - Placement no longer treats stopped rows as unbound children to restart.
+- Leader election no longer crashes when a node leaves mid-election (`elector` 0.3.4). A node that went down between candidacy and its reply raised `{:erpc, :noconnection}` inside `elector_commission`; the supervisor restarted it, but the election was lost and a crash report reached the application log. Hubs using `:auto_recovery` or the `CentralizedLoadBalancer` distribution strategy are affected.
 
 ## v0.6.1 - 2026-08-06
 Fixes `Janitor` TTL sweep bug and minor documentation issues.

@@ -8,6 +8,8 @@ defmodule Test.Service.DeclaredChildrenTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.DeclaredChildren
@@ -81,14 +83,24 @@ defmodule Test.Service.DeclaredChildrenTest do
       :ok = DeclaredChildren.adopt(hub, manifest(5, :mmm@host, [:kept_by_m]))
 
       # A higher-named mutator loses the tie; the local copy stands.
-      :ok = DeclaredChildren.adopt(hub, manifest(5, :zzz@host, [:from_z]))
+      log =
+        capture_log(fn ->
+          :ok = DeclaredChildren.adopt(hub, manifest(5, :zzz@host, [:from_z]))
+        end)
+
+      assert log =~ "mutated by mmm@host over zzz@host"
       assert %{mutated_by: :mmm@host} = DeclaredChildren.manifest(hub)
 
       assert_receive {:tiebreak,
                       %{version: 5, kept_mutated_by: :mmm@host, discarded_mutated_by: :zzz@host}}
 
       # A lower-named mutator wins it.
-      :ok = DeclaredChildren.adopt(hub, manifest(5, :aaa@host, [:from_a]))
+      log =
+        capture_log(fn ->
+          :ok = DeclaredChildren.adopt(hub, manifest(5, :aaa@host, [:from_a]))
+        end)
+
+      assert log =~ "mutated by aaa@host over mmm@host"
       assert %{mutated_by: :aaa@host, entries: entries} = DeclaredChildren.manifest(hub)
       assert Map.keys(entries) == [:from_a]
 
@@ -100,7 +112,8 @@ defmodule Test.Service.DeclaredChildrenTest do
       :ok = DeclaredChildren.adopt(hub, manifest(1, :peer@host, [:a]))
 
       newer = %{manifest(9, :peer@host, [:b]) | format: DeclaredChildren.format() + 1}
-      :ok = DeclaredChildren.adopt(hub, newer)
+      log = capture_log(fn -> :ok = DeclaredChildren.adopt(hub, newer) end)
+      assert log =~ "unsupported format #{newer.format}"
 
       assert %{version: 1} = DeclaredChildren.manifest(hub)
     end
