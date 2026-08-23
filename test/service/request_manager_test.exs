@@ -417,6 +417,40 @@ defmodule Test.Service.RequestManagerTest do
       refute MapSet.member?(updated_op.completed_nodes, :node2)
     end
 
+    test "retains an awaitable result until a late await claims it" do
+      sub_req = %StartChildrenRequest{
+        node: node(),
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{node(), [%{child_id: :child1}]}])
+      op = %{op | sub_requests: [sub_req], options: [awaitable: true, timeout: 0]}
+      state = hub_state(%{op.transaction_id => op})
+
+      {:noreply, retained} =
+        RequestManager.handle_response(state, op.transaction_id, node(), [
+          {:child1, {:ok, self()}}
+        ])
+
+      held = retained.pending_operations[op.transaction_id]
+      assert %ProcessHub.StartResult{status: :ok} = held.result
+      # Retention is bounded by the future timeout plus the await grace period.
+      assert held.expires_at <= System.monotonic_time(:millisecond) + 1000
+
+      # Split requests reply once per chunk under the same id; the result is final.
+      assert {:noreply, ^retained} =
+               RequestManager.handle_response(retained, op.transaction_id, node(), [
+                 {:child2, {:ok, self()}}
+               ])
+
+      assert {:reply, %ProcessHub.StartResult{started: [{:child1, _}]}, awaited} =
+               RequestManager.handle_await(retained, op.transaction_id, {self(), make_ref()})
+
+      assert awaited.pending_operations == %{}
+    end
+
     test "replies to awaiter on complete" do
       ref = make_ref()
       from = {self(), ref}

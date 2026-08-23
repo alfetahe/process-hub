@@ -98,6 +98,7 @@ defmodule Test.ProcessHubRegistryUpdatePropagationTest do
                RegistryUpdateFns.put_marker(:set),
                propagate: true
              )
+
     assert marker(node(), child_id) == :set
     assert :erpc.call(peer, ProcessRegistry, :lookup, [@hub, child_id]) == nil
   end

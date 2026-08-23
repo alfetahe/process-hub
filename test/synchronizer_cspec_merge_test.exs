@@ -20,14 +20,19 @@ defmodule Test.SynchronizerCspecMergeTest do
     :ok
   end
 
-  defp spec(id, payload), do: %{id: id, start: {TestModuleRelay, :start_link, [{:default, payload}]}}
+  defp spec(id, payload),
+    do: %{id: id, start: {TestModuleRelay, :start_link, [{:default, payload}]}}
+
   defp payload(cs), do: elem(cs.start, 2) |> hd()
 
   test "a peer's spec/metadata do not overwrite the local entry; only its pid is recorded" do
     id = :placement_keep_local
-    ProcessRegistry.insert(@hub_id, spec(id, :local), [{node(), self()}], metadata: %{tag: "local"})
 
-    peer = :"peer@nohost"
+    ProcessRegistry.insert(@hub_id, spec(id, :local), [{node(), self()}],
+      metadata: %{tag: "local"}
+    )
+
+    peer = :peer@nohost
     peer_pid = spawn(fn -> :ok end)
     hub = ProcessHub.Coordinator.get_hub(@hub_id)
     Synchronizer.append_data(hub, %{peer => [{spec(id, :stale), peer_pid, %{tag: "stale"}}]})
@@ -40,7 +45,7 @@ defmodule Test.SynchronizerCspecMergeTest do
 
   test "an unknown child from a peer is learned" do
     id = :placement_learn_new
-    peer = :"peer@nohost"
+    peer = :peer@nohost
     peer_pid = spawn(fn -> :ok end)
     hub = ProcessHub.Coordinator.get_hub(@hub_id)
     Synchronizer.append_data(hub, %{peer => [{spec(id, :remote), peer_pid, %{tag: "remote"}}]})

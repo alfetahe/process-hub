@@ -54,7 +54,10 @@ defmodule Test.Strategy.Migration.MigrationConsentTest do
                start: {DefaultConsentServer, :start_link, [%{}]}
              })
 
-      assert MigrationConsent.participates?(%{id: :c2, start: {ConsentServer, :start_link, [%{}]}})
+      assert MigrationConsent.participates?(%{
+               id: :c2,
+               start: {ConsentServer, :start_link, [%{}]}
+             })
     end
 
     test "rejects plain modules and malformed child specs" do
