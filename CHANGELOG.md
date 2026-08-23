@@ -2,7 +2,10 @@
 All notable changes to this project will be documented in this file.
 
 ## Unreleased
-Fixes a race that lost the result of `awaitable: true` operations. Reported and fixed by [Peaceful James](https://github.com/peaceful-james) ([#18](https://github.com/alfetahe/process-hub/issues/18), [#19](https://github.com/alfetahe/process-hub/pull/19)).
+Relicensed under Apache-2.0. Fixes a race that lost the result of `awaitable: true` operations. Reported and fixed by [Peaceful James](https://github.com/peaceful-james) ([#18](https://github.com/alfetahe/process-hub/issues/18), [#19](https://github.com/alfetahe/process-hub/pull/19)).
+
+### Changed
+- Relicensed from GPL-3.0 to Apache-2.0. Earlier Hex releases remain under GPL-3.0.
 
 ### Fixed
 - `awaitable: true` no longer loses the result when `await/1` is called after the operation has completed. The coordinator dropped a finalized operation as soon as the last node responded and only replied if an awaiter had already registered; since `await/1` is a separate round trip made after `start_child/3` returns, a late await got `{:error, :pending_request_not_found}` for a child that had started fine. A completed awaitable operation now retains its finalized result until it is claimed once or its `:timeout` window (plus a one second grace) elapses, after which the expiry sweep reaps it. The retained result is final: later responses under the same transaction id (split request chunks) no longer re-finalize it.
