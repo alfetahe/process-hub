@@ -1,4 +1,6 @@
 defmodule ProcessHubTest do
+  alias Test.Helper.Common
+
   use ExUnit.Case
   # doctest ProcessHub
 
@@ -6,36 +8,23 @@ defmodule ProcessHubTest do
     Test.Helper.SetupHelper.setup_base(%{}, :process_hub_main_test)
   end
 
-  test "await after the operation has already completed", %{hub_id: hub_id} do
+  test "await returns the result of an already completed start and stop", %{hub_id: hub_id} do
     [cs] = ProcessHub.Utility.Bag.gen_child_specs(1, id_type: :atom, prefix: "late_await_")
 
-    future = ProcessHub.start_child(hub_id, cs, awaitable: true, timeout: 1000)
-
-    # Let the operation finish before anyone awaits it.
-    Process.sleep(100)
+    {:ok, future} = ProcessHub.start_child(hub_id, cs, awaitable: true, timeout: 1000)
+    assert Common.eventually(fn -> result_retained?(hub_id, future.ref) end)
 
     result = ProcessHub.Future.await(future)
-
     assert ProcessHub.StartResult.status(result) === :ok
     assert ProcessHub.StartResult.cids(result) === [cs.id]
     assert is_pid(ProcessHub.get_pid(hub_id, cs.id))
-
-    # The result is claimed once; a second await finds nothing.
+    # The result is claimed once.
     assert ProcessHub.Future.await(future) === {:error, :pending_request_not_found}
-  end
 
-  test "await after a completed stop operation", %{hub_id: hub_id} do
-    [cs] = ProcessHub.Utility.Bag.gen_child_specs(1, id_type: :atom, prefix: "late_stop_")
-
-    ProcessHub.start_child(hub_id, cs, awaitable: true, timeout: 1000)
-    |> ProcessHub.Future.await()
-
-    future = ProcessHub.stop_child(hub_id, cs.id, awaitable: true, timeout: 1000)
-
-    Process.sleep(100)
+    {:ok, future} = ProcessHub.stop_child(hub_id, cs.id, awaitable: true, timeout: 1000)
+    assert Common.eventually(fn -> result_retained?(hub_id, future.ref) end)
 
     result = ProcessHub.Future.await(future)
-
     assert ProcessHub.StopResult.status(result) === :ok
     assert ProcessHub.StopResult.cids(result) === [cs.id]
   end
@@ -1051,5 +1040,10 @@ defmodule ProcessHubTest do
 
     result = ProcessHub.cancel_hook_handlers(:cancel_error_stub, :some_hook, [:h1, :h2])
     assert result === {:error, :failed_to_cancel_some_handlers}
+  end
+
+  # True once the coordinator holds the finalized result for a late await.
+  defp result_retained?(hub_id, ref) do
+    match?(%{result: %{}}, :sys.get_state(hub_id).pending_operations[ref])
   end
 end

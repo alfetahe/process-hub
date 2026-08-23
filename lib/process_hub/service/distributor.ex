@@ -275,14 +275,18 @@ defmodule ProcessHub.Service.Distributor do
   Applies the default options shared by every start and stop operation.
 
   Stop operations use this directly - the start-only defaults applied by
-  `default_init_opts/1` are not read on the stop path.
+  `default_init_opts/1` are not read on the stop path. A `:timeout` that is
+  not a non-negative integer is replaced by the default.
   """
   @spec default_operation_opts(keyword()) :: keyword()
   def default_operation_opts(opts) do
     opts
-    |> Keyword.put_new(:timeout, @default_init_timeout)
+    |> Keyword.update(:timeout, @default_init_timeout, &valid_timeout/1)
     |> Keyword.put_new(:awaitable, false)
   end
+
+  defp valid_timeout(timeout) when is_integer(timeout) and timeout >= 0, do: timeout
+  defp valid_timeout(_), do: @default_init_timeout
 
   defp init_distribution(hub, child_specs, opts, %{distribution: strategy}) do
     DistributionStrategy.children_init(strategy, hub, child_specs, opts)

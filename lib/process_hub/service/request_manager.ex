@@ -37,7 +37,7 @@ defmodule ProcessHub.Service.RequestManager do
           expires_at: integer(),
           awaiter: {pid(), reference()} | nil,
           future: ProcessHub.Future.t() | nil,
-          result: {:ok, struct()} | nil,
+          result: struct() | nil,
           options: keyword()
         }
 
@@ -175,6 +175,10 @@ defmodule ProcessHub.Service.RequestManager do
       nil ->
         {:noreply, state}
 
+      # A retained result is final; split chunks reply again under the same id.
+      %__MODULE__{result: result} when result != nil ->
+        {:noreply, state}
+
       operation ->
         case process_response(operation, response_node, results) do
           {:complete, updated} ->
@@ -185,10 +189,8 @@ defmodule ProcessHub.Service.RequestManager do
                 GenServer.reply(updated.awaiter, result)
                 {:noreply, remove(state, transaction_id)}
 
-              awaitable?(updated) ->
-                # Nobody is awaiting yet. `await/1` is a separate round trip made
-                # after the operation was dispatched, so it can arrive late.
-                # Hold the finalized result until it is claimed or expires.
+              Keyword.get(updated.options, :awaitable, false) ->
+                # `await/1` is a separate round trip and may arrive after completion.
                 {:noreply, update(state, retain_result(updated, result))}
 
               true ->
@@ -208,8 +210,8 @@ defmodule ProcessHub.Service.RequestManager do
       nil ->
         {:reply, {:error, :pending_request_not_found}, state}
 
-      %__MODULE__{result: {:ok, already_completed_result}} ->
-        {:reply, already_completed_result, remove(state, transaction_id)}
+      %__MODULE__{result: result} when result != nil ->
+        {:reply, result, remove(state, transaction_id)}
 
       operation ->
         timeout = Keyword.get(operation.options, :timeout, 5000)
@@ -502,14 +504,10 @@ defmodule ProcessHub.Service.RequestManager do
   # Private
   ##############################################################################
 
-  defp awaitable?(%__MODULE__{options: options}) do
-    Keyword.get(options, :awaitable, false)
-  end
-
   defp retain_result(%__MODULE__{} = operation, result) do
     retention = Keyword.get(operation.options, :timeout, 5000) + @result_retention_grace
-    incipient_expires_at = System.monotonic_time(:millisecond) + retention
-    %{operation | result: {:ok, result}, sub_requests: [], expires_at: incipient_expires_at}
+    expires_at = System.monotonic_time(:millisecond) + retention
+    %{operation | result: result, sub_requests: [], nodes_data: [], expires_at: expires_at}
   end
 
   defp handler_action(handler_module) do
