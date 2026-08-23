@@ -587,6 +587,11 @@ defmodule ProcessHub do
   the response is received. If the response is not received within the timeout
   period, the function will return `{:error, term()}`.
 
+  The result of an awaitable operation is held for the duration of the `:timeout`
+  option, so `await/1` returns the result whether it is called before or after the
+  operation completes. Each result can be claimed once; awaiting the same future
+  twice returns `{:error, :pending_request_not_found}`.
+
   ## Example
       iex> {:ok, future} = ProcessHub.start_child(:my_hub, child_spec, [awaitable: true])
       iex> ProcessHub.await(future)

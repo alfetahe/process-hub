@@ -183,6 +183,12 @@ defmodule Test.Service.DistributorTest do
     assert Keyword.get(result, :init_cids) === []
   end
 
+  test "default_operation_opts replaces an invalid :timeout with the default" do
+    assert Distributor.default_operation_opts(timeout: :infinity)[:timeout] == 10000
+    assert Distributor.default_operation_opts(timeout: -1)[:timeout] == 10000
+    assert Distributor.default_operation_opts(timeout: 0)[:timeout] == 0
+  end
+
   describe "compose_start_operation/3" do
     test "returns error when child_specs is empty", %{hub: hub} do
       assert Distributor.compose_start_operation(hub, [], []) === {:error, :no_children}

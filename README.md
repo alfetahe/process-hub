@@ -176,3 +176,6 @@ Browse the [full documentation](https://hexdocs.pm/process_hub) for all guides a
 ## Contributing
 Contributions are welcome and appreciated. If you have any ideas, suggestions, or bugs to report,
 please open an issue or a pull request on GitHub.
+
+## License
+Copyright 2023 Anuar Alfetahe. Licensed under the [Apache License, Version 2.0](LICENSE).
