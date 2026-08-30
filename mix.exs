@@ -1,10 +1,12 @@
 defmodule ProcessHub.MixProject do
   use Mix.Project
 
+  @version "0.7.0"
+
   def project do
     [
       app: :process_hub,
-      version: "0.7.0",
+      version: @version,
       elixir: "~> 1.13",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -35,6 +37,7 @@ defmodule ProcessHub.MixProject do
       aliases: aliases(),
       docs: [
         main: "readme",
+        source_ref: "v#{@version}",
         extras: [
           "README.md",
           "guides/Introduction.md",
