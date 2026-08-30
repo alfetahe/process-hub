@@ -1,7 +1,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.7.0 - 2026-08-30
 Relicensed under Apache-2.0. Fixes a race that lost the result of `awaitable: true` operations. Reported and fixed by [Peaceful James](https://github.com/peaceful-james) ([#18](https://github.com/alfetahe/process-hub/issues/18), [#19](https://github.com/alfetahe/process-hub/pull/19)).
 
 ### Changed

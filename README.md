@@ -49,7 +49,7 @@ Main features include:
     ```elixir
     def deps do
       [
-        {:process_hub, "~> 0.6.1"}
+        {:process_hub, "~> 0.7.0"}
       ]
     end
     ```

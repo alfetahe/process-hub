@@ -4,7 +4,7 @@ defmodule ProcessHub.MixProject do
   def project do
     [
       app: :process_hub,
-      version: "0.6.1",
+      version: "0.7.0",
       elixir: "~> 1.13",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -47,7 +47,8 @@ defmodule ProcessHub.MixProject do
           "guides/ManualDistribution.md",
           "guides/ReplicatingProcesses.md",
           "guides/CustomStrategy.md",
-          "guides/Architecture.md"
+          "guides/Architecture.md",
+          "LICENSE"
         ],
         authors: ["Anuar Alfetahe"],
         filter_modules: fn module, _metadata ->
