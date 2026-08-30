@@ -133,35 +133,64 @@ defmodule ProcessHub.Service.Storage do
   Backends implementing the optional `insert_many/2` callback commit the
   whole batch with a single write, so concurrent readers never observe a
   partially applied batch. Other backends fall back to per-item inserts.
-  """
-  @spec insert_many(table_id(), [{term(), term(), keyword()}]) :: :ok | {:error, term()}
-  def insert_many(_table, []), do: :ok
 
-  def insert_many(table, items) do
+  `write_opts` (`sync: false`) defers the backend's durable sync to a later
+  `sync/1`; backends without that callback ignore it and stay durable on
+  return.
+  """
+  @spec insert_many(table_id(), [{term(), term(), keyword()}], keyword()) ::
+          :ok | {:error, term()}
+  def insert_many(table, items, write_opts \\ [])
+
+  def insert_many(_table, [], _write_opts), do: :ok
+
+  def insert_many(table, items, write_opts) do
     case registered_backend(table) do
       nil ->
         EtsBackend.insert_many(table, items)
 
       {module, ref} ->
-        if function_exported?(module, :insert_many, 2) do
-          module.insert_many(ref, items)
-        else
-          Enum.each(items, fn {key, value, opts} -> module.insert(ref, key, value, opts) end)
+        cond do
+          function_exported?(module, :insert_many, 3) ->
+            module.insert_many(ref, items, write_opts)
+
+          function_exported?(module, :insert_many, 2) ->
+            module.insert_many(ref, items)
+
+          true ->
+            Enum.each(items, fn {key, value, opts} -> module.insert(ref, key, value, opts) end)
         end
+    end
+  end
+
+  @doc """
+  Makes every write deferred with `sync: false` durable. `:ok` for backends
+  without a durable medium.
+  """
+  @spec sync(table_id()) :: :ok | {:error, term()}
+  def sync(table) do
+    case registered_backend(table) do
+      {module, ref} ->
+        if function_exported?(module, :sync, 1), do: module.sync(ref), else: :ok
+
+      nil ->
+        :ok
     end
   end
 
   @doc """
   Removes an entry from the storage.
   """
-  @spec remove(table_id(), term()) :: boolean() | :ok
-  def remove(table, key) do
+  @spec remove(table_id(), term(), keyword()) :: boolean() | :ok
+  def remove(table, key, write_opts \\ []) do
     case registered_backend(table) do
       nil ->
         ETS.delete(table, key)
 
       {module, ref} ->
-        module.remove(ref, key)
+        if function_exported?(module, :remove, 3),
+          do: module.remove(ref, key, write_opts),
+          else: module.remove(ref, key)
     end
   end
 
@@ -178,6 +207,29 @@ defmodule ProcessHub.Service.Storage do
 
       {module, ref} ->
         module.clear_all(ref)
+    end
+  end
+
+  @doc """
+  Returns every non-expired row held in the backend's durable medium, without
+  touching its live view. `{:ok, []}` for backends without one; `{:error, reason}`
+  when the medium is unreadable.
+
+  `read_durable/1` is an optional backend callback: a backend that does not
+  implement it is treated as having no durable medium.
+  """
+  @spec read_durable(table_id()) :: {:ok, [{term(), term()}]} | {:error, term()}
+  def read_durable(table) do
+    case registered_backend(table) do
+      nil ->
+        EtsBackend.read_durable(table)
+
+      {module, ref} ->
+        if function_exported?(module, :read_durable, 1) do
+          module.read_durable(ref)
+        else
+          {:ok, []}
+        end
     end
   end
 

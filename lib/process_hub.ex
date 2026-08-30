@@ -75,6 +75,14 @@ defmodule ProcessHub do
   for the initial request to the coordinator. This timeout applies to bulk operations such as starting children,
   stopping children, and migrations. By default, the timeout is calculated as `5000ms + (1ms × child_count)`,
   e.g., 10k children = 15s, 30k children = 35s. Set to `:infinity` for no timeout, or a specific integer in milliseconds.
+  - `:durable` - is optional and records the children in the hub's declared list before they
+  are started. The list is persisted on disk, so when a node goes down — or the whole
+  cluster does — the orphan reconcile restores the children from it once the node is back
+  up, while a deliberate stop is remembered forever (list absence never expires).
+  **Experimental.** Requires `:auto_recovery` to be enabled and a restartable type —
+  `:permanent` (the default) or `:transient`; a `:temporary` spec is refused. The list
+  mutation is serialized through the hub's leader node, so the call
+  can also return `{:error, :no_leader}`. The default is `false`.
   """
   @type init_opts() :: [
           awaitable: boolean(),
@@ -84,7 +92,8 @@ defmodule ProcessHub do
           metadata: child_metadata(),
           child_metadata: child_metadata_map(),
           disable_logging: boolean(),
-          call_timeout: timeout()
+          call_timeout: timeout(),
+          durable: boolean()
         ]
 
   @typedoc """
@@ -197,32 +206,40 @@ defmodule ProcessHub do
 
     See `guides/Persistence.md` for the recovery semantics and
     operational profile.
-  - `:auto_recovery` is optional and enables a marker-gated coordinator
-    boot lifecycle (`:recovering → :normal`). **Experimental** and may
-    change in future releases. The default is `false`. Requires a
-    persistent `:registry_backend` (e.g. `{:dets, _}`) to be useful; with
-    the default `:ets` backend the replay step finds an empty registry.
-    Accepted shapes:
-    - `false` — disabled (default).
+  - `:auto_recovery` is optional and enables the declared-children lifecycle:
+    children started with `durable: true` are recorded in a versioned, durable,
+    leader-written *declared list*, and each node periodically reconciles the
+    cluster toward it — starting declared children observed running nowhere and
+    stopping running children whose declared entry was removed. A whole-cluster
+    outage restores itself, a single node rejoining a live cluster starts
+    nothing, and a deliberate stop is remembered forever because list absence
+    never expires. **Experimental** and may change in future releases. The
+    default is `false`. Accepted shapes:
+    - `false` — disabled (default). No reconcile round runs, no election is
+      started, no list file is created, and `recovery_state/1` is `:normal`
+      from `init/1`.
     - `true` — enabled with default options.
     - `keyword()` — explicit options:
-      - `:marker_path` — operator override for the marker file location.
-        `nil` (default) resolves to
-        `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
-        Marker present on boot → straight to `:normal`; absent →
-        `:recovering` with a cspecs-only replay, then `:normal`.
-      - `:recovery_timeout_ms` — safety ceiling on the `:recovering` state:
-        bounds the replay loop and force-opens the cluster-event queue gate
-        after this many ms. Default `30_000`. Range `[1_000, 600_000]`.
+      - `:reconcile_grace_ms` — delay before the first round, which runs whether
+        or not any peer has joined. Default `30_000`. Range `[50, 600_000]` — it
+        is a one-shot delay, so the floor is low enough for a suite that boots a
+        hub per test. Set it above the synchronization strategy's `sync_interval`
+        in production.
+      - `:reconcile_interval_ms` — minimum spacing between subsequent rounds, and
+        the per-handler budget for the blocking `pre_recovery_replay` hook.
+        Default `15_000`. Range `[1_000, 600_000]`.
+      - `:remote_manifest` — `{module, opts}` implementing
+        `ProcessHub.Storage.RemoteManifest`; ships the declared list off-cluster
+        after every mutation and is consulted on boot, so the list survives the
+        loss of every cluster disk. Default `nil` (disabled).
 
-    See `ProcessHub.Service.Recovery` (`recovery_state/1`, `await_normal/2`,
-    `prepare_recovery/1`, `prepare_recovery_cluster/1`) for the
-    recovery/operator API.
+    The keys `:marker_path`, `:replay_timeout_ms`, `:recovery_timeout_ms`, and
+    `:stopped_row_ttl_ms` are **deprecated**: accepted with a warning, ignored,
+    and rejected in a future release. See `migration-guide.md`.
 
-    See `guides/Persistence.md` for the full state-machine, the marker
-    gate, the hooks, and the recommended pairing with
-    `registry_backend: {:dets, _}` or `{:durable_ets, _}` for full
-    restart-survival.
+    See `ProcessHub.Service.Recovery` (`recovery_state/1`, `await_normal/2`) and
+    `ProcessHub.Service.DeclaredChildren` for the introspection API, and
+    `guides/Persistence.md` for the declared-list model and the epoch merge rule.
   """
   @type t() :: %__MODULE__{
           hub_id: hub_id(),
@@ -737,6 +754,18 @@ defmodule ProcessHub do
   """
   @spec tag_query(hub_id(), String.t()) :: [{child_id(), [{node(), pid()}]}]
   defdelegate tag_query(hub_id, tag), to: ProcessRegistry, as: :match_tag
+
+  @doc """
+  Returns every child whose registry metadata carries `key`, as
+  `{child_id, node_pids, value}` — the metadata given at start (`:metadata`)
+  or set through `ProcessHub.Service.ProcessRegistry.update/4`.
+
+  ## Examples
+      iex> ProcessHub.metadata_query(:my_hub, :shard)
+      [{:my_child, [{:mynode, #PID<0.123.0>}], 3}]
+  """
+  @spec metadata_query(hub_id(), term()) :: [{child_id(), [{node(), pid()}], term()}]
+  defdelegate metadata_query(hub_id, key), to: ProcessRegistry, as: :match_metadata
 
   @doc """
   Dumps all information currently stored in the process registry.

@@ -34,9 +34,16 @@ defmodule ProcessHub.Initializer do
     end
   end
 
+  # Surfaced, never rejected: each of these still starts, just wastes work or
+  # narrows a window the design relies on.
+  defp warn_on_suboptimal_config(%ProcessHub{} = hub) do
+    warn_on_debounce(hub)
+    warn_on_reconcile_grace(hub)
+  end
+
   # Bounded max-wait still flushes, but a debounce >= discover interval makes
-  # every discovery tick wasted work — surface without rejecting start.
-  defp warn_on_suboptimal_config(%ProcessHub{
+  # every discovery tick wasted work.
+  defp warn_on_debounce(%ProcessHub{
          hub_id: hub_id,
          cluster_event_debounce: debounce,
          hubs_discover_interval: discover
@@ -54,7 +61,38 @@ defmodule ProcessHub.Initializer do
     )
   end
 
-  defp warn_on_suboptimal_config(_), do: :ok
+  defp warn_on_debounce(_), do: :ok
+
+  # The first reconcile round computes a difference against whatever the cluster
+  # has synced by then. A grace window no longer than a sync interval can fire
+  # before the first exchange, so a returning node may still be holding a stale
+  # `:running` row for a child the cluster has since stopped — and restart it.
+  defp warn_on_reconcile_grace(%ProcessHub{
+         hub_id: hub_id,
+         auto_recovery: auto_recovery,
+         synchronization_strategy: %{sync_interval: sync_interval}
+       })
+       when auto_recovery !== false and is_integer(sync_interval) do
+    case Recovery.parse_config(auto_recovery) do
+      {:ok, %{enabled?: true, reconcile_grace_ms: grace}} when grace <= sync_interval ->
+        LoggerService.warning(
+          ":auto_recovery reconcile_grace_ms (@grace ms) <= sync_interval (@sync ms) " <>
+            "for hub @hub_id; the first reconcile round can run before the first " <>
+            "synchronisation exchange. Set reconcile_grace_ms above sync_interval.",
+          %{
+            "hub_id" => inspect(hub_id),
+            "grace" => Integer.to_string(grace),
+            "sync" => Integer.to_string(sync_interval)
+          },
+          prefix: "Initializer"
+        )
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp warn_on_reconcile_grace(_), do: :ok
 
   defp validate_handover_replication(%ProcessHub{
          migration_strategy: migration_strat,
@@ -90,7 +128,8 @@ defmodule ProcessHub.Initializer do
 
   @impl true
   def init(%ProcessHub{hub_id: hub_id} = hub_conf) do
-    storage = setup_storage(hub_id, hub_conf)
+    recovery_config = Recovery.config_or_disabled(hub_conf)
+    storage = setup_storage(hub_id, hub_conf, recovery_config)
     procs = setup_procs(hub_id)
 
     children =
@@ -99,18 +138,26 @@ defmodule ProcessHub.Initializer do
         {ProcessHub.Service.ProcessRegistry, {hub_id, procs.process_registry}},
         {Blockade, %{name: procs.event_queue, priority_sync: false}},
         dist_sup(hub_conf, procs),
-        {Task.Supervisor, name: procs.task_sup},
-        {ProcessHub.Coordinator, {hub_conf, procs, storage}},
-        {ProcessHub.Worker.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
-        {ProcessHub.Worker.BootstrapWorker, {hub_id, procs.bootstrap_worker, storage.misc}},
-        {ProcessHub.Worker.Janitor,
-         {
-           hub_id,
-           procs.janitor,
-           storage.misc,
-           hub_conf.storage_purge_interval
-         }}
-      ]
+        {Task.Supervisor, name: procs.task_sup}
+      ] ++
+        ProcessHub.Storage.RemoteManifest.Shipper.child_specs(
+          hub_id,
+          recovery_config,
+          procs.manifest_shipper,
+          storage.hook
+        ) ++
+        [
+          {ProcessHub.Coordinator, {hub_conf, procs, storage}},
+          {ProcessHub.Worker.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
+          {ProcessHub.Worker.BootstrapWorker, {hub_id, procs.bootstrap_worker, storage.misc}},
+          {ProcessHub.Worker.Janitor,
+           {
+             hub_id,
+             procs.janitor,
+             storage.misc,
+             hub_conf.storage_purge_interval
+           }}
+        ]
 
     opts = [strategy: :one_for_one]
 
@@ -132,9 +179,18 @@ defmodule ProcessHub.Initializer do
     }
   end
 
-  defp setup_storage(hub_id, hub_conf) do
+  # An opted-in hub never populates the live registry from disk: restoration
+  # flows through the orphan reconcile round, which starts only the difference
+  # between the declared list and what the cluster is observed to hold. Loading
+  # rows here would republish a returning node's stale view as fact.
+  defp setup_storage(hub_id, hub_conf, recovery_config) do
     {backend_module, backend_opts} = resolve_registry_backend(hub_conf.registry_backend)
-    backend_opts = Recovery.maybe_inject_replay_flag(backend_opts, hub_id, hub_conf)
+
+    backend_opts =
+      if recovery_config.enabled?,
+        do: Keyword.put(backend_opts, :recovery_replay, false),
+        else: backend_opts
+
     {:ok, backend_ref} = backend_module.open(hub_id, backend_opts)
     ProcessHub.Service.Storage.register_backend(hub_id, backend_module, backend_ref)
 
@@ -143,7 +199,17 @@ defmodule ProcessHub.Initializer do
       misc: :ets.new(hub_id, [:set, :public]),
       registry_backend: {backend_module, backend_ref}
     }
+    |> setup_declared_storage(hub_id, hub_conf, recovery_config)
   end
+
+  defp setup_declared_storage(storage, hub_id, hub_conf, %{enabled?: true}) do
+    Map.merge(
+      storage,
+      ProcessHub.Service.DeclaredChildren.open_storage(hub_id, hub_conf.registry_backend)
+    )
+  end
+
+  defp setup_declared_storage(storage, _hub_id, _hub_conf, _recovery_config), do: storage
 
   defp resolve_registry_backend(:ets), do: {ProcessHub.Service.Storage.Ets, []}
   defp resolve_registry_backend(nil), do: {ProcessHub.Service.Storage.Ets, []}
@@ -171,7 +237,8 @@ defmodule ProcessHub.Initializer do
       task_sup: {:via, Registry, {system_registry, "task_sup"}},
       worker_queue: {:via, Registry, {system_registry, "worker_queue"}},
       bootstrap_worker: {:via, Registry, {system_registry, "bootstrap_worker"}},
-      janitor: {:via, Registry, {system_registry, "janitor"}}
+      janitor: {:via, Registry, {system_registry, "janitor"}},
+      manifest_shipper: {:via, Registry, {system_registry, "manifest_shipper"}}
     }
   end
 end

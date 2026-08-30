@@ -3,9 +3,7 @@
 ## Purpose
 
 TBD - created from the durable-registry change. Update Purpose after the change is archived.
-
 ## Requirements
-
 ### Requirement: Pluggable storage backend behaviour for the process registry
 
 ProcessHub SHALL define a behaviour `ProcessHub.Service.Storage.Behaviour` declaring the contract for registry-table storage operations. The behaviour SHALL specify the following callbacks:
@@ -318,63 +316,62 @@ The typespec on `ProcessHub.t().registry_backend` SHALL be extended to reflect t
 
 ### Requirement: Boot-time DETS / DurableETS read is gated by recovery mode
 
-ProcessHub SHALL gate the boot-time replay-from-disk path of `ProcessHub.Service.Storage.Dets` and `ProcessHub.Service.Storage.DurableEts` by the coordinator's resolved recovery mode (see `coordinator-bootstrap-recovery`).
+ProcessHub SHALL gate the boot-time replay-from-disk path of
+`ProcessHub.Service.Storage.Dets` and `ProcessHub.Service.Storage.DurableEts` by
+configuration rather than by any per-boot mode resolution.
 
-Concretely, the backend `open/2` callback SHALL accept a new option
-`recovery_replay: boolean()` (default `true` for back-compat):
+The backend `open/2` callback SHALL keep the option `recovery_replay: boolean()`
+(default `true` for back-compat):
 
-- `recovery_replay: true` (the default; library callers without the new
-  coordinator are unaffected) — the backend behaves exactly as before this
-  change: DETS rows are replayed into the in-memory table on open.
-- `recovery_replay: false` — the backend SHALL open the DETS file (to enable
-  subsequent writes and crash-survival) but SHALL NOT load any row into the
-  associated in-memory table. The in-memory table is left empty. Mutating
-  callbacks continue to write through to DETS.
+- `recovery_replay: true` (the default; library callers are unaffected) — DETS rows are
+  replayed into the in-memory table on open.
+- `recovery_replay: false` — the backend SHALL open the DETS file (to enable subsequent
+  writes and crash-survival) but SHALL NOT load any row into the associated in-memory
+  table. Mutating callbacks continue to write through to DETS.
 
-`ProcessHub.Coordinator` (when `:auto_recovery` is enabled) SHALL
-compute the boolean from the resolved mode and pass it as
-`recovery_replay: false` for normal-mode boots and `recovery_replay: true` for
-recovery-mode boots.
+`ProcessHub.Coordinator` SHALL pass `recovery_replay: false` whenever `:auto_recovery`
+is enabled. There is no boot in which the coordinator populates the live registry from
+disk: durable rows reach the cluster through the orphan reconcile round, which reads
+them via `read_durable/1` and starts only the difference against what the cluster is
+observed to hold. Loading them into the live registry instead would republish a
+returning node's stale view as fact.
 
-Writes are unchanged. `insert/3,4`, `remove/2`, `clear_all/1` continue to write
-through to DETS with `:dets.sync/1`, regardless of how the table was opened.
+Writes are unchanged. `insert/3,4`, `remove/2`, `clear_all/1` continue to write through
+to DETS with `:dets.sync/1`, regardless of how the table was opened.
 
-#### Scenario: Normal-mode boot opens DETS without replay
+#### Scenario: Opt-in boot opens DETS without replay
 
-- **GIVEN** a DETS file containing 5 rows, a hub with `auto_recovery: true`, and
-  the marker file present
-- **WHEN** the coordinator passes `recovery_replay: false` to
-  `Storage.Dets.open/2` (or `Storage.DurableEts.open/2`)
-- **THEN** the DETS file is opened successfully
-- **AND** the in-memory ETS table (in the DurableEts case) or the registry's
-  visible row set (in the Dets case via `ProcessRegistry.dump/1`) is empty
+- **GIVEN** a DETS file containing 5 rows and a hub with `auto_recovery: true`
+- **WHEN** the coordinator opens the backend
+- **THEN** it passes `recovery_replay: false`
+- **AND** the registry's visible row set (`ProcessRegistry.dump/1`) is empty
   immediately after `open/2` returns
 - **AND** `[:process_hub, :registry, :backend_opened]` telemetry fires with
   `replayed: false, row_count: 0`
+- **AND** the 5 rows remain readable via `read_durable/1`
 
-#### Scenario: Recovery-mode boot replays DETS rows
+#### Scenario: Durable rows reach the cluster through reconcile, not through open
 
-- **GIVEN** a DETS file containing 5 rows, a hub with `auto_recovery: true`, and
-  the marker file absent
-- **WHEN** the coordinator passes `recovery_replay: true` to the backend
-- **THEN** the backend replays all 5 rows into the in-memory table
-- **AND** `[:process_hub, :registry, :backend_opened]` telemetry fires with
-  `replayed: true, row_count: 5`
+- **GIVEN** the same hub after `reconcile_grace_ms` has elapsed with no peers
+- **WHEN** the first reconcile round runs
+- **THEN** the 5 rows are read via `read_durable/1` and their non-stopped children are
+  started through `Distributor.compose_start_operation/3` with `check_existing: true`
+- **AND** the live registry is populated by those starts, not by the backend open
 
 #### Scenario: Writes unchanged regardless of replay flag
 
 - **GIVEN** a backend opened with `recovery_replay: false`
 - **WHEN** `Storage.Dets.insert(ref, :key, "value")` is called
-- **THEN** the row is durably written to DETS, `:dets.sync/1` is called, and
-  subsequent process restart with `recovery_replay: true` reads the row back
+- **THEN** the row is durably written to DETS, `:dets.sync/1` is called, and the row is
+  returned by a subsequent `read_durable/1`
 
 #### Scenario: Library-direct caller default unchanged
 
-- **GIVEN** a library caller invoking `Storage.Dets.open(:my_hub, [])` without
-  setting `recovery_replay`
+- **GIVEN** a library caller invoking `Storage.Dets.open(:my_hub, [])` without setting
+  `recovery_replay`
 - **WHEN** the call runs
-- **THEN** the backend replays DETS rows into the in-memory table (i.e.
-  `recovery_replay` defaults to `true`)
+- **THEN** the backend replays DETS rows into the in-memory table (the option defaults
+  to `true`)
 - **AND** behaviour at this call site is bit-for-bit identical to pre-change
 
 ### Requirement: Backend-opened telemetry reports replay flag
@@ -456,3 +453,58 @@ unbounded stub accumulation.
   each of `Storage.Ets`, `Storage.Dets`, and `Storage.DurableEts`
 - **WHEN** `match/2` is called with a pattern matching 3-tuple rows for that key
 - **THEN** the expired row is included in the result
+
+### Requirement: Durable rows are readable without populating the live registry
+
+The `ProcessHub.Service.Storage.Behaviour` SHALL gain a callback
+
+```elixir
+@callback read_durable(ref()) :: {:ok, [{term(), term()}]} | {:error, term()}
+```
+
+returning every non-expired row held in the backend's **durable medium**, without
+inserting into, mutating, or otherwise affecting the backend's live in-memory view.
+
+- `Storage.Ets` SHALL return `{:ok, []}` — it has no durable medium.
+- `Storage.Dets` and `Storage.DurableEts` SHALL fold the DETS file and return its rows.
+- A backend whose durable medium is unreadable SHALL return `{:error, reason}`; callers
+  SHALL treat an error as "no candidates" rather than as an empty durable set, so a
+  transient read failure can never be mistaken for "everything was deliberately
+  removed".
+
+This is the read the orphan reconcile round uses to build its candidate set. It exists
+because the live registry deliberately starts empty on a non-replaying open: without a
+separate read the on-disk rows are invisible to every component, which is what makes a
+node that boots after a whole-cluster outage look like a node with nothing to restore.
+
+`read_durable/1` SHALL be safe to call at any time on a running hub and SHALL NOT block
+mutations for longer than a single fold.
+
+#### Scenario: Durable read does not populate the live registry
+
+- **GIVEN** a hub on `{:durable_ets, path: <tmp>}` opened with `recovery_replay: false`,
+  whose DETS file holds 5 rows
+- **WHEN** `read_durable/1` is called
+- **THEN** it returns the 5 rows
+- **AND** `ProcessRegistry.dump/1` still returns an empty map
+
+#### Scenario: ETS backend has no durable rows
+
+- **GIVEN** a hub with `registry_backend: :ets` holding 5 live rows
+- **WHEN** `read_durable/1` is called
+- **THEN** it returns `{:ok, []}`
+
+#### Scenario: Expired rows are excluded
+
+- **GIVEN** a DETS file holding one live row and one row whose TTL has passed
+- **WHEN** `read_durable/1` is called
+- **THEN** only the live row is returned
+
+#### Scenario: Unreadable durable medium is an error, not an empty set
+
+- **GIVEN** a backend whose DETS file cannot be folded
+- **WHEN** `read_durable/1` is called
+- **THEN** it returns `{:error, reason}`
+- **AND** the reconcile round that requested it performs no starts and no duplicate
+  resolution for that round
+

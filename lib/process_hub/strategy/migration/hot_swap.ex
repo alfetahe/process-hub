@@ -185,8 +185,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
     end
 
     # Always terminate old local processes after remote start succeeded.
-    sync_strat = Storage.get(hub.storage.misc, StorageKey.strsyn())
-    Distributor.children_terminate(hub, child_ids, sync_strat)
+    Distributor.children_terminate(hub, child_ids)
 
     :ok
   end

@@ -810,15 +810,12 @@ defmodule Test.Service.RequestManagerTest do
   ##############################################################################
 
   describe "load_strategies/1" do
-    test "loads all four strategies", %{hub: hub} do
+    test "loads the strategies the start path resolves against", %{hub: hub} do
       strats = RequestManager.load_strategies(hub)
 
-      assert Map.has_key?(strats, :sync)
-      assert Map.has_key?(strats, :dist)
-      assert Map.has_key?(strats, :redun)
-      assert Map.has_key?(strats, :migr)
+      assert Map.keys(strats) |> Enum.sort() == [:dist, :redun]
       assert strats.dist != nil
-      assert strats.sync != nil
+      assert strats.redun != nil
     end
   end
 

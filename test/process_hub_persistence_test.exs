@@ -22,6 +22,40 @@ defmodule Test.ProcessHubPersistenceTest do
     {:ok, %{tmp_dir: tmp_dir}}
   end
 
+  test "durable_ets backend: concurrent inserts survive coordinator restart", %{tmp_dir: tmp_dir} do
+    hub_id = :"persist_group_commit_#{System.unique_integer([:positive])}"
+    path = Path.join(tmp_dir, "registry.dets")
+
+    start = fn ->
+      {:ok, pid} =
+        ProcessHub.Initializer.start_link(%ProcessHub{
+          hub_id: hub_id,
+          registry_backend: {:durable_ets, path: path}
+        })
+
+      :erlang.unlink(pid)
+    end
+
+    start.()
+
+    1..20
+    |> Task.async_stream(
+      fn i ->
+        ProcessRegistry.insert(hub_id, %{id: :"c#{i}", start: {:m, :f, []}}, [{:n1, :p1}])
+      end,
+      max_concurrency: 20
+    )
+    |> Enum.each(fn {:ok, result} -> assert result === :ok end)
+
+    assert map_size(ProcessRegistry.dump(hub_id)) === 20
+
+    :ok = ProcessHub.Initializer.stop(hub_id)
+    start.()
+    on_exit(fn -> ProcessHub.Initializer.stop(hub_id) end)
+
+    assert map_size(ProcessRegistry.dump(hub_id)) === 20
+  end
+
   test "DETS backend: registry survives coordinator restart", %{tmp_dir: tmp_dir} do
     hub_id = :"persist_survive_#{System.unique_integer([:positive])}"
     path = Path.join(tmp_dir, "registry.dets")

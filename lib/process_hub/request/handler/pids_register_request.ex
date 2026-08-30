@@ -3,12 +3,14 @@ defmodule ProcessHub.Request.Handler.PidsRegisterRequest do
   alias ProcessHub.Request.CrossNodeRequest
 
   defstruct [
-    :children_data
+    :children_data,
+    durable: false
   ]
 
-  def new(children_data) do
+  def new(children_data, opts \\ []) do
     %__MODULE__{
-      children_data: children_data
+      children_data: children_data,
+      durable: Keyword.get(opts, :durable, false)
     }
   end
 
@@ -20,7 +22,8 @@ defmodule ProcessHub.Request.Handler.PidsRegisterRequest do
       ProcessRegistry.bulk_insert(
         hub.hub_id,
         request.children_data,
-        hook_storage: hub.storage.hook
+        hook_storage: hub.storage.hook,
+        durable: request.durable
       )
     end
   end

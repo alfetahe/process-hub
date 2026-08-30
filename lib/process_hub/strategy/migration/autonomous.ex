@@ -18,11 +18,9 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
-  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.ProcessRegistry
-  alias ProcessHub.Service.Storage
   alias ProcessHub.Request.Handler.StartChildrenRequest
 
   @typedoc """
@@ -37,9 +35,6 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
   def reconcile(hub, handler, cid_node_map) do
     local_node = node()
     registry_data = ProcessRegistry.dump_all(hub.hub_id)
-
-    sync_strat =
-      Map.get(handler, :sync_strat) || Storage.get(hub.storage.misc, StorageKey.strsyn())
 
     # Categorize children into to_stop and to_start.
     {to_stop, to_start} =
@@ -78,7 +73,7 @@ defmodule ProcessHub.Strategy.Migration.Autonomous do
 
     # Stop children that shouldn't be here.
     if to_stop != [] do
-      Distributor.children_terminate(hub, to_stop, sync_strat)
+      Distributor.children_terminate(hub, to_stop)
     end
 
     # Start children that should be here.

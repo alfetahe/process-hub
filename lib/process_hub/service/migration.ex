@@ -90,6 +90,64 @@ defmodule ProcessHub.Service.Migration do
   def handle_retry_tick(hub), do: run_pass(hub, :consent).remaining
 
   @doc """
+  Migrates one child to `target_node`, handing its state over per the hub's
+  migration strategy — the same per-child move a drain performs, invocable for
+  a single child with an explicit target. The child's declared-list entry is
+  untouched by the move, so a crash mid-migration heals through the reconcile
+  instead of losing the child.
+
+  Runs on the node currently hosting the child and routes itself there when
+  called elsewhere. The consent protocol is NOT queried — the caller decides
+  the child may move; a drain remains the consent-gated path.
+
+  The distribution strategy still considers the child assigned by its own
+  arithmetic, so a later topology event may migrate it back — callers healing
+  toward an off-assignment placement must be prepared to re-apply.
+  """
+  @spec migrate_child(ProcessHub.hub_id(), ProcessHub.child_id(), node()) ::
+          :ok | {:error, :not_found | :not_a_member | :same_node | term()}
+  def migrate_child(hub_id, child_id, target_node) when is_atom(hub_id) do
+    hub = Coordinator.get_hub(hub_id)
+    hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
+
+    with :ok <- member_check(hub_nodes, target_node),
+         {:ok, cspec, meta, hosting_node} <- child_row(hub, child_id),
+         :ok <- if(hosting_node === target_node, do: {:error, :same_node}, else: :ok) do
+      if hosting_node in [nil, node()] do
+        strategy = Storage.get(hub.storage.misc, StorageKey.strmigr())
+        stop_local = if hosting_node === node(), do: [child_id], else: []
+        SwapMigration.migrate(hub, strategy, [{cspec, meta, [target_node]}], stop_local)
+      else
+        try do
+          :erpc.call(hosting_node, __MODULE__, :migrate_child, [hub_id, child_id, target_node])
+        catch
+          _, reason -> {:error, {:migrate_route_failed, hosting_node, reason}}
+        end
+      end
+    end
+  end
+
+  defp member_check(hub_nodes, target_node) do
+    if target_node in hub_nodes, do: :ok, else: {:error, :not_a_member}
+  end
+
+  defp child_row(hub, child_id) do
+    case ProcessRegistry.lookup(hub.hub_id, child_id, with_metadata: true) do
+      {cspec, node_pids, meta} ->
+        hosting =
+          case node_pids do
+            [{n, _pid} | _] -> n
+            _ -> nil
+          end
+
+        {:ok, cspec, meta, hosting}
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
   Drains the local node before shutdown: removes it from the distribution
   cluster-wide, migrates every local child away through the consent gate, and
   force-migrates whatever is still deferred at the `:timeout` deadline

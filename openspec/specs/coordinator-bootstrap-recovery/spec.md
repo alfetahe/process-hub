@@ -3,229 +3,164 @@
 ## Purpose
 
 TBD - created from the coordinator-bootstrap-recovery change. Update Purpose after the change is archived.
-
 ## Requirements
-
 ### Requirement: Three-state coordinator boot lifecycle
 
-`ProcessHub.Coordinator` SHALL implement a three-state boot lifecycle accessible via the `Hub.t()` runtime struct's `:recovery_state` field:
+`ProcessHub.Coordinator` SHALL implement a two-state boot lifecycle accessible via the
+`Hub.t()` runtime struct's `:recovery_state` field:
 
-- **`:recovery_pending`** — the initial state when `auto_recovery` is enabled and the marker is absent. Means "the system is in recovery mode and is about to replay the persistent registry locally."
-- **`:recovering`** — actively iterating the persistent registry and dispatching `start_children` calls.
-- **`:normal`** — fully operational. The terminal state. Reachable directly from `:recovery_pending` when the marker is present (skip replay) OR from `:recovering` (replay completed or timed out).
+- **`:recovering`** — the initial state when `auto_recovery` is enabled. Means "this
+  node's durable registry has not yet been reconciled against the cluster". Cluster
+  events are processed normally in this state; nothing is gated.
+- **`:normal`** — the first orphan reconcile round has completed. Terminal state.
 
-When `auto_recovery == false` (the default), the coordinator SHALL set `:recovery_state` to `:normal` at init/1 time and never transition. This preserves all existing behaviour bit-for-bit.
+When `auto_recovery == false` (the default), the coordinator SHALL set `:recovery_state`
+to `:normal` at `init/1` and never transition, and SHALL run no reconcile rounds. This
+preserves pre-change behaviour for hubs that never opted in.
 
-When `auto_recovery == true` (or a keyword list), the coordinator SHALL resolve the recovery mode from the marker gate at init/1: marker present → `:normal` directly; marker absent → `:recovery_pending`, then replay the persistent registry through `:recovering` to `:normal` as described below.
+The transition to `:normal` SHALL occur when the first reconcile round completes. That
+round runs when `reconcile_grace_ms` elapses whether or not any peer has joined, so
+`:normal` is reached in bounded time on every boot, including a single node booting
+alone.
+
+`:recovery_pending` is removed. It named the window between init and the start of boot
+replay, which no longer exists.
 
 #### Scenario: Default config — :recovery_state is always :normal
 
 - **GIVEN** a hub started with `auto_recovery: false` (or no `:auto_recovery` field set)
 - **WHEN** the coordinator initialises
 - **THEN** `Hub.t().recovery_state` is `:normal` from the moment `init/1` returns
-- **AND** no recovery-window timer is scheduled
-- **AND** no `recovery_state_changed` hook fires (the field starts at `:normal` rather than transitioning to it)
+- **AND** no reconcile round is ever scheduled
+- **AND** no `recovery_state_changed` hook fires
 
-#### Scenario: Opt-in with marker absent starts in :recovery_pending
+#### Scenario: Opt-in hub starts in :recovering and settles
 
-- **GIVEN** a hub started with `auto_recovery: true` and the marker file absent
+- **GIVEN** a hub started with `auto_recovery: true` and `reconcile_grace_ms: 30_000`
 - **WHEN** the coordinator initialises
-- **THEN** `Hub.t().recovery_state` is `:recovery_pending`
-- **AND** a `recovery_timeout_ms` ceiling timer is scheduled for the event-queue gate (default 30_000)
+- **THEN** `Hub.t().recovery_state` is `:recovering`
+- **AND** cluster events are processed inline from that moment
+- **AND** after the first reconcile round completes, `recovery_state` is `:normal` and
+  one `recovery_state_changed` hook has fired with
+  `%{from: :recovering, to: :normal, reason: :reconcile_complete}`
+
+#### Scenario: A node alone still reaches :normal
+
+- **GIVEN** an opt-in hub booting with no reachable peers
+- **WHEN** `reconcile_grace_ms` elapses
+- **THEN** the first round runs against an empty cluster view and the coordinator
+  transitions to `:normal`
 
 ### Requirement: `:auto_recovery` configuration field
 
-`ProcessHub.t()` SHALL include the optional field `:auto_recovery` as the
-single configuration entry point for coordinator recovery, accepting these
-shapes:
+`ProcessHub.t()` SHALL include the optional field `:auto_recovery` as the single
+configuration entry point for registry convergence and orphan recovery, accepting:
 
-- `false` — default. Coordinator transitions immediately to `:normal`; the
-  marker gate is disabled; the DETS-read-on-open path behaves exactly as before
-  this change. Library tests and single-node deployments are unaffected.
-- `true` — enable with default options. Marker gate is active; DETS-read on
-  open is gated; `prepare_recovery` API is enabled.
+- `false` — default. No reconcile rounds, no epoch stamping beyond what a single node
+  writes locally, `recovery_state` is `:normal` from init. Library tests and
+  single-node deployments are unaffected.
+- `true` — enable with defaults.
 - `keyword()` — accepts
-  `marker_path: String.t()` (operator override for the marker file location;
-  `nil`/unset resolves to `:filename.basedir(:user_data, "process_hub") /
-  <hub_id>/cluster.healthy`),
-  `replay_timeout_ms: integer()` (default `60_000`, range `[1_000, 3_600_000]`),
-  and `recovery_timeout_ms: integer()` (default `30_000`, range
-  `[1_000, 600_000]`) for the event-queue gate ceiling.
+  `reconcile_grace_ms: integer()` (default `30_000`, range `[1_000, 600_000]`),
+  `reconcile_interval_ms: integer()` (default `15_000`, range `[1_000, 600_000]`), and
+  `stopped_row_ttl_ms: integer()` (default `86_400_000`, range
+  `[60_000, 31_536_000_000]`).
 
-The marker is always the gating mechanism whenever `:auto_recovery` is enabled;
-there is no separate marker option and no way to keep recovery on while
-bypassing the gate.
+The keys `:marker_path`, `:replay_timeout_ms`, and `:recovery_timeout_ms` no longer
+drive anything and are **deprecated**. Supplying any of them SHALL log a WARN naming
+the key and SHALL otherwise be ignored, so a deployment carrying them keeps starting.
+They SHALL be rejected at init in a future release.
 
-The field SHALL be ignored by the coordinator if its value is anything other
-than the documented shapes; an INVALID-config WARN log SHALL fire and the
-coordinator SHALL behave as if `auto_recovery == false`.
+The field SHALL be ignored by the coordinator if its value is anything other than the
+documented shapes; an INVALID-config WARN log SHALL fire and the coordinator SHALL
+behave as if `auto_recovery == false`.
 
-#### Scenario: Default config — marker logic disabled, no DETS read on open
+#### Scenario: Default config — no reconcile, no durable read
 
 - **GIVEN** a hub started with `auto_recovery: false` (or unset)
-- **WHEN** the coordinator initialises with `registry_backend: {:dets, []}` and
-  3 persisted rows
-- **THEN** the in-memory registry does **not** load those 3 rows
-  (DETS-read-on-open is gated by the resolved mode, which is "disabled" in this
-  case → behaves as a no-op replay)
+- **WHEN** the coordinator initialises with `registry_backend: {:dets, []}` and 3
+  persisted rows
+- **THEN** the in-memory registry does not load those 3 rows
 - **AND** `recovery_state` is `:normal` from the moment `init/1` returns
+- **AND** no reconcile round runs
 
-> Implementation note: When the marker gate is disabled the DETS read path was
-> never the source of correctness for cluster registry state — peers always
-> dominate via `init_sync`. The existing "library + single-node tests" suites
-> rely on the in-memory registry starting empty after a fresh `init/1`; this
-> requirement makes that explicit. (This codifies and preserves the pre-change
-> single-node test-suite behaviour.)
+#### Scenario: Custom grace, interval, and stopped-row TTL
 
-#### Scenario: Custom marker path, replay timeout, and recovery timeout
-
-- **GIVEN** `auto_recovery: [marker_path: "/srv/hub/cluster.healthy",
-  replay_timeout_ms: 120_000, recovery_timeout_ms: 45_000]`
+- **GIVEN** `auto_recovery: [reconcile_grace_ms: 60_000, reconcile_interval_ms: 30_000,
+  stopped_row_ttl_ms: 604_800_000]`
 - **WHEN** the coordinator initialises
-- **THEN** the marker gate is consulted at `/srv/hub/cluster.healthy`; the
-  replay-loop ceiling is 120 s; the cluster-event queue gate ceiling is 45 s
+- **THEN** the first round runs no earlier than 60 s after start, subsequent rounds no
+  more often than every 30 s, and stopped rows expire 7 days after `stopped_at`
 
-#### Scenario: Out-of-range recovery_timeout_ms rejected
+#### Scenario: Deprecated key warns and is ignored
 
-- **GIVEN** `auto_recovery: [recovery_timeout_ms: 100]` (below `1_000` minimum)
+- **GIVEN** `auto_recovery: [marker_path: "/srv/hub/cluster.healthy"]`
 - **WHEN** the coordinator initialises
-- **THEN** init fails with `{:error, {:invalid_auto_recovery,
-  :recovery_timeout_ms_out_of_range}}`
+- **THEN** the hub starts with the default reconcile settings
+- **AND** a WARN log identifies `:marker_path` as deprecated and names the release
+  that removes it
 
-### Requirement: Marker-gated cold-boot behaviour
+#### Scenario: Out-of-range reconcile_grace_ms rejected
 
-When the coordinator boots with `auto_recovery` enabled, the marker gate alone
-determines whether the persistent registry is replayed:
-
-- **Marker present** (or `PROCESS_HUB_RECOVERY_MODE=skip`) → the coordinator
-  boots straight to `:normal`, does not read DETS rows on open, and inherits
-  cluster state from peers via the existing `init_sync` flow.
-- **Marker absent** (or `PROCESS_HUB_RECOVERY_MODE=force`) → the coordinator
-  enters `:recovery_pending`, replays the persistent registry (cspecs only)
-  through `:recovering`, writes the marker, then transitions to `:normal`.
-
-There is no peer-state exchange and no "wait and see" window; a returning node
-trusts its local DETS only when the operator has armed it (marker absent).
-
-#### Scenario: Marker present — boot straight to :normal
-
-- **GIVEN** node A has `auto_recovery: true`, the marker is present, and node B is already running with `recovery_state: :normal`
-- **WHEN** A's coordinator initialises
-- **THEN** A boots directly to `:normal` without replaying DETS
-- **AND** A inherits cluster state from B via `init_sync`
-- **AND** the `recovery_state_changed` hook does not fire a `:recovering` transition
-
-#### Scenario: Cluster-wide cold boot — every marker absent
-
-- **GIVEN** three nodes A/B/C all booting with `auto_recovery: true` and every marker absent
-- **WHEN** they each initialise
-- **THEN** each enters `:recovery_pending`, transitions to `:recovering`, runs replay, writes its marker, and reaches `:normal`
-
-#### Scenario: Old peer in mixed-version cluster
-
-- **GIVEN** a cluster of two nodes, A running new ProcessHub, B running pre-change ProcessHub
-- **WHEN** A boots with the marker absent and replays its persistent registry
-- **THEN** A's recovery is driven entirely by its local marker gate, independent of B's version
-- **AND** No errors are raised; the lifecycle completes correctly even though B is on the old code
-
-### Requirement: Replay path runs `Distributor.compose_start_request` for each persisted child
-
-The coordinator SHALL execute the replay sequence below when it transitions from `:recovery_pending` to `:recovering` (marker absent in `auto` mode, or `PROCESS_HUB_RECOVERY_MODE=force`):
-
-1. Emit `[:process_hub, :recovery, :started]` telemetry with `%{cspec_count: N}`
-   measurement and `%{hub_id: id, mode: mode}` metadata.
-2. Dispatch the `pre_recovery_replay` hook synchronously (blocking variant) —
-   handlers can inspect or block until prerequisite services are ready. Default
-   handler: none.
-3. Iterate the persistent registry via `ProcessRegistry.dump(hub_id)` and project
-   each row to its `child_spec` only — node-pids and metadata are **not** loaded
-   into the in-memory registry. Binding state SHALL be recomputed by the first
-   migration tick after the cluster forms.
-4. For each cspec, call `Distributor.compose_start_request(state, [cspec], opts)`
-   with `opts` containing `:auto_recovery_replay: true` so downstream code can
-   identify the call source.
-5. Per-cspec failures SHALL be logged at WARN with `child_id` and reason but SHALL
-   NOT abort the replay loop. Replay is best-effort; partial-success is
-   acceptable.
-6. Open the cluster-event queue gate when every cspec has been attempted OR when
-   `recovery_timeout_ms` (new config key) fires, whichever first. Emit
-   `[:process_hub, :recovery, :complete]` or `[:process_hub, :recovery, :timeout]`
-   accordingly.
-7. Dispatch the `post_recovery_replay` hook (async).
-8. Write the recovery marker to disk.
-9. Transition to `:normal`.
-
-Replay SHALL load **cspecs only**. The existing assumption that recovery restores
-node-pids and bindings from DETS is removed — bindings are always recomputed by
-the migration strategy on the first post-cluster-formation tick.
-
-The previous `replay_timeout_ms` keeps its meaning as an upper bound on the
-*replay loop itself* (kept for back-compat); the new `recovery_timeout_ms` is the
-upper bound on the *event-queue gate*. When both fire, the earlier of the two
-opens the gate.
-
-#### Scenario: Empty registry replay completes immediately
-
-- **GIVEN** a hub with `auto_recovery: true`, marker absent, and either
-  `registry_backend: :ets` or `:dets` with no persisted rows
-- **WHEN** the recovery path runs
-- **THEN** `:started` fires with `cspec_count: 0`; iteration is empty
-- **AND** `:complete` fires with `cspec_count: 0, succeeded: 0, failed: 0`;
-  marker is written; coordinator transitions to `:normal`
-
-#### Scenario: Cspecs-only replay — no stale bindings injected
-
-- **GIVEN** DETS contains a row for `cid_a` with `node_pids: [{n1, dead_pid}]`
-  and metadata `%{assigned_executor: "x1"}`
-- **WHEN** recovery replay runs on a fresh boot of `n1`
-- **THEN** `cid_a` is restarted locally via `Distributor.compose_start_request`
-- **AND** the in-memory registry contains the freshly-started pid, never
-  `dead_pid`
-- **AND** `metadata` is reset (empty) — `assigned_executor` is recomputed by the
-  first migration tick after the cluster forms
-
-#### Scenario: Replay timeout — queue gate opens, replay continues
-
-- **GIVEN** 1 000 cspecs in DETS, `recovery_timeout_ms: 1_000`, slow distribution
-- **WHEN** at `t = 1 s` only 200 cspecs have been attempted
-- **THEN** the cluster-event queue gate opens; coordinator transitions to
-  `:normal` with `reason: :recovery_timeout`; `[:process_hub, :recovery,
-  :timeout]` fires with `attempted: 200`
-- **AND** the remaining 800 attempts continue in the background; subsequent
-  cluster events are processed inline
+- **GIVEN** `auto_recovery: [reconcile_grace_ms: 100]` (below the `1_000` minimum)
+- **WHEN** the coordinator initialises
+- **THEN** init fails with
+  `{:error, {:invalid_auto_recovery, :reconcile_grace_ms_out_of_range}}`
 
 ### Requirement: Hook points for downstream integration
 
-Three new hook keys SHALL be available via `ProcessHub.Constant.Hook`:
+Three hook keys SHALL be available via `ProcessHub.Constant.Hook`:
 
-- `Hook.recovery_state_changed()` — fires on every `recovery_state` transition. Payload: `%{from: state, to: state, reason: atom}`. In the marker path the transitions are `:recovery_pending → :recovering` (reason `:marker_absent`) and `:recovering → :normal` (reason `:replay_complete`, or `:recovery_timeout` if the gate ceiling fires). Async (fire-and-forget). Replaces no existing hook.
-- `Hook.pre_recovery_replay()` — fires once when entering `:recovering`, before any `start_children` is dispatched. Synchronous (blocking) — the coordinator awaits each handler's reply before proceeding. Handlers SHOULD return quickly (the coordinator's reply timeout is `replay_timeout_ms`); long blocks risk forcing the timeout path. Use case: downstream users (e.g. Flezha) ensure prerequisite services (FleetManager, transport listeners) are fully ready before replay starts dispatching.
-- `Hook.post_recovery_replay()` — fires once when leaving `:recovering` (whether by completion or timeout). Async. Use case: downstream users mark "boot complete" externally.
+- `Hook.recovery_state_changed()` — fires on every `recovery_state` transition.
+  Payload: `%{from: state, to: state, reason: atom}`. The only transition is
+  `:recovering → :normal` with reason `:reconcile_complete`. Async.
+- `Hook.pre_recovery_replay()` — fires once, before the **first** reconcile round of a
+  coordinator's lifetime issues any start. Synchronous (blocking) — the coordinator
+  awaits each handler's reply before proceeding, with the per-handler budget bounded by
+  `reconcile_interval_ms`. Use case: downstream users ensure prerequisite services are
+  ready before children are started.
+- `Hook.post_recovery_replay()` — fires once, after the first reconcile round completes
+  (whether or not it started anything). Async.
 
-These hooks are additive. Existing hook keys are unchanged. Handlers for these hooks are not invoked when `auto_recovery == false`.
+The hook keys and their synchronous/async contracts are unchanged from the previous
+version; only the moment they bracket has changed, from the boot replay to the first
+reconcile round. Handlers registered by existing downstream code continue to work
+without modification. Handlers for these hooks are not invoked when
+`auto_recovery == false`.
 
-#### Scenario: pre_recovery_replay handler can block until FleetManager is ready
+Subsequent reconcile rounds SHALL NOT re-fire these hooks; they are boot-integration
+points, not per-round hooks. Per-round observability is the `:reconcile` telemetry.
 
-- **GIVEN** a downstream application registers a `pre_recovery_replay` handler that waits up to 30 s for `FleetManager` to report ready
-- **WHEN** the coordinator enters `:recovering`
-- **THEN** the coordinator dispatches the `pre_recovery_replay` hook synchronously
-- **AND** the handler blocks until `FleetManager` is ready (or its internal timeout)
-- **AND** only after the handler returns does the coordinator begin iterating the registry
+#### Scenario: pre_recovery_replay handler blocks the first round's starts
 
-#### Scenario: recovery_state_changed fires on every transition
+- **GIVEN** a downstream application registers a `pre_recovery_replay` handler that
+  waits until its own service reports ready
+- **WHEN** the first reconcile round is due
+- **THEN** the coordinator dispatches the hook synchronously
+- **AND** no child is started until the handler returns
 
-- **GIVEN** a coordinator that boots with the marker absent
-- **WHEN** it transitions `:recovery_pending → :recovering → :normal` (replay path)
-- **THEN** TWO hooks fire — one for each transition (`reason: :marker_absent` then `reason: :replay_complete`)
+#### Scenario: Hooks fire once per coordinator lifetime
+
+- **GIVEN** an opt-in hub that has completed 5 reconcile rounds
+- **WHEN** the hook dispatch counts are inspected
+- **THEN** `pre_recovery_replay` and `post_recovery_replay` have each fired exactly once
 
 ### Requirement: Public API for recovery-state introspection
 
-`ProcessHub` SHALL expose two new public functions:
+`ProcessHub` SHALL expose:
 
-- `ProcessHub.recovery_state(hub_id) :: :recovery_pending | :recovering | :normal` — synchronous query of the current state. For hubs with `auto_recovery: false`, ALWAYS returns `:normal`.
-- `ProcessHub.await_normal(hub_id, timeout_ms \\ 60_000) :: :ok | {:error, :timeout}` — blocks until the hub's `recovery_state` is `:normal` or the timeout elapses. For hubs with `auto_recovery: false`, returns `:ok` immediately.
+- `ProcessHub.recovery_state(hub_id) :: :recovering | :normal` — synchronous query of
+  the current state. For hubs with `auto_recovery: false`, ALWAYS returns `:normal`.
+- `ProcessHub.await_normal(hub_id, timeout_ms \\ 60_000) :: :ok | {:error, :timeout}` —
+  blocks until the hub's `recovery_state` is `:normal` or the timeout elapses. For hubs
+  with `auto_recovery: false`, returns `:ok` immediately.
 
-Both functions SHALL work for any hub regardless of whether `auto_recovery` is enabled.
+Both signatures are unchanged. `:recovery_pending` is no longer a possible return
+value. `await_normal/2` now means "the first reconcile round has completed", which is
+the point at which a returning node has restored whatever it was going to restore.
+
+Callers SHOULD size their timeout above `reconcile_grace_ms`; a timeout below the grace
+window will always return `{:error, :timeout}` on an opt-in hub.
 
 #### Scenario: recovery_state returns :normal for non-opted-in hub
 
@@ -233,256 +168,75 @@ Both functions SHALL work for any hub regardless of whether `auto_recovery` is e
 - **WHEN** `ProcessHub.recovery_state(:my_hub)` is called at any point after `init/1`
 - **THEN** it returns `:normal`
 
-#### Scenario: await_normal blocks until transition
+#### Scenario: await_normal returns after the first round
 
-- **GIVEN** a hub in `:recovery_pending` (marker absent) replaying its persistent registry
+- **GIVEN** an opt-in hub with `reconcile_grace_ms: 5_000`
 - **WHEN** a caller invokes `ProcessHub.await_normal(:my_hub, 30_000)` at `t = 0`
-- **THEN** the call blocks until the coordinator reaches `:normal` (after replay completes)
-- **AND** returns `:ok` once the transition completes
+- **THEN** the call blocks until the first reconcile round completes and returns `:ok`
 
-#### Scenario: await_normal returns :timeout on long replays
+#### Scenario: Timeout below the grace window always times out
 
-- **GIVEN** a hub whose replay genuinely takes longer than the caller's timeout
-- **WHEN** `ProcessHub.await_normal(:my_hub, 5_000)` is called and replay is still ongoing at t=5s
+- **GIVEN** an opt-in hub with `reconcile_grace_ms: 30_000`
+- **WHEN** `ProcessHub.await_normal(:my_hub, 5_000)` is called at boot
 - **THEN** the call returns `{:error, :timeout}`
 - **AND** the coordinator continues toward `:normal` independently
 
 ### Requirement: Backward compatibility — existing applications need no changes
 
-Applications using ProcessHub before this change SHALL NOT require any code,
-configuration, or dependency modification to continue functioning identically
-after this change is merged.
+Applications that never set `:auto_recovery` SHALL require no code, configuration, or
+dependency modification. Applications that opted into `auto_recovery` SHALL require the
+migration described below — for them this change is breaking.
 
-Specifically:
+Preserved unconditionally:
 
-- The `ProcessHub.t()` struct accepts the keyword keys `:marker_path`,
-  `:replay_timeout_ms`, and `:recovery_timeout_ms` inside `:auto_recovery` as
-  absent and treats them as defaults.
-- When `auto_recovery == false` (the default), the marker gate is disabled, no
-  marker file is written or read, and the DETS-read-on-open path behaves
-  exactly as before this change.
-- All existing public functions (`start_link`, `child_spec`, `is_alive?`,
-  `start_children`, `stop_children`, `recovery_state/1`, `await_normal/2`)
-  have unchanged signatures and behaviour.
-- When `:auto_recovery` is enabled the recovery mode is resolved from
-  (env > marker) at `init/1`; the marker is always the gating mechanism.
-- New public functions (`prepare_recovery/1`, `prepare_recovery_cluster/1`) are
-  no-ops on hubs with `auto_recovery: false` (they return `:ok` without doing
-  IO).
-- New event `{:cluster_join, {:restarted, node}}` is silently dropped by peers
-  running older versions.
+- `auto_recovery: false` (the default) behaves exactly as before: no marker IO existed
+  for these hubs, no reconcile runs, `recovery_state` is `:normal` from init, and the
+  durable backend is opened without replay.
+- `start_link/1`, `child_spec/1`, `is_alive?/1`, `start_children/3`, `stop_children/3`,
+  `recovery_state/1`, and `await_normal/2` keep their signatures.
+- The `pre_recovery_replay`, `post_recovery_replay`, and `recovery_state_changed` hook
+  keys and their blocking/async contracts are unchanged.
 - No new required dependencies.
 
-#### Scenario: Pre-change single-node test suite passes unchanged
+Deprecated for opted-in applications — still compiles and starts, warns, removed in
+a future release:
 
-- **GIVEN** an existing single-node test that uses `auto_recovery: false`
-  (default) and `registry_backend: {:dets, []}`
+- `ProcessHub.Service.Recovery.prepare_recovery/1` and `prepare_recovery_cluster/1`
+  SHALL remain callable as no-ops returning their documented shapes, logging a WARN.
+- `:marker_path`, `:replay_timeout_ms`, and `:recovery_timeout_ms` SHALL be accepted
+  with a WARN and ignored.
+
+Behaviour that changes for opted-in applications:
+
+- `PROCESS_HUB_RECOVERY_MODE` is no longer read.
+- `:recovery_pending` is no longer a `recovery_state/1` return value.
+- `[:process_hub, :recovery, :skipped]` and `[:process_hub, :recovery, :timeout]` are no
+  longer emitted.
+
+The change SHALL ship as a minor version bump with a `migration-guide.md` section
+covering each deprecation and removal, and its replacement.
+
+#### Scenario: Deprecated operator API stays callable
+
+- **GIVEN** an application still calling `Recovery.prepare_recovery_cluster/1` on a
+  running hub
+- **WHEN** the call runs
+- **THEN** it returns `{:ok, members}` and logs a deprecation WARN
+- **AND** no marker file is read or written
+
+#### Scenario: Pre-change default-config test suite passes unchanged
+
+- **GIVEN** an existing single-node test that uses `auto_recovery: false` (default) and
+  `registry_backend: {:dets, []}`
 - **WHEN** the suite runs against post-change ProcessHub
-- **THEN** all tests pass with no modifications; behaviour at every observation
-  point is bit-for-bit identical to pre-change
+- **THEN** all tests pass with no modifications
 
-#### Scenario: First-ever boot with `auto_recovery: true` is a no-op recovery
+#### Scenario: Opted-in application with a removed key fails fast
 
-- **GIVEN** a fresh deployment with `auto_recovery: true`, marker absent, and
-  DETS empty (first boot ever)
-- **WHEN** the coordinator initialises
-- **THEN** recovery runs against an empty DETS (`cspec_count: 0`, no-op)
-- **AND** the marker is written; the hub transitions to `:normal`
-- **AND** subsequent boots (until `prepare_recovery` is invoked) see the marker
-  and skip DETS read entirely
-
-### Requirement: Operator-controlled recovery via marker file
-
-ProcessHub SHALL gate boot-time replay of the persistent registry behind a per-node
-**marker file**. The marker is a zero-byte file at a path resolved per hub. When the
-marker is present at coordinator init, the hub boots in **normal mode** and SHALL
-NOT read any rows from the persistent registry table on open. When the marker is
-absent, the hub boots in **recovery mode** and SHALL load every cspec from the
-persistent registry, attempt to start each child locally, and only then begin
-processing cluster events.
-
-The marker is always the gating mechanism whenever `:auto_recovery` is enabled.
-Its path SHALL be configurable per hub via the `:marker_path` key inside
-`:auto_recovery`:
-
-- `marker_path: nil` (unset) — resolve to the default
-  `<:filename.basedir(:user_data, "process_hub")>/<hub_id>/cluster.healthy`.
-  Translated to `/var/lib/process_hub/<hub_id>/cluster.healthy` on standard Linux
-  deployments.
-- `marker_path: String.t()` — absolute path on the local filesystem.
-
-When `auto_recovery: false`, the marker gate is disabled entirely: the hub
-behaves as if always in normal mode (no DETS read on boot, no marker IO),
-preserving pre-change behaviour bit-for-bit for library tests.
-
-The marker SHALL be (re)written automatically after every successful boot — both
-after a normal-mode boot and after recovery completes (`:recovering → :normal`).
-Steady-state operation SHALL never require human attention to the marker.
-
-#### Scenario: Marker present at boot — normal mode, no DETS read
-
-- **GIVEN** a hub with `auto_recovery: true`, `registry_backend: {:dets, []}`, and the
-  marker file exists at the resolved path
-- **WHEN** the coordinator initialises
-- **THEN** the in-memory registry table is empty after `init/1`
-- **AND** `ProcessRegistry.dump(hub_id)` returns `[]` immediately after init
-- **AND** no child is started from DETS on this node
-- **AND** the hub joins the cluster and inherits state from peers via `init_sync`
-
-#### Scenario: Marker absent at boot — recovery mode, DETS replay runs
-
-- **GIVEN** a hub with `auto_recovery: true`, `registry_backend: {:dets, []}`, the
-  DETS file contains 3 persisted cspecs, and the marker file does **not** exist
-- **WHEN** the coordinator initialises
-- **THEN** the recovery-state transitions `:recovery_pending → :recovering`
-  *before* any `:nodeup` event is processed
-- **AND** each of the 3 cspecs is restarted on the local node via
-  `Distributor.compose_start_request/3`
-- **AND** after replay completes the coordinator writes the marker file and
-  transitions to `:normal`
-
-#### Scenario: Marker (re)written on successful boot
-
-- **GIVEN** any successful boot path (marker-present-normal, marker-absent-recovery,
-  or env-forced override)
-- **WHEN** the coordinator reaches `:normal`
-- **THEN** the marker file exists at the resolved path with a zero-byte payload
-- **AND** the next boot with the same persistent state observes the marker and
-  selects normal mode
-
-### Requirement: PROCESS_HUB_RECOVERY_MODE env-var override
-
-ProcessHub SHALL honour a `PROCESS_HUB_RECOVERY_MODE` environment variable that
-overrides the marker-file-driven mode resolution on a per-node basis. The
-resolution precedence at coordinator init SHALL be (highest → lowest):
-
-1. `PROCESS_HUB_RECOVERY_MODE=force` — recover even if the marker is present
-2. `PROCESS_HUB_RECOVERY_MODE=skip` — never recover even if the marker is absent
-   (start empty; do **not** read DETS; do write the marker on entry to `:normal`)
-3. `PROCESS_HUB_RECOVERY_MODE=auto` (default if env var is unset or any other value)
-   — marker-driven decision
-
-Unknown or unparseable env-var values SHALL behave as `auto` and SHALL emit a
-WARN log identifying the offending value. The env-var SHALL be evaluated **once**
-at coordinator `init/1`. Changing the env-var at runtime SHALL NOT change the
-hub's already-resolved mode.
-
-#### Scenario: Force override recovers despite marker
-
-- **GIVEN** a hub with marker present and `PROCESS_HUB_RECOVERY_MODE=force` at
-  `init/1`
-- **WHEN** the coordinator initialises
-- **THEN** the hub enters `:recovering` and replays DETS even though the marker
-  exists
-
-#### Scenario: Skip override boots empty without DETS read
-
-- **GIVEN** a hub with marker absent, DETS containing 5 cspecs, and
-  `PROCESS_HUB_RECOVERY_MODE=skip`
-- **WHEN** the coordinator initialises
-- **THEN** the in-memory registry is empty
-- **AND** no cspec is started from DETS
-- **AND** the marker is written on entry to `:normal`
-
-#### Scenario: Unknown env value falls back to auto
-
-- **GIVEN** `PROCESS_HUB_RECOVERY_MODE=garbage`
-- **WHEN** the coordinator initialises
-- **THEN** a WARN log identifies the value `garbage` as invalid
-- **AND** mode is resolved as if the env var were `auto`
-
-### Requirement: Cluster-event queue during recovery
-
-While the coordinator is in `:recovery_pending` or `:recovering`, it SHALL queue
-all incoming `:nodeup`, `:nodedown`, and hook events (`@event_cluster_join`,
-`@event_cluster_leave`, dispatched hook events) instead of processing them through
-the normal handler. BEAM distribution, libcluster, `:global`, and `:net_kernel`
-SHALL continue to operate normally — only ProcessHub's own coordinator handlers
-are gated.
-
-The queue SHALL drain through the normal handler when **either**:
-
-1. Every cspec read from the persistent registry has been *attempted*
-   (success / error / skip — per-cspec errors SHALL NOT block the gate), OR
-2. A configurable `recovery_timeout_ms` ceiling fires (new config key, default
-   `30_000` ms, range `[1_000, 600_000]`).
-
-Whichever fires first opens the gate. After the gate opens the queue SHALL be
-drained in FIFO order and subsequent events SHALL be processed inline by the
-normal handler.
-
-#### Scenario: Events queued during recovery, drained on completion
-
-- **GIVEN** a hub in `:recovering` and a peer node joins
-- **WHEN** the `:nodeup`/`@event_cluster_join` event arrives at the coordinator
-  mid-replay
-- **THEN** the event SHALL be appended to the recovery event queue
-- **AND** `init_sync` SHALL NOT be invoked for the joining peer until the queue
-  drains
-
-#### Scenario: Gate opens on cspec-attempt completion
-
-- **GIVEN** 5 cspecs in DETS at boot
-- **WHEN** every cspec has been attempted (3 succeeded, 1 errored, 1 skipped as
-  invalid)
-- **THEN** the coordinator opens the queue gate and transitions to `:normal`
-- **AND** the queued cluster events drain through the normal handler in FIFO
-  order
-
-#### Scenario: Gate opens on recovery_timeout_ms ceiling
-
-- **GIVEN** `recovery_timeout_ms: 5_000` and 1 000 cspecs in DETS where replay is
-  slow
-- **WHEN** at `t = 5 s` only 200 cspecs have been attempted
-- **THEN** the coordinator opens the queue gate, transitions to `:normal` with
-  `reason: :recovery_timeout`
-- **AND** the remaining cspec attempts continue in the background; queued events
-  drain immediately
-
-### Requirement: prepare_recovery operator API
-
-ProcessHub SHALL expose two public functions for operators to arm a hub for a
-recovery boot:
-
-- `ProcessHub.prepare_recovery(hub_id \\ :default_hub) :: :ok | {:error, term()}` —
-  deletes the marker file on the local node. The next coordinator init on this
-  node SHALL select recovery mode (subject to env-var precedence). If the marker
-  file does not exist the call SHALL be a no-op and return `:ok`.
-
-- `ProcessHub.prepare_recovery_cluster(hub_id \\ :default_hub) ::
-  {:ok, [node()]} | {:partial, [node()], [node()]} | {:error, term()}` —
-  fans out the `prepare_recovery/1` call via RPC to every member node returned
-  by `ProcessHub.Service.Cluster.nodes(hub_id, [:include_local])`. Returns
-  `{:ok, acked_nodes}` if every member acknowledged, `{:partial, acked, unreachable}`
-  if any member failed to respond or the RPC errored, `{:error, reason}` if the
-  cluster API itself failed (e.g. hub not running locally).
-
-Both functions SHALL be safe to call on a running hub — they SHALL only delete
-the marker file; they SHALL NOT interrupt the live coordinator. Subsequent
-restarts SHALL pick up the marker absence.
-
-#### Scenario: prepare_recovery deletes the marker locally
-
-- **GIVEN** a running hub with the marker present
-- **WHEN** `ProcessHub.prepare_recovery(:my_hub)` is invoked
-- **THEN** the marker file at the configured path is deleted
-- **AND** the call returns `:ok`
-- **AND** the running coordinator state is unchanged
-
-#### Scenario: prepare_recovery_cluster fan-out with reachable peers
-
-- **GIVEN** a 3-node cluster, all members reachable
-- **WHEN** `ProcessHub.prepare_recovery_cluster(:my_hub)` is invoked on any node
-- **THEN** the marker file is deleted on all 3 nodes
-- **AND** the call returns `{:ok, [n1, n2, n3]}`
-
-#### Scenario: prepare_recovery_cluster partial reach
-
-- **GIVEN** a 3-node cluster where one peer is unreachable (`:rpc.call` returns
-  `{:badrpc, :nodedown}`)
-- **WHEN** `ProcessHub.prepare_recovery_cluster(:my_hub)` is invoked
-- **THEN** the call returns `{:partial, [acked_node_1, acked_node_2], [down_node]}`
-- **AND** the marker is deleted on the two reachable nodes
+- **GIVEN** an application upgrading with `auto_recovery: [marker_path: "..."]` in place
+- **WHEN** the hub starts
+- **THEN** init fails with a message naming `:marker_path` and pointing at the
+  migration guide, rather than starting with silently different behaviour
 
 ### Requirement: Fast-restart purge signal within :net_ticktime
 
@@ -519,45 +273,29 @@ before the first `init_sync` of the boot.
 
 ### Requirement: Recovery telemetry events
 
-ProcessHub SHALL emit `[:telemetry]`-compatible events for the recovery lifecycle:
+ProcessHub SHALL emit `[:telemetry]`-compatible events for the boot lifecycle:
 
-- `[:process_hub, :recovery, :started]` — emitted when the coordinator enters
-  `:recovering`. Measurements: `%{cspec_count: N, system_time: t}`. Metadata:
-  `%{hub_id: id, mode: :auto | :force | :skip, marker_path: path | nil}`.
-- `[:process_hub, :recovery, :complete]` — emitted when the coordinator
-  transitions `:recovering → :normal` after all cspecs have been attempted.
-  Measurements: `%{cspec_count, succeeded, failed, skipped, elapsed_ms}`.
-  Metadata: `%{hub_id, mode}`.
-- `[:process_hub, :recovery, :skipped]` — emitted when recovery is skipped at
-  boot (marker present in `auto`, or `PROCESS_HUB_RECOVERY_MODE=skip`).
-  Measurements: `%{system_time: t}`. Metadata:
-  `%{hub_id, reason: :marker_present | :env_skip | :disabled}`.
-- `[:process_hub, :recovery, :timeout]` — emitted when `recovery_timeout_ms`
-  fires before every cspec has been attempted. Measurements: `%{cspec_count,
-  attempted, elapsed_ms}`. Metadata: `%{hub_id, mode}`.
+- `[:process_hub, :recovery, :started]` — emitted once when the first reconcile round
+  begins. Measurements: `%{candidate_count: N, system_time: t}`. Metadata: `%{hub_id}`.
+- `[:process_hub, :recovery, :complete]` — emitted once when the first reconcile round
+  completes and the coordinator transitions to `:normal`. Measurements:
+  `%{candidate_count, orphans, started, duplicates, elapsed_ms}`. Metadata: `%{hub_id}`.
 
-These events are additive. The existing `recovery_state_changed` hook continues
-to fire on every state transition.
+`[:process_hub, :recovery, :skipped]` and `[:process_hub, :recovery, :timeout]` are
+removed: the first names a marker-present boot that no longer exists, the second a
+replay ceiling that no longer exists. Per-round observability is
+`[:process_hub, :reconcile, :round]`, specified in `registry-convergence`.
 
-#### Scenario: Skipped recovery emits :skipped, not :started
+#### Scenario: Opt-in boot emits started then complete
 
-- **GIVEN** marker present, `auto` mode
-- **WHEN** the coordinator initialises and transitions directly to `:normal`
-- **THEN** exactly one `[:process_hub, :recovery, :skipped]` event is emitted with
-  `reason: :marker_present`
-- **AND** no `:started` or `:complete` event is emitted
+- **GIVEN** an opt-in hub with 3 durable candidates and an empty cluster
+- **WHEN** the first reconcile round runs
+- **THEN** exactly one `:started` event with `candidate_count: 3` and one `:complete`
+  event with `started: 3` are emitted, in that order
 
-#### Scenario: Recovery completion emits :complete
+#### Scenario: Non-opted-in hub emits neither
 
-- **GIVEN** marker absent, 3 cspecs in DETS, all start successfully
-- **WHEN** replay finishes
-- **THEN** exactly one `:started` and one `:complete` event are emitted in order
-- **AND** the `:complete` measurements include `succeeded: 3, failed: 0,
-  skipped: 0`
+- **GIVEN** a hub with `auto_recovery: false`
+- **WHEN** it boots and runs
+- **THEN** no `[:process_hub, :recovery, _]` event is emitted
 
-#### Scenario: Recovery timeout emits :timeout
-
-- **GIVEN** `recovery_timeout_ms: 1_000`, 1 000 cspecs in DETS, slow replay
-- **WHEN** the ceiling fires at `t = 1 s` with only 100 cspecs attempted
-- **THEN** exactly one `[:process_hub, :recovery, :timeout]` event is emitted
-  with `attempted: 100`

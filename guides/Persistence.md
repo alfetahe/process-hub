@@ -77,119 +77,190 @@ lifecycle is observable via the `recovery_state_changed` hook (see below);
 registry-file corruption is logged at ERROR. There are no per-mutation
 events on the hot path.
 
-## Coordinator recovery
+## Declared children and orphan recovery
 
 > #### Experimental {: .warning}
 >
-> Coordinator recovery (the `:auto_recovery` lifecycle) is **experimental**
-> and may change. The persistence backends above are not affected by this
-> notice.
+> The `:auto_recovery` lifecycle is **experimental** and may change. The
+> persistence backends above are not affected by this notice.
 
-Recovery is **operator-controlled**. A returning node only rebuilds from
-its local disk when the operator has armed it to; otherwise it trusts its
-peers. This prevents a rejoining node from re-asserting stale local rows
-(dead pids, obsolete metadata) into a healthy cluster.
+With `:auto_recovery` enabled, a hub maintains a *declared list*: a versioned,
+durable list of the children that SHALL exist. `start_child/3` with
+`durable: true` adds the child's spec to it; a deliberate stop removes it; no
+other code path writes it. Each node then periodically reconciles the cluster
+toward the list:
 
-The gate is a per-node zero-byte **marker file**, consulted at coordinator
-`init/1` before the backend opens:
+```
+orphans = declared children − children observed running anywhere
+```
 
-- **Marker present** → `:normal`. The backend opens without loading any
-  rows; the synchronization strategy populates the registry from peers.
-- **Marker absent** → `:recovering`. The coordinator replays its persisted
-  registry (child specs only), then transitions to `:normal` and writes
-  the marker.
+The remainder is started through the normal start path with
+`check_existing: true`, and a running child whose declared entry was removed (a
+stop that crashed halfway) is stopped. The same difference covers both
+directions: after a whole-cluster outage the live registry is empty and every
+declared child returns; after a single-node rejoin the peers already hold the
+children and the difference is empty; a child stopped during the absence is
+absent from the list and stays dead — **list absence is the stop record, and it
+never expires**, so a node may be away arbitrarily long without resurrecting a
+stopped child on return.
 
-A successful boot always writes the marker, so steady-state restarts skip
-replay. To arm a node for disk recovery, the operator deletes the marker.
+### The declared list
 
-### Recovery states
+Mutations are serialized through the hub's leader node (elected via `:elector`,
+validated against the hub's own cluster, with the lexicographically lowest hub
+member as deterministic fallback). The leader increments one monotonic version
+per mutation and persists before acknowledging, so "which copy is newer" is a
+single integer comparison and adoption replaces the whole list. The list
+mutation always commits before the process action — add before start, remove
+before terminate — so either half of a crashed command heals in the next round.
 
-`:recovery_state` is `:recovering` (replaying from disk) or `:normal`
-(operational). With `auto_recovery: false` (the default) it is `:normal`
-from `init/1` and never transitions.
+Every node persists its adopted copy in its own DETS-backed store beside the
+registry file (whatever the `:registry_backend`), and on boot adopts the
+highest version among its local copy, its peers, and the remote manifest. With
+no leader reachable, `durable: true` starts and stops of declared children
+return `{:error, :no_leader}`; everything else stays leader-free.
+
+`durable: true` requires a `:permanent` restart type (the default): a
+`:transient` or `:temporary` child may finish on its own node, and no other
+node could distinguish "finished" from "lost".
+
+```elixir
+ProcessHub.start_child(:my_hub, child_spec, durable: true)
+ProcessHub.Service.DeclaredChildren.declared_children(:my_hub)
+#=> %{version: 3, children: [%{id: :my_child, ...}]}
+```
+
+### Remote manifest
+
+An optional off-cluster copy protects the list against the loss of every
+cluster disk. Configure `remote_manifest: {module, opts}` inside
+`:auto_recovery` with a module implementing `ProcessHub.Storage.RemoteManifest`
+— built-in adapters are `ProcessHub.Storage.RemoteManifest.LocalPath`
+(dependency-free; point it at storage that lives *outside* the cluster) and
+`ProcessHub.Storage.RemoteManifest.S3` (behind the optional `:ex_aws_s3`
+dependency, using conditional writes).
+
+The leader ships every mutation asynchronously — retried with backoff,
+coalescing superseded versions — and boot fetches the remote copy before the
+first reconcile round: the higher version wins, whichever side holds it. A
+failing or slow adapter never affects a command; failures emit the
+`manifest_ship_failed` hook.
+
+### A missing list is never empty truth
+
+A missing or corrupt local list while durable evidence exists (a seeded marker
+beside the list file, or durable registry rows) is not read as "nothing
+declared": the hub restores from the remote manifest, or parks its reconcile —
+starting and stopping nothing, emitting the alarm-grade `declared_parked` hook
+— until an operator intervenes. The explicit operator call is
+`ProcessHub.Service.DeclaredChildren.clear/1`.
+
+On the first boot with the feature enabled and no stored list, the hub seeds
+version 1 from its durable registry rows, once — so an existing deployment's
+children carry over. The stored list has a format marker; a newer marker than
+the running release understands refuses to open.
+
+### Row bookkeeping
+
+Every row carries hub-owned state under the reserved metadata key
+`:__process_hub__`: `epoch`, `changed_by`, `changed_at` (diagnostics only), and
+`durable: true` for declared children.
+
+Every write that *authors* a row increments `epoch`. Merges resolve by higher
+epoch, ties by the lexicographically lower `changed_by`, and adopt the winner
+verbatim — so every node converges on the same value in any order. The epoch is a
+counter, never a wall clock: hardware without a battery-backed clock boots with a
+bogus time exactly when it rejoins and merges. Caller metadata cannot set the key.
+
+`node_pids` is not part of that resolution. It is a set of per-node observations,
+each owned by the node it names — a payload from node `N` only touches the
+`{N, pid}` entry, and a child missing from `N`'s payload removes nothing else.
+**No absence observation deletes durable state.**
+
+A deliberate stop deletes the registry row (stop memory lives in the list); a
+`:temporary` or `:transient` child the supervisor declines to restart gets the
+same treatment. Placement churn leaves a short-lived stub swept by the janitor.
+
+### Rounds and states
+
+`:recovery_state` is `:recovering` until the first round completes, then `:normal`
+(terminal). With `auto_recovery: false` it is `:normal` from `init/1`.
+
+The first round runs `reconcile_grace_ms` after start, with or without peers, so
+`:normal` is always reached. Later rounds follow completed synchronisation rounds,
+rate-limited to one per `reconcile_interval_ms`.
+
+Every node submits from its adopted copy of the list. Duplicates are prevented by
+`check_existing: true` and by the ring routing concurrent submissions to the same
+owner, where the supervisor rejects the second. A round also reduces a child
+observed on more than one node to its ring owner's instance, and removes rows
+marked durable that are undeclared and observed running nowhere (a stale
+rejoining peer's leftovers).
 
 ### Configuration
 
 ```elixir
 %ProcessHub{
   hub_id: :my_hub,
-  registry_backend: {:dets, []},
   auto_recovery: [
-    marker_path: "/var/lib/process_hub/my_hub/cluster.healthy",
-    recovery_timeout_ms: 30_000
+    reconcile_grace_ms: 30_000,
+    reconcile_interval_ms: 15_000,
+    remote_manifest: {ProcessHub.Storage.RemoteManifest.LocalPath, path: "/mnt/off-cluster"}
   ]
 }
 ```
 
-`:auto_recovery` accepts `false` (default), `true` (default path and
-timeout), or a keyword list:
+- `:reconcile_grace_ms` — delay before the first round. Default `30_000`, range
+  `[50, 600_000]`. **Set it above your synchronization strategy's
+  `sync_interval`**; ProcessHub warns at init when it is not.
+- `:reconcile_interval_ms` — minimum spacing between rounds, and the per-handler
+  budget for the blocking `pre_recovery_replay` hook. Default `15_000`, range
+  `[1_000, 600_000]`.
+- `:remote_manifest` — `{module, opts}` implementing
+  `ProcessHub.Storage.RemoteManifest`. Default `nil` (disabled).
 
-- `:marker_path` — override; defaults to
-  `:filename.basedir(:user_data, "process_hub")/<hub_id>/cluster.healthy`.
-- `:recovery_timeout_ms` — safety ceiling on the `:recovering` state:
-  bounds the replay loop and force-opens the cluster-event queue gate.
-  Default `30_000`, range `[1_000, 600_000]`.
+The superseded keys `:marker_path`, `:replay_timeout_ms`, `:recovery_timeout_ms`
+and `:stopped_row_ttl_ms` are deprecated: accepted with a WARN, ignored, and
+rejected in a later release. So are `Recovery.prepare_recovery/1` and
+`prepare_recovery_cluster/1`, now no-ops. See `migration-guide.md`.
 
-Out-of-range values fail startup with `{:invalid_auto_recovery, _}`.
-
-### Cspecs-only replay
-
-Replay loads `child_spec` only — `node_pids` and metadata are dropped and
-recomputed by the first migration tick, so a recovered row routes through
-exactly the same path as a freshly-registered child (this is what closes
-the stale-binding leak). While recovering, the coordinator queues incoming
-cluster events and drains them FIFO once the gate opens.
-
-Stale bindings for a returning node are reaped separately by the general
-per-boot token mechanism (see
-[Fast-restart stale-binding reaping](#fast-restart-stale-binding-reaping)),
-independent of `:auto_recovery`.
+An opted-in hub opens its backend with `recovery_replay: false`: restoration
+flows through the reconcile, never through the backend open, so a returning
+node cannot republish its stale view as fact.
 
 ### Hooks
 
-- `recovery_state_changed` — every transition (async); `%{from, to, reason}`.
-- `pre_recovery_replay` — once before replay (**synchronous** — the
-  coordinator awaits each handler; use to wait on prerequisite services).
-- `post_recovery_replay` — once after replay (async).
+- `recovery_state_changed` — the `:recovering → :normal` transition (async).
+- `pre_recovery_replay` — once, before the **first** round issues any start.
+  **Synchronous**: use it to wait on prerequisite services.
+- `post_recovery_replay` — once, after the first round completes (async).
+- `reconcile_round` — every round, including quiet ones, with `candidates`,
+  `orphans`, `started`, `skipped_pending`, `duplicates`, `stopped_undeclared`,
+  `removed_stale`, `elapsed_ms`.
+- `reconcile_duplicate` — emitted by the node stopping its own duplicate instance.
+- `declared_tiebreak` — a version tie with differing content was resolved.
+- `declared_parked` — alarm-grade: the list is lost and the reconcile is parked.
+- `manifest_ship_failed` — a remote ship attempt failed; the shipper retries.
 
-### Operator API
-
-The recovery/operator API lives on `ProcessHub.Service.Recovery`:
+### Introspection and failure modes
 
 ```elixir
 Recovery.recovery_state(:my_hub)         # :recovering | :normal
-Recovery.await_normal(:my_hub, 60_000)   # :ok | {:error, :timeout} (default timeout: 60_000)
-
-# Arm the local node (delete the marker) for recovery on next boot.
-Recovery.prepare_recovery(:my_hub)       # :ok | {:error, term}
-
-# Arm every hub member via :rpc.multicall/4.
-Recovery.prepare_recovery_cluster(:my_hub)
-# => {:ok, [node]} | {:partial, acked, unreachable} | {:error, term}
+Recovery.await_normal(:my_hub, 60_000)   # :ok | {:error, :timeout}
+DeclaredChildren.declared_children(:my_hub)  # %{version: v, children: [...]}
 ```
 
-`prepare_recovery/1` only deletes the marker; the running coordinator is
-not interrupted. Wrap `prepare_recovery_cluster/1` in your ops CLI for a
-planned "drain & rebuild from disk" restart — for a rolling restart, leave
-the markers in place and let peers dominate. On hubs with
-`auto_recovery: false` these calls are no-ops returning `:ok`.
+`await_normal/2` returns once the first round has completed. Size the timeout
+above `reconcile_grace_ms`.
 
-Recommended with a persistent backend: with the default `:ets` backend the
-registry is empty on every restart, so recovery replays zero rows and
-provides no restart-survival.
-
-### Failure modes
-
-- **Corrupt DETS in recovery mode** — file is rotated, recovery runs
-  against an empty registry and reaches `:normal` with `cspec_count: 0`.
-- **Marker write failure** — logged at ERROR; the coordinator continues as
-  `:normal`, and the next boot recovers again (fail-safe: a node that
-  cannot record "I am healthy" defaults to "I might not be").
-- **Ephemeral storage** — the marker and DETS paths must share the same
-  persistent volume; ephemeral pods cannot use these backends anyway.
-
-To disable recovery entirely, set `auto_recovery: false`: the coordinator
-reaches `:normal` at `init/1` with no marker IO, exactly as before.
+- **Parked list** — the round performs no starts and no stops; a lost list is
+  never read as "nothing declared".
+- **A child mid-migration** — a declared child with a registered but unbound row
+  must be an orphan in two consecutive rounds before it is started.
+- **Divergence partitions** — both sides mutating the list under a non-locking
+  partition strategy resolve on heal by version, ties deterministically to the
+  lowest mutating node (`declared_tiebreak` fires). Quorum strategies refuse the
+  situation outright.
 
 ## Hybrid backend (`:durable_ets`)
 

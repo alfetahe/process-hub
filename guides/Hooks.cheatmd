@@ -349,9 +349,11 @@ When children are started, hooks fire in this order:
 | `:scoreboard_updated_hook`          | Load balancer scoreboard updated            | `%{scoreboard: term(), node: node()}`              |
 | `:migration_deferred_hook`          | Children parked by migration consent        | `%{child_ids: [child_id()]}`                       |
 | `:drain_completed_hook`             | Node drain completed                        | `%{migrated: non_neg_integer(), forced: non_neg_integer()}` |
-| `:recovery_state_changed_hook`      | Coordinator recovery lifecycle moment       | `%{hub_id: atom(), from: atom(), to: atom(), reason: atom(), measurements: map()}` |
-| `:pre_recovery_replay_hook`         | Before recovery replay (**synchronous**)    | `%{hub_id: atom(), child_count: non_neg_integer()}` |
-| `:post_recovery_replay_hook`        | After recovery replay                       | `%{hub_id: atom(), child_count: non_neg_integer(), succeeded: non_neg_integer(), failed: non_neg_integer(), reason: atom()}` |
+| `:recovery_state_changed_hook`      | `:recovering → :normal` transition          | `%{hub_id: atom(), from: atom(), to: atom(), reason: atom(), measurements: map()}` |
+| `:pre_recovery_replay_hook`         | Before the first reconcile round's starts (**synchronous**) | `%{hub_id: atom(), child_count: non_neg_integer()}` |
+| `:post_recovery_replay_hook`        | After the first reconcile round             | `%{hub_id: atom(), child_count: non_neg_integer(), succeeded: non_neg_integer(), failed: non_neg_integer(), reason: atom()}` |
+| `:reconcile_round_hook`             | End of every orphan reconcile round         | `%{hub_id: atom(), first_round: boolean(), measurements: map()}` |
+| `:reconcile_duplicate_hook`         | A double-bound child reduced to one instance | `%{hub_id: atom(), child_id: term(), instance_count: pos_integer(), kept_node: node(), stopped_nodes: [node()]}` |
 
 
 ## Alter hooks

@@ -140,11 +140,7 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
     if strategy.handover, do: handover_states(hub, strategy, stop_local)
 
     if match?(%ColdSwap{}, strategy) and stop_local !== [] do
-      Distributor.children_terminate(
-        hub,
-        stop_local,
-        Storage.get(hub.storage.misc, StorageKey.strsyn())
-      )
+      Distributor.children_terminate(hub, stop_local)
     end
 
     forward_to

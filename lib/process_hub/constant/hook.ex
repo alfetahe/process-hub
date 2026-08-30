@@ -185,42 +185,41 @@ defmodule ProcessHub.Constant.Hook do
   def scoreboard_updated(), do: :scoreboard_updated_hook
 
   @doc """
-  Hook dispatched on every coordinator recovery-lifecycle moment when the hub
-  has opted into `:auto_recovery`. This is the single observability surface for
-  the lifecycle. Moments:
-
-    * `:init → :recovering` (`reason: :marker_absent`) — boot enters replay.
-    * `:init → :normal` (`reason: :marker_present`) — boot skips replay.
-    * `:recovering → :normal` (`reason: :replay_complete | :recovery_timeout`).
+  Hook dispatched on every coordinator `:recovery_state` transition when the hub
+  has opted into `:auto_recovery`. The only transition is
+  `:recovering → :normal` (`reason: :reconcile_complete`), fired when the first
+  orphan reconcile round completes.
 
   Part of the **experimental** boot-recovery feature; may change in future releases.
 
   Data: `%{hub_id: atom(), from: atom(), to: atom(), reason: atom(), measurements: map()}`
-  where `measurements` carries the per-moment counts (e.g. `cspec_count`,
-  `succeeded`, `failed`, `skipped`, `elapsed_ms`).
+  where `measurements` carries the first round's counts (`candidates`, `orphans`,
+  `started`, `duplicates`, `elapsed_ms`).
   """
   @spec recovery_state_changed() :: atom()
   def recovery_state_changed(), do: :recovery_state_changed_hook
 
   @doc """
-  Hook dispatched once when the coordinator enters `:recovering`, before any
-  `start_children` is dispatched. Part of the **experimental** boot-recovery
+  Hook dispatched once per coordinator lifetime, before the **first** orphan
+  reconcile round issues any start. Part of the **experimental** boot-recovery
   feature; may change in future releases. This hook is dispatched **synchronously** —
   the coordinator awaits each registered handler's reply before proceeding,
   so handlers may block on prerequisite-service readiness.
 
-  Handlers should return quickly. Long blocks risk forcing the
-  `:recovery_timeout_ms` safety path. Crashes inside handlers are caught and
-  logged; replay proceeds regardless.
+  Handlers should return quickly; the per-handler budget is bounded by
+  `:reconcile_interval_ms`. Crashes inside handlers are caught and logged; the
+  round proceeds regardless. Subsequent rounds do not re-fire it — per-round
+  observability is `reconcile_round/0`.
 
-  Data: `%{hub_id: atom(), child_count: non_neg_integer()}`
+  Data: `%{hub_id: atom(), child_count: non_neg_integer()}` where `child_count` is
+  the durable candidate count for the round.
   """
   @spec pre_recovery_replay() :: atom()
   def pre_recovery_replay(), do: :pre_recovery_replay_hook
 
   @doc """
-  Hook dispatched once when the coordinator leaves `:recovering` (whether via
-  completion or via the `:recovery_timeout_ms` safety path). Async.
+  Hook dispatched once per coordinator lifetime, after the first orphan reconcile
+  round completes (whether or not it started anything). Async.
 
   Part of the **experimental** boot-recovery feature; may change in future releases.
 
@@ -228,4 +227,71 @@ defmodule ProcessHub.Constant.Hook do
   """
   @spec post_recovery_replay() :: atom()
   def post_recovery_replay(), do: :post_recovery_replay_hook
+
+  @doc """
+  Hook dispatched at the end of **every** orphan reconcile round, including rounds
+  that find nothing — a silent reconcile stays distinguishable from a stalled one.
+
+  Part of the **experimental** boot-recovery feature; may change in future releases.
+
+  Data: `%{hub_id: atom(), first_round: boolean(), measurements: map()}` where
+  `measurements` is `%{candidates, orphans, started, skipped_pending, duplicates,
+  elapsed_ms}`.
+  """
+  @spec reconcile_round() :: atom()
+  def reconcile_round(), do: :reconcile_round_hook
+
+  @doc """
+  Hook dispatched by the node that stops its own instance of a child observed
+  running on more than one node. The instance on the child's ring owner is kept;
+  when no observed instance is on the owner, the lexicographically lowest node
+  name is kept.
+
+  Part of the **experimental** boot-recovery feature; may change in future releases.
+
+  Data: `%{hub_id: atom(), child_id: term(), instance_count: pos_integer(), kept_node: node(), stopped_nodes: [node()]}`
+  """
+  @spec reconcile_duplicate() :: atom()
+  def reconcile_duplicate(), do: :reconcile_duplicate_hook
+
+  @doc """
+  Hook dispatched when two declared-list copies carry the same version with
+  different content and the deterministic tiebreak (lexicographically lowest
+  mutating node) resolves them. Reachable only when both partition sides mutated
+  the list under a non-locking partition strategy.
+
+  Part of the **experimental** declared-children feature; may change in future
+  releases.
+
+  Data: `%{hub_id: atom(), version: pos_integer(), kept_mutated_by: node(), discarded_mutated_by: node()}`
+  """
+  @spec declared_tiebreak() :: atom()
+  def declared_tiebreak(), do: :declared_tiebreak_hook
+
+  @doc """
+  Alarm-grade hook dispatched when a hub's declared list is missing or corrupt
+  while durable evidence of declared children exists and no remote manifest copy
+  could restore it. The hub's reconcile is parked — no child is started or
+  stopped by it — until an operator intervenes.
+
+  Part of the **experimental** declared-children feature; may change in future
+  releases.
+
+  Data: `%{hub_id: atom(), reason: atom()}`
+  """
+  @spec declared_parked() :: atom()
+  def declared_parked(), do: :declared_parked_hook
+
+  @doc """
+  Hook dispatched when shipping the declared list to the configured remote
+  manifest adapter fails. The originating command already committed locally;
+  the shipper retries with backoff.
+
+  Part of the **experimental** declared-children feature; may change in future
+  releases.
+
+  Data: `%{hub_id: atom(), version: pos_integer(), error: term(), attempt: pos_integer()}`
+  """
+  @spec manifest_ship_failed() :: atom()
+  def manifest_ship_failed(), do: :manifest_ship_failed_hook
 end

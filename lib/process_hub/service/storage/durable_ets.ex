@@ -6,7 +6,9 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   ETS is the source-of-truth for reads and writes; every mutation is
   mirrored to a DETS file with `:dets.sync/1` before returning, so
   durability is no weaker than the `ProcessHub.Service.Storage.Dets`
-  backend. On `open/2` the DETS file is replayed into ETS so reads are
+  backend. A write made with `sync: false` is mirrored but not synced
+  until `sync/1` — the registry uses this to commit a batch of
+  concurrent writes under one sync. On `open/2` the DETS file is replayed into ETS so reads are
   immediately authoritative.
 
   ### When to use
@@ -117,9 +119,17 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
   @impl true
   @spec insert_many(ref(), [{term(), term(), keyword()}]) :: :ok | {:error, term()}
-  def insert_many(ref, items) do
-    do_write(ref, Entry.build_many(items))
+  def insert_many(ref, items), do: insert_many(ref, items, [])
+
+  @impl true
+  @spec insert_many(ref(), [{term(), term(), keyword()}], keyword()) :: :ok | {:error, term()}
+  def insert_many(ref, items, write_opts) do
+    do_write(ref, Entry.build_many(items), write_opts)
   end
+
+  @impl true
+  @spec sync(ref()) :: :ok | {:error, term()}
+  def sync({_ets_tid, dets_table}), do: :dets.sync(dets_table)
 
   @impl true
   @spec get(ref(), term()) :: term() | nil
@@ -141,13 +151,17 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
   @impl true
   @spec remove(ref(), term()) :: :ok | {:error, term()}
-  def remove({ets_tid, dets_table} = _ref, key) do
+  def remove(ref, key), do: remove(ref, key, [])
+
+  @impl true
+  @spec remove(ref(), term(), keyword()) :: :ok | {:error, term()}
+  def remove({ets_tid, dets_table} = _ref, key, write_opts) do
     prior = ETS.lookup(ets_tid, key)
     ETS.delete(ets_tid, key)
 
     case :dets.delete(dets_table, key) do
       :ok ->
-        :dets.sync(dets_table)
+        DetsFile.maybe_sync(dets_table, write_opts)
         :ok
 
       {:error, reason} ->
@@ -191,6 +205,10 @@ defmodule ProcessHub.Service.Storage.DurableEts do
   end
 
   @impl true
+  @spec read_durable(ref()) :: {:ok, [{term(), term()}]} | {:error, term()}
+  def read_durable({_ets_tid, dets_table}), do: DetsFile.read_durable(dets_table)
+
+  @impl true
   @spec clear_all(ref()) :: :ok | {:error, term()}
   def clear_all({ets_tid, dets_table} = _ref) do
     case :dets.delete_all_objects(dets_table) do
@@ -206,14 +224,14 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
   ## Helpers ----------------------------------------------------------------
 
-  defp do_write({ets_tid, dets_table}, objects) do
+  defp do_write({ets_tid, dets_table}, objects, write_opts \\ []) do
     keys = Enum.map(objects, &elem(&1, 0))
     prior = Enum.flat_map(keys, &ETS.lookup(ets_tid, &1))
     ETS.insert(ets_tid, objects)
 
     case :dets.insert(dets_table, objects) do
       :ok ->
-        :dets.sync(dets_table)
+        DetsFile.maybe_sync(dets_table, write_opts)
         :ok
 
       {:error, reason} ->

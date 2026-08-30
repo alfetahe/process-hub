@@ -95,9 +95,9 @@ defmodule Test.Service.DistributorTest do
     )
     |> ProcessHub.Future.await()
 
-    sync_strategy = ProcessHub.Service.Storage.get(misc_storage, :synchronization_strategy)
+    _sync_strategy = ProcessHub.Service.Storage.get(misc_storage, :synchronization_strategy)
 
-    Distributor.children_terminate(hub, [cs1.id, cs2.id], sync_strategy)
+    Distributor.children_terminate(hub, [cs1.id, cs2.id])
 
     assert Supervisor.which_children(hub.procs.dist_sup) === []
   end

@@ -310,15 +310,16 @@ defmodule ProcessHub.Service.RequestManager do
   end
 
   @doc """
-  Loads all strategies from storage.
+  Loads the strategies a child-start request resolves against.
+
+  Propagation reads the synchronization strategy itself, through
+  `ProcessHub.Service.Dispatcher.propagate_event/3`.
   """
-  @spec load_strategies(Hub.t()) :: %{sync: term(), dist: term(), redun: term(), migr: term()}
+  @spec load_strategies(Hub.t()) :: %{dist: term(), redun: term()}
   def load_strategies(hub) do
     %{
-      sync: Storage.get(hub.storage.misc, StorageKey.strsyn()),
       dist: Storage.get(hub.storage.misc, StorageKey.strdist()),
-      redun: Storage.get(hub.storage.misc, StorageKey.strred()),
-      migr: Storage.get(hub.storage.misc, StorageKey.strmigr())
+      redun: Storage.get(hub.storage.misc, StorageKey.strred())
     }
   end
 
@@ -492,10 +493,10 @@ defmodule ProcessHub.Service.RequestManager do
       when length(data) <= @max_pids_per_request,
       do: [req]
 
-  def split(%PidsUnregisterRequest{removable_cid_nodes: data}) do
+  def split(%PidsUnregisterRequest{removable_cid_nodes: data} = req) do
     data
     |> Enum.chunk_every(@max_pids_per_request)
-    |> Enum.map(fn chunk -> %PidsUnregisterRequest{removable_cid_nodes: chunk} end)
+    |> Enum.map(fn chunk -> %{req | removable_cid_nodes: chunk} end)
   end
 
   def split(request), do: [request]

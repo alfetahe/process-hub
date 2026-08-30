@@ -172,6 +172,32 @@ defmodule Test.Service.MigrationTest do
     end
   end
 
+  describe "migrate_child/3" do
+    test "moves a locally hosted child to the target through the handover pipeline", %{hub: hub} do
+      {:ok, pid} = ConsentServer.start_link(%{})
+      register_child(hub, :mc1, pid)
+
+      assert :ok = Migration.migrate_child(hub.hub_id, :mc1, @remote_node)
+      # The hot-swap handover pipeline ran (state queried and stored) without
+      # any deferred-list involvement — consent is the caller's decision here.
+      assert {%{}, ^pid} = Storage.get(hub.storage.misc, {:hotswap_state, :mc1})
+      assert Migration.deferred_list(hub) == []
+    end
+
+    test "refuses an unknown child, a non-member target, and a same-node move", %{hub: hub} do
+      assert {:error, :not_found} = Migration.migrate_child(hub.hub_id, :missing, @remote_node)
+
+      {:ok, pid} = ConsentServer.start_link(%{})
+      register_child(hub, :mc2, pid)
+
+      assert {:error, :not_a_member} =
+               Migration.migrate_child(hub.hub_id, :mc2, :not_in_hub@nowhere)
+
+      assert {:error, :same_node} = Migration.migrate_child(hub.hub_id, :mc2, node())
+      assert Storage.get(hub.storage.misc, {:hotswap_state, :mc2}) == nil
+    end
+  end
+
   describe "handle_retry_tick/1" do
     test "prunes entries whose child has no local pid", %{hub: hub} do
       put_deferred(hub, [entry(:ghost)])

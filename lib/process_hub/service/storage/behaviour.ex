@@ -33,6 +33,13 @@ defmodule ProcessHub.Service.Storage.Behaviour do
   """
   @type insert_opts() :: [{:ttl, pos_integer()}] | keyword()
 
+  @typedoc """
+  Per-write options. `sync: false` applies the write but leaves its durable
+  sync to a later `sync/1`, so one sync can cover a batch of writes (group
+  commit). Absent, or `sync: true`, the write is durable on return.
+  """
+  @type write_opts() :: [{:sync, boolean()}]
+
   @doc """
   Opens (and if necessary creates) the registry storage for the given
   hub.
@@ -75,6 +82,17 @@ defmodule ProcessHub.Service.Storage.Behaviour do
               :ok | {:error, term()}
 
   @doc """
+  Optional: `insert_many/2` taking `write_opts()`. A backend that implements
+  it together with `sync/1` lets the registry group-commit: several writes
+  applied with `sync: false`, then one `sync/1` that makes them all durable.
+  """
+  @callback insert_many(
+              ref :: ref(),
+              items :: [{term(), term(), insert_opts()}],
+              write_opts :: write_opts()
+            ) :: :ok | {:error, term()}
+
+  @doc """
   Returns the value stored under `key`, or `nil` if the key is missing
   or expired.
   """
@@ -89,6 +107,18 @@ defmodule ProcessHub.Service.Storage.Behaviour do
   Removes `key`.
   """
   @callback remove(ref :: ref(), key :: term()) :: :ok | {:error, term()}
+
+  @doc """
+  Optional: `remove/2` taking `write_opts()`; see `insert_many/3`.
+  """
+  @callback remove(ref :: ref(), key :: term(), write_opts :: write_opts()) ::
+              :ok | {:error, term()}
+
+  @doc """
+  Optional: makes every write applied with `sync: false` durable. Backends
+  without a durable medium need not implement it.
+  """
+  @callback sync(ref :: ref()) :: :ok | {:error, term()}
 
   @doc """
   Returns all entries as a list. The shape mirrors the existing
@@ -114,5 +144,26 @@ defmodule ProcessHub.Service.Storage.Behaviour do
   """
   @callback clear_all(ref :: ref()) :: :ok
 
-  @optional_callbacks insert_many: 2
+  @doc """
+  Returns every non-expired row held in the backend's **durable medium**, as
+  `{key, value}` pairs, without inserting into, mutating, or otherwise affecting
+  the backend's live in-memory view.
+
+  Backends without a durable medium return `{:ok, []}`. A backend whose durable
+  medium is unreadable returns `{:error, reason}`; callers MUST treat an error as
+  "no candidates" rather than as an empty durable set, so a transient read
+  failure is never mistaken for "everything was deliberately removed".
+
+  Safe to call at any time on a running hub; it MUST NOT block mutations for
+  longer than a single fold.
+
+  Optional: a backend that omits it is treated as having no durable medium, so
+  backends written against earlier releases keep working.
+
+  Part of the **experimental** `:auto_recovery` feature; may change in future
+  releases.
+  """
+  @callback read_durable(ref :: ref()) :: {:ok, [{term(), term()}]} | {:error, term()}
+
+  @optional_callbacks insert_many: 2, insert_many: 3, remove: 3, sync: 1, read_durable: 1
 end

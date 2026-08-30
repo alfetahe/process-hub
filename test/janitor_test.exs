@@ -208,7 +208,7 @@ defmodule Test.JanitorTest do
       # dump_all returns entries including those with empty nodes
       dump = ProcessRegistry.dump_all(hub_id)
       assert Map.has_key?(dump, :dump_pending)
-      assert dump[:dump_pending] == {child_spec, [], metadata}
+      assert Test.Helper.Common.caller_rows(dump[:dump_pending]) == {child_spec, [], metadata}
 
       # dump (filtered) excludes entries with empty nodes
       filtered_dump = ProcessRegistry.dump(hub_id)

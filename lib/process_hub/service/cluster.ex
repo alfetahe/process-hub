@@ -127,13 +127,14 @@ defmodule ProcessHub.Service.Cluster do
   end
 
   @doc """
-  Removes every process-registry entry that references `node`, deleting any child
-  entry left with no remaining locations. Returns the affected `child_id`s.
+  Withdraws every process-registry observation that references `node`. Returns the
+  affected `child_id`s.
 
-  This is a delete-only dead-node maintenance primitive for the cases the
-  automatic `:nodedown` purge does not cover — for example `{dead_node, pid}`
-  rows replayed from a durable registry at cold boot, where no `:nodedown` event
-  ever fires. It does not redistribute; re-placement is the caller's job.
+  This is a dead-node maintenance primitive for the cases the automatic
+  `:nodedown` purge does not cover — for example `{dead_node, pid}` rows replayed
+  from a durable registry at cold boot, where no `:nodedown` event ever fires. A
+  child left with no observation keeps its row and becomes an orphan-reconcile
+  candidate; re-placement is the caller's job.
   """
   @spec purge_node(ProcessHub.hub_id(), node()) :: [ProcessHub.child_id()]
   def purge_node(hub_id, node) do
@@ -141,10 +142,10 @@ defmodule ProcessHub.Service.Cluster do
   end
 
   @doc """
-  Purges every node that is not part of the hub's current cluster from the
-  process registry. Returns the list of purged dead nodes.
+  Withdraws the observations of every node that is not part of the hub's current
+  cluster. Returns the list of purged dead nodes.
 
-  Delete-only, like `purge_node/2`; it does not redistribute. Intended for
+  Observation-only, like `purge_node/2`; it does not redistribute. Intended for
   out-of-band reconcile and cold-boot replay sanitisation.
   """
   @spec purge_dead_nodes(ProcessHub.hub_id()) :: [node()]
@@ -193,9 +194,10 @@ defmodule ProcessHub.Service.Cluster do
 
   This closes the fast-restart stale-binding gap for every backend — the stale
   `{peer, dead_pid}` rows live on the local (peer) node, independent of the
-  restarted node's `:registry_backend`. Purging is delete-only; the child's
-  re-placement is handled by the normal redistribution path, and any binding
-  wiped by a late announcement is re-asserted by the returning node's next sync.
+  restarted node's `:registry_backend`. Purging only withdraws observations; the
+  child's re-placement is handled by the normal redistribution path, and any
+  binding wiped by a late announcement is re-asserted by the returning node's next
+  sync.
   """
   @spec handle_boot_announcement(Hub.t(), node(), integer()) :: :ok
   def handle_boot_announcement(%Hub{} = hub, peer, token) do
@@ -210,25 +212,9 @@ defmodule ProcessHub.Service.Cluster do
     end
   end
 
-  # Single pass over an already-dumped registry: drop every `{node, pid}` whose
-  # node is in `nodes_to_purge`, deleting entries left empty. Returns affected ids.
   defp purge_from(hub_id, registry, nodes_to_purge) do
-    registry
-    |> Enum.filter(fn {_child_id, {_spec, node_pids, _meta}} ->
-      Enum.any?(node_pids, fn {node, _pid} -> MapSet.member?(nodes_to_purge, node) end)
-    end)
-    |> Enum.map(fn {child_id, {_spec, node_pids, _meta}} ->
-      case Enum.reject(node_pids, fn {node, _pid} -> MapSet.member?(nodes_to_purge, node) end) do
-        [] ->
-          ProcessRegistry.delete(hub_id, child_id)
-
-        remaining ->
-          ProcessRegistry.update(hub_id, child_id, fn spec, _node_pids, meta ->
-            {spec, remaining, meta}
-          end)
-      end
-
-      child_id
+    ProcessRegistry.withdraw_observations(hub_id, registry, fn _child_id, node ->
+      MapSet.member?(nodes_to_purge, node)
     end)
   end
 

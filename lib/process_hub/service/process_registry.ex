@@ -4,7 +4,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
   """
 
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.Batch
   alias ProcessHub.Service.HookManager
+  alias ProcessHub.Service.ProcessRegistry.Row
   alias ProcessHub.Service.Storage
 
   require Logger
@@ -12,6 +14,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
   use GenServer
 
   @default_timeout 10_000
+
+  # Registry writes are applied on the spot and synced in a group: see `commit/4`.
+  @deferred [sync: false]
   # Per-peer budget for opt-in update propagation. Kept short: propagation
   # runs in the caller (e.g. inside a heal/rebind path) and is best-effort —
   # a slow peer must not stall the caller for the full local timeout.
@@ -33,7 +38,8 @@ defmodule ProcessHub.Service.ProcessRegistry do
         }
 
   @type metadata() :: %{
-          tag: String.t()
+          optional(:tag) => String.t(),
+          optional(:__process_hub__) => Row.t()
         }
 
   def start_link({hub_id, via_tuple}) do
@@ -46,32 +52,54 @@ defmodule ProcessHub.Service.ProcessRegistry do
     # configured Storage.Behaviour backend). This GenServer exists to
     # serialise mutations through `handle_call/3`; it does not own the
     # underlying storage handle.
-    {:ok, hub_id}
+    {:ok, %{hub_id: hub_id, batch: Batch.new(), dirty: MapSet.new()}}
   end
 
   @impl GenServer
-  def handle_call({:insert, hub_id, child_spec, child_nodes, opts}, _from, state) do
-    {:reply, with_storage(fn -> handle_insert(hub_id, child_spec, child_nodes, opts) end), state}
+  def handle_call({:insert, _hub_id, child_spec, child_nodes, opts}, from, state) do
+    table = Keyword.get(opts, :table, state.hub_id)
+
+    commit(
+      state,
+      from,
+      table,
+      with_storage(fn -> handle_insert(state, child_spec, child_nodes, opts) end)
+    )
   end
 
   @impl GenServer
-  def handle_call({:delete, hub_id, child_id, opts}, _from, state) do
-    {:reply, with_storage(fn -> handle_delete(hub_id, child_id, opts) end), state}
+  def handle_call({:delete, hub_id, child_id, opts}, from, state) do
+    commit(state, from, hub_id, with_storage(fn -> handle_delete(hub_id, child_id, opts) end))
   end
 
   @impl GenServer
-  def handle_call({:bulk_insert, hub_id, children, opts}, _from, state) do
-    {:reply, with_storage(fn -> handle_bulk_insert(hub_id, children, opts) end), state}
+  def handle_call({:bulk_insert, _hub_id, children, opts}, from, state) do
+    commit(
+      state,
+      from,
+      state.hub_id,
+      with_storage(fn -> handle_bulk_insert(state, children, opts) end)
+    )
   end
 
   @impl GenServer
-  def handle_call({:bulk_delete, hub_id, children, opts}, _from, state) do
-    {:reply, with_storage(fn -> handle_bulk_delete(hub_id, children, opts) end), state}
+  def handle_call({:bulk_delete, _hub_id, children, opts}, from, state) do
+    commit(
+      state,
+      from,
+      state.hub_id,
+      with_storage(fn -> handle_bulk_delete(state, children, opts) end)
+    )
   end
 
   @impl GenServer
-  def handle_call({:update, hub_id, child_id, update_fn}, _from, state) do
-    {:reply, with_storage(fn -> handle_update(hub_id, child_id, update_fn) end), state}
+  def handle_call({:update, _hub_id, child_id, update_fn}, from, state) do
+    commit(
+      state,
+      from,
+      state.hub_id,
+      with_storage(fn -> handle_update(state, child_id, update_fn) end)
+    )
   end
 
   @impl GenServer
@@ -80,9 +108,62 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @impl GenServer
-  def handle_call({:delete_if_expired, hub_id, child_id}, _from, state) do
-    {:reply, with_storage(fn -> handle_delete_if_expired(hub_id, child_id) end, false), state}
+  def handle_call({:delete_if_expired, hub_id, child_id}, from, state) do
+    commit(
+      state,
+      from,
+      hub_id,
+      with_storage(fn -> handle_delete_if_expired(hub_id, child_id) end, false)
+    )
   end
+
+  # One durable sync per dirty table covers every write queued ahead of this
+  # message, then each caller gets its reply. A sync failure is reported, not
+  # turned into a caller error: the rows are already applied, and the backend
+  # syncs again on the next write.
+  @impl GenServer
+  def handle_info(:flush, state) do
+    Enum.each(state.dirty, fn table ->
+      case with_storage(fn -> Storage.sync(table) end) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "ProcessRegistry: durable sync of #{inspect(table)} failed: #{inspect(reason)}"
+          )
+      end
+    end)
+
+    {replies, batch} = Batch.take(state.batch)
+    Enum.each(replies, fn {from, result} -> GenServer.reply(from, result) end)
+
+    {:noreply, %{state | batch: batch, dirty: MapSet.new()}}
+  end
+
+  # The catch-all `use GenServer` provided before `:flush` existed: a stray
+  # message (a late reply to a call made from inside a hook) is noted, never
+  # fatal to the registry.
+  @impl GenServer
+  def handle_info(message, state) do
+    Logger.debug("ProcessRegistry received an unexpected message: #{inspect(message)}")
+    {:noreply, state}
+  end
+
+  # Group commit: the write is applied before this runs and its reply rides
+  # the batch's `:flush`, so no caller is answered before the sync that covers
+  # its write. A result that wrote nothing (an error, a no-op expiry) is
+  # answered at once.
+  defp commit(state, from, table, result) when result in [:ok, true] do
+    {:noreply,
+     %{
+       state
+       | batch: Batch.add(state.batch, :flush, {from, result}),
+         dirty: MapSet.put(state.dirty, table)
+     }}
+  end
+
+  defp commit(state, _from, _table, result), do: {:reply, result, state}
 
   # Drops mutation requests that race against hub teardown: Coordinator.terminate
   # closes the registry backend, so a still-queued bulk_delete/insert can land
@@ -112,23 +193,28 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Entries with empty node lists are excluded.
   """
   @spec dump(ProcessHub.hub_id()) :: registry_dump()
-  def dump(hub_id) do
-    Storage.foldl_entries(hub_id, %{}, fn
-      {_child_id, {_spec, [], _meta}}, acc -> acc
-      {child_id, value}, acc -> Map.put(acc, child_id, value)
-    end)
-  end
+  def dump(hub_id), do: dump_all(hub_id, include_unbound: false)
 
   @doc """
   Dumps the whole registry including entries with empty node lists.
 
   Unlike `dump/1`, this includes all entries regardless of their node list,
-  such as pending forwarding entries and TTL tombstone entries.
+  such as pending forwarding entries and churn stubs.
+
+  ## Options
+  - `:include_unbound` - when `false`, rows with an empty node list are left out
+    (default: `true`). This is what `dump/1` asks for.
   """
-  @spec dump_all(ProcessHub.hub_id()) :: registry_dump()
-  def dump_all(hub_id) do
-    Storage.foldl_entries(hub_id, %{}, fn {child_id, value}, acc ->
-      Map.put(acc, child_id, value)
+  @spec dump_all(ProcessHub.hub_id(), keyword()) :: registry_dump()
+  def dump_all(hub_id, opts \\ []) do
+    include_unbound = Keyword.get(opts, :include_unbound, true)
+
+    Storage.foldl_entries(hub_id, %{}, fn {child_id, {_spec, nodes, _metadata} = value}, acc ->
+      if not include_unbound and nodes === [] do
+        acc
+      else
+        Map.put(acc, child_id, value)
+      end
     end)
   end
 
@@ -178,6 +264,18 @@ defmodule ProcessHub.Service.ProcessRegistry do
     match_expr = {:"$1", {:_, :"$3", %{tag: tag}}}
 
     Storage.match(hub_id, match_expr)
+  end
+
+  @doc """
+  Returns every child whose registry metadata carries `key`, with that key's
+  value: `[{child_id, node_pids, value}]`. An ETS match over the rows, no row
+  decoding — `match_tag/2` generalised to any metadata key and any value.
+  """
+  @spec match_metadata(ProcessHub.hub_id(), term()) :: [
+          {ProcessHub.child_id(), [{node(), pid()}], term()}
+        ]
+  def match_metadata(hub_id, key) do
+    Storage.match(hub_id, {:"$1", {:_, :"$2", %{key => :"$3"}}})
   end
 
   @doc "Deletes all objects from the process registry."
@@ -251,14 +349,23 @@ defmodule ProcessHub.Service.ProcessRegistry do
   Checks whether an entry exists in the registry for the given child_id.
 
   Unlike `lookup/2`, this returns `true` even for entries with empty node lists
-  (e.g., pending forwarding entries or TTL tombstone entries).
+  (e.g., pending forwarding entries or churn stubs).
   """
   @spec entry_exists?(ProcessHub.hub_id(), ProcessHub.child_id()) :: boolean()
   def entry_exists?(hub_id, child_id) do
     Storage.get(hub_id, child_id) != nil
   end
 
-  @doc "Return the child_spec, nodes, and pids for the given child_id."
+  @doc """
+  Return the child_spec, nodes, and pids for the given child_id.
+
+  ## Options
+  - `:table` - alternative table to read from (default: `hub_id`)
+  - `:with_metadata` - include the metadata map in the returned tuple (default: `false`)
+  - `:include_empty` - also return rows whose `node_pids` list is empty —
+    pending-forward rows and rows whose last observation was withdrawn
+    (default: `false`, which reports them as absent)
+  """
   @spec lookup(
           ProcessHub.hub_id(),
           ProcessHub.child_id(),
@@ -270,12 +377,13 @@ defmodule ProcessHub.Service.ProcessRegistry do
   def lookup(hub_id, child_id, opts \\ []) do
     table = Keyword.get(opts, :table, hub_id)
     with_metadata = Keyword.get(opts, :with_metadata, false)
+    include_empty = Keyword.get(opts, :include_empty, false)
 
     case Storage.get(table, child_id) do
       nil ->
         nil
 
-      {_child_spec, [], _metadata} ->
+      {_child_spec, [], _metadata} when not include_empty ->
         nil
 
       {child_spec, child_nodes, metadata} ->
@@ -297,9 +405,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
   option is provided. If `:hook_storage` is `nil` or not provided, no hooks will be fired.
 
   ## Options
-  - `:metadata` - Additional metadata to store with the process (default: `%{}`)
+  - `:metadata` - Additional metadata to store with the process (default: `%{}`).
+    The reserved `:__process_hub__` key is hub-owned: a caller-supplied value is
+    ignored with a WARN log.
   - `:table` - Alternative table to use for storage (default: `hub_id`)
   - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
+  - `:adopt` - When `true`, the `:__process_hub__` map inside `:metadata` is
+    written verbatim instead of being re-authored. Reserved for the replica merge,
+    which adopts the winner of an epoch comparison rather than authoring a new
+    value (default: `false`).
+  - `:durable` - Marks the row's child as declared (`durable: true` start); the
+    flag is carried in the hub-owned bookkeeping and survives subsequent writes.
   """
   @spec insert(ProcessHub.hub_id(), ProcessHub.child_spec(), [{node(), pid()}], keyword() | nil) ::
           :ok
@@ -360,9 +476,18 @@ defmodule ProcessHub.Service.ProcessRegistry do
   if the `:hook_storage` option is provided. If `:hook_storage` is `nil` or not provided,
   no hooks will be fired.
 
+  Rows are never removed here — only the named nodes' entries are.
+
   ## Options
   - `:hook_storage` - Hook storage to use for dispatching hooks (default: `nil`)
   - `:timeout` - GenServer call timeout in milliseconds (default: `10_000`)
+  - `:on_empty` - what becomes of a row that just lost its last node entry:
+    - `:churn` (default) - a stub with a 30 s expiry. For placement churn, where
+      a re-registration from the child's new node is expected imminently.
+    - `:delete` - the row is removed entirely, for a deliberate stop. Stop
+      memory for declared children lives in the declared list, not in the row.
+    - `:keep` - an unbound row with no expiry, for a withdrawn observation.
+      The row is kept rather than erased on someone else's say-so.
 
   ## Parameters
   - `hub_id` - The hub identifier
@@ -381,13 +506,45 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @doc """
+  Withdraws every `{node, pid}` observation in `registry` for which
+  `withdraw?.(child_id, node)` returns true. Returns the affected child_ids.
+
+  Withdrawing is never a delete: an observation says only what its owner sees, so
+  a child left with no observation keeps its row (`on_empty: :keep`) and becomes a
+  candidate for the next orphan reconcile round rather than being erased on
+  someone else's say-so.
+
+  `opts` are forwarded to `bulk_delete/3`.
+  """
+  @spec withdraw_observations(
+          ProcessHub.hub_id(),
+          registry_dump(),
+          (ProcessHub.child_id(), node() -> boolean()),
+          keyword()
+        ) :: [ProcessHub.child_id()]
+  def withdraw_observations(hub_id, registry, withdraw?, opts \\ []) do
+    withdrawn =
+      registry
+      |> Enum.map(fn {child_id, {_child_spec, node_pids, _metadata}} ->
+        {child_id, node_pids |> Keyword.keys() |> Enum.filter(&withdraw?.(child_id, &1))}
+      end)
+      |> Enum.reject(fn {_child_id, nodes} -> nodes === [] end)
+
+    if withdrawn !== [] do
+      bulk_delete(hub_id, withdrawn, Keyword.put(opts, :on_empty, :keep))
+    end
+
+    Enum.map(withdrawn, fn {child_id, _nodes} -> child_id end)
+  end
+
+  @doc """
   Deletes a TTL registry entry, but only if it is still expired.
 
   Expiry is re-validated inside the registry process. If the entry was
   re-populated since the caller observed it (re-population clears the TTL,
   turning the row into a permanent 2-tuple) or was given a fresh TTL lease,
   the delete is skipped. This closes a race where the janitor's registry
-  scan sees an expired tombstone, but an incoming registration re-populates
+  scan sees an expired stub, but an incoming registration re-populates
   the entry before the delete is applied — without this guard the cleanup
   would wipe a freshly re-registered live process.
 
@@ -477,11 +634,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
     end)
   end
 
-  defp handle_insert(hub_id, child_spec, child_nodes, opts) do
-    metadata = Keyword.get(opts, :metadata, %{})
-
-    Keyword.get(opts, :table, hub_id)
-    |> Storage.insert(child_spec.id, {child_spec, child_nodes, metadata}, opts)
+  defp handle_insert(state, child_spec, child_nodes, opts) do
+    table = Keyword.get(opts, :table, state.hub_id)
+    row = staged_row(state, table, child_spec.id, child_spec, child_nodes, opts)
+    Storage.insert_many(table, [row], @deferred)
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
@@ -505,7 +661,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
     case Storage.match(hub_id, {child_id, :_, :"$1"}) do
       [{expire}] when is_integer(expire) and now > expire ->
-        Storage.remove(hub_id, child_id)
+        Storage.remove(hub_id, child_id, @deferred)
         true
 
       _ ->
@@ -515,7 +671,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   defp handle_delete(hub_id, child_id, opts) do
-    Storage.remove(hub_id, child_id)
+    Storage.remove(hub_id, child_id, @deferred)
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
@@ -529,22 +685,42 @@ defmodule ProcessHub.Service.ProcessRegistry do
   # Stages all final rows first and commits them with a single
   # `Storage.insert_many/2` write, so concurrent readers never observe a
   # partially applied bulk.
-  defp handle_bulk_insert(hub_id, children, opts) do
+  defp handle_bulk_insert(state, children, opts) do
     hook_storage = Keyword.get(opts, :hook_storage, nil)
+    hub_id = state.hub_id
 
     {rows, hooks} =
       Enum.reduce(children, {[], []}, fn {child_id, {child_spec, child_nodes, metadata}},
                                          {rows, hooks} ->
-        case lookup(hub_id, child_id) do
+        case lookup(hub_id, child_id, with_metadata: true, include_empty: true) do
           nil ->
-            row = {child_id, {child_spec, child_nodes, metadata}, []}
+            row =
+              staged_row(
+                state,
+                hub_id,
+                child_id,
+                child_spec,
+                child_nodes,
+                Keyword.put(opts, :metadata, metadata)
+              )
+
             {[row | rows], stage_registered_hook(hooks, child_id, child_nodes)}
 
-          {_child_spec, existing_nodes} ->
+          {_child_spec, existing_nodes, _existing_metadata} ->
             if Enum.sort(child_nodes) !== Enum.sort(existing_nodes) do
               merged_nodes = Keyword.merge(existing_nodes, child_nodes)
               diff = get_insert_diff(child_nodes, existing_nodes)
-              row = {child_id, {child_spec, merged_nodes, metadata}, []}
+
+              row =
+                staged_row(
+                  state,
+                  hub_id,
+                  child_id,
+                  child_spec,
+                  merged_nodes,
+                  Keyword.put(opts, :metadata, metadata)
+                )
+
               {[row | rows], stage_registered_hook(hooks, child_id, diff)}
             else
               {rows, hooks}
@@ -552,7 +728,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
         end
       end)
 
-    Storage.insert_many(hub_id, rows)
+    Storage.insert_many(hub_id, rows, @deferred)
 
     if hook_storage do
       HookManager.dispatch_hooks(hook_storage, Enum.reverse(hooks))
@@ -567,13 +743,17 @@ defmodule ProcessHub.Service.ProcessRegistry do
     [{Hook.child_registered(), %{child_id: child_id, node_pids: node_pids}} | hooks]
   end
 
-  # Same stage-then-commit shape as `handle_bulk_insert/3`.
-  defp handle_bulk_delete(hub_id, children, opts) do
-    {rows, hooks} =
-      Enum.reduce(children, {[], []}, fn {child_id, rem_nodes}, {rows, hooks} ->
+  # Same stage-then-commit shape as `handle_bulk_insert/3`. Rows emptied under
+  # `on_empty: :delete` are removed instead of re-staged.
+  defp handle_bulk_delete(state, children, opts) do
+    hub_id = state.hub_id
+    on_empty = Keyword.get(opts, :on_empty) || :churn
+
+    {rows, deletes, hooks} =
+      Enum.reduce(children, {[], [], []}, fn {child_id, rem_nodes}, {rows, deletes, hooks} ->
         case lookup(hub_id, child_id, with_metadata: true) do
           nil ->
-            {rows, hooks}
+            {rows, deletes, hooks}
 
           {child_spec, nodes, metadata} ->
             new_nodes =
@@ -581,23 +761,30 @@ defmodule ProcessHub.Service.ProcessRegistry do
                 !Enum.member?(rem_nodes, node)
               end)
 
-            row =
-              if new_nodes != [] do
-                {child_id, {child_spec, new_nodes, metadata}, []}
-              else
-                # Keep the entry alive with a TTL instead of deleting immediately.
-                # This prevents a race condition where bulk_delete wipes the entry
-                # before an incoming PidsRegisterRequest can re-populate it with
-                # the new node's data. The TTL ensures cleanup if no re-population
-                # occurs.
-                {child_id, {child_spec, [], metadata}, [ttl: 30_000]}
-              end
+            hooks = [{Hook.child_unregistered(), %{child_id: child_id}} | hooks]
 
-            {[row | rows], [{Hook.child_unregistered(), %{child_id: child_id}} | hooks]}
+            if new_nodes === [] and on_empty === :delete do
+              {rows, [child_id | deletes], hooks}
+            else
+              row_opts = if new_nodes != [], do: [], else: empty_row_opts(on_empty)
+
+              row =
+                staged_row(
+                  state,
+                  hub_id,
+                  child_id,
+                  child_spec,
+                  new_nodes,
+                  Keyword.put(row_opts, :metadata, metadata)
+                )
+
+              {[row | rows], deletes, hooks}
+            end
         end
       end)
 
-    Storage.insert_many(hub_id, rows)
+    Storage.insert_many(hub_id, rows, @deferred)
+    Enum.each(deletes, &Storage.remove(hub_id, &1, @deferred))
     hooks = Enum.reverse(hooks)
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
@@ -609,23 +796,59 @@ defmodule ProcessHub.Service.ProcessRegistry do
     :ok
   end
 
-  defp handle_update(hub_id, child_id, update_fn) do
-    table = hub_id
-    opts = [table: table, with_metadata: true, hook_storage: nil]
+  defp handle_update(state, child_id, update_fn) do
+    opts = [table: state.hub_id, with_metadata: true, hook_storage: nil]
 
-    case lookup(hub_id, child_id, opts) do
+    case lookup(state.hub_id, child_id, opts) do
       nil ->
         {:error, "No child found"}
 
       {child_spec, node_pids, metadata} ->
         {cs, cn, m} = update_fn.(child_spec, node_pids, metadata)
-        handle_insert(hub_id, cs, cn, [{:metadata, m} | opts])
+        handle_insert(state, cs, cn, [{:metadata, m} | opts])
 
         :ok
 
       _any ->
         {:error, "Invalid arguments returned from the update function"}
     end
+  end
+
+  ## Row bookkeeping ---------------------------------------------------------
+
+  # The churn expiry closes a race where a bulk_delete would wipe the entry
+  # before the new node's PidsRegisterRequest re-populates it.
+  defp empty_row_opts(:churn), do: [ttl: 30_000]
+  defp empty_row_opts(:keep), do: []
+
+  # The single row builder: every write stamps its bookkeeping here, whether it
+  # is committed alone or in a bulk.
+  defp staged_row(state, table, child_id, child_spec, child_nodes, opts) do
+    metadata = stamped_metadata(state, table, child_id, opts)
+
+    {child_id, {child_spec, child_nodes, metadata}, Keyword.take(opts, [:ttl, :expire_at])}
+  end
+
+  defp stamped_metadata(state, table, child_id, opts) do
+    previous =
+      case Storage.get(table, child_id) do
+        {_child_spec, _child_nodes, previous_metadata} -> Row.meta(previous_metadata)
+        _ -> nil
+      end
+
+    {metadata, forged?} =
+      Row.stamp(Keyword.get(opts, :metadata, %{}), previous, opts)
+
+    if forged?, do: warn_reserved_write(state.hub_id, child_id)
+
+    metadata
+  end
+
+  defp warn_reserved_write(hub_id, child_id) do
+    Logger.warning(
+      "ProcessHub registry: ignoring caller-supplied #{inspect(Row.reserved_key())} metadata " <>
+        "for #{inspect(child_id)} on #{inspect(hub_id)}; the key is hub-owned."
+    )
   end
 
   defp get_insert_diff(nodes_new, nodes_existing) do

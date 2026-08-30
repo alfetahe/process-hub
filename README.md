@@ -164,7 +164,8 @@ ProcessHub.child_spec(%ProcessHub{
 See [guides/Configuration.md](guides/Configuration.md) for the configurable
 strategies, `t:ProcessHub.t/0` for the full set of hub options, and
 [guides/Persistence.md](guides/Persistence.md) for the optional disk-backed
-registry and coordinator recovery.
+registry and the experimental declared-children recovery (`:auto_recovery`
+with `durable: true` starts and an optional off-cluster remote manifest).
 
 ## Getting started 📚
 
