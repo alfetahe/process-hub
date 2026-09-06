@@ -1,6 +1,11 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## v0.7.1 - 2026-09-06
+
+### Fixed
+- A hub with `:auto_recovery` no longer crashes on startup when `:elector` is missing. It now runs without an election and picks the first hub node by name as the leader instead. Elector comes along as a process_hub dependency, but it is left out when you build a release, so add `{:elector, "~> 0.3.4"}` to your own dependencies to have it there. `Strategy.Distribution.CentralizedLoadBalancer` needs it in every case.
+
 ## v0.7.0 - 2026-08-30
 Relicensed under Apache-2.0. Reworks the experimental recovery mechanism: the marker-gated boot replay is replaced by a *declared list* — children started with `durable: true` are recorded in a versioned, leader-written list persisted on disk (and optionally shipped off-cluster), and every node periodically reconciles the cluster toward it. Also fixes a race that lost the result of `awaitable: true` operations, reported and fixed by [Peaceful James](https://github.com/peaceful-james) ([#18](https://github.com/alfetahe/process-hub/issues/18), [#19](https://github.com/alfetahe/process-hub/pull/19)).
 

@@ -22,6 +22,9 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
   1. **Leader Election**: Uses the `:elector` library to elect a single leader node.
      The leader is determined by **highest uptime** - the node that has been running
      the longest becomes the leader. This selection criteria is currently not configurable.
+     Elector comes along as a process_hub dependency, but it is left out when
+     you build a release. Add `{:elector, "~> 0.3.4"}` to your own dependencies,
+     or this strategy will stop working in a release.
   2. **Metrics Collection**: Each node periodically sends performance metrics to the leader
   3. **Load Scoring**: The leader calculates load scores based on multiple system metrics
   4. **Distribution**: New processes are assigned to nodes with the lowest load scores

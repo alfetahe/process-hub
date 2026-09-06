@@ -119,6 +119,26 @@ defmodule Test.Service.DeclaredChildrenTest do
     end
   end
 
+  describe "ensure_election/0" do
+    test "answers :ok when elector is not part of the build" do
+      ebin = :filename.dirname(:code.which(:elector))
+
+      Application.stop(:elector)
+      Application.unload(:elector)
+      :code.del_path(ebin)
+      :code.purge(:elector)
+      :code.delete(:elector)
+
+      on_exit(fn ->
+        :code.add_pathz(ebin)
+        {:ok, _} = Application.ensure_all_started(:elector)
+        DeclaredChildren.ensure_election()
+      end)
+
+      assert DeclaredChildren.ensure_election() == :ok
+    end
+  end
+
   describe "leader/1" do
     test "falls back to the lowest hub member when elector cannot name a member",
          %{hub: hub} do

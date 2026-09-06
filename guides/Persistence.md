@@ -106,9 +106,9 @@ stopped child on return.
 
 ### The declared list
 
-Mutations are serialized through the hub's leader node (elected via `:elector`,
-validated against the hub's own cluster, with the lexicographically lowest hub
-member as deterministic fallback). The leader increments one monotonic version
+Mutations are serialized through the hub's leader node. The leader is chosen by
+`:elector` when it is available, and is otherwise the first hub member by name;
+either way every node picks the same one. The leader increments one monotonic version
 per mutation and persists before acknowledging, so "which copy is newer" is a
 single integer comparison and adoption replaces the whole list. The list
 mutation always commits before the process action — add before start, remove

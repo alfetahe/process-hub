@@ -169,17 +169,27 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @doc """
   Starts elector participation. Elector is node-global; the strategy module is
   set only when unset so another user of it keeps its configuration.
+
+  Elector comes along as a process_hub dependency, but it is left out when you
+  build a release. Add `{:elector, "~> 0.3.4"}` to your own dependencies so the
+  release includes it. Without it there is no election and `leader/1` picks the
+  first node by name instead, which is fine on a single node and still gives
+  one leader across a cluster.
   """
   @spec ensure_election() :: :ok
   def ensure_election do
-    Application.ensure_started(:elector)
+    case Application.ensure_started(:elector) do
+      :ok ->
+        if Application.get_env(:elector, :strategy_module) === nil do
+          Application.put_env(:elector, :strategy_module, :elector_ut_high_strategy)
+        end
 
-    if Application.get_env(:elector, :strategy_module) === nil do
-      Application.put_env(:elector, :strategy_module, :elector_ut_high_strategy)
+        Elector.elect()
+        :ok
+
+      {:error, _reason} ->
+        :ok
     end
-
-    Elector.elect()
-    :ok
   end
 
   @doc """
