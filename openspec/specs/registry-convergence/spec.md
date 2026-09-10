@@ -158,11 +158,12 @@ NOT be restricted to the ring owner. Duplicate submissions are resolved by
 `check_existing: true` and by the ring routing both submissions to the same
 owner, where the supervisor rejects the second with `already_started`.
 
-The first round SHALL run no earlier than `reconcile_grace_ms` (default
-`30_000`) after coordinator start, and thereafter at most once per
+The first round SHALL open on peer evidence, as the `coordinator-bootstrap-recovery`
+capability specifies, and no later than `reconcile_grace_ms` (default `30_000`)
+after coordinator start; thereafter rounds run at most once per
 `reconcile_interval_ms` (default `15_000`), triggered by the completion of a
 synchronisation round. The first round SHALL run when the grace elapses
-whether or not any peer has joined. When the declared list is parked
+whether or not any peer has answered. When the declared list is parked
 (missing/corrupt with durable evidence and no remote copy), the round SHALL
 start and stop nothing for that hub.
 
@@ -174,8 +175,8 @@ starts.
 - **GIVEN** a 2-node cluster whose declared list (version-adopted on both
   nodes) holds `cid_a`, `cid_b`, `cid_c`, and both nodes are restarted with
   no children running
-- **WHEN** the first reconcile round runs on each node after the grace
-  window
+- **WHEN** the first reconcile round runs on each node once it has heard from
+  its peer
 - **THEN** all three children are started exactly once, each on its ring
   owner
 - **AND** no operator action was required

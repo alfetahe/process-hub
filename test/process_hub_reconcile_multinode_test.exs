@@ -5,7 +5,9 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
     * whole-cluster restart — every declared child returns, exactly once;
     * rejoin into a live cluster — a returning node starts nothing;
     * a stop during a node's absence — the child stays stopped on its return;
-    * a child bound on two nodes — the ring owner's instance is kept.
+    * a child bound on two nodes — the ring owner's instance is kept;
+    * the first round opening on a peer's registry data, and the grace capping
+      the wait for a peer that never answers.
   """
 
   use ExUnit.Case, async: false
@@ -13,6 +15,7 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
   import ExUnit.CaptureLog
 
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Recovery
@@ -77,11 +80,13 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
   defp stop_hub(node, hub_id) when node === node(), do: ProcessHub.Initializer.stop(hub_id)
   defp stop_hub(node, hub_id), do: :erpc.call(node, ProcessHub.Initializer, :stop, [hub_id])
 
-  defp await_normal(node, hub_id) when node === node(),
-    do: Recovery.await_normal(hub_id, 20_000)
+  defp await_normal(node, hub_id, timeout \\ 20_000)
 
-  defp await_normal(node, hub_id),
-    do: :erpc.call(node, Recovery, :await_normal, [hub_id, 20_000], 25_000)
+  defp await_normal(node, hub_id, timeout) when node === node(),
+    do: Recovery.await_normal(hub_id, timeout)
+
+  defp await_normal(node, hub_id, timeout),
+    do: :erpc.call(node, Recovery, :await_normal, [hub_id, timeout], timeout + 5_000)
 
   defp dump(node, hub_id) when node === node(), do: ProcessRegistry.dump(hub_id)
   defp dump(node, hub_id), do: :erpc.call(node, ProcessRegistry, :dump, [hub_id])
@@ -254,6 +259,68 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
 
     refute :sd_b in (local_ids(node(), hub_id) ++ local_ids(peer, hub_id))
     assert ProcessHub.get_pid(hub_id, :sd_b) == nil
+  end
+
+  test "a peer's registry data opens the first round before the grace",
+       %{peer: peer, tmp_dir: tmp_dir} do
+    hub_id = SetupHelper.unique_id(:reconcile_gate)
+    start_cluster!(hub_id, tmp_dir, peer)
+
+    ids = [:gt_a, :gt_b, :gt_c, :gt_d]
+
+    assert %ProcessHub.StartResult{status: :ok} =
+             ProcessHub.start_children(hub_id, Enum.map(ids, &cspec/1),
+               awaitable: true,
+               durable: true
+             )
+             |> ProcessHub.await()
+
+    assert started_ids(hub_id, ids) == ids
+
+    # The local node leaves; the peer adopts every child.
+    stop_hub(node(), hub_id)
+    assert Common.eventually(fn -> local_ids(peer, hub_id) == ids end, 20_000)
+
+    # It returns with no reconcile_now/1 and a 600 s grace: only the peer's
+    # registry data can open its first round.
+    round_hook = Hook.reconcile_round()
+    hooks = %{round_hook => [Bag.recv_hook(round_hook, self())]}
+    start_hub(node(), hub_conf(hub_id, tmp_dir, node(), hooks))
+
+    # Nothing was orphaned, so the round's cluster view held the peer's rows —
+    # an empty view would have made all four declared children orphans.
+    assert_receive {^round_hook, %{first_round: true, measurements: %{orphans: 0, started: 0}}},
+                   30_000
+
+    assert await_normal(node(), hub_id) == :ok
+  end
+
+  test "a connected peer that never answers is capped by the grace",
+       %{peer: peer, tmp_dir: tmp_dir} do
+    hub_id = SetupHelper.unique_id(:reconcile_frozen)
+
+    conf = %{
+      hub_conf(hub_id, tmp_dir, node())
+      | auto_recovery: [
+          reconcile_grace_ms: 3_000,
+          reconcile_interval_ms: 1_000,
+          cluster_settle_ms: 1_000
+        ]
+    }
+
+    start_hub(node(), conf)
+    on_exit(fn -> stop_hub(node(), hub_id) end)
+
+    # The peer is connected but runs no hub for this id, so its registry data
+    # never arrives.
+    Cluster.add_hub_node(ProcessHub.Coordinator.get_hub(hub_id).storage.misc, peer)
+
+    # Past the settle window and still recovering: the gate is waiting on a peer
+    # that will never answer.
+    assert await_normal(node(), hub_id, 1_500) == {:error, :timeout}
+
+    # The grace opens the round anyway.
+    assert await_normal(node(), hub_id) == :ok
   end
 
   test "a child bound on two nodes is reduced to the ring owner's instance",

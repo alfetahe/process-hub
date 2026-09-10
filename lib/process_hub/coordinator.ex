@@ -106,7 +106,7 @@ defmodule ProcessHub.Coordinator do
 
     Registry.register(state.procs.system_registry, "initializer", state.procs.initializer)
 
-    schedule_hub_discovery(Storage.get(state.storage.misc, StorageKey.hdi()))
+    send(self(), :propagate)
     schedule_sync(Storage.get(state.storage.misc, StorageKey.strsyn()))
     schedule_request_cleanup(state)
 
@@ -486,25 +486,20 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  # "Run a round if one is allowed". The grace timer sends this once to open the
-  # first round; afterwards completed synchronisation rounds drive it (see
-  # `:sync_processes`), and `round_due?/1` applies the rate limit.
-  def handle_info(:reconcile_round, %Hub{recovery_state: :recovering} = state),
-    do: {:noreply, Recovery.spawn_round(state)}
-
+  # "Run a round if one is allowed". The grace timer sends this once; it is the
+  # cap, so a peer that never answers cannot hold the hub in `:recovering`.
   def handle_info(:reconcile_round, state) do
-    {:noreply, if(Recovery.round_due?(state), do: Recovery.spawn_round(state), else: state)}
+    {:noreply, Recovery.trigger_round(state, :grace)}
+  end
+
+  @impl true
+  def handle_info(:cluster_settled, state) do
+    {:noreply, state |> Recovery.cluster_settled() |> Recovery.trigger_round(:evidence)}
   end
 
   @impl true
   def handle_info({:reconcile_done, result}, state) do
-    state = %{
-      state
-      | reconcile_running?: false,
-        reconcile_last_at: System.monotonic_time(:millisecond)
-    }
-
-    {:noreply, state |> Recovery.complete_first_round(result) |> reply_normal_waiters()}
+    {:noreply, state |> Recovery.complete_round(result) |> reply_normal_waiters()}
   end
 
   @impl true
@@ -526,10 +521,16 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_node_registry_broadcast, {sync_data, remote_node}}, state) do
+    # The evidence is recorded here rather than in the strategy so every
+    # strategy, including a custom one, satisfies the first-round gate the same
+    # way. The round is triggered only after the payload has been merged, so a
+    # round it opens sees the peer's rows.
+    state = Recovery.registry_delivered(state, remote_node)
+
     sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
     SynchronizationStrategy.handle_node_join_data(sync_strategy, state, sync_data, remote_node)
 
-    {:noreply, state}
+    {:noreply, Recovery.trigger_round(state, :evidence)}
   end
 
   @impl true
@@ -543,9 +544,7 @@ defmodule ProcessHub.Coordinator do
 
     DeclaredChildren.announce_version(state)
 
-    state = if Recovery.round_due?(state), do: Recovery.spawn_round(state), else: state
-
-    {:noreply, state}
+    {:noreply, Recovery.trigger_round(state, :sync)}
   end
 
   # A batch of declared-list commands in flight is written and dispatched

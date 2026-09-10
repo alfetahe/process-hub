@@ -17,6 +17,7 @@ defmodule Test.ProcessHubRecoveryTest do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Recovery
   alias ProcessHub.Storage.RemoteManifest.LocalPath
+  alias ProcessHub.Strategy.Synchronization.Gossip
   alias ProcessHub.Strategy.Synchronization.PubSub
   alias Test.Helper.SetupHelper
 
@@ -29,8 +30,9 @@ defmodule Test.ProcessHubRecoveryTest do
   @interval_ms 1_000
   @sync_strategy %PubSub{sync_interval: 300}
 
-  # Asks the coordinator to run a round now. `round_due?/1` still applies, so this
-  # cannot produce a round the running system would not have allowed.
+  # Asks the coordinator to run a round now, on the same path as the grace timer:
+  # while `:recovering` it is the cap and opens the round, and once `:normal` the
+  # rate limit applies.
   defp reconcile_now(hub_id), do: send(hub_id, :reconcile_round)
 
   setup do
@@ -107,10 +109,12 @@ defmodule Test.ProcessHubRecoveryTest do
                 enabled?: false,
                 reconcile_grace_ms: 30_000,
                 reconcile_interval_ms: 15_000,
+                cluster_settle_ms: 2_000,
                 remote_manifest: nil
               }} = Recovery.parse_config(false)
 
-      assert {:ok, %{enabled?: true, reconcile_grace_ms: 30_000}} = Recovery.parse_config(true)
+      assert {:ok, %{enabled?: true, reconcile_grace_ms: 30_000, cluster_settle_ms: 2_000}} =
+               Recovery.parse_config(true)
 
       assert {:ok,
               %{
@@ -133,6 +137,22 @@ defmodule Test.ProcessHubRecoveryTest do
 
       assert {:error, {:invalid_auto_recovery, :reconcile_interval_ms_out_of_range}} =
                Recovery.parse_config(reconcile_interval_ms: 50)
+    end
+
+    test "cluster_settle_ms defaults, accepts its whole range, and rejects the rest" do
+      assert {:ok, %{cluster_settle_ms: 2_000}} = Recovery.parse_config([])
+
+      # 0 is how a host that forms its cluster before starting hubs says so.
+      assert {:ok, %{cluster_settle_ms: 0}} = Recovery.parse_config(cluster_settle_ms: 0)
+
+      assert {:ok, %{cluster_settle_ms: 60_000}} =
+               Recovery.parse_config(cluster_settle_ms: 60_000)
+
+      assert {:error, {:invalid_auto_recovery, :cluster_settle_ms_out_of_range}} =
+               Recovery.parse_config(cluster_settle_ms: -1)
+
+      assert {:error, {:invalid_auto_recovery, :cluster_settle_ms_out_of_range}} =
+               Recovery.parse_config(cluster_settle_ms: 120_000)
     end
 
     test "rejects out-of-range values and unknown shapes" do
@@ -328,6 +348,89 @@ defmodule Test.ProcessHubRecoveryTest do
 
       assert Recovery.await_normal(hub_id, 200) == {:error, :timeout}
       assert Recovery.recovery_state(hub_id) == :recovering
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # First-round gate
+  # ---------------------------------------------------------------------------
+
+  describe "first round gate" do
+    # A settle window no test outlives, so the gate stays shut unless the case
+    # opens it.
+    @held_settle_ms 60_000
+    @registry_broadcast :node_registry_broadcast_event
+
+    defp delivered_by(hub_id), do: ProcessHub.Coordinator.get_hub(hub_id).registry_delivered_by
+
+    test "a node with no peers opens the round once the cluster has settled" do
+      hub_id = SetupHelper.unique_id(:rec_gate_alone)
+      cleanup_priv(hub_id)
+      {^hub_id, _pid} = SetupHelper.start_hub!(opt_in(hub_id, cluster_settle_ms: 300))
+
+      # No reconcile_now/1: the gate opens the round on its own, and the grace
+      # is @no_timer_grace_ms away.
+      assert Recovery.await_normal(hub_id, 5_000) == :ok
+      assert_receive {:round, %{first_round: true}}, 5_000
+    end
+
+    test "cluster_settle_ms: 0 opens the round immediately" do
+      hub_id = SetupHelper.unique_id(:rec_gate_now)
+      cleanup_priv(hub_id)
+      {^hub_id, _pid} = SetupHelper.start_hub!(opt_in(hub_id, cluster_settle_ms: 0))
+
+      assert Recovery.await_normal(hub_id, 1_000) == :ok
+    end
+
+    test "a grace shorter than the settle window wins" do
+      hub_id = SetupHelper.unique_id(:rec_gate_grace)
+      cleanup_priv(hub_id)
+
+      {^hub_id, _pid} =
+        SetupHelper.start_hub!(
+          opt_in(hub_id, reconcile_grace_ms: 100, cluster_settle_ms: @held_settle_ms)
+        )
+
+      # The settle window is still shut; only the grace can have opened this.
+      assert Recovery.await_normal(hub_id, 5_000) == :ok
+    end
+
+    # Starts a hub whose gate is held shut, feeds it one registry broadcast from
+    # `peer`, and returns the evidence set the coordinator recorded.
+    defp evidence_after_broadcast(id, strategy, sync_data) do
+      hub_id = SetupHelper.unique_id(id)
+      cleanup_priv(hub_id)
+
+      conf =
+        opt_in(hub_id, cluster_settle_ms: @held_settle_ms)
+        |> Keyword.put(:synchronization_strategy, strategy)
+
+      {^hub_id, _pid} = SetupHelper.start_hub!(conf)
+      assert delivered_by(hub_id) == MapSet.new()
+
+      send(hub_id, {@registry_broadcast, {sync_data, :peer@evidence}})
+
+      assert Recovery.recovery_state(hub_id) == :recovering
+      delivered_by(hub_id)
+    end
+
+    # The record is the coordinator's, so neither strategy carries its own.
+    test "the coordinator records the delivering node under PubSub" do
+      evidence =
+        evidence_after_broadcast(:rec_gate_pubsub, %PubSub{sync_interval: 300}, {%{}, 1})
+
+      assert MapSet.member?(evidence, :peer@evidence)
+    end
+
+    test "the coordinator records the delivering node under Gossip" do
+      evidence =
+        evidence_after_broadcast(:rec_gate_gossip, %Gossip{sync_interval: 300}, %{
+          ref: make_ref(),
+          nodes_data: %{},
+          sync_acks: []
+        })
+
+      assert MapSet.member?(evidence, :peer@evidence)
     end
   end
 

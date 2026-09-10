@@ -26,6 +26,14 @@ defmodule Test.Service.ClusterTest do
     assert Cluster.nodes(hub.storage.misc, [:include_local]) === [node()]
   end
 
+  test "connected drops members this node is not connected to", %{hub: hub} = _context do
+    Cluster.add_hub_node(hub.storage.misc, :gone@nowhere)
+
+    assert Cluster.nodes(hub.storage.misc, [:connected]) === []
+    assert Cluster.nodes(hub.storage.misc, [:include_local, :connected]) === [node()]
+    assert Cluster.nodes(hub.storage.misc, [:include_local]) === [node(), :gone@nowhere]
+  end
+
   test "add confirmed node", %{hub: hub} = _context do
     local_node = node()
 

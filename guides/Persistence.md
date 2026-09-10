@@ -186,9 +186,12 @@ same treatment. Placement churn leaves a short-lived stub swept by the janitor.
 `:recovery_state` is `:recovering` until the first round completes, then `:normal`
 (terminal). With `auto_recovery: false` it is `:normal` from `init/1`.
 
-The first round runs `reconcile_grace_ms` after start, with or without peers, so
-`:normal` is always reached. Later rounds follow completed synchronisation rounds,
-rate-limited to one per `reconcile_interval_ms`.
+The first round opens on evidence: once `cluster_settle_ms` has passed since
+start and every connected peer the hub knows about has delivered its registry
+data. `reconcile_grace_ms` caps that wait — it opens the round whatever the
+evidence says, so a peer that is connected but never answers cannot hold a node
+in `:recovering`, and `:normal` is always reached. Later rounds follow completed
+synchronisation rounds, rate-limited to one per `reconcile_interval_ms`.
 
 Every node submits from its adopted copy of the list. Duplicates are prevented by
 `check_existing: true` and by the ring routing concurrent submissions to the same
@@ -204,15 +207,20 @@ rejoining peer's leftovers).
   hub_id: :my_hub,
   auto_recovery: [
     reconcile_grace_ms: 30_000,
+    cluster_settle_ms: 2_000,
     reconcile_interval_ms: 15_000,
     remote_manifest: {ProcessHub.Storage.RemoteManifest.LocalPath, path: "/mnt/off-cluster"}
   ]
 }
 ```
 
-- `:reconcile_grace_ms` — delay before the first round. Default `30_000`, range
-  `[50, 600_000]`. **Set it above your synchronization strategy's
-  `sync_interval`**; ProcessHub warns at init when it is not.
+- `:reconcile_grace_ms` — the cap on the wait for the first round, not the
+  normal path to it. Default `30_000`, range `[50, 600_000]`. A value below
+  `:cluster_settle_ms` wins, so a hub tuned down keeps its timing.
+- `:cluster_settle_ms` — how long silence from the cluster counts as "this node
+  is alone" before the first round may open. Default `2_000`, range
+  `[0, 60_000]`. Raise it when your cluster layer is slow to connect peers; set
+  `0` when the host forms its cluster before starting its hubs.
 - `:reconcile_interval_ms` — minimum spacing between rounds, and the per-handler
   budget for the blocking `pre_recovery_replay` hook. Default `15_000`, range
   `[1_000, 600_000]`.

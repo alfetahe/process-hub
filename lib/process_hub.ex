@@ -220,11 +220,17 @@ defmodule ProcessHub do
       from `init/1`.
     - `true` — enabled with default options.
     - `keyword()` — explicit options:
-      - `:reconcile_grace_ms` — delay before the first round, which runs whether
-        or not any peer has joined. Default `30_000`. Range `[50, 600_000]` — it
-        is a one-shot delay, so the floor is low enough for a suite that boots a
-        hub per test. Set it above the synchronization strategy's `sync_interval`
-        in production.
+      - `:reconcile_grace_ms` — the cap on the wait for the first round: it opens
+        the round whether or not any peer has answered, so `:normal` is reached
+        in bounded time on every boot. Default `30_000`. Range `[50, 600_000]` —
+        it is a one-shot delay, so the floor is low enough for a suite that boots
+        a hub per test. A value below `:cluster_settle_ms` simply wins.
+      - `:cluster_settle_ms` — how long silence from the cluster counts as "this
+        node is alone" before the first round may open. Together with "every
+        connected peer the hub knows about has delivered its registry data" it
+        opens the first round, usually in a fraction of the grace. Default
+        `2_000`. Range `[0, 60_000]`; a host that forms its cluster before
+        starting its hubs may set `0`.
       - `:reconcile_interval_ms` — minimum spacing between subsequent rounds, and
         the per-handler budget for the blocking `pre_recovery_replay` hook.
         Default `15_000`. Range `[1_000, 600_000]`.

@@ -1,7 +1,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.7.1 - 2026-09-06
+## v0.7.1 - Upcoming
+
+### Added
+- **Experimental:** a new `:auto_recovery` option, `:cluster_settle_ms` (default `2_000`). When a hub starts, this is how long it waits for other nodes to show up before it decides it is running alone. If your application connects the cluster before it starts its hubs, you can set it to `0`.
+
+### Changed
+- **Experimental:** a hub with `:auto_recovery` no longer sits out the whole `:reconcile_grace_ms` before its first recovery round. The round now runs as soon as the hub has heard from the other nodes it is connected to, so a node reaches `:normal` (and `await_normal/2` returns) in about two seconds instead of thirty. `:reconcile_grace_ms` is now the longest the hub will wait: if a connected node never answers, the round still runs when the grace runs out. If you had set the grace below two seconds, nothing changes for you.
+- Hubs now announce themselves to the cluster as soon as they start, instead of waiting for the first `:hubs_discover_interval` tick (10 seconds by default), so nodes find each other almost immediately.
+- The startup warning asking you to keep `:reconcile_grace_ms` above the synchronization `sync_interval` is gone. The first round no longer waits for a periodic sync, so the two settings no longer have to be kept in step.
+- **Experimental:** if you call the recovery internals directly, `Recovery.complete_first_round/2` is now called `complete_round/2`, and `Recovery.round_due?/2` takes an optional second argument saying what asked for the round. Calls with one argument still work. `Cluster.nodes/2` also accepts `:connected` to list only the hub members this node can currently reach.
 
 ### Fixed
 - A hub with `:auto_recovery` no longer crashes on startup when `:elector` is missing. It now runs without an election and picks the first hub node by name as the leader instead. Elector comes along as a process_hub dependency, but it is left out when you build a release, so add `{:elector, "~> 0.3.4"}` to your own dependencies to have it there. `Strategy.Distribution.CentralizedLoadBalancer` needs it in every case.

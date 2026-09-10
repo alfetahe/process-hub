@@ -38,7 +38,6 @@ defmodule ProcessHub.Initializer do
   # narrows a window the design relies on.
   defp warn_on_suboptimal_config(%ProcessHub{} = hub) do
     warn_on_debounce(hub)
-    warn_on_reconcile_grace(hub)
   end
 
   # Bounded max-wait still flushes, but a debounce >= discover interval makes
@@ -62,37 +61,6 @@ defmodule ProcessHub.Initializer do
   end
 
   defp warn_on_debounce(_), do: :ok
-
-  # The first reconcile round computes a difference against whatever the cluster
-  # has synced by then. A grace window no longer than a sync interval can fire
-  # before the first exchange, so a returning node may still be holding a stale
-  # `:running` row for a child the cluster has since stopped — and restart it.
-  defp warn_on_reconcile_grace(%ProcessHub{
-         hub_id: hub_id,
-         auto_recovery: auto_recovery,
-         synchronization_strategy: %{sync_interval: sync_interval}
-       })
-       when auto_recovery !== false and is_integer(sync_interval) do
-    case Recovery.parse_config(auto_recovery) do
-      {:ok, %{enabled?: true, reconcile_grace_ms: grace}} when grace <= sync_interval ->
-        LoggerService.warning(
-          ":auto_recovery reconcile_grace_ms (@grace ms) <= sync_interval (@sync ms) " <>
-            "for hub @hub_id; the first reconcile round can run before the first " <>
-            "synchronisation exchange. Set reconcile_grace_ms above sync_interval.",
-          %{
-            "hub_id" => inspect(hub_id),
-            "grace" => Integer.to_string(grace),
-            "sync" => Integer.to_string(sync_interval)
-          },
-          prefix: "Initializer"
-        )
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp warn_on_reconcile_grace(_), do: :ok
 
   defp validate_handover_replication(%ProcessHub{
          migration_strategy: migration_strat,

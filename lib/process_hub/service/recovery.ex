@@ -12,31 +12,45 @@ defmodule ProcessHub.Service.Recovery do
   > The orphan reconcile (the `:auto_recovery` lifecycle) is experimental and may
   > change in future releases. Use in production at your own discretion.
 
-  The first round runs `reconcile_grace_ms` after coordinator start, later
-  rounds follow completed synchronisation rounds, rate-limited to one per
-  `reconcile_interval_ms`. This module owns the `:auto_recovery` config, the
-  scheduling, and the recovery lifecycle; the round itself lives in
-  `ProcessHub.Service.Recovery.Round` and the coordinator stays the GenServer.
-  See `guides/Persistence.md` for the model.
+  The first round opens as soon as the cluster has settled (`cluster_settle_ms`)
+  and every connected peer the hub knows about has delivered its registry data;
+  `reconcile_grace_ms` caps that wait so a peer that never answers cannot hold
+  the hub in `:recovering`. Later rounds follow completed synchronisation rounds,
+  rate-limited to one per `reconcile_interval_ms`. This module owns the
+  `:auto_recovery` config, the scheduling, and the recovery lifecycle; the round
+  itself lives in `ProcessHub.Service.Recovery.Round` and the coordinator stays
+  the GenServer. See `guides/Persistence.md` for the model.
   """
 
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Service.Recovery.Round
   alias ProcessHub.Storage.RemoteManifest
   alias ProcessHub.Hub
 
+  @typedoc """
+  What is asking for a round: a completed synchronisation round, first-round
+  evidence (the settle window or a peer's registry data), or the grace cap.
+  """
+  @type trigger() :: :sync | :evidence | :grace
+
   @default_reconcile_grace_ms 30_000
   @default_reconcile_interval_ms 15_000
+  @default_cluster_settle_ms 2_000
 
-  # The grace is a one-shot delay before the first round, so a small value costs
+  # The grace caps a one-shot wait before the first round, so a small value costs
   # nothing beyond starting sooner — and a suite that boots a hub per test pays
   # it every time. The interval keeps the higher floor: it is recurring, and each
   # round diffs the declared list against the cluster.
   @reconcile_grace_ms_min 50
   @reconcile_ms_min 1_000
   @reconcile_ms_max 600_000
+
+  # A host that forms its cluster before starting its hubs may set 0.
+  @cluster_settle_ms_min 0
+  @cluster_settle_ms_max 60_000
 
   # Keys from superseded designs. Still accepted so an existing deployment keeps
   # starting, but they no longer drive anything and are dropped in a future
@@ -50,9 +64,9 @@ defmodule ProcessHub.Service.Recovery do
 
     * `false` — disabled (the default).
     * `true` — enabled with defaults.
-    * `keyword()` — `:reconcile_grace_ms`, `:reconcile_interval_ms`, and
-      `:remote_manifest` (`{module, opts}` implementing
-      `ProcessHub.Storage.RemoteManifest`, default `nil`).
+    * `keyword()` — `:reconcile_grace_ms`, `:reconcile_interval_ms`,
+      `:cluster_settle_ms`, and `:remote_manifest` (`{module, opts}`
+      implementing `ProcessHub.Storage.RemoteManifest`, default `nil`).
 
   The superseded keys `:marker_path`, `:replay_timeout_ms`,
   `:recovery_timeout_ms`, and `:stopped_row_ttl_ms` are **deprecated**: they are
@@ -86,6 +100,13 @@ defmodule ProcessHub.Service.Recovery do
              @reconcile_ms_max,
              :reconcile_interval_ms_out_of_range
            ),
+         {:ok, settle} <-
+           validate_int(
+             Keyword.get(opts, :cluster_settle_ms, @default_cluster_settle_ms),
+             @cluster_settle_ms_min,
+             @cluster_settle_ms_max,
+             :cluster_settle_ms_out_of_range
+           ),
          {:ok, remote_manifest} <-
            validate_remote_manifest(Keyword.get(opts, :remote_manifest)) do
       {:ok,
@@ -93,6 +114,7 @@ defmodule ProcessHub.Service.Recovery do
          enabled?: true,
          reconcile_grace_ms: grace,
          reconcile_interval_ms: interval,
+         cluster_settle_ms: settle,
          remote_manifest: remote_manifest
        }}
     end
@@ -107,6 +129,7 @@ defmodule ProcessHub.Service.Recovery do
       enabled?: false,
       reconcile_grace_ms: @default_reconcile_grace_ms,
       reconcile_interval_ms: @default_reconcile_interval_ms,
+      cluster_settle_ms: @default_cluster_settle_ms,
       remote_manifest: nil
     }
   end
@@ -152,9 +175,11 @@ defmodule ProcessHub.Service.Recovery do
   # --- scheduling -------------------------------------------------------------
 
   @doc """
-  Schedules the first reconcile round `reconcile_grace_ms` after coordinator start.
+  Arms the two first-round timers: the settle window, after which silence from
+  the cluster counts as being alone, and `reconcile_grace_ms`, which opens the
+  round whatever the evidence says.
 
-  The timer fires whether or not any peer joined, so `:normal` is reached in
+  The grace fires whether or not any peer answered, so `:normal` is reached in
   bounded time on every boot. Disabled hubs schedule nothing.
   """
   @spec schedule_first_round(Hub.t()) :: Hub.t()
@@ -162,30 +187,69 @@ defmodule ProcessHub.Service.Recovery do
 
   def schedule_first_round(%Hub{} = hub) do
     Process.send_after(self(), :reconcile_round, hub.recovery_config.reconcile_grace_ms)
+    Process.send_after(self(), :cluster_settled, hub.recovery_config.cluster_settle_ms)
     hub
   end
 
   @doc """
-  Returns whether a round triggered by a completed synchronisation round may run.
+  Returns whether `trigger` may run a round now — the single answer for the first
+  round as well as for later ones.
 
-  Rounds are rate-limited to one per `reconcile_interval_ms`, are never started
-  before the first (grace-scheduled) round, and never overlap.
+  Triggers are `:sync` (a completed synchronisation round, the default),
+  `:evidence` (the settle window closing or a peer's registry data arriving) and
+  `:grace` (`reconcile_grace_ms`). Rounds never overlap. The first round waits
+  for the evidence gate — the settle window passed and every connected peer the
+  hub knows about heard from — except under `:grace`, which is the cap and opens
+  it regardless. Evidence only ever opens the first round; later rounds follow
+  the sync tick, rate-limited to one per `reconcile_interval_ms`.
   """
-  @spec round_due?(Hub.t()) :: boolean()
-  def round_due?(%Hub{recovery_config: %{enabled?: false}}), do: false
-  def round_due?(%Hub{reconcile_running?: true}), do: false
-  def round_due?(%Hub{recovery_state: :recovering}), do: false
+  @spec round_due?(Hub.t(), trigger()) :: boolean()
+  def round_due?(hub, trigger \\ :sync)
+  def round_due?(%Hub{recovery_config: %{enabled?: false}}, _trigger), do: false
+  def round_due?(%Hub{reconcile_running?: true}, _trigger), do: false
+  def round_due?(%Hub{recovery_state: :recovering}, :grace), do: true
+  def round_due?(%Hub{recovery_state: :recovering} = hub, _trigger), do: first_round_open?(hub)
+  # Evidence opens the first round only; a later round follows the sync tick.
+  def round_due?(%Hub{}, :evidence), do: false
 
-  def round_due?(%Hub{reconcile_last_at: last, recovery_config: config}) do
+  def round_due?(%Hub{reconcile_last_at: last, recovery_config: config}, _trigger) do
     last === nil or
       System.monotonic_time(:millisecond) - last >= config.reconcile_interval_ms
   end
 
+  defp first_round_open?(%Hub{cluster_settled?: false}), do: false
+
+  defp first_round_open?(%Hub{} = hub) do
+    hub.storage.misc
+    |> Cluster.nodes([:connected])
+    |> Enum.all?(&MapSet.member?(hub.registry_delivered_by, &1))
+  end
+
+  @doc "Spawns a round when `round_due?/2` allows `trigger` one."
+  @spec trigger_round(Hub.t(), trigger()) :: Hub.t()
+  def trigger_round(%Hub{} = hub, trigger \\ :sync) do
+    if round_due?(hub, trigger), do: spawn_round(hub), else: hub
+  end
+
+  @doc """
+  Records that `node` has delivered its registry data. Only the first round
+  waits on this evidence, so nothing is kept once the hub is `:normal`.
+  """
+  @spec registry_delivered(Hub.t(), node()) :: Hub.t()
+  def registry_delivered(%Hub{recovery_state: :recovering} = hub, node) do
+    %{hub | registry_delivered_by: MapSet.put(hub.registry_delivered_by, node)}
+  end
+
+  def registry_delivered(%Hub{} = hub, _node), do: hub
+
+  @doc "Records that the cluster settle window has passed."
+  @spec cluster_settled(Hub.t()) :: Hub.t()
+  def cluster_settled(%Hub{} = hub), do: %{hub | cluster_settled?: true}
+
   @doc """
   Runs a round in a separate process; replies to the coordinator with
-  `{:reconcile_done, result}`. The reply is what clears `reconcile_running?`
-  and, on the first round, reaches `:normal` — `Round.run_safe/2` guarantees
-  one whatever happened.
+  `{:reconcile_done, result}`, which it hands to `complete_round/2` —
+  `Round.run_safe/2` guarantees a reply whatever happened.
   """
   @spec spawn_round(Hub.t()) :: Hub.t()
   def spawn_round(%Hub{} = hub) do
@@ -200,11 +264,17 @@ defmodule ProcessHub.Service.Recovery do
   # --- coordinator transition -------------------------------------------------
 
   @doc """
-  Completes the first round: moves the coordinator to `:normal`, dispatches the
+  Completes a round: clears what `spawn_round/1` set and stamps the rate limit.
+  The first round also moves the coordinator to `:normal`, dispatches the
   transition hook, and fires the async `post_recovery_replay`.
   """
-  @spec complete_first_round(Hub.t(), Round.result()) :: Hub.t()
-  def complete_first_round(%Hub{recovery_state: :recovering} = hub, result) do
+  @spec complete_round(Hub.t(), Round.result()) :: Hub.t()
+  def complete_round(%Hub{} = hub, result) do
+    %{hub | reconcile_running?: false, reconcile_last_at: System.monotonic_time(:millisecond)}
+    |> complete_first_round(result)
+  end
+
+  defp complete_first_round(%Hub{recovery_state: :recovering} = hub, result) do
     hub = %{hub | recovery_state: :normal}
 
     HookManager.dispatch_hook(hub.storage.hook, Hook.recovery_state_changed(), %{
@@ -226,7 +296,7 @@ defmodule ProcessHub.Service.Recovery do
     hub
   end
 
-  def complete_first_round(hub, _result), do: hub
+  defp complete_first_round(hub, _result), do: hub
 
   @doc """
   Returns the coordinator's current `:recovery_state`.

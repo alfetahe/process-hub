@@ -566,10 +566,10 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
         end
       end)
 
-    Enum.each(send_data, fn {target_node, data} ->
-      cluster_nodes = Cluster.nodes(hub.storage.misc)
+    connected = Cluster.nodes(hub.storage.misc, [:connected])
 
-      if Enum.member?(cluster_nodes, target_node) && Enum.member?(Node.list(), target_node) do
+    Enum.each(send_data, fn {target_node, data} ->
+      if Enum.member?(connected, target_node) do
         GenServer.cast(
           {hub.hub_id, target_node},
           {:exec_cast, {callback_mod, :handle_storage_update, [data]}}

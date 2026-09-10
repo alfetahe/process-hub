@@ -18,15 +18,17 @@ defmodule ProcessHub.Hub do
 
   @typedoc """
   Parsed `:auto_recovery` config. `enabled?` gates the lifecycle;
-  `reconcile_grace_ms` delays the first reconcile round after coordinator start;
-  `reconcile_interval_ms` rate-limits subsequent rounds and bounds each blocking
-  hook handler; `remote_manifest` is the optional off-cluster declared-list
-  adapter (`{module, opts}`).
+  `reconcile_grace_ms` caps the wait for the first reconcile round after
+  coordinator start; `cluster_settle_ms` is how long silence from the cluster
+  counts as "this node is alone"; `reconcile_interval_ms` rate-limits subsequent
+  rounds and bounds each blocking hook handler; `remote_manifest` is the optional
+  off-cluster declared-list adapter (`{module, opts}`).
   """
   @type recovery_config() :: %{
           enabled?: boolean(),
           reconcile_grace_ms: pos_integer(),
           reconcile_interval_ms: pos_integer(),
+          cluster_settle_ms: non_neg_integer(),
           remote_manifest: {module(), keyword()} | nil
         }
 
@@ -59,6 +61,8 @@ defmodule ProcessHub.Hub do
           recovery_normal_waiters: %{GenServer.from() => reference()},
           reconcile_running?: boolean(),
           reconcile_last_at: integer() | nil,
+          cluster_settled?: boolean(),
+          registry_delivered_by: MapSet.t(node()),
           # The declared-list batch's working manifest, not yet written, and the
           # commands parked behind its write.
           declared_unsynced: map() | nil,
@@ -85,11 +89,14 @@ defmodule ProcessHub.Hub do
       enabled?: false,
       reconcile_grace_ms: 30_000,
       reconcile_interval_ms: 15_000,
+      cluster_settle_ms: 2_000,
       remote_manifest: nil
     },
     recovery_normal_waiters: %{},
     reconcile_running?: false,
     reconcile_last_at: nil,
+    cluster_settled?: false,
+    registry_delivered_by: MapSet.new(),
     declared_unsynced: nil,
     declared_batch: %ProcessHub.Service.Batch{}
   ]

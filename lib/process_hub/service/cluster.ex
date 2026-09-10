@@ -53,14 +53,30 @@ defmodule ProcessHub.Service.Cluster do
     !Enum.member?(nodes, node)
   end
 
-  @doc "Returns a list of nodes in the cluster."
-  @spec nodes(:ets.tid(), [:include_local] | nil) :: [node()]
+  @doc """
+  Returns a list of nodes in the cluster.
+
+  `:include_local` keeps the local node in the list; `:connected` drops members
+  the local node is no longer connected to.
+  """
+  @spec nodes(:ets.tid(), [:include_local | :connected] | nil) :: [node()]
   def nodes(misc_storage, opts \\ []) do
     nodes = Storage.get(misc_storage, StorageKey.hn()) || []
+    local = node()
 
-    case Enum.member?(opts, :include_local) do
-      false -> Enum.filter(nodes, &(&1 !== node()))
-      true -> nodes
+    nodes =
+      case Enum.member?(opts, :include_local) do
+        false -> Enum.filter(nodes, &(&1 !== local))
+        true -> nodes
+      end
+
+    case Enum.member?(opts, :connected) do
+      false ->
+        nodes
+
+      true ->
+        connected = [local | Node.list()]
+        Enum.filter(nodes, &(&1 in connected))
     end
   end
 

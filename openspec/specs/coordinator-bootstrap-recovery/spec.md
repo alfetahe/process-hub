@@ -19,9 +19,9 @@ to `:normal` at `init/1` and never transition, and SHALL run no reconcile rounds
 preserves pre-change behaviour for hubs that never opted in.
 
 The transition to `:normal` SHALL occur when the first reconcile round completes. That
-round runs when `reconcile_grace_ms` elapses whether or not any peer has joined, so
-`:normal` is reached in bounded time on every boot, including a single node booting
-alone.
+round opens on peer evidence, and `reconcile_grace_ms` caps the wait, so `:normal` is
+reached in bounded time on every boot, including a single node booting alone and
+including a node whose peer is connected but never answers.
 
 `:recovery_pending` is removed. It named the window between init and the start of boot
 replay, which no longer exists.
@@ -47,9 +47,9 @@ replay, which no longer exists.
 #### Scenario: A node alone still reaches :normal
 
 - **GIVEN** an opt-in hub booting with no reachable peers
-- **WHEN** `reconcile_grace_ms` elapses
+- **WHEN** the cluster settle window elapses with no peer connected
 - **THEN** the first round runs against an empty cluster view and the coordinator
-  transitions to `:normal`
+  transitions to `:normal`, without waiting for `reconcile_grace_ms`
 
 ### Requirement: `:auto_recovery` configuration field
 
@@ -61,15 +61,16 @@ configuration entry point for registry convergence and orphan recovery, acceptin
   single-node deployments are unaffected.
 - `true` — enable with defaults.
 - `keyword()` — accepts
-  `reconcile_grace_ms: integer()` (default `30_000`, range `[1_000, 600_000]`),
-  `reconcile_interval_ms: integer()` (default `15_000`, range `[1_000, 600_000]`), and
-  `stopped_row_ttl_ms: integer()` (default `86_400_000`, range
-  `[60_000, 31_536_000_000]`).
+  `reconcile_grace_ms: integer()` (default `30_000`, range `[50, 600_000]`), the cap on
+  the wait for the first reconcile round;
+  `cluster_settle_ms: integer()` (default `2_000`, range `[0, 60_000]`);
+  `reconcile_interval_ms: integer()` (default `15_000`, range `[1_000, 600_000]`); and
+  `remote_manifest`, specified by the `remote-manifest` capability.
 
-The keys `:marker_path`, `:replay_timeout_ms`, and `:recovery_timeout_ms` no longer
-drive anything and are **deprecated**. Supplying any of them SHALL log a WARN naming
-the key and SHALL otherwise be ignored, so a deployment carrying them keeps starting.
-They SHALL be rejected at init in a future release.
+The keys `:marker_path`, `:replay_timeout_ms`, `:recovery_timeout_ms`, and
+`:stopped_row_ttl_ms` no longer drive anything and are **deprecated**. Supplying any of
+them SHALL log a WARN naming the key and SHALL otherwise be ignored, so a deployment
+carrying them keeps starting. They SHALL be rejected at init in a future release.
 
 The field SHALL be ignored by the coordinator if its value is anything other than the
 documented shapes; an INVALID-config WARN log SHALL fire and the coordinator SHALL
@@ -84,13 +85,12 @@ behave as if `auto_recovery == false`.
 - **AND** `recovery_state` is `:normal` from the moment `init/1` returns
 - **AND** no reconcile round runs
 
-#### Scenario: Custom grace, interval, and stopped-row TTL
+#### Scenario: Custom grace and interval
 
-- **GIVEN** `auto_recovery: [reconcile_grace_ms: 60_000, reconcile_interval_ms: 30_000,
-  stopped_row_ttl_ms: 604_800_000]`
+- **GIVEN** `auto_recovery: [reconcile_grace_ms: 60_000, reconcile_interval_ms: 30_000]`
 - **WHEN** the coordinator initialises
-- **THEN** the first round runs no earlier than 60 s after start, subsequent rounds no
-  more often than every 30 s, and stopped rows expire 7 days after `stopped_at`
+- **THEN** the first round runs no later than 60 s after start, and subsequent rounds no
+  more often than every 30 s
 
 #### Scenario: Deprecated key warns and is ignored
 
@@ -102,7 +102,7 @@ behave as if `auto_recovery == false`.
 
 #### Scenario: Out-of-range reconcile_grace_ms rejected
 
-- **GIVEN** `auto_recovery: [reconcile_grace_ms: 100]` (below the `1_000` minimum)
+- **GIVEN** `auto_recovery: [reconcile_grace_ms: 49]` (below the `50` minimum)
 - **WHEN** the coordinator initialises
 - **THEN** init fails with
   `{:error, {:invalid_auto_recovery, :reconcile_grace_ms_out_of_range}}`
@@ -159,8 +159,9 @@ Both signatures are unchanged. `:recovery_pending` is no longer a possible retur
 value. `await_normal/2` now means "the first reconcile round has completed", which is
 the point at which a returning node has restored whatever it was going to restore.
 
-Callers SHOULD size their timeout above `reconcile_grace_ms`; a timeout below the grace
-window will always return `{:error, :timeout}` on an opt-in hub.
+The first round usually opens well before `reconcile_grace_ms`, but the grace is the
+only bound that holds on every boot, so callers that must not time out SHOULD size their
+timeout above it.
 
 #### Scenario: recovery_state returns :normal for non-opted-in hub
 
@@ -174,10 +175,11 @@ window will always return `{:error, :timeout}` on an opt-in hub.
 - **WHEN** a caller invokes `ProcessHub.await_normal(:my_hub, 30_000)` at `t = 0`
 - **THEN** the call blocks until the first reconcile round completes and returns `:ok`
 
-#### Scenario: Timeout below the grace window always times out
+#### Scenario: Timeout below the time to the first round times out
 
-- **GIVEN** an opt-in hub with `reconcile_grace_ms: 30_000`
-- **WHEN** `ProcessHub.await_normal(:my_hub, 5_000)` is called at boot
+- **GIVEN** an opt-in hub whose first reconcile round has not yet completed
+- **WHEN** `ProcessHub.await_normal(:my_hub, 200)` is called at boot and the round does
+  not complete within 200 ms
 - **THEN** the call returns `{:error, :timeout}`
 - **AND** the coordinator continues toward `:normal` independently
 
@@ -298,4 +300,98 @@ replay ceiling that no longer exists. Per-round observability is
 - **GIVEN** a hub with `auto_recovery: false`
 - **WHEN** it boots and runs
 - **THEN** no `[:process_hub, :recovery, _]` event is emitted
+
+### Requirement: The first reconcile round opens on peer evidence
+
+The first reconcile round SHALL open at the first moment at which both of these hold:
+the cluster settle window has elapsed since coordinator start, and every connected peer
+the hub knows about has delivered its registry data. `reconcile_grace_ms` SHALL open the
+round unconditionally when it elapses, so a connected peer that never answers cannot hold
+a hub in `:recovering` indefinitely.
+
+A peer's registry data counts as delivered when the coordinator has handled that node's
+registry broadcast. The record SHALL be kept by the coordinator rather than by a
+synchronization strategy, so every strategy, including a custom one, satisfies the gate
+the same way.
+
+`reconcile_grace_ms` SHALL act as a maximum and never as a minimum: when it is shorter
+than the cluster settle window, it opens the round and the settle window has no effect.
+A hub configured with a short grace therefore keeps its current timing.
+
+`Recovery.round_due?/2` SHALL be the single answer to whether a round may run, for the
+first round as well as later ones, and SHALL take the trigger asking for it — a completed
+synchronisation round, first-round evidence, or the grace cap. It SHALL NOT refuse a round
+solely because `recovery_state` is `:recovering`; the evidence gate decides instead, while
+the overlap guard and the `reconcile_interval_ms` rate limit continue to apply unchanged.
+
+The coordinator SHALL announce its presence to the cluster at the end of `init/1`, in
+addition to the announcement scheduled at `hubs_discover_interval`, so a peer answers and
+its registry data arrives without waiting for the first discovery tick.
+
+`ProcessHub.Initializer` SHALL NOT warn about `reconcile_grace_ms` being at or below
+`sync_interval`. The first round no longer depends on the periodic synchronisation having
+run, so the relationship that warning described no longer exists.
+
+#### Scenario: A node with no peers opens the round after the settle window
+
+- **GIVEN** an opt-in hub with `cluster_settle_ms: 2_000` and `reconcile_grace_ms: 45_000`
+- **AND** no peer is connected at any point
+- **WHEN** 2 000 ms have elapsed since coordinator start
+- **THEN** the first reconcile round runs and `recovery_state` becomes `:normal`
+- **AND** it does so without waiting for `reconcile_grace_ms`
+
+#### Scenario: A peer's registry data opens the round
+
+- **GIVEN** an opt-in hub with `cluster_settle_ms: 2_000` and `reconcile_grace_ms: 45_000`
+- **AND** one connected peer running the same hub
+- **WHEN** the peer's registry broadcast has been handled and the settle window has
+  elapsed
+- **THEN** the first reconcile round runs against a cluster view that includes the peer's
+  rows, well before `reconcile_grace_ms` elapses
+
+#### Scenario: A connected peer that never answers is capped by the grace
+
+- **GIVEN** an opt-in hub with `reconcile_grace_ms: 45_000` and one connected peer whose
+  hub never delivers registry data
+- **WHEN** 45 000 ms have elapsed since coordinator start
+- **THEN** the first reconcile round runs anyway and `recovery_state` becomes `:normal`
+
+#### Scenario: A grace shorter than the settle window wins
+
+- **GIVEN** an opt-in hub with `reconcile_grace_ms: 100` and the default
+  `cluster_settle_ms`
+- **WHEN** the coordinator initialises
+- **THEN** the first reconcile round runs at 100 ms, exactly as it did before this change
+
+### Requirement: `cluster_settle_ms` configuration key
+
+The `:auto_recovery` keyword configuration SHALL accept `cluster_settle_ms: integer()`
+(default `2_000`, range `[0, 60_000]`), which is how long silence from the cluster counts
+as "this node is alone" before the first reconcile round may open.
+
+A value outside the range SHALL fail init with
+`{:error, {:invalid_auto_recovery, :cluster_settle_ms_out_of_range}}`, consistent with the
+other bounded keys. A host that forms its cluster before starting its hubs MAY set `0`.
+
+`ProcessHub.Service.Recovery.parse_config/1` SHALL read the key, so the documented
+configuration surface continues to name only keys the library acts on.
+
+#### Scenario: Default settle window
+
+- **GIVEN** `auto_recovery: true`
+- **WHEN** the coordinator initialises
+- **THEN** the parsed configuration carries `cluster_settle_ms: 2_000`
+
+#### Scenario: Host declares its cluster is already formed
+
+- **GIVEN** `auto_recovery: [cluster_settle_ms: 0]` and no connected peers
+- **WHEN** the coordinator initialises
+- **THEN** the first reconcile round opens immediately, without a settle wait
+
+#### Scenario: Out-of-range cluster_settle_ms rejected
+
+- **GIVEN** `auto_recovery: [cluster_settle_ms: 120_000]` (above the `60_000` maximum)
+- **WHEN** the coordinator initialises
+- **THEN** init fails with
+  `{:error, {:invalid_auto_recovery, :cluster_settle_ms_out_of_range}}`
 
