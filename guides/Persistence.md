@@ -104,6 +104,11 @@ absent from the list and stays dead — **list absence is the stop record, and i
 never expires**, so a node may be away arbitrarily long without resurrecting a
 stopped child on return.
 
+A restored child keeps the metadata of the registry row it left behind: the row
+in the live registry while there is one, bound or not, and otherwise its copy in
+the durable medium, which is all a restarted hub has. A `child_data_alter` hook
+may rewrite any key; every key it leaves alone survives.
+
 ### The declared list
 
 Mutations are serialized through the hub's leader node. The leader is chosen by

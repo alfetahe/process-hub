@@ -83,7 +83,7 @@ defmodule ProcessHub.Service.Recovery.Round do
     registered = ProcessRegistry.dump_all(hub.hub_id)
 
     {orphans, skipped_pending} = orphan_set(hub, entries, live, registered)
-    started = start_orphans(hub, orphans, map_size(entries), first_round?)
+    started = start_orphans(hub, orphans, registered, map_size(entries), first_round?)
     {stopped_undeclared, deferred_undeclared} = stop_undeclared(hub, live, entries)
     removed_stale = remove_stale_rows(hub, registered, entries)
     duplicates = resolve_duplicates(hub, live)
@@ -187,9 +187,9 @@ defmodule ProcessHub.Service.Recovery.Round do
     length(ripe)
   end
 
-  defp start_orphans(_hub, [], _candidate_count, _first_round?), do: 0
+  defp start_orphans(_hub, [], _registered, _candidate_count, _first_round?), do: 0
 
-  defp start_orphans(hub, child_specs, candidate_count, first_round?) do
+  defp start_orphans(hub, child_specs, registered, candidate_count, first_round?) do
     if first_round? do
       HookManager.dispatch_hook_blocking(
         hub.storage.hook,
@@ -199,19 +199,56 @@ defmodule ProcessHub.Service.Recovery.Round do
       )
     end
 
-    submit_orphans(hub, child_specs, true)
+    submit_orphans(hub, child_specs, replaced_metadata(hub, child_specs, registered), true)
+  end
+
+  # A replay registers each child over the row it left behind, so the start
+  # carries that row's caller metadata: every key survives unless a
+  # `child_data_alter` handler rewrites it. The row is the live one while the
+  # registry holds it, bound or not; a restarted hub's live registry starts
+  # empty, and then the durable medium holds the only copy.
+  defp replaced_metadata(hub, child_specs, registered) do
+    {known, unknown} =
+      child_specs |> Enum.map(& &1.id) |> Enum.split_with(&is_map_key(registered, &1))
+
+    rows = Map.merge(Map.take(registered, known), durable_rows(hub, unknown))
+
+    for {child_id, {_child_spec, _node_pids, %{} = metadata}} <- rows,
+        into: %{},
+        do: {child_id, Map.delete(metadata, Row.reserved_key())}
+  end
+
+  defp durable_rows(_hub, []), do: %{}
+
+  # An unreadable medium carries nothing rather than failing the round.
+  defp durable_rows(hub, child_ids) do
+    case Storage.read_durable(hub.hub_id) do
+      {:ok, rows} ->
+        rows |> Map.new() |> Map.take(child_ids)
+
+      {:error, reason} ->
+        LoggerService.warning(
+          "Reconcile could not read the durable medium (@reason); " <>
+            "@count children restart without their registry metadata",
+          %{"reason" => inspect(reason), "count" => Integer.to_string(length(child_ids))},
+          prefix: "Recovery"
+        )
+
+        %{}
+    end
   end
 
   # `check_existing: true` rejects the whole batch when any child raced into the
   # registry between the difference and the submit; drop the racers and retry once.
-  defp submit_orphans(_hub, [], _retry?), do: 0
+  defp submit_orphans(_hub, [], _child_metadata, _retry?), do: 0
 
-  defp submit_orphans(hub, child_specs, retry?) do
+  defp submit_orphans(hub, child_specs, child_metadata, retry?) do
     opts =
       [
         {:auto_recovery_replay, true},
         {:awaitable, false},
         {:check_existing, true},
+        {:child_metadata, child_metadata},
         {:disable_logging, true},
         {:durable, true},
         {:init_cids, Enum.map(child_specs, & &1.id)}
@@ -223,7 +260,8 @@ defmodule ProcessHub.Service.Recovery.Round do
         length(child_specs)
 
       {:error, {:already_started, child_ids}} when retry? ->
-        submit_orphans(hub, Enum.reject(child_specs, &(&1.id in child_ids)), false)
+        remaining = Enum.reject(child_specs, &(&1.id in child_ids))
+        submit_orphans(hub, remaining, child_metadata, false)
 
       {:error, reason} ->
         LoggerService.warning(

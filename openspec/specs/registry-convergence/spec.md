@@ -292,3 +292,48 @@ distinguishable from a stalled one.
 - **THEN** one `:round` event is emitted with `candidates: 3, orphans: 3, started: 3`
   and `first_round: true`
 
+### Requirement: A reconcile restart keeps the metadata of the row it replaces
+
+A reconcile round SHALL start each orphan with the caller metadata of the registry row
+the start replaces, passed as that child's `:child_metadata`. The replaced row SHALL be
+the one in the local live registry when it holds the child, bound or not; otherwise it
+SHALL be the child's row in the backend's durable medium, read through `read_durable/1`.
+A child with neither SHALL start with the round's default metadata, `%{}`.
+
+The reserved `:__process_hub__` key SHALL NOT be carried: the registration authors it, as
+every write does. A `child_data_alter` handler SHALL receive the carried metadata and MAY
+rewrite any key; every key it leaves alone SHALL reach the registered row.
+
+The durable medium SHALL be read at most once per round, and only when at least one child
+the round starts has no live row. When `read_durable/1` answers `{:error, reason}`, those
+children SHALL start with no carried metadata rather than the round failing, and the
+round SHALL log a warning naming the reason and the number of children.
+
+`ProcessRegistry.bulk_insert/3` SHALL keep writing a registration's incoming metadata
+over an existing row: the carry is the round's, not the registry's.
+
+#### Scenario: A warm restart restores each child's metadata
+
+- **GIVEN** an opted-in hub on `{:durable_ets, _}` whose declared children `cm_a` and
+  `cm_b` were started with `child_metadata: %{cm_a: %{shard: 0}, cm_b: %{shard: 1}}`
+- **AND** the hub is restarted, so its live registry starts empty
+- **WHEN** the first reconcile round restores both children
+- **THEN** `metadata_query(hub, :shard)` answers `cm_a` with `0` and `cm_b` with `1`
+
+#### Scenario: A restart over an unbound row keeps its metadata
+
+- **GIVEN** a declared child whose registered row is bound nowhere and carries
+  `%{shard: 7, tag: "stale"}`
+- **AND** a `child_data_alter` handler that sets `tag` to `"fresh"`
+- **WHEN** the second round that sees the child unbound restarts it
+- **THEN** the registered row carries `shard: 7` and `tag: "fresh"`
+
+#### Scenario: An unreadable durable medium costs the metadata, not the restart
+
+- **GIVEN** a restarted hub whose declared children have no live row
+- **AND** `read_durable/1` answers `{:error, reason}`
+- **WHEN** the first reconcile round runs
+- **THEN** every declared child is started, with no carried metadata
+- **AND** a warning names the reason and the number of children restarted without
+  their metadata
+

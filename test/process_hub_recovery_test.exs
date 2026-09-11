@@ -44,6 +44,9 @@ defmodule Test.ProcessHubRecoveryTest do
 
   def forward_to(pid, tag, payload), do: send(pid, {tag, payload})
 
+  # A `child_data_alter` handler that rewrites one caller key on every start.
+  def retag(child_data), do: put_in(child_data, [:metadata, :tag], "fresh")
+
   # Drops hook messages from a previous hub incarnation so a restart's own
   # reports are the only ones in the mailbox.
   defp flush_hooks do
@@ -742,6 +745,98 @@ defmodule Test.ProcessHubRecoveryTest do
                      @interval_ms * 3
 
       assert_receive {:round, %{measurements: %{orphans: 1, started: 1}}}, @interval_ms * 3
+    end
+
+    # Starts `specs` durable, restarts the hub, and waits for its first round to
+    # register them all again. The restarted live registry starts empty, so the
+    # rows the round replaces exist only in the durable medium.
+    defp restart_after_durable_start(hub_id, conf, specs, start_opts) do
+      {^hub_id, pid} = SetupHelper.start_hub!(conf)
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 10_000) == :ok
+
+      assert %ProcessHub.StartResult{status: :ok} =
+               ProcessHub.start_children(
+                 hub_id,
+                 specs,
+                 [awaitable: true, durable: true] ++ start_opts
+               )
+               |> ProcessHub.await()
+
+      {^hub_id, _pid} = SetupHelper.restart_hub!(hub_id, pid, conf)
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 10_000) == :ok
+
+      assert Test.Helper.Common.eventually(fn ->
+               map_size(ProcessRegistry.dump(hub_id)) == length(specs)
+             end)
+    end
+
+    defp shards(hub_id) do
+      Enum.sort(
+        for {id, _node_pids, shard} <- ProcessHub.metadata_query(hub_id, :shard), do: {id, shard}
+      )
+    end
+
+    test "a cold boot's replay keeps each child's registry metadata", %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_cold_meta)
+
+      restart_after_durable_start(
+        hub_id,
+        durable_conf(hub_id, dets),
+        [cspec(:cm_a), cspec(:cm_b)],
+        child_metadata: %{cm_a: %{shard: 0}, cm_b: %{shard: 1}}
+      )
+
+      assert shards(hub_id) == [cm_a: 0, cm_b: 1]
+    end
+
+    test "an unreadable durable medium costs the metadata, not the restart", %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_unreadable_meta)
+      cleanup_priv(hub_id)
+      backend = {Test.Support.UnreadableDurable, path: dets}
+
+      log =
+        capture_log(fn ->
+          restart_after_durable_start(
+            hub_id,
+            opt_in(hub_id, []) ++ [registry_backend: backend],
+            [cspec(:ur_a), cspec(:ur_b)],
+            metadata: %{shard: 0}
+          )
+        end)
+
+      assert shards(hub_id) == []
+      assert log =~ "Reconcile could not read the durable medium (:unreadable)"
+      assert log =~ "2 children restart without their registry metadata"
+    end
+
+    test "a replay over an unbound row keeps its metadata, and a hook's rewrite wins",
+         %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_unbound_meta)
+
+      retag = [%HookManager{id: :retag, m: __MODULE__, f: :retag, a: [:_]}]
+      conf = durable_conf(hub_id, dets)
+      conf = Keyword.update!(conf, :hooks, &Map.put(&1, Hook.child_data_alter(), retag))
+      {^hub_id, _pid} = SetupHelper.start_hub!(conf)
+
+      reconcile_now(hub_id)
+      assert Recovery.await_normal(hub_id, 10_000) == :ok
+      assert_receive {:round, %{first_round: true}}, 10_000
+
+      assert :ok = GenServer.call(hub_id, {:declared_mutate, {:add, [cspec(:um_x)]}})
+      ProcessRegistry.insert(hub_id, cspec(:um_x), [], metadata: %{shard: 7, tag: "stale"})
+
+      assert_receive {:round, %{measurements: %{skipped_pending: 1, started: 0}}},
+                     @interval_ms * 3
+
+      assert_receive {:round, %{measurements: %{orphans: 1, started: 1}}}, @interval_ms * 3
+      assert Test.Helper.Common.eventually(fn -> is_pid(ProcessHub.get_pid(hub_id, :um_x)) end)
+
+      {_child_spec, _node_pids, metadata} =
+        ProcessRegistry.lookup(hub_id, :um_x, with_metadata: true)
+
+      assert Map.take(metadata, [:shard, :tag]) == %{shard: 7, tag: "fresh"}
     end
 
     test "a stale durable row observed nowhere is removed after two rounds", %{dets: dets} do
