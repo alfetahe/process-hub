@@ -180,14 +180,14 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       strategies = RequestManager.load_strategies(hub)
       start_opts = to_start_opts(request)
 
-      # Validate and start children
-      validated_children = validate_children(request, hub, strategies)
-
-      # Dispatch pre-start hook
+      # Dispatched before validation: a distribution strategy may learn per-child
+      # placement data from the request, and validation asks it `belongs_to`.
       HookManager.dispatch_hook(hub.storage.hook, Hook.pre_children_start(), %{
         request: request,
         hub: hub
       })
+
+      validated_children = validate_children(request, hub, strategies)
 
       # Start children locally
       post_start_results = start_children(hub, validated_children, start_opts)

@@ -311,6 +311,38 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
     end
   end
 
+  describe "execute/2" do
+    test "dispatches pre_children_start before it asks which children are local", %{hub: hub} do
+      alias ProcessHub.Constant.{Hook, StorageKey}
+      alias ProcessHub.Service.{HookManager, Storage}
+      alias Test.Support.RecordingDistribution
+
+      previous = Storage.get(hub.storage.misc, StorageKey.strdist())
+      Storage.insert(hub.storage.misc, StorageKey.strdist(), %RecordingDistribution{recorder: self()})
+
+      HookManager.register_handler(hub.storage.hook, Hook.pre_children_start(), %HookManager{
+        id: :scr_order_probe,
+        m: RecordingDistribution,
+        f: :notify,
+        a: [self(), :pre_children_start, :_]
+      })
+
+      on_exit(fn ->
+        HookManager.cancel_handler(hub.storage.hook, Hook.pre_children_start(), :scr_order_probe)
+        Storage.insert(hub.storage.misc, StorageKey.strdist(), previous)
+      end)
+
+      child_spec = %{id: :scr_order_child, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+      request = StartChildrenRequest.for_migration(hub, node(), [{child_spec, %{}}])
+
+      assert :ok = StartChildrenRequest.execute(request, hub)
+
+      assert_received first
+      assert_received second
+      assert {first, second} == {:pre_children_start, :belongs_to}
+    end
+  end
+
   describe "for_contraction/2" do
     test "creates contraction request", %{hub: hub} do
       child_spec = %{id: :contr_child, start: {Test.Helper.TestServer, :start_link, [%{}]}}

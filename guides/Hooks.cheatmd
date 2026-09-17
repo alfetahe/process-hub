@@ -319,7 +319,7 @@ Although, it's not recommended to dispatch hooks manually as it can lead to unex
 ## Child start flow dispatch order
 
 When children are started, hooks fire in this order:
-1. `:pre_children_start_hook` - before any children are started
+1. `:pre_children_start_hook` - before any children are started, and before the receiving node checks which of the request's children belong to it
 2. `:child_data_alter_hook` - for each child, to modify child data before start (alter hook)
 3. `:post_children_start_hook` - after all children are started (includes child details)
 4. `:child_registered_hook` - for each child registered in the process registry
