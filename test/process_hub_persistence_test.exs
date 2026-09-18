@@ -288,4 +288,78 @@ defmodule Test.ProcessHubPersistenceTest do
     assert Test.Support.MockStorage.last_op(hub_id) in [:insert, :get]
     assert ProcessRegistry.lookup(hub_id, :mock_child) !== nil
   end
+
+  # ---------------------------------------------------------------------------
+  # Where files are allowed to land
+  # ---------------------------------------------------------------------------
+
+  # Both resolve to the same directory under `mix test` (_build's priv is a
+  # symlink into the source tree); check both so the assertion holds wherever
+  # the suite runs from.
+  defp library_priv_dirs(hub_id) do
+    base =
+      case :code.priv_dir(:process_hub) do
+        {:error, :bad_name} -> []
+        priv when is_list(priv) -> [List.to_string(priv)]
+      end
+
+    for root <- [Path.join(File.cwd!(), "priv") | base],
+        do: Path.join([root, "process_hub", Atom.to_string(hub_id)])
+  end
+
+  test "an :ets hub with :auto_recovery writes nothing to disk" do
+    hub_id = :"persist_ets_recovery_#{System.unique_integer([:positive])}"
+    dirs = library_priv_dirs(hub_id)
+
+    on_exit(fn ->
+      ProcessHub.Initializer.stop(hub_id)
+      Enum.each(dirs, &File.rm_rf!/1)
+    end)
+
+    Enum.each(dirs, &refute(File.exists?(&1)))
+
+    {:ok, pid} =
+      ProcessHub.Initializer.start_link(%ProcessHub{
+        hub_id: hub_id,
+        registry_backend: :ets,
+        auto_recovery: [
+          reconcile_grace_ms: 1_000,
+          reconcile_interval_ms: 1_000,
+          cluster_settle_ms: 500
+        ]
+      })
+
+    :erlang.unlink(pid)
+
+    Enum.each(dirs, fn dir ->
+      refute File.exists?(dir),
+             "an :ets hub left #{inspect(Path.wildcard(Path.join(dir, "*")))} on disk"
+    end)
+  end
+
+  test "a DETS registry backend without :path is refused at startup" do
+    hub_id = :"persist_dets_nopath_#{System.unique_integer([:positive])}"
+    on_exit(fn -> Enum.each(library_priv_dirs(hub_id), &File.rm_rf!/1) end)
+
+    assert {:error, {:invalid_config, {:registry_backend_path_required, :dets}}} =
+             ProcessHub.Initializer.start_link(%ProcessHub{
+               hub_id: hub_id,
+               registry_backend: {:dets, []}
+             })
+
+    Enum.each(library_priv_dirs(hub_id), &refute(File.exists?(&1)))
+  end
+
+  test "a durable_ets registry backend without :path is refused at startup" do
+    hub_id = :"persist_dets_nopath_de_#{System.unique_integer([:positive])}"
+    on_exit(fn -> Enum.each(library_priv_dirs(hub_id), &File.rm_rf!/1) end)
+
+    assert {:error, {:invalid_config, {:registry_backend_path_required, :durable_ets}}} =
+             ProcessHub.Initializer.start_link(%ProcessHub{
+               hub_id: hub_id,
+               registry_backend: {:durable_ets, []}
+             })
+
+    Enum.each(library_priv_dirs(hub_id), &refute(File.exists?(&1)))
+  end
 end

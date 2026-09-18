@@ -23,23 +23,12 @@ defmodule Test.ProcessHub.Service.Storage.DetsTest do
     Backend.close(ref)
   end
 
-  test "open uses default priv path when no :path option", %{hub_id: hub_id} do
-    {:ok, ref} = Backend.open(hub_id, [])
+  test "open without a :path refuses rather than picking a location", %{hub_id: hub_id} do
+    assert_raise ArgumentError, ~r/needs a :path option/, fn ->
+      Backend.open(hub_id, [])
+    end
 
-    expected_dir =
-      Path.join([
-        File.cwd!(),
-        "priv",
-        "process_hub",
-        Atom.to_string(hub_id)
-      ])
-
-    expected_path = Path.join(expected_dir, "registry.dets")
-
-    on_exit(fn -> File.rm_rf!(expected_dir) end)
-
-    assert File.exists?(expected_path)
-    Backend.close(ref)
+    refute File.exists?(Path.join([File.cwd!(), "priv", "process_hub", Atom.to_string(hub_id)]))
   end
 
   test "insert + get round-trip", %{hub_id: hub_id, path: path} do

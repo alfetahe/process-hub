@@ -95,8 +95,6 @@ defmodule Test.ProcessHubRecoveryTest do
     opt_in(hub_id, recovery_opts) ++ [registry_backend: {:durable_ets, path: dets}]
   end
 
-  defp cleanup_priv(hub_id), do: on_exit(fn -> File.rm_rf!("priv/process_hub/#{hub_id}") end)
-
   defp declared_ids(hub_id) do
     DeclaredChildren.declared_children(hub_id).children |> Enum.map(& &1.id) |> Enum.sort()
   end
@@ -201,7 +199,6 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "a deprecated key still starts the hub" do
       hub_id = SetupHelper.unique_id(:rec_deprecated_key)
-      cleanup_priv(hub_id)
 
       log =
         capture_log(fn ->
@@ -337,7 +334,6 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "a node alone still reaches :normal on the :ets backend" do
       hub_id = SetupHelper.unique_id(:rec_alone)
-      cleanup_priv(hub_id)
       {^hub_id, _pid} = SetupHelper.start_hub!(opt_in(hub_id, []))
 
       reconcile_now(hub_id)
@@ -368,7 +364,6 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "a node with no peers opens the round once the cluster has settled" do
       hub_id = SetupHelper.unique_id(:rec_gate_alone)
-      cleanup_priv(hub_id)
       {^hub_id, _pid} = SetupHelper.start_hub!(opt_in(hub_id, cluster_settle_ms: 300))
 
       # No reconcile_now/1: the gate opens the round on its own, and the grace
@@ -379,7 +374,6 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "cluster_settle_ms: 0 opens the round immediately" do
       hub_id = SetupHelper.unique_id(:rec_gate_now)
-      cleanup_priv(hub_id)
       {^hub_id, _pid} = SetupHelper.start_hub!(opt_in(hub_id, cluster_settle_ms: 0))
 
       assert Recovery.await_normal(hub_id, 1_000) == :ok
@@ -387,7 +381,6 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "a grace shorter than the settle window wins" do
       hub_id = SetupHelper.unique_id(:rec_gate_grace)
-      cleanup_priv(hub_id)
 
       {^hub_id, _pid} =
         SetupHelper.start_hub!(
@@ -402,7 +395,6 @@ defmodule Test.ProcessHubRecoveryTest do
     # `peer`, and returns the evidence set the coordinator recorded.
     defp evidence_after_broadcast(id, strategy, sync_data) do
       hub_id = SetupHelper.unique_id(id)
-      cleanup_priv(hub_id)
 
       conf =
         opt_in(hub_id, cluster_settle_ms: @held_settle_ms)
@@ -605,7 +597,6 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "a quiet round is still reported" do
       hub_id = SetupHelper.unique_id(:rec_quiet)
-      cleanup_priv(hub_id)
       {^hub_id, _pid} = SetupHelper.start_hub!(opt_in(hub_id, []))
       reconcile_now(hub_id)
       assert Recovery.await_normal(hub_id, 5_000) == :ok
@@ -793,7 +784,6 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "an unreadable durable medium costs the metadata, not the restart", %{dets: dets} do
       hub_id = SetupHelper.unique_id(:rec_unreadable_meta)
-      cleanup_priv(hub_id)
       backend = {Test.Support.UnreadableDurable, path: dets}
 
       log =
@@ -861,7 +851,6 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "an empty declared list has no candidates and starts nothing" do
       hub_id = SetupHelper.unique_id(:rec_ets)
-      cleanup_priv(hub_id)
       {^hub_id, _pid} = SetupHelper.start_hub!(opt_in(hub_id, []))
       reconcile_now(hub_id)
       assert Recovery.await_normal(hub_id, 5_000) == :ok

@@ -12,36 +12,47 @@ defmodule ProcessHub.Service.DeclaredChildren.Store do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.Storage.DetsFile
   alias ProcessHub.Service.Storage.DurableEts
+  alias ProcessHub.Service.Storage.Ets
   alias ProcessHub.Hub
 
   @doc """
-  Opens the list's durable store; returns the `:declared_backend` and
-  `:declared_path` entries for the hub's storage map. Called by the initializer
-  when the feature gate is on.
+  Opens the list's store; returns the `:declared_backend` entry for the hub's
+  storage map, and `:declared_path` when the list is kept on disk. Called by the
+  initializer when the feature gate is on.
+
+  The list is only as durable as the registry: a hub whose registry keeps
+  nothing on disk gets an in-memory list too.
   """
   @spec open(ProcessHub.hub_id(), term()) :: %{
-          declared_backend: {module(), term()},
-          declared_path: String.t()
+          required(:declared_backend) => {module(), term()},
+          optional(:declared_path) => String.t()
         }
   def open(hub_id, registry_backend) do
-    path = list_path(hub_id, registry_backend)
-    {:ok, ref} = DurableEts.open(:"#{hub_id}_declared_list", path: path)
+    case list_path(registry_backend) do
+      nil ->
+        {:ok, ref} = Ets.open(:"#{hub_id}_declared_list", [])
+        %{declared_backend: {Ets, ref}}
 
-    %{declared_backend: {DurableEts, ref}, declared_path: path}
+      path ->
+        {:ok, ref} = DurableEts.open(:"#{hub_id}_declared_list", path: path)
+        %{declared_backend: {DurableEts, ref}, declared_path: path}
+    end
   end
 
   # Sibling of the exact registry file (not just its directory), so nodes that
   # share a filesystem but use per-node registry paths get per-node list files.
-  defp list_path(hub_id, registry_backend) do
-    registry_opts =
-      case registry_backend do
-        {kind, opts} when kind in [:dets, :durable_ets] and is_list(opts) -> opts
-        _ -> []
-      end
-
-    base = DetsFile.resolve_path(hub_id, registry_opts)
-    Path.rootname(base) <> ".declared.dets"
+  # A backend that named no file has no sibling to sit beside, and a hub that
+  # keeps nothing on disk should not have a list forced onto it: nil keeps the
+  # list in memory. Any backend carrying a :path gets a durable list, custom
+  # ones included.
+  defp list_path({_kind, opts}) when is_list(opts) do
+    case DetsFile.configured_path(opts) do
+      nil -> nil
+      path -> Path.rootname(path) <> ".declared.dets"
+    end
   end
+
+  defp list_path(_registry_backend), do: nil
 
   @doc "Persists `manifest`, refreshes the read cache, and sets the seeded marker."
   @spec write(Hub.t(), DeclaredChildren.manifest()) :: :ok | {:error, term()}

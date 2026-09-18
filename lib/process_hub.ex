@@ -189,15 +189,16 @@ defmodule ProcessHub do
     - `:ets` — in-memory only. Registry contents are lost when the
       coordinator restarts.
     - `{:dets, opts}` — on-disk persistence via `ProcessHub.Service.Storage.Dets`.
-      Recognised opts: `path: String.t()` (file path; defaults to
-      `priv/process_hub/<hub_id>/registry.dets`). Reads are served from
+      Recognised opts: `path: String.t()`, which is **required** — the hub
+      refuses to start without it, because ProcessHub has no directory of
+      its own that your application can reach. Reads are served from
       DETS (slower than ETS).
     - `{:durable_ets, opts}` — hybrid backend via
       `ProcessHub.Service.Storage.DurableEts`. Reads are served from an
       in-memory ETS table; mutations are mirrored synchronously to a
       DETS file (`:dets.sync/1` per write) for restart-survival. The DETS
       file is replayed into ETS on open, so reads are immediately
-      authoritative. Same `:path` opt and default location as `{:dets, _}`;
+      authoritative. Same required `:path` opt as `{:dets, _}`;
       switching a hub between the two against the same path picks up the
       existing rows. Recommended for read-heavy workloads that also need
       durability.

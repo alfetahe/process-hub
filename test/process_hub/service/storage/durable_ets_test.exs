@@ -31,17 +31,12 @@ defmodule Test.ProcessHub.Service.Storage.DurableEtsTest do
       Backend.close(ref)
     end
 
-    test "uses the default priv path when no :path is given", %{hub_id: hub_id} do
-      {:ok, ref} = Backend.open(hub_id, [])
+    test "open without a :path refuses rather than picking a location", %{hub_id: hub_id} do
+      assert_raise ArgumentError, ~r/needs a :path option/, fn ->
+        Backend.open(hub_id, [])
+      end
 
-      expected_dir =
-        Path.join([File.cwd!(), "priv", "process_hub", Atom.to_string(hub_id)])
-
-      expected_path = Path.join(expected_dir, "registry.dets")
-      on_exit(fn -> File.rm_rf!(expected_dir) end)
-
-      assert File.exists?(expected_path)
-      Backend.close(ref)
+      refute File.exists?(Path.join([File.cwd!(), "priv", "process_hub", Atom.to_string(hub_id)]))
     end
 
     test "replays existing DETS rows into ETS on open", %{hub_id: hub_id, path: path} do

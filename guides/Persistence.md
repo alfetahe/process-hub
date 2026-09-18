@@ -20,9 +20,10 @@ registry backends, configured via the `:registry_backend` field on
 - `{Module, opts}` — a custom module implementing
   `ProcessHub.Service.Storage.Behaviour`.
 
-Both disk backends accept `path: String.t()`, defaulting to
-`priv/process_hub/<hub_id>/registry.dets`. They share the same on-disk
-format, so a hub can switch between them against the same path.
+Both disk backends require `path: String.t()`; a hub configured without
+one refuses to start, because ProcessHub has no directory of its own that
+your application can reach. They share the same on-disk format, so a hub
+can switch between them against the same path.
 
 ```elixir
 ProcessHub.child_spec(%ProcessHub{
@@ -119,9 +120,12 @@ single integer comparison and adoption replaces the whole list. The list
 mutation always commits before the process action — add before start, remove
 before terminate — so either half of a crashed command heals in the next round.
 
-Every node persists its adopted copy in its own DETS-backed store beside the
-registry file (whatever the `:registry_backend`), and on boot adopts the
-highest version among its local copy, its peers, and the remote manifest. With
+Every node keeps its adopted copy in a store beside the registry file, and on
+boot adopts the highest version among its local copy, its peers, and the remote
+manifest. The list is exactly as durable as the registry: a backend with a
+`:path` gets a DETS-backed list beside that file, while an `:ets` hub keeps the
+list in memory and starts from an empty one after a restart. To keep a list
+across restarts without putting the registry on disk, use `:remote_manifest`. With
 no leader reachable, `durable: true` starts and stops of declared children
 return `{:error, :no_leader}`; everything else stays leader-free.
 

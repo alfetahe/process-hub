@@ -11,13 +11,14 @@ defmodule ProcessHub.Service.Storage.Dets do
 
   ### File location
 
-  By default the file is stored at
-  `priv/process_hub/<hub_id>/registry.dets` resolved against the
-  application's `priv` directory. Override with the `:path` option:
+  The `:path` option is required — ProcessHub never picks a location of its
+  own, because the only directory it could name is its own, inside the
+  dependency, where the host application cannot reach it:
 
       registry_backend: {:dets, path: "/var/lib/myapp/hub.dets"}
 
-  The parent directory is created if it does not exist.
+  The parent directory is created if it does not exist. A hub configured
+  without a `:path` refuses to start.
 
   ### Recovery on corruption
 

@@ -27,9 +27,11 @@ defmodule ProcessHub.Initializer do
   def start_link(_), do: {:error, :expected_hub_settings}
 
   @doc false
-  @spec validate_config(ProcessHub.t()) :: :ok | {:error, {:invalid_config, atom()}}
+  @spec validate_config(ProcessHub.t()) ::
+          :ok | {:error, {:invalid_config, atom() | {atom(), atom()}}}
   defp validate_config(%ProcessHub{} = hub) do
-    with :ok <- validate_handover_replication(hub) do
+    with :ok <- validate_handover_replication(hub),
+         :ok <- validate_registry_backend_path(hub) do
       :ok
     end
   end
@@ -61,6 +63,18 @@ defmodule ProcessHub.Initializer do
   end
 
   defp warn_on_debounce(_), do: :ok
+
+  # A DETS-file backend is told where to write or the hub does not start. The
+  # library has no host-owned directory to fall back on.
+  defp validate_registry_backend_path(%ProcessHub{registry_backend: {kind, opts}})
+       when kind in [:dets, :durable_ets] and is_list(opts) do
+    case ProcessHub.Service.Storage.DetsFile.configured_path(opts) do
+      nil -> {:error, {:invalid_config, {:registry_backend_path_required, kind}}}
+      _path -> :ok
+    end
+  end
+
+  defp validate_registry_backend_path(%ProcessHub{}), do: :ok
 
   defp validate_handover_replication(%ProcessHub{
          migration_strategy: migration_strat,

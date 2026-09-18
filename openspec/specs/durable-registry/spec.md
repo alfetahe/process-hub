@@ -59,9 +59,9 @@ ProcessHub SHALL provide `ProcessHub.Service.Storage.Dets` implementing
 
 `open/2` SHALL:
 
-1. Resolve the file path: from `opts[:path]` if provided, else default
-   `priv/process_hub/<hub_id>/registry.dets` resolved against the application's
-   `priv` directory.
+1. Resolve the file path from `opts[:path]`. There SHALL be no default: a
+   library cannot name a directory its host owns, so `open/2` SHALL raise an
+   `ArgumentError` naming `:path` when the option is absent.
 2. Ensure the parent directory exists (`File.mkdir_p!/1`).
 3. Call `:dets.open_file/2` with options `[file: path, repair: true, type: :set]`.
 4. If `:dets.open_file/2` returns `{:error, _}` indicating an unrepairable
@@ -102,8 +102,8 @@ for this change.
 
 #### Scenario: DETS open creates the file on first use
 
-- **GIVEN** no file exists at `priv/process_hub/<hub_id>/registry.dets`
-- **WHEN** `Storage.Dets.open(:my_hub, [])` is called
+- **GIVEN** no file exists at the configured `:path`
+- **WHEN** `Storage.Dets.open(:my_hub, path: "/var/lib/myapp/hub.dets")` is called
 - **THEN** the parent directory is created if needed; a fresh empty DETS file
   is created; the function returns `{:ok, table_name}`
 - **AND** `[:process_hub, :registry, :backend_opened]` telemetry fires with
@@ -147,7 +147,7 @@ for this change.
 `ProcessHub.t()` SHALL include a new optional field `:registry_backend` accepting these shapes:
 
 - `:ets` — use `ProcessHub.Service.Storage.Ets`. THIS IS THE DEFAULT and matches all existing behaviour.
-- `{:dets, opts}` where `opts` is `keyword()` — use `ProcessHub.Service.Storage.Dets`. Recognised opts: `path: String.t()` (file path; defaults to `priv/process_hub/<hub_id>/registry.dets`).
+- `{:dets, opts}` where `opts` is `keyword()` — use `ProcessHub.Service.Storage.Dets`. Recognised opts: `path: String.t()`, which is REQUIRED; a hub configured without it SHALL be refused by `ProcessHub.start_link/1` with `{:error, {:invalid_config, {:registry_backend_path_required, :dets}}}`.
 - `{Module, opts}` where `Module` implements `ProcessHub.Service.Storage.Behaviour` — use the custom module. Allows downstream extensibility (in-memory test backends, future Raft backend, etc.).
 
 `ProcessHub.Coordinator.init/1` SHALL open the configured backend before the supervision tree completes setup, store the returned `ref()` in the `Hub.t()` storage map, and pass it to all registry-touching code paths. `terminate/2` SHALL call `Backend.close/1`.
@@ -258,7 +258,7 @@ The backend SHALL combine ETS source-of-truth read/write semantics with DETS-mir
 - TTL'd rows SHALL be stored as `{key, value, expire_ms}` in both ETS and DETS, matching the existing layout. Expired entries SHALL be filtered on read.
 - Telemetry events SHALL match the `:dets` backend's event names — `[:process_hub, :registry, :backend_opened | :backend_corrupt | :insert | :remove]` — with `backend: ProcessHub.Service.Storage.DurableEts` in the event metadata. Existing `:dets`-backend dashboards SHALL continue to work.
 
-The accepted `opts` SHALL match the `:dets` backend (`:path` keyword; default `priv/process_hub/<hub_id>/registry.dets`).
+The accepted `opts` SHALL match the `:dets` backend (`:path` keyword, required).
 
 `ProcessHub.Initializer.resolve_registry_backend/1` SHALL accept `{:durable_ets, opts}` and return `{ProcessHub.Service.Storage.DurableEts, opts}`.
 

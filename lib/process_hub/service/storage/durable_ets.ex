@@ -20,9 +20,8 @@ defmodule ProcessHub.Service.Storage.DurableEts do
 
   ### File location
 
-  Identical to the `:dets` backend. Default
-  `priv/process_hub/<hub_id>/registry.dets`; override with the `:path`
-  option:
+  Identical to the `:dets` backend: `:path` is required and a hub
+  configured without one refuses to start.
 
       registry_backend: {:durable_ets, path: "/var/lib/myapp/hub.dets"}
 

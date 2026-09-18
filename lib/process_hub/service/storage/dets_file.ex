@@ -18,14 +18,35 @@ defmodule ProcessHub.Service.Storage.DetsFile do
     if Keyword.get(write_opts, :sync, true), do: :dets.sync(table), else: :ok
   end
 
-  @doc "Resolves the on-disk path for `hub_id` (`:path` option, else `priv/process_hub/<hub_id>/registry.dets`)."
-  @spec resolve_path(atom(), keyword()) :: String.t()
-  def resolve_path(hub_id, opts) do
+  @doc """
+  The on-disk path in `opts`, or `nil` when none was given.
+
+  The single place backend options are read for a file location, so "was this
+  backend told where to write?" is answered the same way everywhere.
+  """
+  @spec configured_path(keyword()) :: String.t() | nil
+  def configured_path(opts) when is_list(opts) do
     case Keyword.get(opts, :path) do
-      nil -> default_path(hub_id)
       path when is_binary(path) -> path
       path when is_list(path) -> List.to_string(path)
+      _missing -> nil
     end
+  end
+
+  def configured_path(_opts), do: nil
+
+  @doc """
+  Returns the on-disk path the backend was configured with, or raises.
+
+  There is no default: a library cannot know a location its host owns, and the
+  one it used to pick sat in its own `priv`, where the host could not reach it.
+  """
+  @spec resolve_path(atom(), keyword()) :: String.t()
+  def resolve_path(hub_id, opts) do
+    configured_path(opts) ||
+      raise ArgumentError,
+            "a DETS-file storage backend for #{inspect(hub_id)} needs a :path option, " <>
+              "for example registry_backend: {:dets, path: \"/var/lib/myapp/hub.dets\"}"
   end
 
   @doc "Rotates a corrupt DETS file aside, logs at ERROR, and reopens a fresh file."
@@ -73,15 +94,5 @@ defmodule ProcessHub.Service.Storage.DetsFile do
     error -> {:error, error}
   catch
     :exit, reason -> {:error, reason}
-  end
-
-  defp default_path(hub_id) do
-    base =
-      case :code.priv_dir(:process_hub) do
-        {:error, :bad_name} -> Path.join([File.cwd!(), "priv"])
-        priv when is_list(priv) -> List.to_string(priv)
-      end
-
-    Path.join([base, "process_hub", Atom.to_string(hub_id), "registry.dets"])
   end
 end
