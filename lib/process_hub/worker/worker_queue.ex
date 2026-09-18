@@ -3,6 +3,7 @@ defmodule ProcessHub.Worker.WorkerQueue do
   alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Cluster
+  alias ProcessHub.Service.LoggerService
   alias ProcessHub.Service.Storage
 
   use GenServer
@@ -19,7 +20,7 @@ defmodule ProcessHub.Worker.WorkerQueue do
   @impl true
   def handle_cast({:tracked, message, notify_pid}, state) do
     {message, notify_pids, tail} = merge_start_batches(message, [notify_pid])
-    do_work(message, state)
+    run(message)
     Enum.each(notify_pids, &send(&1, :work_complete))
 
     case tail do
@@ -27,7 +28,7 @@ defmodule ProcessHub.Worker.WorkerQueue do
         :ok
 
       {tail_message, tail_pid} ->
-        do_work(tail_message, state)
+        run(tail_message)
         send(tail_pid, :work_complete)
     end
 
@@ -35,29 +36,8 @@ defmodule ProcessHub.Worker.WorkerQueue do
   end
 
   @impl true
-  def handle_cast({:handle_work, func}, state) do
-    do_work({:handle_work, func}, state)
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_cast({:handle_requests, requests, hub}, state) do
-    do_work({:handle_requests, requests, hub}, state)
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_cast({:handle_node_down, arg}, state) do
-    do_work({:handle_node_down, arg}, state)
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_cast({:handle_node_up, arg}, state) do
-    do_work({:handle_node_up, arg}, state)
+  def handle_cast(message, state) do
+    run(message)
 
     {:noreply, state}
   end
@@ -67,13 +47,26 @@ defmodule ProcessHub.Worker.WorkerQueue do
     {:reply, func.(), state}
   end
 
-  defp do_work({:handle_work, func}, _state), do: func.()
+  # A failing job costs only itself: the queue goes on to the next one, and a
+  # tracked job still reports back, so the coordinator's lock count drains.
+  defp run(message) do
+    do_work(message)
+  catch
+    kind, reason ->
+      LoggerService.error(
+        "Worker queue job @job failed: @reason",
+        %{"job" => elem(message, 0), "reason" => Exception.format(kind, reason, __STACKTRACE__)},
+        prefix: "WorkerQueue"
+      )
+  end
 
-  defp do_work({:handle_requests, requests, hub}, state),
-    do: do_work({:handle_request_batch, Enum.map(requests, &{&1, hub})}, state)
+  defp do_work({:handle_work, func}), do: func.()
+
+  defp do_work({:handle_requests, requests, hub}),
+    do: do_work({:handle_request_batch, Enum.map(requests, &{&1, hub})})
 
   # Each request runs against the hub snapshot it was dispatched with.
-  defp do_work({:handle_request_batch, [{_request, hub} | _] = pairs}, _state) do
+  defp do_work({:handle_request_batch, [{_request, hub} | _] = pairs}) do
     Task.async_stream(pairs, fn {request, hub} -> CrossNodeRequest.handle(request, hub) end,
       timeout: Storage.get(hub.storage.misc, StorageKey.cnrt()) || 5000,
       ordered: false,
@@ -82,11 +75,11 @@ defmodule ProcessHub.Worker.WorkerQueue do
     |> Stream.run()
   end
 
-  defp do_work({:handle_request_batch, []}, _state), do: :ok
+  defp do_work({:handle_request_batch, []}), do: :ok
 
-  defp do_work({:handle_node_down, arg}, _state), do: Cluster.handle_node_down(arg)
+  defp do_work({:handle_node_down, arg}), do: Cluster.handle_node_down(arg)
 
-  defp do_work({:handle_node_up, arg}, _state), do: Cluster.handle_node_up(arg)
+  defp do_work({:handle_node_up, arg}), do: Cluster.handle_node_up(arg)
 
   # Start operations already queued behind this one join its batch, so their
   # registrations share one registry sync instead of paying one each. The

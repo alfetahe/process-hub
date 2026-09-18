@@ -45,6 +45,30 @@ defmodule Test.Worker.WorkerQueueTest do
 
       assert_receive :work_complete, 1000
     end
+
+    test "a job that raises, exits or throws is logged and still reports done",
+         %{hub: hub} do
+      wq_pid = GenServer.whereis(hub.procs.worker_queue)
+      test_pid = self()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          for fail <- [fn -> raise "boom" end, fn -> exit(:gone) end, fn -> throw(:up) end] do
+            GenServer.cast(wq_pid, {:tracked, {:handle_work, fail}, test_pid})
+            assert_receive :work_complete, 1000
+          end
+
+          GenServer.cast(wq_pid, {:handle_work, fn -> send(test_pid, :next_job_ran) end})
+          assert_receive :next_job_ran, 1000
+        end)
+
+      assert GenServer.whereis(hub.procs.worker_queue) === wq_pid
+      assert log =~ "[error]"
+      assert log =~ "Worker queue job :handle_work failed"
+      assert log =~ "boom"
+      assert log =~ ":gone"
+      assert log =~ ":up"
+    end
   end
 
   describe "handle_call {:handle_work}" do
