@@ -134,8 +134,10 @@ defmodule ProcessHub.Initializer do
           storage.hook
         ) ++
         [
-          {ProcessHub.Coordinator, {hub_conf, hub}},
+          # Before the coordinator: it hands work to the queue from its first
+          # message, and a cast to an unregistered queue is silently dropped.
           {ProcessHub.Worker.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
+          {ProcessHub.Coordinator, {hub_conf, hub}},
           {ProcessHub.Worker.BootstrapWorker, {hub_id, procs.bootstrap_worker, storage.misc}},
           {ProcessHub.Worker.Janitor,
            {
