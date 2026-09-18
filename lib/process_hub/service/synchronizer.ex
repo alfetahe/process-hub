@@ -4,10 +4,10 @@ defmodule ProcessHub.Service.Synchronizer do
   registry data between nodes.
   """
 
-  alias ProcessHub.Coordinator
-  alias ProcessHub.Task.SynchronizationTask
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.ProcessRegistry.Row
+  alias ProcessHub.Service.State
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
@@ -19,36 +19,22 @@ defmodule ProcessHub.Service.Synchronizer do
   The system will use the configured synchronization strategy.
   """
   def trigger_sync(hub) do
-    Task.Supervisor.async(
-      hub.procs.task_sup,
-      SynchronizationTask.IntervalSyncInit,
-      :handle,
-      [
-        %SynchronizationTask.IntervalSyncInit{
-          hub: hub
-        }
-      ]
-    )
-    |> Task.await()
+    if not State.is_partitioned?(hub) and broadcastable_local_data(hub) !== :suppress do
+      hub.storage.misc
+      |> Storage.get(StorageKey.strsyn())
+      |> SynchronizationStrategy.init_sync(hub, Cluster.nodes(hub.storage.misc, [:include_local]))
+    end
+
+    :ok
   end
 
   def exec_interval_sync(hub_id, strategy, sync_data, remote_node) do
-    hub = Coordinator.get_hub(hub_id)
-
-    Task.Supervisor.async_nolink(
-      hub.procs.task_sup,
-      SynchronizationTask.IntervalSyncHandle,
-      :handle,
-      [
-        %SynchronizationTask.IntervalSyncHandle{
-          hub: hub,
-          sync_strat: strategy,
-          sync_data: sync_data,
-          remote_node: remote_node
-        }
-      ]
+    SynchronizationStrategy.handle_synchronization(
+      strategy,
+      Hub.get(hub_id),
+      sync_data,
+      remote_node
     )
-    |> Task.await()
   end
 
   @doc """
@@ -197,20 +183,31 @@ defmodule ProcessHub.Service.Synchronizer do
   Called when new nodes join the cluster to share local process information.
   """
   @spec broadcast_local_registry(Hub.t(), [node()]) :: :ok
-  def broadcast_local_registry(state, target_nodes) do
-    case broadcastable_local_data(state) do
+  def broadcast_local_registry(hub, target_nodes) do
+    case broadcastable_local_data(hub) do
       :suppress ->
         :ok
 
       {:ok, local_data} ->
-        sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
+        sync_strategy = Storage.get(hub.storage.misc, StorageKey.strsyn())
 
         SynchronizationStrategy.broadcast_local_data(
           sync_strategy,
-          state,
+          hub,
           local_data,
           target_nodes
         )
     end
+  end
+
+  @doc """
+  Merges the registry data `remote_node` broadcast when it joined, through the
+  configured synchronization strategy.
+  """
+  @spec merge_remote_registry(Hub.t(), term(), node()) :: :ok
+  def merge_remote_registry(hub, sync_data, remote_node) do
+    hub.storage.misc
+    |> Storage.get(StorageKey.strsyn())
+    |> SynchronizationStrategy.handle_node_join_data(hub, sync_data, remote_node)
   end
 end

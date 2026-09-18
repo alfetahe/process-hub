@@ -166,6 +166,26 @@ defmodule Test.ProcessHubRecoveryTest do
       assert {:error, :invalid_auto_recovery} = Recovery.parse_config(:bad)
     end
 
+    test "an out-of-range value refuses the hub before anything is stored or opened" do
+      hub_id = SetupHelper.unique_id(:rec_bad_grace)
+
+      assert {:error, {:invalid_auto_recovery, :reconcile_grace_ms_out_of_range}} =
+               ProcessHub.start_link(%ProcessHub{
+                 hub_id: hub_id,
+                 auto_recovery: [reconcile_grace_ms: 49]
+               })
+
+      assert ProcessHub.Hub.get(hub_id) === nil
+    end
+
+    test "an unknown shape starts the hub with recovery disabled and a warning" do
+      hub_id = SetupHelper.unique_id(:rec_bad_shape)
+      log = capture_log(fn -> SetupHelper.start_hub!(hub_id: hub_id, auto_recovery: :bad) end)
+
+      assert log =~ "Invalid :auto_recovery config"
+      refute ProcessHub.Hub.get(hub_id).recovery_config.enabled?
+    end
+
     test "rejects an unusable remote manifest configuration" do
       assert {:error,
               {:invalid_auto_recovery,
@@ -360,7 +380,7 @@ defmodule Test.ProcessHubRecoveryTest do
     @held_settle_ms 60_000
     @registry_broadcast :node_registry_broadcast_event
 
-    defp delivered_by(hub_id), do: ProcessHub.Coordinator.get_hub(hub_id).registry_delivered_by
+    defp delivered_by(hub_id), do: :sys.get_state(hub_id).registry_delivered_by
 
     test "a node with no peers opens the round once the cluster has settled" do
       hub_id = SetupHelper.unique_id(:rec_gate_alone)
@@ -404,8 +424,13 @@ defmodule Test.ProcessHubRecoveryTest do
       assert delivered_by(hub_id) == MapSet.new()
 
       send(hub_id, {@registry_broadcast, {sync_data, :peer@evidence}})
-
       assert Recovery.recovery_state(hub_id) == :recovering
+
+      # The merge runs in the worker queue and reports back before the queue
+      # answers the next job.
+      worker_queue = ProcessHub.Hub.get(hub_id).procs.worker_queue
+      :ok = GenServer.call(worker_queue, {:handle_work, fn -> :ok end})
+
       delivered_by(hub_id)
     end
 
@@ -426,6 +451,16 @@ defmodule Test.ProcessHubRecoveryTest do
         })
 
       assert MapSet.member?(evidence, :peer@evidence)
+    end
+
+    test "a broadcast whose merge fails is not evidence" do
+      {evidence, log} =
+        with_log(fn ->
+          evidence_after_broadcast(:rec_gate_failed, %PubSub{sync_interval: 300}, {:bad, 1})
+        end)
+
+      refute MapSet.member?(evidence, :peer@evidence)
+      assert log =~ "Worker queue job :handle_work failed"
     end
   end
 
@@ -538,7 +573,7 @@ defmodule Test.ProcessHubRecoveryTest do
       Application.stop(:elector)
       on_exit(fn -> DeclaredChildren.ensure_election() end)
 
-      hub = ProcessHub.Coordinator.get_hub(hub_id)
+      hub = ProcessHub.Hub.get(hub_id)
 
       ProcessHub.Service.Storage.insert(
         hub.storage.misc,
@@ -998,6 +1033,34 @@ defmodule Test.ProcessHubRecoveryTest do
 
       assert Test.Helper.Common.eventually(fn -> is_pid(ProcessHub.get_pid(hub_id, :rm_keep)) end)
       assert ProcessHub.get_pid(hub_id, :rm_stop) == nil
+    end
+
+    test "a re-fetch of the remote manifest ships, adopts, or keeps the local list",
+         %{dets: dets, tmp_dir: tmp_dir} do
+      hub_id = SetupHelper.unique_id(:rec_refetch)
+      remote = [path: Path.join(tmp_dir, "manifests")]
+
+      {^hub_id, _pid} =
+        SetupHelper.start_hub!(durable_conf(hub_id, dets, remote_manifest: {LocalPath, remote}))
+
+      # Newer remotely: it is adopted.
+      newer = DeclaredChildren.new_manifest(5, %{rf_b: cspec(:rf_b)})
+      :ok = LocalPath.store(hub_id, 5, ProcessHub.Storage.RemoteManifest.encode(newer), remote)
+      send(hub_id, :declared_remote_refetch)
+      assert Test.Helper.Common.eventually(fn -> declared_ids(hub_id) == [:rf_b] end)
+
+      # Missing remotely: the local list is shipped.
+      File.rm_rf!(remote[:path])
+      send(hub_id, :declared_remote_refetch)
+
+      assert Test.Helper.Common.eventually(fn ->
+               match?({:ok, {5, _}}, LocalPath.fetch(hub_id, remote))
+             end)
+
+      # Unreachable: the local list stays as it is.
+      send(hub_id, {:declared_remote_fetched, {:error, :unreachable}})
+      :sys.get_state(hub_id)
+      assert %{version: 5} = DeclaredChildren.declared_children(hub_id)
     end
 
     test "a stored list with a newer format marker refuses to open", %{

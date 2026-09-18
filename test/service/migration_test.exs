@@ -6,6 +6,7 @@ defmodule Test.Service.MigrationTest do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Coordinator
+  alias ProcessHub.Hub
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Migration
@@ -21,29 +22,32 @@ defmodule Test.Service.MigrationTest do
 
   @remote_node :ph_fake_remote@localhost
 
-  # Stands in for the coordinator: resolves the hub, serializes deferred-list
-  # writes, and forwards the messages it would receive to the test process.
+  # Stands in for the coordinator: answers whether it is locked, serializes
+  # deferred-list writes, and forwards the messages it would receive to the
+  # test process.
   defmodule HubStub do
     @moduledoc false
     use GenServer
 
-    def start_link({hub, owner}),
-      do: GenServer.start_link(__MODULE__, {hub, owner}, name: hub.hub_id)
+    def start_link({hub, owner}) do
+      state = %{hub: hub, owner: owner, locked?: false}
+      GenServer.start_link(__MODULE__, state, name: hub.hub_id)
+    end
 
     @impl GenServer
     def init(state), do: {:ok, state}
 
     @impl GenServer
-    def handle_call(:get_state, _from, {hub, _owner} = state), do: {:reply, hub, state}
+    def handle_call(:is_locked?, _from, state), do: {:reply, state.locked?, state}
 
     @impl GenServer
-    def handle_call({:migration_deferred_update, fun}, _from, {hub, _owner} = state) do
-      {:reply, Migration.apply_deferred_update(hub, fun), state}
+    def handle_call({:migration_deferred_update, fun}, _from, state) do
+      {:reply, Migration.apply_deferred_update(state.hub, fun), state}
     end
 
     @impl GenServer
-    def handle_info(msg, {_hub, owner} = state) do
-      send(owner, msg)
+    def handle_info(msg, state) do
+      send(state.owner, msg)
       {:noreply, state}
     end
   end
@@ -81,9 +85,11 @@ defmodule Test.Service.MigrationTest do
       storage: %{misc: misc, hook: hook}
     }
 
+    Hub.put(hub)
     start_supervised!({HubStub, {hub, self()}})
 
     on_exit(fn ->
+      Hub.delete(hub_id)
       if :ets.whereis(hub_id) != :undefined, do: :ets.delete(hub_id)
     end)
 
@@ -359,37 +365,40 @@ defmodule Test.Service.MigrationTest do
   end
 
   describe "coordinator retry scheduling" do
-    test "schedules no timer while the deferred list is empty", %{hub: hub} do
-      assert {:noreply, state} = Coordinator.handle_info({:migration_retry_ensure, 0}, hub)
+    setup %{hub: hub}, do: %{state: %Coordinator.State{hub: hub}}
+
+    test "schedules no timer while the deferred list is empty", %{state: state} do
+      assert {:noreply, state} = Coordinator.handle_info({:migration_retry_ensure, 0}, state)
       assert state.migration_retry_timer == nil
       refute_receive :migration_retry_tick, 50
     end
 
-    test "schedules a tick when entries exist", %{hub: hub} do
+    test "schedules a tick when entries exist", %{hub: hub, state: state} do
       put_deferred(hub, [entry(:a)])
 
-      assert {:noreply, state} = Coordinator.handle_info({:migration_retry_ensure, 0}, hub)
+      assert {:noreply, state} = Coordinator.handle_info({:migration_retry_ensure, 0}, state)
       assert is_reference(state.migration_retry_timer)
       assert_receive :migration_retry_tick
     end
 
-    test "does not double-schedule while a timer is pending or a tick runs", %{hub: hub} do
+    test "does not double-schedule while a timer is pending or a tick runs",
+         %{hub: hub, state: state} do
       put_deferred(hub, [entry(:a)])
-      state = %{hub | migration_retry_timer: make_ref()}
+      state = %{state | migration_retry_timer: make_ref()}
 
       assert {:noreply, ^state} = Coordinator.handle_info({:migration_retry_ensure, 0}, state)
       refute_receive :migration_retry_tick, 50
     end
 
-    test "the tick runs in a task and reports the remaining count", %{hub: hub} do
-      assert {:noreply, state} = Coordinator.handle_info(:migration_retry_tick, hub)
+    test "the tick runs in a task and reports the remaining count", %{state: state} do
+      assert {:noreply, state} = Coordinator.handle_info(:migration_retry_tick, state)
       assert {:running, ref} = state.migration_retry_timer
       assert_receive {^ref, 0}
     end
 
-    test "re-arms only while entries remain", %{hub: hub} do
+    test "re-arms only while entries remain", %{hub: hub, state: state} do
       ref = make_ref()
-      running = %{hub | migration_retry_timer: {:running, ref}}
+      running = %{state | migration_retry_timer: {:running, ref}}
 
       put_deferred(hub, [entry(:a)])
       assert {:noreply, state} = Coordinator.handle_info({ref, 1}, running)
@@ -400,10 +409,10 @@ defmodule Test.Service.MigrationTest do
       assert state.migration_retry_timer == nil
     end
 
-    test "a crashed tick reschedules instead of wedging the timer", %{hub: hub} do
+    test "a crashed tick reschedules instead of wedging the timer", %{hub: hub, state: state} do
       put_deferred(hub, [entry(:a)])
       ref = make_ref()
-      running = %{hub | migration_retry_timer: {:running, ref}}
+      running = %{state | migration_retry_timer: {:running, ref}}
 
       assert {:noreply, state} =
                Coordinator.handle_info({:DOWN, ref, :process, self(), :boom}, running)
@@ -411,14 +420,14 @@ defmodule Test.Service.MigrationTest do
       assert is_reference(state.migration_retry_timer)
     end
 
-    test "a draining node skips the presence heartbeat", %{hub: hub} do
+    test "a draining node skips the presence heartbeat", %{hub: hub, state: state} do
       Storage.insert(hub.storage.misc, StorageKey.hdi(), 60_000)
       Storage.insert(hub.storage.misc, StorageKey.drn(), %{waiter: self()})
 
-      assert {:noreply, _state} = Coordinator.handle_info(:propagate, hub)
+      assert {:noreply, _state} = Coordinator.handle_info(:propagate, state)
 
       Storage.remove(hub.storage.misc, StorageKey.drn())
-      assert {:noreply, _state} = Coordinator.handle_info(:propagate, hub)
+      assert {:noreply, _state} = Coordinator.handle_info(:propagate, state)
     end
   end
 
@@ -442,7 +451,9 @@ defmodule Test.Service.MigrationTest do
     test "locked hub returns error", %{hub: hub} do
       Registry.register(hub.procs.system_registry, "dist_sup", nil)
 
-      assert Migration.drain(%{hub | pending_work_count: 1}, []) == {:error, :locked}
+      :sys.replace_state(hub.hub_id, &%{&1 | locked?: true})
+
+      assert Migration.drain(hub, []) == {:error, :locked}
     end
 
     test "an already-draining node returns error", %{hub: hub} do

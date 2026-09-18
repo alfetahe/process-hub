@@ -1,20 +1,12 @@
 defmodule ProcessHub.Hub do
-  @typedoc """
-  Per-event batch state: pending nodes, debounce timer ref, and the monotonic
-  ms at which the current window opened — used to cap the total wait so a
-  sustained event stream cannot starve the batch.
-  """
-  @type batch_state() :: %{
-          nodes: [node()],
-          timer_ref: reference() | nil,
-          started_at: integer() | nil
-        }
+  @moduledoc """
+  The parts of a hub that are fixed when it starts: its id, its processes, its
+  storage and its parsed `:auto_recovery` config.
 
-  @typedoc """
-  Coordinator boot-recovery state. `:recovering` means the first orphan reconcile
-  round has not completed; `:normal` means it has and is terminal.
+  A running hub is stored before any of its processes start, so any process
+  reads it with `get/1` without messaging the coordinator. The coordinator's
+  changing bookkeeping lives in `ProcessHub.Coordinator.State`.
   """
-  @type recovery_state() :: :recovering | :normal
 
   @typedoc """
   Parsed `:auto_recovery` config. `enabled?` gates the lifecycle;
@@ -36,12 +28,15 @@ defmodule ProcessHub.Hub do
           hub_id: atom(),
           procs: %{
             initializer: pid(),
-            task_sup: {:via, Registry, {pid(), binary()}},
-            dist_sup: {:via, Registry, {pid(), binary()}},
-            worker_queue: {:via, Registry, {pid(), binary()}},
-            janitor: {:via, Registry, {pid(), binary()}},
-            manifest_shipper: {:via, Registry, {pid(), binary()}},
-            event_queue: atom()
+            system_registry: atom(),
+            event_queue: atom(),
+            process_registry: GenServer.name(),
+            dist_sup: GenServer.name(),
+            task_sup: GenServer.name(),
+            worker_queue: GenServer.name(),
+            bootstrap_worker: GenServer.name(),
+            janitor: GenServer.name(),
+            manifest_shipper: GenServer.name()
           },
           storage: %{
             optional(:registry_backend) => {module(), term()},
@@ -50,74 +45,23 @@ defmodule ProcessHub.Hub do
             misc: :ets.tid(),
             hook: :ets.tid()
           },
-          event_batches: %{nodedown: batch_state(), cluster_join: batch_state()},
-          # Per-node membership reconciliation fail-safe timers, keyed by node.
-          nodeup_reconcile_timers: %{node() => reference()},
-          pending_operations: %{reference() => ProcessHub.Service.RequestManager.t()},
-          pending_work_count: non_neg_integer(),
-          migration_retry_timer: reference() | {:running, reference()} | nil,
-          recovery_state: recovery_state(),
-          recovery_config: recovery_config(),
-          recovery_normal_waiters: %{GenServer.from() => reference()},
-          reconcile_running?: boolean(),
-          reconcile_last_at: integer() | nil,
-          cluster_settled?: boolean(),
-          registry_delivered_by: MapSet.t(node()),
-          # The declared-list batch's working manifest, not yet written, and the
-          # commands parked behind its write.
-          declared_unsynced: map() | nil,
-          declared_batch: ProcessHub.Service.Batch.t()
+          recovery_config: recovery_config()
         }
 
-  @doc "Returns the default event batch state."
-  def default_batch_state, do: %{nodes: [], timer_ref: nil, started_at: nil}
+  defstruct [:hub_id, :procs, :storage, :recovery_config]
 
-  defstruct [
-    :hub_id,
-    :procs,
-    :storage,
-    event_batches: %{
-      nodedown: %{nodes: [], timer_ref: nil, started_at: nil},
-      cluster_join: %{nodes: [], timer_ref: nil, started_at: nil}
-    },
-    nodeup_reconcile_timers: %{},
-    pending_operations: %{},
-    pending_work_count: 0,
-    migration_retry_timer: nil,
-    recovery_state: :normal,
-    recovery_config: %{
-      enabled?: false,
-      reconcile_grace_ms: 30_000,
-      reconcile_interval_ms: 15_000,
-      cluster_settle_ms: 2_000,
-      remote_manifest: nil
-    },
-    recovery_normal_waiters: %{},
-    reconcile_running?: false,
-    reconcile_last_at: nil,
-    cluster_settled?: false,
-    registry_delivered_by: MapSet.new(),
-    declared_unsynced: nil,
-    declared_batch: %ProcessHub.Service.Batch{}
-  ]
+  @doc "Stores `hub` under its `hub_id`. The only writer of the stored hub."
+  @spec put(t()) :: :ok
+  def put(%__MODULE__{hub_id: hub_id} = hub), do: :persistent_term.put({__MODULE__, hub_id}, hub)
 
-  @doc """
-  The hub a worker needs — identity, processes, storage, configuration — with
-  the coordinator's transient bookkeeping blanked. That bookkeeping (every
-  in-flight operation, the declared-list batch, event batches, waiters) grows
-  with the load; handed to the worker queue and copied into every request task
-  it made each start cost as much as every start in flight.
-  """
-  @spec for_workers(t()) :: t()
-  def for_workers(%__MODULE__{} = hub) do
-    %{
-      hub
-      | pending_operations: %{},
-        declared_unsynced: nil,
-        declared_batch: %ProcessHub.Service.Batch{},
-        event_batches: %{nodedown: default_batch_state(), cluster_join: default_batch_state()},
-        nodeup_reconcile_timers: %{},
-        recovery_normal_waiters: %{}
-    }
+  @doc "Returns the running hub `hub_id`, or `nil` when it is not running."
+  @spec get(atom()) :: t() | nil
+  def get(hub_id), do: :persistent_term.get({__MODULE__, hub_id}, nil)
+
+  @doc "Removes the stored hub `hub_id`."
+  @spec delete(atom()) :: :ok
+  def delete(hub_id) do
+    :persistent_term.erase({__MODULE__, hub_id})
+    :ok
   end
 end

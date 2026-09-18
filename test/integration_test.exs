@@ -588,7 +588,7 @@ defmodule Test.IntegrationTest do
     |> Bootstrap.start_hubs(Node.list(), lh, new_nodes: true)
 
     # Get fresh hub to get updated ring after restart
-    fresh_hub = ProcessHub.Coordinator.get_hub(hub_id)
+    fresh_hub = ProcessHub.Hub.get(hub_id)
     ring = ProcessHub.Service.Ring.get_ring(fresh_hub.storage.misc)
     local_node = node()
 
@@ -679,7 +679,7 @@ defmodule Test.IntegrationTest do
       GenServer.call(pid, {:set_value, :shutdown, true})
     end)
 
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
 
     dist_strat =
       ProcessHub.Service.Storage.get(hub.storage.misc, ProcessHub.Constant.StorageKey.strdist())
@@ -788,7 +788,7 @@ defmodule Test.IntegrationTest do
 
     Common.sync_base_test(context, child_specs, :add, scope: :global)
 
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
 
     dist_strat =
       ProcessHub.Service.Storage.get(hub.storage.misc, ProcessHub.Constant.StorageKey.strdist())

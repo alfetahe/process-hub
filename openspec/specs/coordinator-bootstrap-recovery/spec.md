@@ -72,9 +72,11 @@ The keys `:marker_path`, `:replay_timeout_ms`, `:recovery_timeout_ms`, and
 them SHALL log a WARN naming the key and SHALL otherwise be ignored, so a deployment
 carrying them keeps starting. They SHALL be rejected at init in a future release.
 
-The field SHALL be ignored by the coordinator if its value is anything other than the
-documented shapes; an INVALID-config WARN log SHALL fire and the coordinator SHALL
-behave as if `auto_recovery == false`.
+The field SHALL be parsed once, when the hub starts. A value outside the documented
+ranges SHALL be refused by `ProcessHub.start_link/1` before any storage is opened,
+with `{:error, {:invalid_auto_recovery, reason}}`. A value that is not one of the
+documented shapes SHALL be ignored: an INVALID-config WARN log SHALL fire and the hub
+SHALL behave as if `auto_recovery == false`.
 
 #### Scenario: Default config — no reconcile, no durable read
 
@@ -103,9 +105,10 @@ behave as if `auto_recovery == false`.
 #### Scenario: Out-of-range reconcile_grace_ms rejected
 
 - **GIVEN** `auto_recovery: [reconcile_grace_ms: 49]` (below the `50` minimum)
-- **WHEN** the coordinator initialises
-- **THEN** init fails with
+- **WHEN** the hub is started
+- **THEN** `ProcessHub.start_link/1` returns
   `{:error, {:invalid_auto_recovery, :reconcile_grace_ms_out_of_range}}`
+- **AND** no registry backend or declared-list store was opened
 
 ### Requirement: Hook points for downstream integration
 
@@ -309,10 +312,11 @@ the hub knows about has delivered its registry data. `reconcile_grace_ms` SHALL 
 round unconditionally when it elapses, so a connected peer that never answers cannot hold
 a hub in `:recovering` indefinitely.
 
-A peer's registry data counts as delivered when the coordinator has handled that node's
-registry broadcast. The record SHALL be kept by the coordinator rather than by a
-synchronization strategy, so every strategy, including a custom one, satisfies the gate
-the same way.
+A peer's registry data counts as delivered when that node's registry broadcast has been
+merged into the local registry. A broadcast whose merge fails SHALL NOT count, so the
+round never opens on rows that did not arrive; `reconcile_grace_ms` still caps the wait.
+The record SHALL be kept by the coordinator rather than by a synchronization strategy, so
+every strategy, including a custom one, satisfies the gate the same way.
 
 `reconcile_grace_ms` SHALL act as a maximum and never as a minimum: when it is shorter
 than the cluster settle window, it opens the round and the settle window has no effect.
@@ -344,7 +348,7 @@ run, so the relationship that warning described no longer exists.
 
 - **GIVEN** an opt-in hub with `cluster_settle_ms: 2_000` and `reconcile_grace_ms: 45_000`
 - **AND** one connected peer running the same hub
-- **WHEN** the peer's registry broadcast has been handled and the settle window has
+- **WHEN** the peer's registry broadcast has been merged and the settle window has
   elapsed
 - **THEN** the first reconcile round runs against a cluster view that includes the peer's
   rows, well before `reconcile_grace_ms` elapses

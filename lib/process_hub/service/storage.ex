@@ -9,52 +9,31 @@ defmodule ProcessHub.Service.Storage do
       configured `ProcessHub.Service.Storage.Behaviour` backend
       (default `ProcessHub.Service.Storage.Ets`).
 
-  When a registry backend is opened it registers itself with this
-  module via `register_backend/3`. From then on, calls to the public
-  API that target a registry table (the hub_id atom) are dispatched
-  through the configured backend module. Misc and hook storage
-  (passed by tid) bypass the dispatcher and use ETS directly.
+  Calls to the public API that target a registry table (the hub_id
+  atom) are dispatched through the backend of the running hub, read from
+  its stored `ProcessHub.Hub`. Misc and hook storage (passed by tid)
+  bypass the dispatcher and use ETS directly.
 
   The public function signatures and return values are unchanged from
   prior releases.
   """
 
   alias :ets, as: ETS
+  alias ProcessHub.Hub
   alias ProcessHub.Service.Storage.Ets, as: EtsBackend
 
   @type table_id() :: atom() | :ets.tid()
 
-  @persistent_term_namespace :process_hub_registry_backend
-
   @doc """
-  Registers `{module, ref}` as the registry backend for `hub_id`.
-
-  After registration, public API calls passing `hub_id` (an atom) are
-  dispatched through `module`. Called by the coordinator at startup.
-  """
-  @spec register_backend(atom(), module(), term()) :: :ok
-  def register_backend(hub_id, module, ref) when is_atom(hub_id) and is_atom(module) do
-    :persistent_term.put({@persistent_term_namespace, hub_id}, {module, ref})
-    :ok
-  end
-
-  @doc """
-  Removes the registered backend for `hub_id`. Called by the
-  coordinator at shutdown.
-  """
-  @spec unregister_backend(atom()) :: :ok
-  def unregister_backend(hub_id) when is_atom(hub_id) do
-    :persistent_term.erase({@persistent_term_namespace, hub_id})
-    :ok
-  end
-
-  @doc """
-  Returns `{module, ref}` for the registered registry backend, or
-  `nil` if `hub_id` has no registered backend.
+  Returns `{module, ref}` for the registry backend of the running hub
+  `hub_id`, or `nil` if no such hub is running.
   """
   @spec registered_backend(atom()) :: {module(), term()} | nil
   def registered_backend(hub_id) when is_atom(hub_id) do
-    :persistent_term.get({@persistent_term_namespace, hub_id}, nil)
+    case Hub.get(hub_id) do
+      %Hub{storage: %{registry_backend: backend}} -> backend
+      _ -> nil
+    end
   end
 
   def registered_backend(_), do: nil

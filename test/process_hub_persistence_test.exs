@@ -164,7 +164,7 @@ defmodule Test.ProcessHubPersistenceTest do
     ProcessRegistry.insert(hub_id, stub_spec, [], metadata: %{}, ttl: -1000)
     assert [{_expire}] = Storage.match(hub_id, {:swept_stub, :_, :"$1"})
 
-    registry_proc = ProcessHub.Coordinator.get_hub(hub_id).procs.process_registry
+    registry_proc = ProcessHub.Hub.get(hub_id).procs.process_registry
     registry_pid = GenServer.whereis(registry_proc)
 
     assert Janitor.purge_pending_registry(hub_id) === :ok
@@ -198,7 +198,7 @@ defmodule Test.ProcessHubPersistenceTest do
     ProcessRegistry.insert(hub_id, stub_spec, [], metadata: %{}, ttl: -1000)
     assert [{_expire}] = Storage.match(hub_id, {:swept_stub, :_, :"$1"})
 
-    registry_proc = ProcessHub.Coordinator.get_hub(hub_id).procs.process_registry
+    registry_proc = ProcessHub.Hub.get(hub_id).procs.process_registry
     registry_pid = GenServer.whereis(registry_proc)
 
     assert Janitor.purge_pending_registry(hub_id) === :ok
@@ -256,17 +256,16 @@ defmodule Test.ProcessHubPersistenceTest do
       ttl: -1000
     )
 
-    registry_proc = ProcessHub.Coordinator.get_hub(hub_id).procs.process_registry
-    registry_pid = GenServer.whereis(registry_proc)
+    hub = ProcessHub.Hub.get(hub_id)
+    registry_pid = GenServer.whereis(hub.procs.process_registry)
 
-    {module, ref} = Storage.registered_backend(hub_id)
-    Storage.unregister_backend(hub_id)
+    ProcessHub.Hub.delete(hub_id)
 
     refute ProcessRegistry.delete_if_expired(hub_id, :race_stub)
-    assert GenServer.whereis(registry_proc) === registry_pid
+    assert GenServer.whereis(hub.procs.process_registry) === registry_pid
     assert Process.alive?(registry_pid)
 
-    Storage.register_backend(hub_id, module, ref)
+    ProcessHub.Hub.put(hub)
   end
 
   test "custom backend module is dispatched through" do

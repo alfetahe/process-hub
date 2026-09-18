@@ -166,7 +166,7 @@ defmodule ProcessHub.Service.Cluster do
   """
   @spec purge_dead_nodes(ProcessHub.hub_id()) :: [node()]
   def purge_dead_nodes(hub_id) do
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = Hub.get(hub_id)
     cluster_nodes = MapSet.new(nodes(hub.storage.misc, [:include_local]))
     registry = ProcessRegistry.dump_all(hub_id)
 

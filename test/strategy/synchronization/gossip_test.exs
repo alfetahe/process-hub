@@ -147,6 +147,11 @@ defmodule Test.Strategy.Synchronization.GossipTest do
       result = Gossip.propagate_data([], hub, strategy, {make_ref(), [], []})
       assert result == :ok
     end
+
+    test "a node not running the hub ignores the propagation" do
+      assert Gossip.remote_propagate_cast(:no_such_gossip_hub, %Gossip{}, {make_ref(), [], []}) ==
+               nil
+    end
   end
 
   describe "struct defaults" do
@@ -180,7 +185,7 @@ defmodule Test.Strategy.Synchronization.GossipIntegrationTest do
       {:error, error} -> throw(error)
     end
 
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
 
     on_exit(:stop_hub, fn ->
       ProcessHub.Initializer.stop(hub_id)

@@ -6,7 +6,6 @@ defmodule ProcessHub.Service.Migration do
 
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
-  alias ProcessHub.Coordinator
   alias ProcessHub.Hub
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
@@ -64,7 +63,7 @@ defmodule ProcessHub.Service.Migration do
   @spec migration_ready(ProcessHub.hub_id() | Hub.t(), ProcessHub.child_id()) ::
           :ok | {:error, :not_deferred}
   def migration_ready(hub_id, child_id) when is_atom(hub_id) do
-    migration_ready(Coordinator.get_hub(hub_id), child_id)
+    migration_ready(Hub.get(hub_id), child_id)
   end
 
   def migration_ready(hub, child_id) do
@@ -107,7 +106,7 @@ defmodule ProcessHub.Service.Migration do
   @spec migrate_child(ProcessHub.hub_id(), ProcessHub.child_id(), node()) ::
           :ok | {:error, :not_found | :not_a_member | :same_node | term()}
   def migrate_child(hub_id, child_id, target_node) when is_atom(hub_id) do
-    hub = Coordinator.get_hub(hub_id)
+    hub = Hub.get(hub_id)
     hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
     with :ok <- member_check(hub_nodes, target_node),
@@ -158,7 +157,7 @@ defmodule ProcessHub.Service.Migration do
           | {:error, :no_target_nodes | :draining | :partitioned | :locked}
   def drain(hub_or_id, opts \\ [])
 
-  def drain(hub_id, opts) when is_atom(hub_id), do: drain(Coordinator.get_hub(hub_id), opts)
+  def drain(hub_id, opts) when is_atom(hub_id), do: drain(Hub.get(hub_id), opts)
 
   def drain(hub, opts) do
     with :ok <- preconditions(hub) do
@@ -300,7 +299,7 @@ defmodule ProcessHub.Service.Migration do
       Cluster.nodes(hub.storage.misc) === [] -> {:error, :no_target_nodes}
       draining?(hub) -> {:error, :draining}
       State.is_partitioned?(hub) -> {:error, :partitioned}
-      hub.pending_work_count > 0 -> {:error, :locked}
+      ProcessHub.is_locked?(hub.hub_id) -> {:error, :locked}
       true -> :ok
     end
   end

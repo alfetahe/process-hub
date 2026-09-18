@@ -10,14 +10,14 @@ defmodule CoordinatorTest do
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.RequestManager
-  alias ProcessHub.Hub
+  alias ProcessHub.Coordinator.State
 
   describe "req_cleanup_interval configuration" do
     test "default value" do
       hub_id = :coord_cleanup_default
       ProcessHub.start_link(%ProcessHub{hub_id: hub_id})
 
-      hub = ProcessHub.Coordinator.get_hub(hub_id)
+      hub = ProcessHub.Hub.get(hub_id)
       interval = Storage.get(hub.storage.misc, StorageKey.rci())
 
       assert interval === 60000
@@ -32,7 +32,7 @@ defmodule CoordinatorTest do
         req_cleanup_interval: custom_interval
       })
 
-      hub = ProcessHub.Coordinator.get_hub(hub_id)
+      hub = ProcessHub.Hub.get(hub_id)
       interval = Storage.get(hub.storage.misc, StorageKey.rci())
 
       assert interval === custom_interval
@@ -63,10 +63,7 @@ defmodule CoordinatorTest do
         future: nil
       }
 
-      state = %Hub{
-        hub_id: :test_hub,
-        procs: %{},
-        storage: %{},
+      state = %State{
         pending_operations: %{
           expired_op.transaction_id => expired_op,
           valid_op.transaction_id => valid_op
@@ -106,18 +103,13 @@ defmodule CoordinatorTest do
       end)
 
       # Verify operation was added
-      updated_hub = ProcessHub.Coordinator.get_hub(hub_id)
-      assert map_size(updated_hub.pending_operations) === 1
+      assert map_size(:sys.get_state(hub_id).pending_operations) === 1
 
       # Trigger cleanup directly by sending the cleanup message
       send(Process.whereis(hub_id), :cleanup_expired_requests)
 
-      # Allow message to be processed
-      _ = ProcessHub.Coordinator.get_hub(hub_id)
-
       # Verify operation was cleaned up
-      final_hub = ProcessHub.Coordinator.get_hub(hub_id)
-      assert map_size(final_hub.pending_operations) === 0
+      assert map_size(:sys.get_state(hub_id).pending_operations) === 0
     end
   end
 
@@ -132,10 +124,10 @@ defmodule CoordinatorTest do
         ProcessHub.Service.Storage.insert(context.hub.storage.misc, :hub_nodes, [local_node])
       end)
 
-      context
+      Map.put(context, :state, %State{hub: context.hub})
     end
 
-    test "process_hub_join dispatches hooks with correct node data", %{hub: hub} = _context do
+    test "process_hub_join dispatches hooks with correct node data", %{hub: hub, state: state} do
       test_pid = self()
 
       handler = %HookManager{
@@ -148,7 +140,7 @@ defmodule CoordinatorTest do
       HookManager.register_handler(hub.storage.hook, Hook.pre_node_join(), handler)
 
       # Add multiple new nodes
-      Coordinator.process_hub_join(hub, [:new_node1, :new_node2, :new_node3])
+      Coordinator.process_hub_join(state, [:new_node1, :new_node2, :new_node3])
 
       # Verify hook is called with each specific node name
       assert_receive {:hook_called, :hub_join, %{node: :new_node1}}, 1000
@@ -159,7 +151,7 @@ defmodule CoordinatorTest do
       refute_receive {:hook_called, :hub_join, _}, 100
     end
 
-    test "process_hub_join filters local node and existing nodes", %{hub: hub} = _context do
+    test "process_hub_join filters local node and existing nodes", %{hub: hub, state: state} do
       local_node = node()
       test_pid = self()
 
@@ -177,9 +169,9 @@ defmodule CoordinatorTest do
 
       # process_hub_join should filter out local node and existing nodes
       # Only :truly_new_node should trigger hook
-      result = Coordinator.process_hub_join(hub, [local_node, :existing_node, :truly_new_node])
+      result = Coordinator.process_hub_join(state, [local_node, :existing_node, :truly_new_node])
 
-      assert result.hub_id === hub.hub_id
+      assert result.hub === hub
 
       # Only the truly new node should trigger hook
       assert_receive {:hook_called, :hub_join_filter, %{node: :truly_new_node}}, 1000
@@ -188,7 +180,7 @@ defmodule CoordinatorTest do
       refute_receive {:hook_called, :hub_join_filter, _}, 100
     end
 
-    test "process_node_down_batch dispatches hook for single node", %{hub: hub} = _context do
+    test "process_node_down_batch dispatches hook for single node", %{hub: hub, state: state} do
       test_pid = self()
 
       handler = %HookManager{
@@ -204,15 +196,15 @@ defmodule CoordinatorTest do
       Cluster.add_hub_node(hub.storage.misc, :node_to_remove)
 
       # process_node_down_batch should dispatch the hook with the node name
-      result = Coordinator.process_node_down_batch(hub, [:node_to_remove])
+      result = Coordinator.process_node_down_batch(state, [:node_to_remove])
 
-      assert result.hub_id === hub.hub_id
+      assert result.hub === hub
 
       # Verify the exact node passed to hook matches expected
       assert_receive {:hook_called, :node_down, %{node: :node_to_remove}}, 1000
     end
 
-    test "process_node_down_batch ignores nodes not in hub", %{hub: hub} = _context do
+    test "process_node_down_batch ignores nodes not in hub", %{hub: hub, state: state} do
       test_pid = self()
 
       handler = %HookManager{
@@ -225,14 +217,14 @@ defmodule CoordinatorTest do
       HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Try to remove a node that doesn't exist in the hub
-      result = Coordinator.process_node_down_batch(hub, [:non_existent_node])
+      result = Coordinator.process_node_down_batch(state, [:non_existent_node])
 
-      assert result.hub_id === hub.hub_id
+      assert result.hub === hub
       refute_receive {:hook_called, :node_down_ignore, _}, 100
     end
 
     test "process_node_down_batch dispatches hooks with correct node data",
-         %{hub: hub} = _context do
+         %{hub: hub, state: state} do
       test_pid = self()
 
       handler = %HookManager{
@@ -251,9 +243,9 @@ defmodule CoordinatorTest do
 
       # Process batch with some valid and one invalid node
       result =
-        Coordinator.process_node_down_batch(hub, [:batch_node1, :batch_node2, :non_existent])
+        Coordinator.process_node_down_batch(state, [:batch_node1, :batch_node2, :non_existent])
 
-      assert result.hub_id === hub.hub_id
+      assert result.hub === hub
 
       # Verify each valid node receives its own hook call with correct data
       assert_receive {:hook_called, :batch_down, %{node: :batch_node1}}, 1000
@@ -263,7 +255,7 @@ defmodule CoordinatorTest do
       refute_receive {:hook_called, :batch_down, :non_existent}, 100
     end
 
-    test "process_node_down_batch handles all nodes in batch", %{hub: hub} = _context do
+    test "process_node_down_batch handles all nodes in batch", %{hub: hub, state: state} do
       test_pid = self()
 
       handler = %HookManager{
@@ -283,9 +275,14 @@ defmodule CoordinatorTest do
 
       # Process batch with all valid nodes
       result =
-        Coordinator.process_node_down_batch(hub, [:all_node1, :all_node2, :all_node3, :all_node4])
+        Coordinator.process_node_down_batch(state, [
+          :all_node1,
+          :all_node2,
+          :all_node3,
+          :all_node4
+        ])
 
-      assert result.hub_id === hub.hub_id
+      assert result.hub === hub
 
       # Verify all hooks dispatched with correct node names
       assert_receive {:hook_called, :batch_all, %{node: :all_node1}}, 1000
@@ -297,7 +294,7 @@ defmodule CoordinatorTest do
       refute_receive {:hook_called, :batch_all, _}, 100
     end
 
-    test "process_node_down_batch ignores empty valid nodes list", %{hub: hub} = _context do
+    test "process_node_down_batch ignores empty valid nodes list", %{hub: hub, state: state} do
       test_pid = self()
 
       handler = %HookManager{
@@ -310,9 +307,9 @@ defmodule CoordinatorTest do
       HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Try to remove nodes that don't exist
-      result = Coordinator.process_node_down_batch(hub, [:non_existent1, :non_existent2])
+      result = Coordinator.process_node_down_batch(state, [:non_existent1, :non_existent2])
 
-      assert result.hub_id === hub.hub_id
+      assert result.hub === hub
       refute_receive {:hook_called, :batch_empty, _}, 100
     end
   end

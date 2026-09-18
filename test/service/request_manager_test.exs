@@ -6,16 +6,17 @@ defmodule Test.Service.RequestManagerTest do
   alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Request.Handler.PidsRegisterRequest
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
+  alias ProcessHub.Coordinator.State
   alias ProcessHub.Hub
 
   setup_all do
     Test.Helper.SetupHelper.setup_base(%{}, :request_manager_test_hub)
   end
 
-  # Helper to create a minimal hub state with pending_operations
+  # Helper to create a minimal coordinator state with pending_operations
   defp hub_state(pending \\ %{}) do
-    %Hub{
-      hub_id: :test_hub,
+    %State{
+      hub: %Hub{hub_id: :test_hub},
       pending_operations: pending
     }
   end

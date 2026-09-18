@@ -313,7 +313,7 @@ defmodule Test.ProcessHubReconcileMultiNodeTest do
 
     # The peer is connected but runs no hub for this id, so its registry data
     # never arrives.
-    Cluster.add_hub_node(ProcessHub.Coordinator.get_hub(hub_id).storage.misc, peer)
+    Cluster.add_hub_node(ProcessHub.Hub.get(hub_id).storage.misc, peer)
 
     # Past the settle window and still recovering: the gate is waiting on a peer
     # that will never answer.

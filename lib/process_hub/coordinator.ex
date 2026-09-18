@@ -26,7 +26,6 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.Distributor
-  alias ProcessHub.Service.State
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Synchronizer
@@ -37,6 +36,7 @@ defmodule ProcessHub.Coordinator do
   alias ProcessHub.Service.Migration
   alias ProcessHub.Service.Recovery
   alias ProcessHub.Utility.TimerMap
+  alias ProcessHub.Coordinator.State
   alias ProcessHub.Hub
 
   use Event
@@ -46,12 +46,8 @@ defmodule ProcessHub.Coordinator do
   # was unreachable at boot.
   @declared_refetch_ms 30_000
 
-  def start_link({settings, _, _} = arg) do
+  def start_link({settings, _hub} = arg) do
     GenServer.start_link(__MODULE__, arg, name: settings.hub_id)
-  end
-
-  def get_hub(hub_id) do
-    GenServer.call(hub_id, :get_state)
   end
 
   ##############################################################################
@@ -59,9 +55,9 @@ defmodule ProcessHub.Coordinator do
   ##############################################################################
 
   @impl true
-  @spec init({ProcessHub.t(), map(), map()}) ::
-          {:ok, Hub.t(), {:continue, :additional_setup}} | {:stop, term()}
-  def init({hub_conf, procs, storage}) do
+  @spec init({ProcessHub.t(), Hub.t()}) ::
+          {:ok, State.t(), {:continue, :additional_setup}} | {:stop, term()}
+  def init({hub_conf, %Hub{procs: procs, storage: storage} = hub}) do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
 
@@ -72,48 +68,26 @@ defmodule ProcessHub.Coordinator do
       get_hub_nodes(storage.misc)
     )
 
-    case Recovery.parse_config(Map.get(hub_conf, :auto_recovery, false)) do
-      {:ok, recovery_config} ->
-        do_init(hub_conf, procs, storage, recovery_config)
-
-      {:error, {:invalid_auto_recovery, _} = reason} ->
-        {:stop, reason}
-
-      {:error, :invalid_auto_recovery} ->
-        LoggerService.warning(
-          "Invalid :auto_recovery config — falling back to disabled",
-          %{},
-          prefix: "Coordinator"
-        )
-
-        do_init(hub_conf, procs, storage, Recovery.disabled_config())
-    end
-  end
-
-  defp do_init(hub_conf, procs, storage, recovery_config) do
-    state = %Hub{
-      hub_id: hub_conf.hub_id,
-      procs: procs,
-      storage: storage,
-      recovery_config: recovery_config,
-      recovery_state: if(recovery_config.enabled?, do: :recovering, else: :normal)
+    state = %State{
+      hub: hub,
+      recovery_state: if(hub.recovery_config.enabled?, do: :recovering, else: :normal)
     }
 
-    hub_conf = init_strategies(state, hub_conf)
+    hub_conf = init_strategies(hub, hub_conf)
     register_handlers(procs)
     register_handlers(storage.hook, hub_conf.hooks)
     setup_misc_storage(hub_conf, storage)
 
-    Registry.register(state.procs.system_registry, "initializer", state.procs.initializer)
+    Registry.register(procs.system_registry, "initializer", procs.initializer)
 
     send(self(), :propagate)
-    schedule_sync(Storage.get(state.storage.misc, StorageKey.strsyn()))
-    schedule_request_cleanup(state)
+    schedule_sync(Storage.get(storage.misc, StorageKey.strsyn()))
+    schedule_request_cleanup(hub)
 
-    Blockade.monitor_handlers(state.procs.event_queue, @event_cluster_join)
+    Blockade.monitor_handlers(procs.event_queue, @event_cluster_join)
 
     boot_handlers =
-      state.procs.event_queue
+      procs.event_queue
       |> Blockade.get_handlers(@event_cluster_join)
       |> elem(1)
 
@@ -129,36 +103,32 @@ defmodule ProcessHub.Coordinator do
 
     state = join_handlers(boot_handlers, state)
 
-    case declared_children_boot(state) do
-      {:ok, state} ->
-        state = Recovery.schedule_first_round(state)
+    with :ok <- declared_children_boot(hub) do
+      Recovery.schedule_first_round(hub)
 
-        boot_token = Cluster.boot_token()
-        Storage.insert(storage.misc, StorageKey.sbt(), boot_token)
-        Cluster.announce_boot(state, boot_token)
+      boot_token = Cluster.boot_token()
+      Storage.insert(storage.misc, StorageKey.sbt(), boot_token)
+      Cluster.announce_boot(hub, boot_token)
 
-        {:ok, state, {:continue, :additional_setup}}
-
-      {:stop, reason} ->
-        {:stop, reason}
+      {:ok, state, {:continue, :additional_setup}}
     end
   end
 
   # Resolves the declared list before the first reconcile round can be
   # scheduled; a remote outage at boot falls back to the local copy and retries
   # the comparison on a timer.
-  defp declared_children_boot(%Hub{recovery_config: %{enabled?: false}} = state), do: {:ok, state}
+  defp declared_children_boot(%Hub{recovery_config: %{enabled?: false}}), do: :ok
 
-  defp declared_children_boot(state) do
+  defp declared_children_boot(hub) do
     DeclaredChildren.ensure_election()
 
-    case DeclaredChildren.boot(state) do
+    case DeclaredChildren.boot(hub) do
       {:ok, {:remote_error, _reason}} ->
         Process.send_after(self(), :declared_remote_refetch, @declared_refetch_ms)
-        {:ok, state}
+        :ok
 
       {:ok, _} ->
-        {:ok, state}
+        :ok
 
       {:error, reason} ->
         {:stop, reason}
@@ -166,60 +136,63 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_continue(:additional_setup, state) do
+  def handle_continue(:additional_setup, %State{hub: hub} = state) do
     # Handle partition strategy initialization. This needs to be done
     # after the coordinator has been started.
     part_strat =
       PartitionToleranceStrategy.init(
-        Storage.get(state.storage.misc, StorageKey.strpart()),
-        state
+        Storage.get(hub.storage.misc, StorageKey.strpart()),
+        hub
       )
 
-    Storage.insert(state.storage.misc, StorageKey.strpart(), part_strat)
+    Storage.insert(hub.storage.misc, StorageKey.strpart(), part_strat)
 
     {:noreply, state}
   end
 
   @impl true
-  def terminate(reason, state) do
+  def terminate(reason, %State{hub: hub}) do
     HookManager.dispatch_hook(
-      state.storage.hook,
+      hub.storage.hook,
       Hook.coordinator_shutdown(),
       %{reason: reason}
     )
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
-    Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_leave, node(), %{
+    Dispatcher.dispatch_event(hub.procs.event_queue, @event_cluster_leave, node(), %{
       members: :external
     })
 
     # Terminate all the running tasks before shutting down the coordinator.
-    task_sup = state.procs.task_sup
+    task_sup = hub.procs.task_sup
 
     Task.Supervisor.children(task_sup)
     |> Enum.each(fn pid ->
       Task.Supervisor.terminate_child(task_sup, pid)
     end)
 
-    # Close the registry backend after the rest of teardown completed.
-    case Map.get(state.storage, :registry_backend) do
-      {module, ref} ->
-        Storage.unregister_backend(state.hub_id)
-        module.close(ref)
-
-      _ ->
-        :ok
-    end
-
-    case Map.get(state.storage, :declared_backend) do
-      {module, ref} -> module.close(ref)
-      _ -> :ok
-    end
+    close_storage(reason, hub)
   end
+
+  # Only the hub's stop closes its storage; after a crash the restarted
+  # coordinator is handed the same, still open, backends.
+  defp close_storage({:shutdown, _}, hub), do: close_storage(:shutdown, hub)
+
+  defp close_storage(reason, hub) when reason in [:normal, :shutdown] do
+    Hub.delete(hub.hub_id)
+
+    for key <- [:registry_backend, :declared_backend],
+        {module, ref} <- [Map.get(hub.storage, key)],
+        do: module.close(ref)
+
+    :ok
+  end
+
+  defp close_storage(_reason, _hub), do: :ok
 
   @impl true
   def handle_cast({:exec_cast, {m, f, a}}, state) do
-    apply(m, f, [state | a])
+    apply(m, f, [state.hub | a])
 
     {:noreply, state}
   end
@@ -231,14 +204,14 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_call({:register_hook_handlers, hook_key, handlers}, _from, state) do
-    result = register_handlers(state.storage.hook, %{hook_key => handlers})
+    result = register_handlers(state.hub.storage.hook, %{hook_key => handlers})
 
     {:reply, result, state}
   end
 
   @impl true
   def handle_call({:cancel_hook_handlers, hook_key, handler_ids}, _from, state) do
-    result = unregister_handlers(state.storage.hook, hook_key, handler_ids)
+    result = unregister_handlers(state.hub.storage.hook, hook_key, handler_ids)
 
     {:reply, result, state}
   end
@@ -254,7 +227,7 @@ defmodule ProcessHub.Coordinator do
     # in between converges through the reconcile instead of losing the intent.
     start = fn state ->
       init_children(state, opts, :start_initiated, fn ->
-        Distributor.compose_start_operation(state, child_specs, opts)
+        Distributor.compose_start_operation(state.hub, child_specs, opts)
       end)
     end
 
@@ -274,7 +247,7 @@ defmodule ProcessHub.Coordinator do
     # order would let the reconcile resurrect a half-completed stop.
     stop = fn state ->
       init_children(state, opts, :stop_initiated, fn ->
-        Distributor.compose_stop_operation(state, child_ids, opts)
+        Distributor.compose_stop_operation(state.hub, child_ids, opts)
       end)
     end
 
@@ -292,7 +265,7 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_call(:declared_clear, _from, state) do
     state = DeclaredChildren.flush(state)
-    {:reply, DeclaredChildren.handle_clear(state), state}
+    {:reply, DeclaredChildren.handle_clear(state.hub), state}
   end
 
   @impl true
@@ -304,8 +277,8 @@ defmodule ProcessHub.Coordinator do
   def handle_call({:get_dist_children, opts}, _from, state) do
     children =
       case Enum.member?(opts, :global) do
-        true -> Distributor.which_children_global(state, opts)
-        false -> Distributor.which_children_local(state, opts)
+        true -> Distributor.which_children_global(state.hub, opts)
+        false -> Distributor.which_children_local(state.hub, opts)
       end
 
     {:reply, children, state}
@@ -313,27 +286,22 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_call(:is_partitioned?, _from, state) do
-    {:reply, State.is_partitioned?(state), state}
+    {:reply, ProcessHub.Service.State.is_partitioned?(state.hub), state}
   end
 
   @impl true
   def handle_call({:get_nodes, opts}, _from, state) do
-    {:reply, Cluster.nodes(state.storage.misc, opts), state}
+    {:reply, Cluster.nodes(state.hub.storage.misc, opts), state}
   end
 
   @impl true
   def handle_call({:promote_to_node, node}, _from, state) do
-    {:reply, Cluster.promote_to_node(state, node), state}
+    {:reply, Cluster.promote_to_node(state.hub, node), state}
   end
 
   @impl true
   def handle_call({:migration_deferred_update, fun}, _from, state) do
-    {:reply, Migration.apply_deferred_update(state, fun), state}
-  end
-
-  @impl true
-  def handle_call(:get_state, _from, state) do
-    {:reply, state, state}
+    {:reply, Migration.apply_deferred_update(state.hub, fun), state}
   end
 
   @impl true
@@ -352,7 +320,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_call({:await_normal, _timeout_ms}, _from, %Hub{recovery_state: :normal} = state) do
+  def handle_call({:await_normal, _timeout_ms}, _from, %State{recovery_state: :normal} = state) do
     {:reply, :ok, state}
   end
 
@@ -367,7 +335,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_requests_handle, requests}, state) do
-    {:noreply, delegate_work(state, {:handle_requests, requests, Hub.for_workers(state)})}
+    {:noreply, delegate_work(state, {:handle_requests, requests, state.hub})}
   end
 
   @impl true
@@ -394,7 +362,7 @@ defmodule ProcessHub.Coordinator do
 
     if length(valid_down_nodes) > 0 do
       Dispatcher.dispatch_event(
-        state.procs.event_queue,
+        state.hub.procs.event_queue,
         @event_cluster_leave_batch,
         valid_down_nodes,
         %{members: :local}
@@ -412,7 +380,7 @@ defmodule ProcessHub.Coordinator do
       # Graceful leaves don't need connection validation (the node announced
       # its departure before shutting down), so dispatch them directly.
       Dispatcher.dispatch_event(
-        state.procs.event_queue,
+        state.hub.procs.event_queue,
         @event_cluster_leave_batch,
         nodes,
         %{members: :local}
@@ -441,7 +409,7 @@ defmodule ProcessHub.Coordinator do
     # Merge only a genuine same-hub peer: one still connected that registered
     # our cluster_join pg handler (what :join relies on). Anything else — e.g.
     # a node not running our hub — is never added to the batch.
-    if Enum.member?(external_hub_nodes(state), node) do
+    if Enum.member?(external_hub_nodes(state.hub), node) do
       {:noreply, batch_event(state, :cluster_join, node)}
     else
       {:noreply, state}
@@ -455,7 +423,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_node_restarted, {peer, token}}, state) when is_atom(peer) do
-    Cluster.handle_boot_announcement(state, peer, token)
+    Cluster.handle_boot_announcement(state.hub, peer, token)
     {:noreply, state}
   end
 
@@ -520,29 +488,41 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_node_registry_broadcast, {sync_data, remote_node}}, state) do
-    # The evidence is recorded here rather than in the strategy so every
-    # strategy, including a custom one, satisfies the first-round gate the same
-    # way. The round is triggered only after the payload has been merged, so a
-    # round it opens sees the peer's rows.
-    state = Recovery.registry_delivered(state, remote_node)
+  def handle_info(
+        {@event_node_registry_broadcast, {sync_data, remote_node}},
+        %State{hub: hub} = state
+      ) do
+    coordinator = self()
 
-    sync_strategy = Storage.get(state.storage.misc, StorageKey.strsyn())
-    SynchronizationStrategy.handle_node_join_data(sync_strategy, state, sync_data, remote_node)
+    merge = fn ->
+      Synchronizer.merge_remote_registry(hub, sync_data, remote_node)
+      send(coordinator, {:registry_merged, remote_node})
+    end
 
-    {:noreply, Recovery.trigger_round(state, :evidence)}
+    {:noreply, delegate_work(state, {:handle_work, merge})}
+  end
+
+  # The evidence is recorded here rather than in the strategy so every
+  # strategy, including a custom one, satisfies the first-round gate the same
+  # way. It is recorded only once the payload is merged, so a round it opens
+  # sees the peer's rows; a merge that failed never reports.
+  @impl true
+  def handle_info({:registry_merged, remote_node}, state) do
+    {:noreply,
+     state
+     |> Recovery.registry_delivered(remote_node)
+     |> Recovery.trigger_round(:evidence)}
   end
 
   @impl true
-  def handle_info(:sync_processes, state) do
-    worker_hub = Hub.for_workers(state)
-    state = delegate_work(state, {:handle_work, fn -> Synchronizer.trigger_sync(worker_hub) end})
+  def handle_info(:sync_processes, %State{hub: hub} = state) do
+    state = delegate_work(state, {:handle_work, fn -> Synchronizer.trigger_sync(hub) end})
 
-    state.storage.misc
+    hub.storage.misc
     |> Storage.get(StorageKey.strsyn())
     |> schedule_sync()
 
-    DeclaredChildren.announce_version(state)
+    DeclaredChildren.announce_version(hub)
 
     {:noreply, Recovery.trigger_round(state, :sync)}
   end
@@ -552,22 +532,30 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info({@event_declared_adopt, manifest}, state) do
     state = DeclaredChildren.flush(state)
-    if state.recovery_config.enabled?, do: DeclaredChildren.adopt(state, manifest)
+    if state.hub.recovery_config.enabled?, do: DeclaredChildren.adopt(state.hub, manifest)
     {:noreply, state}
   end
 
   @impl true
   def handle_info({@event_declared_version, {from_node, version}}, state) do
     state = DeclaredChildren.flush(state)
-    DeclaredChildren.maybe_pull(state, from_node, version)
+    DeclaredChildren.maybe_pull(state.hub, from_node, version)
+    {:noreply, state}
+  end
+
+  # The fetch waits on the adapter, so it runs in a task; its result is applied
+  # here, after any declared-list batch in flight has been written.
+  @impl true
+  def handle_info(:declared_remote_refetch, %State{hub: hub} = state) do
+    run_in_task(hub, fn -> {:declared_remote_fetched, DeclaredChildren.remote_fetch(hub)} end)
     {:noreply, state}
   end
 
   @impl true
-  def handle_info(:declared_remote_refetch, state) do
+  def handle_info({:declared_remote_fetched, fetched}, state) do
     state = DeclaredChildren.flush(state)
 
-    case DeclaredChildren.remote_recompare(state) do
+    case DeclaredChildren.remote_recompare(state.hub, fetched) do
       {:error, _reason} ->
         Process.send_after(self(), :declared_remote_refetch, @declared_refetch_ms)
 
@@ -576,6 +564,11 @@ defmodule ProcessHub.Coordinator do
     end
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:precommitted, result, from, command}, state) do
+    {:noreply, DeclaredChildren.resume(state, result, from, command)}
   end
 
   @impl true
@@ -605,15 +598,15 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info(:propagate, state) do
-    state.storage.misc
+  def handle_info(:propagate, %State{hub: hub} = state) do
+    hub.storage.misc
     |> Storage.get(StorageKey.hdi())
     |> schedule_hub_discovery()
 
     # A draining node must not announce presence — a heartbeat would re-add it
     # to its peers' distribution.
-    unless Migration.draining?(state) do
-      Dispatcher.dispatch_event(state.procs.event_queue, @event_cluster_heartbeat, node(), %{
+    unless Migration.draining?(hub) do
+      Dispatcher.dispatch_event(hub.procs.event_queue, @event_cluster_heartbeat, node(), %{
         members: :external
       })
     end
@@ -633,13 +626,13 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info(:cleanup_expired_requests, state) do
-    schedule_request_cleanup(state)
+    schedule_request_cleanup(state.hub)
     {:noreply, RequestManager.cleanup_expired(state)}
   end
 
   @impl true
   def handle_info({:post_action_callback, m, f, a}, state) do
-    apply(m, f, [state | a])
+    apply(m, f, [state.hub | a])
     {:noreply, state}
   end
 
@@ -650,8 +643,8 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   # No retry timer is kept while the deferred list is empty.
-  def handle_info({:migration_retry_ensure, delay}, %Hub{migration_retry_timer: nil} = state) do
-    case Migration.deferred_list(state) do
+  def handle_info({:migration_retry_ensure, delay}, %State{migration_retry_timer: nil} = state) do
+    case Migration.deferred_list(state.hub) do
       [] -> {:noreply, state}
       _ -> {:noreply, %{state | migration_retry_timer: send_retry_tick(delay)}}
     end
@@ -662,13 +655,15 @@ defmodule ProcessHub.Coordinator do
   @impl true
   def handle_info(:migration_retry_tick, state) do
     task =
-      Task.Supervisor.async_nolink(state.procs.task_sup, Migration, :handle_retry_tick, [state])
+      Task.Supervisor.async_nolink(state.hub.procs.task_sup, Migration, :handle_retry_tick, [
+        state.hub
+      ])
 
     {:noreply, %{state | migration_retry_timer: {:running, task.ref}}}
   end
 
   @impl true
-  def handle_info({ref, _remaining}, %Hub{migration_retry_timer: {:running, ref}} = state) do
+  def handle_info({ref, _remaining}, %State{migration_retry_timer: {:running, ref}} = state) do
     Process.demonitor(ref, [:flush])
     {:noreply, rearm_migration_retry(state)}
   end
@@ -677,7 +672,7 @@ defmodule ProcessHub.Coordinator do
   # A crashed tick must not wedge the timer.
   def handle_info(
         {:DOWN, ref, :process, _pid, _reason},
-        %Hub{migration_retry_timer: {:running, ref}} = state
+        %State{migration_retry_timer: {:running, ref}} = state
       ) do
     {:noreply, rearm_migration_retry(state)}
   end
@@ -695,26 +690,42 @@ defmodule ProcessHub.Coordinator do
   ### Private functions
   ##############################################################################
 
-  # A declared-list command runs now when its precommit wrote nothing, is
-  # parked behind the batch's flush when it did, and is refused at once.
-  defp after_precommit(:ok, state, _from, command), do: command.(state)
-
+  # A declared-list command is parked behind the batch's flush when its
+  # precommit wrote, waits in a task for a remote leader's answer, and is
+  # otherwise answered at once.
   defp after_precommit({:pending, manifest}, state, from, command),
     do: {:noreply, DeclaredChildren.defer(state, manifest, from, command)}
 
-  defp after_precommit({:error, _reason} = error, state, _from, _command),
-    do: {:reply, error, state}
+  defp after_precommit({:remote, _leader, _mutation, _unreachable} = remote, state, from, command) do
+    hub_id = state.hub.hub_id
+
+    run_in_task(state.hub, fn ->
+      {:precommitted, DeclaredChildren.ask_leader(hub_id, remote), from, command}
+    end)
+
+    {:noreply, state}
+  end
+
+  defp after_precommit(result, state, from, command),
+    do: {:noreply, DeclaredChildren.resume(state, result, from, command)}
+
+  # Runs `fun` in a task so the coordinator keeps serving while it waits; the
+  # task sends the coordinator what `fun` returns.
+  defp run_in_task(hub, fun) do
+    coordinator = self()
+    Task.Supervisor.start_child(hub.procs.task_sup, fn -> send(coordinator, fun.()) end)
+  end
 
   defp delegate_work(state, message) do
-    GenServer.cast(state.procs.worker_queue, {:tracked, message, self()})
+    GenServer.cast(state.hub.procs.worker_queue, {:tracked, message, self()})
     %{state | pending_work_count: state.pending_work_count + 1}
   end
 
   # Re-arms the tick only while entries remain (the ensure clause checks).
   defp rearm_migration_retry(state) do
-    delay = Migration.retry_interval(state)
+    delay = Migration.retry_interval(state.hub)
 
-    case Migration.deferred_list(state) do
+    case Migration.deferred_list(state.hub) do
       [] -> %{state | migration_retry_timer: nil}
       _ -> %{state | migration_retry_timer: send_retry_tick(delay)}
     end
@@ -728,7 +739,7 @@ defmodule ProcessHub.Coordinator do
   # :normal. Idempotent and a no-op while still recovering, so it is safe to
   # pipe any post-transition state through it.
   defp reply_normal_waiters(
-         %Hub{recovery_state: :normal, recovery_normal_waiters: waiters} = state
+         %State{recovery_state: :normal, recovery_normal_waiters: waiters} = state
        )
        when map_size(waiters) > 0 do
     Enum.each(waiters, fn {from, timer} ->
@@ -744,7 +755,7 @@ defmodule ProcessHub.Coordinator do
   # A presence announce merges only a node we don't already track, so a
   # steady-state heartbeat is a silent no-op.
   defp reconcile_presence(state, peer) do
-    if Cluster.new_node?(Cluster.nodes(state.storage.misc, [:include_local]), peer) do
+    if Cluster.new_node?(Cluster.nodes(state.hub.storage.misc, [:include_local]), peer) do
       batch_event(state, :cluster_join, peer)
     else
       state
@@ -752,7 +763,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @doc false
-  def process_hub_join(hub, nodes) do
+  def process_hub_join(%State{hub: hub} = state, nodes) do
     hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
     local_node = node()
 
@@ -774,33 +785,33 @@ defmodule ProcessHub.Coordinator do
       Synchronizer.broadcast_local_registry(hub, new_nodes)
       DeclaredChildren.announce_version(hub)
 
-      delegate_work(hub, {:handle_node_up, %{joined_nodes: new_nodes, hub: hub}})
+      delegate_work(state, {:handle_node_up, %{joined_nodes: new_nodes, hub: hub}})
     else
-      hub
+      state
     end
   end
 
   @doc false
-  def process_node_down_batch(hub, down_nodes) do
+  def process_node_down_batch(%State{hub: hub} = state, down_nodes) do
     hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
     # Filter to only nodes that are actually in the hub.
     valid_down_nodes = Enum.filter(down_nodes, &Enum.member?(hub_nodes, &1))
 
     if length(valid_down_nodes) > 0 do
-      delegate_work(hub, {:handle_node_down, %{removed_nodes: valid_down_nodes, hub: hub}})
+      delegate_work(state, {:handle_node_down, %{removed_nodes: valid_down_nodes, hub: hub}})
     else
-      hub
+      state
     end
   end
 
   # Adds a node to the event batch and (re)schedules the flush timer with a
   # bounded total wait, so a sustained event stream cannot starve the batch.
   # Returns the updated state.
-  @spec batch_event(Hub.t(), atom(), node()) :: Hub.t()
+  @spec batch_event(State.t(), atom(), node()) :: State.t()
   defp batch_event(state, event_type, node) do
-    batch = get_in(state.event_batches, [event_type]) || Hub.default_batch_state()
-    debounce_delay = get_debounce_delay(state)
+    batch = Map.fetch!(state.event_batches, event_type)
+    debounce_delay = get_debounce_delay(state.hub)
     max_wait = max_batch_wait(debounce_delay)
     now = System.monotonic_time(:millisecond)
 
@@ -828,8 +839,13 @@ defmodule ProcessHub.Coordinator do
 
   # Stores a composed start/stop operation and replies with either the awaitable
   # future or the initiated marker.
-  @spec init_children(Hub.t(), keyword(), atom(), (-> {:ok, RequestManager.t()} | {:error, term()})) ::
-          {:reply, term(), Hub.t()}
+  @spec init_children(
+          State.t(),
+          keyword(),
+          atom(),
+          (-> {:ok, RequestManager.t()} | {:error, term()})
+        ) ::
+          {:reply, term(), State.t()}
   defp init_children(state, opts, initiated, compose) do
     case compose.() do
       {:ok, operation} ->
@@ -845,17 +861,15 @@ defmodule ProcessHub.Coordinator do
 
   # Takes all nodes from a batch and resets it.
   # Returns {updated_state, nodes_list}.
-  @spec take_batch(Hub.t(), atom()) :: {Hub.t(), [node()]}
+  @spec take_batch(State.t(), atom()) :: {State.t(), [node()]}
   defp take_batch(state, event_type) do
-    batch = get_in(state.event_batches, [event_type]) || Hub.default_batch_state()
-    nodes = batch.nodes
-    state = put_in(state.event_batches[event_type], Hub.default_batch_state())
-    {state, nodes}
+    %{nodes: nodes} = Map.fetch!(state.event_batches, event_type)
+    {put_in(state.event_batches[event_type], State.default_batch_state()), nodes}
   end
 
   # Returns the configured debounce delay in milliseconds from storage.
-  defp get_debounce_delay(state) do
-    Storage.get(state.storage.misc, StorageKey.ced()) || 500
+  defp get_debounce_delay(hub) do
+    Storage.get(hub.storage.misc, StorageKey.ced()) || 500
   end
 
   # Derived upper bound on how long a single batch window may grow before it
@@ -872,8 +886,8 @@ defmodule ProcessHub.Coordinator do
 
   # Remote nodes pg currently resolves as cluster_join handlers. An empty list
   # while a peer is in `Node.list()` means the pg scope never synced.
-  defp external_hub_nodes(state) do
-    state.procs.event_queue
+  defp external_hub_nodes(hub) do
+    hub.procs.event_queue
     |> Blockade.get_handlers(@event_cluster_join)
     |> elem(1)
     |> handler_nodes()
@@ -1005,7 +1019,7 @@ defmodule ProcessHub.Coordinator do
   # Per-node membership reconciliation fail-safe (0 disables). Re-arms cleanly
   # on flapping by cancelling any pending timer for the node first.
   defp schedule_nodeup_reconcile(state, node) do
-    case Storage.get(state.storage.misc, StorageKey.nri()) || 0 do
+    case Storage.get(state.hub.storage.misc, StorageKey.nri()) || 0 do
       interval when interval > 0 ->
         timers =
           TimerMap.put(state.nodeup_reconcile_timers, node, {:nodeup_reconcile, node}, interval)
@@ -1025,8 +1039,8 @@ defmodule ProcessHub.Coordinator do
     %{state | nodeup_reconcile_timers: TimerMap.cancel_all(state.nodeup_reconcile_timers, nodes)}
   end
 
-  defp schedule_request_cleanup(state) do
-    interval = Storage.get(state.storage.misc, StorageKey.rci())
+  defp schedule_request_cleanup(hub) do
+    interval = Storage.get(hub.storage.misc, StorageKey.rci())
     Process.send_after(self(), :cleanup_expired_requests, interval)
   end
 end

@@ -281,7 +281,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       {:ok, pid} = ProcessHub.Initializer.start_link(%ProcessHub{hub_id: hub_id})
       :erlang.unlink(pid)
 
-      real_hub = ProcessHub.Coordinator.get_hub(hub_id)
+      real_hub = ProcessHub.Hub.get(hub_id)
 
       # Initialize strategy which sets initial max_seen
       Storage.insert(real_hub.storage.misc, StorageKey.hn(), [node()])

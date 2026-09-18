@@ -36,7 +36,7 @@ defmodule Test.Helper.SetupHelper do
       {:error, error} -> throw(error)
     end
 
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
 
     on_exit(:stop_hub, fn ->
       ProcessHub.Initializer.stop(hub_id)

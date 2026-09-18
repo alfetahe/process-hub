@@ -6,6 +6,7 @@ defmodule ProcessHub.Initializer do
   """
 
   alias :blockade, as: Blockade
+  alias ProcessHub.Hub
   alias ProcessHub.Service.Recovery
   alias ProcessHub.Service.LoggerService
 
@@ -14,25 +15,22 @@ defmodule ProcessHub.Initializer do
   @doc "Starts a `ProcessHub` instance with all its children."
   @spec start_link(ProcessHub.t()) :: {:ok, pid()} | {:error, term()}
   def start_link(%ProcessHub{} = hub_settings) do
-    case validate_config(hub_settings) do
-      :ok ->
-        warn_on_suboptimal_config(hub_settings)
-        Supervisor.start_link(__MODULE__, hub_settings)
-
-      {:error, _} = err ->
-        err
+    with {:ok, recovery_config} <- validate_config(hub_settings) do
+      warn_on_suboptimal_config(hub_settings)
+      Supervisor.start_link(__MODULE__, {hub_settings, recovery_config})
     end
   end
 
   def start_link(_), do: {:error, :expected_hub_settings}
 
-  @doc false
   @spec validate_config(ProcessHub.t()) ::
-          :ok | {:error, {:invalid_config, atom() | {atom(), atom()}}}
+          {:ok, Hub.recovery_config()}
+          | {:error, {:invalid_config, atom() | {atom(), atom()}}}
+          | {:error, {:invalid_auto_recovery, term()}}
   defp validate_config(%ProcessHub{} = hub) do
     with :ok <- validate_handover_replication(hub),
          :ok <- validate_registry_backend_path(hub) do
-      :ok
+      Recovery.config_or_disabled(hub)
     end
   end
 
@@ -101,18 +99,25 @@ defmodule ProcessHub.Initializer do
   @spec stop(atom()) :: :ok | {:error, :not_alive}
   def stop(hub_id) do
     if ProcessHub.is_alive?(hub_id) do
-      hub = GenServer.call(hub_id, :get_state)
-      Supervisor.stop(hub.procs.initializer)
+      Supervisor.stop(Hub.get(hub_id).procs.initializer)
     else
       {:error, :not_alive}
     end
   end
 
   @impl true
-  def init(%ProcessHub{hub_id: hub_id} = hub_conf) do
-    recovery_config = Recovery.config_or_disabled(hub_conf)
+  def init({%ProcessHub{hub_id: hub_id} = hub_conf, recovery_config}) do
     storage = setup_storage(hub_id, hub_conf, recovery_config)
     procs = setup_procs(hub_id)
+
+    hub = %Hub{
+      hub_id: hub_id,
+      procs: procs,
+      storage: storage,
+      recovery_config: recovery_config
+    }
+
+    Hub.put(hub)
 
     children =
       [
@@ -129,7 +134,7 @@ defmodule ProcessHub.Initializer do
           storage.hook
         ) ++
         [
-          {ProcessHub.Coordinator, {hub_conf, procs, storage}},
+          {ProcessHub.Coordinator, {hub_conf, hub}},
           {ProcessHub.Worker.WorkerQueue, {hub_id, procs.worker_queue, storage.misc}},
           {ProcessHub.Worker.BootstrapWorker, {hub_id, procs.bootstrap_worker, storage.misc}},
           {ProcessHub.Worker.Janitor,
@@ -174,7 +179,6 @@ defmodule ProcessHub.Initializer do
         else: backend_opts
 
     {:ok, backend_ref} = backend_module.open(hub_id, backend_opts)
-    ProcessHub.Service.Storage.register_backend(hub_id, backend_module, backend_ref)
 
     %{
       hook: :ets.new(hub_id, [:set, :public]),

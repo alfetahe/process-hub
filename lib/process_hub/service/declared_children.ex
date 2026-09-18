@@ -35,12 +35,30 @@ defmodule ProcessHub.Service.DeclaredChildren do
   alias ProcessHub.Service.DeclaredChildren.Store
   alias ProcessHub.Service.Batch
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Coordinator.State
   alias ProcessHub.Hub
 
   use Event
 
   @format 1
   @mutate_timeout 5_000
+
+  @typedoc "A change to the declared list, applied by the leader."
+  @type mutation() :: {:add, [ProcessHub.child_spec()]} | {:remove, [ProcessHub.child_id()]}
+
+  @typedoc """
+  A precommit's answer: run the command now, park it behind the batch's write,
+  ask the remote `leader` (answering `unreachable` when it cannot be reached),
+  or refuse it.
+  """
+  @type precommit() ::
+          :ok
+          | {:pending, manifest()}
+          | {:remote, node(), mutation(), :ok | {:error, :no_leader}}
+          | {:error, term()}
+
+  @typedoc "A command held back by its precommit; it answers its caller."
+  @type command() :: (State.t() -> {:reply, term(), State.t()})
 
   @typedoc "The declared list with its version lineage, as persisted and shipped."
   @type manifest() :: %{
@@ -72,7 +90,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
           children: [ProcessHub.child_spec()]
         }
   def declared_children(hub_id) do
-    case cached(hub_id) do
+    case snapshot(hub_id) do
       nil -> %{version: 0, children: []}
       %{version: version, entries: entries} -> %{version: version, children: Map.values(entries)}
     end
@@ -80,7 +98,9 @@ defmodule ProcessHub.Service.DeclaredChildren do
 
   @doc "Returns the full cached manifest, or `nil` when none exists."
   @spec snapshot(ProcessHub.hub_id()) :: manifest() | nil
-  def snapshot(hub_id), do: cached(hub_id)
+  def snapshot(hub_id) when is_atom(hub_id) do
+    with %Hub{} = hub <- Hub.get(hub_id), do: manifest(hub)
+  end
 
   @doc "Returns whether the hub's reconcile is parked over a lost declared list."
   @spec parked?(Hub.t()) :: boolean()
@@ -92,20 +112,6 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @spec manifest(Hub.t()) :: manifest() | nil
   def manifest(%Hub{storage: %{misc: misc}}), do: Storage.get(misc, StorageKey.dcl())
 
-  defp cached(hub_id) when is_atom(hub_id) do
-    case Process.whereis(hub_id) do
-      nil ->
-        nil
-
-      _pid ->
-        try do
-          manifest(GenServer.call(hub_id, :get_state))
-        catch
-          :exit, _ -> nil
-        end
-    end
-  end
-
   # --- command precommit ------------------------------------------------------
 
   @doc """
@@ -113,15 +119,14 @@ defmodule ProcessHub.Service.DeclaredChildren do
   process starts. Refuses when the gate is off, the list is parked, a spec is
   `:temporary`, or no leader is reachable. `:ok` for non-durable starts.
   """
-  @spec precommit_start(Hub.t(), [ProcessHub.child_spec()], keyword()) ::
-          :ok | {:pending, manifest()} | {:error, term()}
-  def precommit_start(hub, child_specs, opts) do
+  @spec precommit_start(State.t(), [ProcessHub.child_spec()], keyword()) :: precommit()
+  def precommit_start(%State{hub: hub} = state, child_specs, opts) do
     cond do
       not Keyword.get(opts, :durable, false) -> :ok
       not hub.recovery_config.enabled? -> {:error, :durable_requires_auto_recovery}
       parked?(hub) -> {:error, :declared_list_parked}
       not Enum.all?(child_specs, &restartable?/1) -> {:error, :durable_requires_restartable}
-      true -> mutate(hub, {:add, child_specs})
+      true -> mutate(state, {:add, child_specs})
     end
   end
 
@@ -130,13 +135,12 @@ defmodule ProcessHub.Service.DeclaredChildren do
   leader's copy is authoritative; with no leader reachable the stop is refused
   only when the local copy shows a declared child among `child_ids`.
   """
-  @spec precommit_stop(Hub.t(), [ProcessHub.child_id()]) ::
-          :ok | {:pending, manifest()} | {:error, term()}
-  def precommit_stop(%Hub{recovery_config: %{enabled?: false}}, _child_ids), do: :ok
+  @spec precommit_stop(State.t(), [ProcessHub.child_id()]) :: precommit()
+  def precommit_stop(%State{hub: %Hub{recovery_config: %{enabled?: false}}}, _child_ids), do: :ok
 
-  def precommit_stop(hub, child_ids) do
+  def precommit_stop(%State{hub: hub} = state, child_ids) do
     locally_declared? =
-      case working_manifest(hub) do
+      case working_manifest(state) do
         nil -> false
         %{entries: entries} -> Enum.any?(child_ids, &Map.has_key?(entries, &1))
       end
@@ -144,16 +148,8 @@ defmodule ProcessHub.Service.DeclaredChildren do
     cond do
       parked?(hub) and locally_declared? -> {:error, :declared_list_parked}
       parked?(hub) -> :ok
-      true -> mutate_stop(hub, child_ids, locally_declared?)
-    end
-  end
-
-  defp mutate_stop(hub, child_ids, locally_declared?) do
-    case mutate(hub, {:remove, child_ids}) do
-      :ok -> :ok
-      {:pending, _manifest} = pending -> pending
-      {:error, :no_leader} when not locally_declared? -> :ok
-      {:error, _} = error -> error
+      locally_declared? -> mutate(state, {:remove, child_ids})
+      true -> mutate(state, {:remove, child_ids}, :ok)
     end
   end
 
@@ -229,24 +225,25 @@ defmodule ProcessHub.Service.DeclaredChildren do
     end
   end
 
-  defp mutate(hub, mutation) do
-    case leader(hub) do
-      leader when leader === node() ->
-        apply_mutation(hub, mutation)
-
-      leader ->
-        try do
-          :erpc.call(
-            leader,
-            GenServer,
-            :call,
-            [hub.hub_id, {:declared_mutate, mutation}, @mutate_timeout],
-            @mutate_timeout + 500
-          )
-        catch
-          _, _ -> {:error, :no_leader}
-        end
+  # A remote leader is asked outside the coordinator (`ask_leader/2`);
+  # `unreachable` is the precommit's answer when that leader cannot be reached.
+  defp mutate(state, mutation, unreachable \\ {:error, :no_leader}) do
+    case leader(state.hub) do
+      leader when leader === node() -> apply_mutation(state, mutation)
+      leader -> {:remote, leader, mutation, unreachable}
     end
+  end
+
+  @doc """
+  Asks the leader of a `{:remote, ...}` precommit to apply its mutation and
+  answers as the precommit: `:ok` once the leader has written it, or an error.
+  Runs outside the coordinator, so no coordinator waits on a leader.
+  """
+  @spec ask_leader(ProcessHub.hub_id(), precommit()) :: :ok | {:error, term()}
+  def ask_leader(hub_id, {:remote, leader, mutation, unreachable}) do
+    GenServer.call({hub_id, leader}, {:declared_mutate, mutation}, @mutate_timeout)
+  catch
+    :exit, _ -> unreachable
   end
 
   @doc """
@@ -259,9 +256,8 @@ defmodule ProcessHub.Service.DeclaredChildren do
   and sync that persists the whole batch — so N commands cost one manifest
   write, not N rewrites of a list that grows with every child.
   """
-  @spec apply_mutation(Hub.t(), {:add, [ProcessHub.child_spec()]} | {:remove, [term()]}) ::
-          :ok | {:pending, manifest()} | {:error, term()}
-  def apply_mutation(hub, mutation) do
+  @spec apply_mutation(State.t(), mutation()) :: :ok | {:pending, manifest()} | {:error, term()}
+  def apply_mutation(%State{hub: hub} = state, mutation) do
     cond do
       not hub.recovery_config.enabled? ->
         {:error, :durable_requires_auto_recovery}
@@ -270,7 +266,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
         {:error, :declared_list_parked}
 
       true ->
-        manifest = working_manifest(hub) || new_manifest(0, %{})
+        manifest = working_manifest(state) || new_manifest(0, %{})
         entries = mutate_entries(manifest.entries, mutation)
 
         if entries === manifest.entries do
@@ -290,8 +286,8 @@ defmodule ProcessHub.Service.DeclaredChildren do
   end
 
   # The batch's working manifest while one is open, else the persisted one.
-  defp working_manifest(%Hub{declared_unsynced: nil} = hub), do: manifest(hub)
-  defp working_manifest(%Hub{declared_unsynced: manifest}), do: manifest
+  defp working_manifest(%State{declared_unsynced: nil, hub: hub}), do: manifest(hub)
+  defp working_manifest(%State{declared_unsynced: manifest}), do: manifest
 
   @doc """
   Parks `continuation` behind the write of `manifest`, the batch's working
@@ -300,13 +296,12 @@ defmodule ProcessHub.Service.DeclaredChildren do
   durable commands share one write and sync — and none of them runs before
   the write that covers its entry. MUST run inside the coordinator process.
   """
-  @spec defer(Hub.t(), manifest(), GenServer.from(), (Hub.t() -> {:reply, term(), Hub.t()})) ::
-          Hub.t()
-  def defer(%Hub{} = hub, manifest, from, continuation) do
+  @spec defer(State.t(), manifest(), GenServer.from(), command()) :: State.t()
+  def defer(%State{} = state, manifest, from, continuation) do
     %{
-      hub
+      state
       | declared_unsynced: manifest,
-        declared_batch: Batch.add(hub.declared_batch, :flush_declared, {from, continuation})
+        declared_batch: Batch.add(state.declared_batch, :flush_declared, {from, continuation})
     }
   end
 
@@ -320,29 +315,44 @@ defmodule ProcessHub.Service.DeclaredChildren do
   flushes before it considers a peer's copy, so an adoption never overwrites
   a batch in flight.
   """
-  @spec flush(Hub.t()) :: Hub.t()
-  def flush(%Hub{declared_unsynced: nil} = hub), do: hub
+  @spec flush(State.t()) :: State.t()
+  def flush(%State{declared_unsynced: nil} = state), do: state
 
-  def flush(%Hub{declared_unsynced: manifest} = hub) do
-    {pending, batch} = Batch.take(hub.declared_batch)
-    hub = %{hub | declared_unsynced: nil, declared_batch: batch}
+  def flush(%State{declared_unsynced: manifest, hub: hub} = state) do
+    {pending, batch} = Batch.take(state.declared_batch)
+    state = %{state | declared_unsynced: nil, declared_batch: batch}
 
-    case Store.write(hub, manifest) do
-      :ok ->
-        broadcast(hub, manifest)
-        Store.ship(hub, manifest)
+    result =
+      case Store.write(hub, manifest) do
+        :ok ->
+          broadcast(hub, manifest)
+          Store.ship(hub, manifest)
+          :ok
 
-        Enum.reduce(pending, hub, fn {from, continuation}, hub ->
-          {:reply, reply, hub} = continuation.(hub)
-          GenServer.reply(from, reply)
-          hub
-        end)
+        {:error, reason} ->
+          {:error, {:declared_list_write_failed, reason}}
+      end
 
-      {:error, reason} ->
-        error = {:error, {:declared_list_write_failed, reason}}
-        Enum.each(pending, fn {from, _continuation} -> GenServer.reply(from, error) end)
-        hub
-    end
+    Enum.reduce(pending, state, fn {from, command}, state ->
+      resume(state, result, from, command)
+    end)
+  end
+
+  @doc """
+  Answers a command held back by its precommit: runs it and replies with its
+  answer once the precommit is `:ok`, or replies with the precommit's error
+  without running it. MUST run inside the coordinator process.
+  """
+  @spec resume(State.t(), :ok | {:error, term()}, GenServer.from(), command()) :: State.t()
+  def resume(state, :ok, from, command) do
+    {:reply, reply, state} = command.(state)
+    GenServer.reply(from, reply)
+    state
+  end
+
+  def resume(state, {:error, _} = error, from, _command) do
+    GenServer.reply(from, error)
+    state
   end
 
   # --- adoption ---------------------------------------------------------------
@@ -484,9 +494,13 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @spec boot(Hub.t()) :: {:ok, :ready | :parked | {:remote_error, term()}} | {:error, term()}
   defdelegate boot(hub), to: Boot, as: :run
 
-  @doc "Re-runs the boot-time remote comparison; MUST run inside the coordinator."
-  @spec remote_recompare(Hub.t()) :: :ok | {:error, term()}
-  defdelegate remote_recompare(hub), to: Boot
+  @doc "Fetches the remote copy; see `ProcessHub.Service.DeclaredChildren.Boot`."
+  @spec remote_fetch(Hub.t()) :: Boot.fetched()
+  defdelegate remote_fetch(hub), to: Boot
+
+  @doc "Applies a re-fetched remote copy as boot would; MUST run inside the coordinator."
+  @spec remote_recompare(Hub.t(), Boot.fetched()) :: :ok | {:error, term()}
+  defdelegate remote_recompare(hub, fetched), to: Boot
 
   # --- operator ---------------------------------------------------------------
 

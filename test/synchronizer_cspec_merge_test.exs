@@ -19,7 +19,7 @@ defmodule Test.SynchronizerCspecMergeTest do
 
   setup do
     on_exit(fn -> ProcessRegistry.clear_all(@hub_id) end)
-    {:ok, hub: ProcessHub.Coordinator.get_hub(@hub_id)}
+    {:ok, hub: ProcessHub.Hub.get(@hub_id)}
   end
 
   defp spec(id, payload),

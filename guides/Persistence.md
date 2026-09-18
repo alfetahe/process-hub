@@ -197,7 +197,7 @@ same treatment. Placement churn leaves a short-lived stub swept by the janitor.
 
 The first round opens on evidence: once `cluster_settle_ms` has passed since
 start and every connected peer the hub knows about has delivered its registry
-data. `reconcile_grace_ms` caps that wait — it opens the round whatever the
+data, which counts once it has been merged into the local registry. `reconcile_grace_ms` caps that wait — it opens the round whatever the
 evidence says, so a peer that is connected but never answers cannot hold a node
 in `:recovering`, and `:normal` is always reached. Later rounds follow completed
 synchronisation rounds, rate-limited to one per `reconcile_interval_ms`.
@@ -235,6 +235,11 @@ rejoining peer's leftovers).
   `[1_000, 600_000]`.
 - `:remote_manifest` — `{module, opts}` implementing
   `ProcessHub.Storage.RemoteManifest`. Default `nil` (disabled).
+
+A value outside these ranges refuses the hub: `ProcessHub.start_link/1` returns
+`{:error, {:invalid_auto_recovery, reason}}` before anything is opened. A value
+that is not `false`, `true` or a keyword list starts the hub with recovery
+disabled and logs a warning.
 
 The superseded keys `:marker_path`, `:replay_timeout_ms`, `:recovery_timeout_ms`
 and `:stopped_row_ttl_ms` are deprecated: accepted with a WARN, ignored, and

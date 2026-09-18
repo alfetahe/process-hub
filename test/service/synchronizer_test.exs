@@ -198,15 +198,15 @@ defmodule Test.Service.SynchronizerTest do
     assert :sync_trigger1 in child_ids
     assert :sync_trigger2 in child_ids
 
-    # trigger_sync spawns a task that calls IntervalSyncInit.handle
-    # which broadcasts local data via the sync strategy. Should complete without error.
+    # trigger_sync broadcasts local data via the sync strategy. Should complete
+    # without error.
     assert Synchronizer.trigger_sync(hub) === :ok
 
     # Data should still be intact after sync (sync doesn't mutate local state)
     assert length(Synchronizer.local_sync_data(hub)) === 2
   end
 
-  test "exec_interval_sync delegates to IntervalSyncHandle",
+  test "exec_interval_sync hands remote data to the sync strategy",
        %{hub: hub, hub_id: hub_id} = _context do
     sync_strat = ProcessHub.Service.Storage.get(hub.storage.misc, :synchronization_strategy)
 

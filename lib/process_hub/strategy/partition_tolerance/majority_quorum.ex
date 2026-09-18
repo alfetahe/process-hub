@@ -107,8 +107,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
   @spec reset_cluster_size(atom(), pos_integer()) :: :ok | {:error, term()}
   def reset_cluster_size(hub_id, new_size)
       when is_atom(hub_id) and is_integer(new_size) and new_size > 0 do
-    # Get the coordinator PID for the hub
-    case ProcessHub.Coordinator.get_hub(hub_id) do
+    case ProcessHub.Hub.get(hub_id) do
       %{storage: %{misc: misc_storage}} ->
         Storage.insert(misc_storage, StorageKey.mqms(), new_size)
         :ok

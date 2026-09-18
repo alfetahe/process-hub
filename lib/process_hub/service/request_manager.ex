@@ -12,13 +12,13 @@ defmodule ProcessHub.Service.RequestManager do
   """
 
   alias ProcessHub.Service.Storage
-  alias ProcessHub.Service.State
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Request.Handler.StopChildrenRequest
   alias ProcessHub.Request.Handler.PidsRegisterRequest
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
+  alias ProcessHub.Coordinator.State
   alias ProcessHub.Hub
 
   @max_children_per_request 1000
@@ -132,30 +132,30 @@ defmodule ProcessHub.Service.RequestManager do
   # State management (coordinator state)
   ##############################################################################
 
-  @spec store(Hub.t(), t()) :: Hub.t()
+  @spec store(State.t(), t()) :: State.t()
   def store(state, %__MODULE__{} = operation) do
     pending = Map.put(state.pending_operations, operation.transaction_id, operation)
     %{state | pending_operations: pending}
   end
 
-  @spec get(Hub.t(), reference()) :: t() | nil
+  @spec get(State.t(), reference()) :: t() | nil
   def get(state, transaction_id) do
     Map.get(state.pending_operations, transaction_id)
   end
 
-  @spec update(Hub.t(), t()) :: Hub.t()
+  @spec update(State.t(), t()) :: State.t()
   def update(state, %__MODULE__{} = operation) do
     pending = Map.put(state.pending_operations, operation.transaction_id, operation)
     %{state | pending_operations: pending}
   end
 
-  @spec remove(Hub.t(), reference()) :: Hub.t()
+  @spec remove(State.t(), reference()) :: State.t()
   def remove(state, transaction_id) do
     pending = Map.delete(state.pending_operations, transaction_id)
     %{state | pending_operations: pending}
   end
 
-  @spec cleanup_expired(Hub.t()) :: Hub.t()
+  @spec cleanup_expired(State.t()) :: State.t()
   def cleanup_expired(state) do
     pending =
       state.pending_operations
@@ -169,7 +169,8 @@ defmodule ProcessHub.Service.RequestManager do
   # GenServer handlers (called from Coordinator)
   ##############################################################################
 
-  @spec handle_response(Hub.t(), reference(), node(), term()) :: {:noreply, Hub.t()}
+  @spec handle_response(State.t(), reference(), node(), term()) ::
+          {:noreply, State.t()}
   def handle_response(state, transaction_id, response_node, results) do
     case get(state, transaction_id) do
       nil ->
@@ -182,7 +183,7 @@ defmodule ProcessHub.Service.RequestManager do
       operation ->
         case process_response(operation, response_node, results) do
           {:complete, updated} ->
-            result = finalize(updated, state)
+            result = finalize(updated, state.hub)
 
             cond do
               updated.awaiter ->
@@ -203,8 +204,8 @@ defmodule ProcessHub.Service.RequestManager do
     end
   end
 
-  @spec handle_await(Hub.t(), reference(), {pid(), reference()}) ::
-          {:reply, term(), Hub.t()} | {:noreply, Hub.t()}
+  @spec handle_await(State.t(), reference(), {pid(), reference()}) ::
+          {:reply, term(), State.t()} | {:noreply, State.t()}
   def handle_await(state, transaction_id, from) do
     case get(state, transaction_id) do
       nil ->
@@ -218,10 +219,10 @@ defmodule ProcessHub.Service.RequestManager do
 
         cond do
           all_responded?(operation) ->
-            {:reply, finalize(operation, state), remove(state, transaction_id)}
+            {:reply, finalize(operation, state.hub), remove(state, transaction_id)}
 
           timeout == 0 ->
-            {:reply, finalize(operation, state), remove(state, transaction_id)}
+            {:reply, finalize(operation, state.hub), remove(state, transaction_id)}
 
           true ->
             updated = set_awaiter(operation, from)
@@ -231,7 +232,8 @@ defmodule ProcessHub.Service.RequestManager do
     end
   end
 
-  @spec handle_timeout(Hub.t(), reference(), {pid(), reference()}) :: {:noreply, Hub.t()}
+  @spec handle_timeout(State.t(), reference(), {pid(), reference()}) ::
+          {:noreply, State.t()}
   def handle_timeout(state, transaction_id, from) do
     case get(state, transaction_id) do
       nil ->
@@ -239,7 +241,7 @@ defmodule ProcessHub.Service.RequestManager do
 
       operation ->
         if operation.awaiter == from do
-          GenServer.reply(from, finalize(operation, state))
+          GenServer.reply(from, finalize(operation, state.hub))
           {:noreply, remove(state, transaction_id)}
         else
           {:noreply, state}
@@ -303,7 +305,7 @@ defmodule ProcessHub.Service.RequestManager do
   """
   @spec with_partition_check(Hub.t(), (-> term())) :: term() | {:error, :partitioned}
   def with_partition_check(hub, fun) do
-    case State.is_partitioned?(hub) do
+    case ProcessHub.Service.State.is_partitioned?(hub) do
       true -> {:error, :partitioned}
       false -> fun.()
     end

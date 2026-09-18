@@ -139,7 +139,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
   @doc false
   def remote_belongs_to_impl(hub_id, child_ids, caller_pid) do
-    nhub = ProcessHub.Coordinator.get_hub(hub_id)
+    nhub = ProcessHub.Hub.get(hub_id)
 
     dist_strat =
       Storage.get(
@@ -155,7 +155,7 @@ defmodule ProcessHub.Strategy.Distribution.CentralizedLoadBalancer do
 
   @doc false
   def remote_calculate_score(hub_id, node, local_stats) do
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
 
     dist_strat =
       Storage.get(

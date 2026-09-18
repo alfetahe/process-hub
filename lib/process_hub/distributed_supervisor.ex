@@ -9,7 +9,7 @@ defmodule ProcessHub.DistributedSupervisor do
 
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Dispatcher
-  alias ProcessHub.Coordinator
+  alias ProcessHub.Hub
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
   alias ProcessHub.Request.Handler.PidUpdateRequest
 
@@ -162,14 +162,7 @@ defmodule ProcessHub.DistributedSupervisor do
   end
 
   defp handle_child_exit(child_id, old_pid) do
-    hub_id = Process.get(:hub_id)
-
-    hub =
-      try do
-        Coordinator.get_hub(hub_id)
-      catch
-        :exit, _ -> nil
-      end
+    hub = Hub.get(Process.get(:hub_id))
 
     if hub do
       new_pid = Process.get(@pd_cid_to_pid, %{}) |> Map.get(child_id)

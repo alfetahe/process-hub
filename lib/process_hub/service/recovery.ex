@@ -28,6 +28,7 @@ defmodule ProcessHub.Service.Recovery do
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Service.Recovery.Round
   alias ProcessHub.Storage.RemoteManifest
+  alias ProcessHub.Coordinator.State
   alias ProcessHub.Hub
 
   @typedoc """
@@ -135,14 +136,24 @@ defmodule ProcessHub.Service.Recovery do
   end
 
   @doc """
-  Returns the parsed `:auto_recovery` config for a settings struct, falling back to
-  the disabled config for any shape the coordinator would reject.
+  Parses a settings struct's `:auto_recovery` for the hub start: an unknown shape
+  falls back to the disabled config with a WARN, an out-of-range value is an error.
   """
-  @spec config_or_disabled(map() | struct()) :: Hub.recovery_config()
+  @spec config_or_disabled(map() | struct()) ::
+          {:ok, Hub.recovery_config()} | {:error, {:invalid_auto_recovery, term()}}
   def config_or_disabled(hub_conf) do
     case parse_config(Map.get(hub_conf, :auto_recovery, false)) do
-      {:ok, config} -> config
-      {:error, _} -> disabled_config()
+      {:error, :invalid_auto_recovery} ->
+        LoggerService.warning(
+          "Invalid :auto_recovery config — falling back to disabled",
+          %{},
+          prefix: "Recovery"
+        )
+
+        {:ok, disabled_config()}
+
+      result ->
+        result
     end
   end
 
@@ -182,13 +193,13 @@ defmodule ProcessHub.Service.Recovery do
   The grace fires whether or not any peer answered, so `:normal` is reached in
   bounded time on every boot. Disabled hubs schedule nothing.
   """
-  @spec schedule_first_round(Hub.t()) :: Hub.t()
-  def schedule_first_round(%Hub{recovery_config: %{enabled?: false}} = hub), do: hub
+  @spec schedule_first_round(Hub.t()) :: :ok
+  def schedule_first_round(%Hub{recovery_config: %{enabled?: false}}), do: :ok
 
   def schedule_first_round(%Hub{} = hub) do
     Process.send_after(self(), :reconcile_round, hub.recovery_config.reconcile_grace_ms)
     Process.send_after(self(), :cluster_settled, hub.recovery_config.cluster_settle_ms)
-    hub
+    :ok
   end
 
   @doc """
@@ -203,62 +214,65 @@ defmodule ProcessHub.Service.Recovery do
   it regardless. Evidence only ever opens the first round; later rounds follow
   the sync tick, rate-limited to one per `reconcile_interval_ms`.
   """
-  @spec round_due?(Hub.t(), trigger()) :: boolean()
-  def round_due?(hub, trigger \\ :sync)
-  def round_due?(%Hub{recovery_config: %{enabled?: false}}, _trigger), do: false
-  def round_due?(%Hub{reconcile_running?: true}, _trigger), do: false
-  def round_due?(%Hub{recovery_state: :recovering}, :grace), do: true
-  def round_due?(%Hub{recovery_state: :recovering} = hub, _trigger), do: first_round_open?(hub)
-  # Evidence opens the first round only; a later round follows the sync tick.
-  def round_due?(%Hub{}, :evidence), do: false
+  @spec round_due?(State.t(), trigger()) :: boolean()
+  def round_due?(state, trigger \\ :sync)
+  def round_due?(%State{hub: %Hub{recovery_config: %{enabled?: false}}}, _trigger), do: false
+  def round_due?(%State{reconcile_running?: true}, _trigger), do: false
+  def round_due?(%State{recovery_state: :recovering}, :grace), do: true
 
-  def round_due?(%Hub{reconcile_last_at: last, recovery_config: config}, _trigger) do
+  def round_due?(%State{recovery_state: :recovering} = state, _trigger),
+    do: first_round_open?(state)
+
+  # Evidence opens the first round only; a later round follows the sync tick.
+  def round_due?(%State{}, :evidence), do: false
+
+  def round_due?(%State{reconcile_last_at: last, hub: hub}, _trigger) do
     last === nil or
-      System.monotonic_time(:millisecond) - last >= config.reconcile_interval_ms
+      System.monotonic_time(:millisecond) - last >= hub.recovery_config.reconcile_interval_ms
   end
 
-  defp first_round_open?(%Hub{cluster_settled?: false}), do: false
+  defp first_round_open?(%State{cluster_settled?: false}), do: false
 
-  defp first_round_open?(%Hub{} = hub) do
-    hub.storage.misc
+  defp first_round_open?(%State{} = state) do
+    state.hub.storage.misc
     |> Cluster.nodes([:connected])
-    |> Enum.all?(&MapSet.member?(hub.registry_delivered_by, &1))
+    |> Enum.all?(&MapSet.member?(state.registry_delivered_by, &1))
   end
 
   @doc "Spawns a round when `round_due?/2` allows `trigger` one."
-  @spec trigger_round(Hub.t(), trigger()) :: Hub.t()
-  def trigger_round(%Hub{} = hub, trigger \\ :sync) do
-    if round_due?(hub, trigger), do: spawn_round(hub), else: hub
+  @spec trigger_round(State.t(), trigger()) :: State.t()
+  def trigger_round(%State{} = state, trigger \\ :sync) do
+    if round_due?(state, trigger), do: spawn_round(state), else: state
   end
 
   @doc """
   Records that `node` has delivered its registry data. Only the first round
   waits on this evidence, so nothing is kept once the hub is `:normal`.
   """
-  @spec registry_delivered(Hub.t(), node()) :: Hub.t()
-  def registry_delivered(%Hub{recovery_state: :recovering} = hub, node) do
-    %{hub | registry_delivered_by: MapSet.put(hub.registry_delivered_by, node)}
+  @spec registry_delivered(State.t(), node()) :: State.t()
+  def registry_delivered(%State{recovery_state: :recovering} = state, node) do
+    %{state | registry_delivered_by: MapSet.put(state.registry_delivered_by, node)}
   end
 
-  def registry_delivered(%Hub{} = hub, _node), do: hub
+  def registry_delivered(%State{} = state, _node), do: state
 
   @doc "Records that the cluster settle window has passed."
-  @spec cluster_settled(Hub.t()) :: Hub.t()
-  def cluster_settled(%Hub{} = hub), do: %{hub | cluster_settled?: true}
+  @spec cluster_settled(State.t()) :: State.t()
+  def cluster_settled(%State{} = state), do: %{state | cluster_settled?: true}
 
   @doc """
   Runs a round in a separate process; replies to the coordinator with
   `{:reconcile_done, result}`, which it hands to `complete_round/2` —
   `Round.run_safe/2` guarantees a reply whatever happened.
   """
-  @spec spawn_round(Hub.t()) :: Hub.t()
-  def spawn_round(%Hub{} = hub) do
+  @spec spawn_round(State.t()) :: State.t()
+  def spawn_round(%State{hub: hub} = state) do
     coordinator = self()
-    first_round? = hub.recovery_state === :recovering
+    first_round? = state.recovery_state === :recovering
 
     spawn(fn -> send(coordinator, {:reconcile_done, Round.run_safe(hub, first_round?)}) end)
 
-    %{hub | reconcile_running?: true}
+    %{state | reconcile_running?: true}
   end
 
   # --- coordinator transition -------------------------------------------------
@@ -268,14 +282,14 @@ defmodule ProcessHub.Service.Recovery do
   The first round also moves the coordinator to `:normal`, dispatches the
   transition hook, and fires the async `post_recovery_replay`.
   """
-  @spec complete_round(Hub.t(), Round.result()) :: Hub.t()
-  def complete_round(%Hub{} = hub, result) do
-    %{hub | reconcile_running?: false, reconcile_last_at: System.monotonic_time(:millisecond)}
+  @spec complete_round(State.t(), Round.result()) :: State.t()
+  def complete_round(%State{} = state, result) do
+    %{state | reconcile_running?: false, reconcile_last_at: System.monotonic_time(:millisecond)}
     |> complete_first_round(result)
   end
 
-  defp complete_first_round(%Hub{recovery_state: :recovering} = hub, result) do
-    hub = %{hub | recovery_state: :normal}
+  defp complete_first_round(%State{recovery_state: :recovering, hub: hub} = state, result) do
+    state = %{state | recovery_state: :normal}
 
     HookManager.dispatch_hook(hub.storage.hook, Hook.recovery_state_changed(), %{
       hub_id: hub.hub_id,
@@ -293,10 +307,10 @@ defmodule ProcessHub.Service.Recovery do
       reason: result.reason
     })
 
-    hub
+    state
   end
 
-  defp complete_first_round(hub, _result), do: hub
+  defp complete_first_round(state, _result), do: state
 
   @doc """
   Returns the coordinator's current `:recovery_state`.

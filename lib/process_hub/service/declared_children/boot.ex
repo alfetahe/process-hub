@@ -17,6 +17,10 @@ defmodule ProcessHub.Service.DeclaredChildren.Boot do
 
   @remote_timeout 5_000
 
+  @typedoc "What `remote_fetch/1` found."
+  @type fetched() ::
+          {:ok, DeclaredChildren.manifest()} | :not_found | :not_configured | {:error, term()}
+
   @doc """
   Resolves the list on coordinator boot. A stored format newer than this
   release refuses to open.
@@ -172,32 +176,26 @@ defmodule ProcessHub.Service.DeclaredChildren.Boot do
   end
 
   @doc """
-  Re-runs the boot-time remote comparison after a remote outage at boot. MUST
-  run inside the coordinator process.
+  Applies a remote copy re-fetched after a remote outage at boot, as the boot
+  comparison would. MUST run inside the coordinator process.
   """
-  @spec remote_recompare(Hub.t()) :: :ok | {:error, term()}
-  def remote_recompare(hub) do
-    case remote_fetch(hub) do
-      {:ok, %{} = remote_manifest} ->
-        DeclaredChildren.adopt(hub, remote_manifest)
-        Store.clear_parked(hub)
-        :ok
-
-      :not_found ->
-        with %{} = local <- DeclaredChildren.manifest(hub), do: Store.ship(hub, local)
-        :ok
-
-      :not_configured ->
-        :ok
-
-      {:error, _} = error ->
-        error
-    end
+  @spec remote_recompare(Hub.t(), fetched()) :: :ok | {:error, term()}
+  def remote_recompare(hub, {:ok, %{} = remote_manifest}) do
+    DeclaredChildren.adopt(hub, remote_manifest)
+    Store.clear_parked(hub)
+    :ok
   end
 
+  def remote_recompare(hub, :not_found) do
+    with %{} = local <- DeclaredChildren.manifest(hub), do: Store.ship(hub, local)
+    :ok
+  end
+
+  def remote_recompare(_hub, :not_configured), do: :ok
+  def remote_recompare(_hub, {:error, _} = error), do: error
+
   @doc "Fetches and decodes the remote copy, bounded and off the caller's heap."
-  @spec remote_fetch(Hub.t()) ::
-          {:ok, DeclaredChildren.manifest()} | :not_found | :not_configured | {:error, term()}
+  @spec remote_fetch(Hub.t()) :: fetched()
   def remote_fetch(%Hub{recovery_config: %{remote_manifest: nil}}), do: :not_configured
 
   def remote_fetch(hub) do

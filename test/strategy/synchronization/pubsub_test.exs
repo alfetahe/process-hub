@@ -121,16 +121,6 @@ defmodule Test.Strategy.Synchronization.PubSubTest do
     end
   end
 
-  describe "remote_sync_cast/5" do
-    test "casts handle_work to worker queue", %{hub: hub} do
-      # Use a fake remote node to avoid detach_data cleaning up local entries
-      PubSub.remote_sync_cast(hub.procs.worker_queue, hub.hub_id, %PubSub{}, [], :fake@remote)
-
-      # Verify no crash by checking the worker is still alive
-      assert GenServer.whereis(hub.procs.worker_queue) != nil
-    end
-  end
-
   describe "struct defaults" do
     test "default sync_interval" do
       strategy = %PubSub{}

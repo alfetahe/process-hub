@@ -26,7 +26,6 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   the synchronization data is not older than the data that is already in the local process registry.
   """
 
-  alias ProcessHub.Coordinator
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.Cluster
@@ -121,12 +120,12 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
   @doc false
   def remote_propagate_cast(hub_id, strategy, data) do
-    local_hub = Coordinator.get_hub(hub_id)
-
-    GenServer.cast(
-      local_hub.procs.worker_queue,
-      {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data) end}
-    )
+    with %Hub{} = local_hub <- Hub.get(hub_id) do
+      GenServer.cast(
+        local_hub.procs.worker_queue,
+        {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data) end}
+      )
+    end
   end
 
   @spec recipients_select([node()], ProcessHub.Strategy.Synchronization.Gossip.t()) :: [node()]

@@ -28,6 +28,13 @@ defmodule Test.Helper.Common do
   def caller_rows(rows) when is_list(rows),
     do: Enum.map(rows, fn {child_id, row} -> {child_id, caller_rows(row)} end)
 
+  @doc "Returns whether `server` answers a `:ping` call within `ms`."
+  def answers_within?(server, ms) do
+    GenServer.call(server, :ping, ms) === :bong
+  catch
+    :exit, {:timeout, _} -> false
+  end
+
   @doc """
   Starts `child_spec` under `node`'s distributed supervisor and registers the
   binding, bypassing distribution.
@@ -36,7 +43,7 @@ defmodule Test.Helper.Common do
   would produce, so the reconcile's duplicate resolution has something to resolve.
   """
   def bind_child_locally(node, hub_id, child_spec) when node === node() do
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
     {:ok, pid} = ProcessHub.DistributedSupervisor.start_child(hub.procs.dist_sup, child_spec)
 
     ProcessHub.Service.ProcessRegistry.bulk_insert(
@@ -565,7 +572,7 @@ defmodule Test.Helper.Common do
   end
 
   defp await_registry_stable_loop(hub_id, child_specs, rf, deadline) do
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
     ring = Ring.get_ring(hub.storage.misc)
     current_registry = ProcessHub.registry_dump(hub_id)
 
@@ -607,7 +614,7 @@ defmodule Test.Helper.Common do
   end
 
   def set_remote_scoreboard(hub_id, scoreboard) do
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    hub = ProcessHub.Hub.get(hub_id)
 
     dist_strat =
       ProcessHub.Service.Storage.get(

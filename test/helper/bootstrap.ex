@@ -75,7 +75,7 @@ defmodule Test.Helper.Bootstrap do
 
     context
     |> Map.put(:hub_conf, hub)
-    |> Map.put(:hub, ProcessHub.Coordinator.get_hub(hub_id))
+    |> Map.put(:hub, ProcessHub.Hub.get(hub_id))
   end
 
   def gen_hub(context) do

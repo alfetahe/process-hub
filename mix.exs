@@ -70,7 +70,6 @@ defmodule ProcessHub.MixProject do
           ProcessHub.Request.Handler,
           ProcessHub.Worker,
           ProcessHub.Task.ClusterUpdateTask,
-          ProcessHub.Task.SynchronizationTask,
           ProcessHub.Constant,
           ProcessHub.Utility
         ],
@@ -80,6 +79,7 @@ defmodule ProcessHub.MixProject do
             ProcessHub.Hub,
             ProcessHub.Initializer,
             ProcessHub.Coordinator,
+            ProcessHub.Coordinator.State,
             ProcessHub.DistributedSupervisor
           ],
           "Distribution Strategies": [
@@ -151,10 +151,7 @@ defmodule ProcessHub.MixProject do
             ProcessHub.Worker.Janitor,
             ProcessHub.Task.ClusterUpdateTask,
             ProcessHub.Task.ClusterUpdateTask.NodeUp,
-            ProcessHub.Task.ClusterUpdateTask.NodeDown,
-            ProcessHub.Task.SynchronizationTask,
-            ProcessHub.Task.SynchronizationTask.IntervalSyncInit,
-            ProcessHub.Task.SynchronizationTask.IntervalSyncHandle
+            ProcessHub.Task.ClusterUpdateTask.NodeDown
           ],
           "Results & Futures": [
             ProcessHub.Future,

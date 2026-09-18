@@ -73,7 +73,14 @@ ProcessHub utilizes the `:blockade` library to provide event-driven communicatio
 
 Operations that must not interleave are delegated to the worker queue
 (`ProcessHub.Worker.WorkerQueue`), which runs them one at a time in the order they were
-received. This preserves data integrity without blocking the coordinator itself.
+received. This preserves data integrity without blocking the coordinator itself. A job
+that fails is logged as an error and costs only itself: the queue moves on to the next one.
+
+The coordinator never waits on slow work itself. Merging a joining node's registry runs
+in the worker queue, and waiting on another node or on a remote manifest store runs in a
+task. The parts of a hub fixed when it starts (its id, processes, storage and recovery
+settings) are held in `ProcessHub.Hub`, so any process reads them with
+`ProcessHub.Hub.get/1` instead of asking the coordinator.
 
 `ProcessHub.is_locked?/1` reports whether the coordinator has delegated work that has
 not completed yet. It is informational only and does not block event processing.
