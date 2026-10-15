@@ -16,9 +16,10 @@ defmodule ProcessHub.Service.Recovery do
   and every connected peer the hub knows about has delivered its registry data;
   `reconcile_grace_ms` caps that wait so a peer that never answers cannot hold
   the hub in `:recovering`. Later rounds follow completed synchronisation rounds,
-  rate-limited to one per `reconcile_interval_ms`. This module owns the
-  `:auto_recovery` config, the scheduling, and the recovery lifecycle; the round
-  itself lives in `ProcessHub.Service.Recovery.Round` and the coordinator stays
+  rate-limited to one per `reconcile_interval_ms`. A node joining, or a host
+  calling `request_round/1`, gets a round within a couple of seconds instead.
+  This module owns the `:auto_recovery` config, the scheduling, and the
+  recovery lifecycle; the round itself lives in `ProcessHub.Service.Recovery.Round` and the coordinator stays
   the GenServer. See `guides/Persistence.md` for the model.
   """
 
@@ -32,14 +33,20 @@ defmodule ProcessHub.Service.Recovery do
   alias ProcessHub.Hub
 
   @typedoc """
-  What is asking for a round: a completed synchronisation round, first-round
-  evidence (the settle window or a peer's registry data), or the grace cap.
+  What is asking for a round: a completed synchronisation round, evidence (the
+  settle window or a peer's registry data, which a joining node sends), the
+  grace cap, or the host (`request_round/1`).
   """
-  @type trigger() :: :sync | :evidence | :grace
+  @type trigger() :: :sync | :evidence | :grace | :demand
 
   @default_reconcile_grace_ms 30_000
   @default_reconcile_interval_ms 15_000
   @default_cluster_settle_ms 2_000
+
+  # Two rounds must both see a child before they act on it, which only means
+  # something when time passes between them. This is the least time a round
+  # asked for early waits after the previous one.
+  @soon_gap_ms 2_000
 
   # The grace caps a one-shot wait before the first round, so a small value costs
   # nothing beyond starting sooner — and a suite that boots a hub per test pays
@@ -208,11 +215,12 @@ defmodule ProcessHub.Service.Recovery do
 
   Triggers are `:sync` (a completed synchronisation round, the default),
   `:evidence` (the settle window closing or a peer's registry data arriving) and
-  `:grace` (`reconcile_grace_ms`). Rounds never overlap. The first round waits
-  for the evidence gate — the settle window passed and every connected peer the
-  hub knows about heard from — except under `:grace`, which is the cap and opens
-  it regardless. Evidence only ever opens the first round; later rounds follow
-  the sync tick, rate-limited to one per `reconcile_interval_ms`.
+  `:grace` (`reconcile_grace_ms`) and `:demand` (`request_round/1`). Rounds
+  never overlap. The first round waits for the evidence gate — the settle window
+  passed and every connected peer the hub knows about heard from — except under
+  `:grace`, which is the cap and opens it regardless. After that, the sync tick
+  runs at most one round per `reconcile_interval_ms`, while evidence and demand
+  only wait until a couple of seconds have passed since the last round.
   """
   @spec round_due?(State.t(), trigger()) :: boolean()
   def round_due?(state, trigger \\ :sync)
@@ -223,13 +231,14 @@ defmodule ProcessHub.Service.Recovery do
   def round_due?(%State{recovery_state: :recovering} = state, _trigger),
     do: first_round_open?(state)
 
-  # Evidence opens the first round only; a later round follows the sync tick.
-  def round_due?(%State{}, :evidence), do: false
+  def round_due?(%State{reconcile_last_at: last}, trigger) when trigger in [:evidence, :demand],
+    do: since?(last, @soon_gap_ms)
 
-  def round_due?(%State{reconcile_last_at: last, hub: hub}, _trigger) do
-    last === nil or
-      System.monotonic_time(:millisecond) - last >= hub.recovery_config.reconcile_interval_ms
-  end
+  def round_due?(%State{reconcile_last_at: last, hub: hub}, _trigger),
+    do: since?(last, hub.recovery_config.reconcile_interval_ms)
+
+  defp since?(nil, _ms), do: true
+  defp since?(last, ms), do: System.monotonic_time(:millisecond) - last >= ms
 
   defp first_round_open?(%State{cluster_settled?: false}), do: false
 
@@ -239,10 +248,52 @@ defmodule ProcessHub.Service.Recovery do
     |> Enum.all?(&MapSet.member?(state.registry_delivered_by, &1))
   end
 
-  @doc "Spawns a round when `round_due?/2` allows `trigger` one."
+  @doc """
+  Spawns a round when `round_due?/2` allows `trigger` one. Evidence or a demand
+  that has to wait, because a round is running or the last one was too recent,
+  is tried again a couple of seconds later.
+  """
   @spec trigger_round(State.t(), trigger()) :: State.t()
   def trigger_round(%State{} = state, trigger \\ :sync) do
-    if round_due?(state, trigger), do: spawn_round(state), else: state
+    cond do
+      round_due?(state, trigger) -> spawn_round(state)
+      trigger in [:evidence, :demand] -> retry_soon(state)
+      true -> state
+    end
+  end
+
+  @doc "Runs the round a waiting request was put off for."
+  @spec retry_round(State.t()) :: State.t()
+  def retry_round(%State{} = state),
+    do: trigger_round(%{state | reconcile_requested?: false}, :demand)
+
+  # Only one retry waits at a time. Before the first round nothing is kept,
+  # since that round comes anyway, unless it is already running and may have
+  # looked at the cluster too early.
+  defp retry_soon(%State{} = state) do
+    if state.hub.recovery_config.enabled? and not state.reconcile_requested? and
+         (state.recovery_state === :normal or state.reconcile_running?) do
+      Process.send_after(self(), :reconcile_retry, @soon_gap_ms)
+      %{state | reconcile_requested?: true}
+    else
+      state
+    end
+  end
+
+  @doc """
+  Asks the hub for a reconcile round soon, for a host that knows a start the
+  last round refused can now succeed — a placement target gaining a member, for
+  example. A node joining the hub already does this by itself.
+
+  The round does not wait for `reconcile_interval_ms`, only until a couple of
+  seconds have passed since the last round, and never overlaps a running one.
+  Before the first round it does nothing, since that round comes anyway. Returns
+  `:ok`; a hub that is not running, or runs without `:auto_recovery`, does nothing.
+  """
+  @spec request_round(ProcessHub.hub_id()) :: :ok
+  def request_round(hub_id) do
+    if pid = Process.whereis(hub_id), do: send(pid, {:reconcile_round, :demand})
+    :ok
   end
 
   @doc """

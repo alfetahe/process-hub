@@ -20,6 +20,7 @@ defmodule Test.ProcessHubRecoveryTest do
   alias ProcessHub.Strategy.Synchronization.Gossip
   alias ProcessHub.Strategy.Synchronization.PubSub
   alias Test.Helper.SetupHelper
+  alias Test.Support.RecordingDistribution
 
   # Rounds are triggered explicitly with `reconcile_now/1` rather than waited for,
   # so the grace window is set beyond any test's lifetime. Tests that assert the
@@ -43,6 +44,15 @@ defmodule Test.ProcessHubRecoveryTest do
   end
 
   def forward_to(pid, tag, payload), do: send(pid, {tag, payload})
+
+  # A `pre_recovery_replay` handler that holds the round until the test releases it.
+  def hold(test_pid, _hook_data) do
+    send(test_pid, {:held, self()})
+
+    receive do
+      :release -> :ok
+    end
+  end
 
   # A `child_data_alter` handler that rewrites one caller key on every start.
   def retag(child_data), do: put_in(child_data, [:metadata, :tag], "fresh")
@@ -771,6 +781,84 @@ defmodule Test.ProcessHubRecoveryTest do
                      @interval_ms * 3
 
       assert_receive {:round, %{measurements: %{orphans: 1, started: 1}}}, @interval_ms * 3
+    end
+
+    test "a requested round ignores the rate limit and starts what was refused",
+         %{dets: dets} do
+      {hub_id, gate} = refused_first_round(:rec_request, dets, :rq_child)
+
+      :atomics.put(gate, 1, 1)
+      assert :ok = Recovery.request_round(hub_id)
+
+      assert_receive {:round, %{first_round: false, measurements: %{orphans: 1, started: 1}}},
+                     5_000
+
+      assert Test.Helper.Common.eventually(fn ->
+               is_pid(ProcessHub.get_pid(hub_id, :rq_child))
+             end)
+    end
+
+    test "a joining node's registry data brings a round soon", %{dets: dets} do
+      {hub_id, gate} = refused_first_round(:rec_join, dets, :rj_child)
+
+      :atomics.put(gate, 1, 1)
+      send(hub_id, {@registry_broadcast, {{%{}, 1}, :peer@joining}})
+
+      assert_receive {:round, %{first_round: false, measurements: %{orphans: 1, started: 1}}},
+                     5_000
+    end
+
+    test "a round requested while one runs follows it", %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_request_running)
+
+      hooks =
+        Map.put(default_hooks(), Hook.pre_recovery_replay(), [
+          %HookManager{id: :hold, m: __MODULE__, f: :hold, a: [self(), :_]}
+        ])
+
+      conf =
+        durable_conf(hub_id, dets, reconcile_interval_ms: 600_000) |> Keyword.put(:hooks, hooks)
+
+      {^hub_id, _pid} = SetupHelper.start_hub!(conf)
+      assert :ok = GenServer.call(hub_id, {:declared_mutate, {:add, [cspec(:rr_child)]}})
+
+      reconcile_now(hub_id)
+      assert_receive {:held, holder}, 10_000
+
+      assert :ok = Recovery.request_round(hub_id)
+      # A call behind the request: the coordinator has seen it before the release.
+      assert :sys.get_state(hub_id).reconcile_running?
+      send(holder, :release)
+
+      assert_receive {:round, %{first_round: true}}, 10_000
+      assert_receive {:round, %{first_round: false}}, 10_000
+    end
+
+    # Starts a hub whose distribution refuses every start until `gate` is set,
+    # and runs its first round, which therefore cannot start `child_id`.
+    defp refused_first_round(id, dets, child_id) do
+      hub_id = SetupHelper.unique_id(id)
+      gate = :atomics.new(1, [])
+      admit = fn -> :atomics.get(gate, 1) == 1 end
+
+      conf =
+        durable_conf(hub_id, dets, reconcile_interval_ms: 600_000) ++
+          [distribution_strategy: %RecordingDistribution{recorder: self(), admit: admit}]
+
+      {^hub_id, _pid} = SetupHelper.start_hub!(conf)
+      assert :ok = GenServer.call(hub_id, {:declared_mutate, {:add, [cspec(child_id)]}})
+
+      log =
+        capture_log(fn ->
+          reconcile_now(hub_id)
+          assert Recovery.await_normal(hub_id, 10_000) == :ok
+
+          assert_receive {:round, %{first_round: true, measurements: %{orphans: 1, started: 0}}},
+                         10_000
+        end)
+
+      assert log =~ "Reconcile could not start 1 orphans: :not_admitted"
+      {hub_id, gate}
     end
 
     # Starts `specs` durable, restarts the hub, and waits for its first round to

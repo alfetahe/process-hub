@@ -8,6 +8,7 @@ defmodule Test.Service.MigrationTest do
   alias ProcessHub.Coordinator
   alias ProcessHub.Hub
   alias ProcessHub.Service.Cluster
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Migration
   alias ProcessHub.Service.Ring
@@ -18,6 +19,7 @@ defmodule Test.Service.MigrationTest do
   alias ProcessHub.Strategy.Redundancy.Replication
   alias ProcessHub.Strategy.Redundancy.Singularity
   alias ProcessHub.Strategy.Synchronization.PubSub
+  alias ProcessHub.Worker.WorkerQueue
   alias Test.Helper.ConsentServer
 
   @remote_node :ph_fake_remote@localhost
@@ -66,6 +68,8 @@ defmodule Test.Service.MigrationTest do
     start_supervised!({:blockade, %{name: event_queue, priority_sync: false}})
     start_supervised!({Task.Supervisor, name: task_sup})
     start_supervised!({Registry, keys: :unique, name: system_registry})
+    worker_queue = {:via, Registry, {system_registry, "worker_queue"}}
+    start_supervised!({WorkerQueue, {hub_id, worker_queue, nil}})
 
     Storage.insert(misc, StorageKey.hn(), [node(), @remote_node])
     Storage.insert(misc, StorageKey.hr(), Ring.create_ring([@remote_node]))
@@ -81,7 +85,12 @@ defmodule Test.Service.MigrationTest do
 
     hub = %ProcessHub.Hub{
       hub_id: hub_id,
-      procs: %{event_queue: event_queue, task_sup: task_sup, system_registry: system_registry},
+      procs: %{
+        event_queue: event_queue,
+        task_sup: task_sup,
+        system_registry: system_registry,
+        worker_queue: worker_queue
+      },
       storage: %{misc: misc, hook: hook}
     }
 
@@ -188,6 +197,17 @@ defmodule Test.Service.MigrationTest do
       # any deferred-list involvement — consent is the caller's decision here.
       assert {%{}, ^pid} = Storage.get(hub.storage.misc, {:hotswap_state, :mc1})
       assert Migration.deferred_list(hub) == []
+      assert Dispatcher.take_start_targets(hub, :mc1) == [@remote_node]
+    end
+
+    test "does not move a child already gone from here", %{hub: hub} do
+      pid = spawn(fn -> :ok end)
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, _, _, _}
+      register_child(hub, :mc3, pid)
+
+      assert :ok = Migration.migrate_child(hub.hub_id, :mc3, @remote_node)
+      assert Dispatcher.take_start_targets(hub, :mc3) == []
     end
 
     test "refuses an unknown child, a non-member target, and a same-node move", %{hub: hub} do

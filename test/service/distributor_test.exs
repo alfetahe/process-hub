@@ -1,6 +1,10 @@
 defmodule Test.Service.DistributorTest do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Distributor
+  alias ProcessHub.Service.Cluster
+  alias ProcessHub.Service.Dispatcher
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Constant.StorageKey
   alias ProcessHub
 
   use ProcessHub.Constant.Event
@@ -298,11 +302,9 @@ defmodule Test.Service.DistributorTest do
     end
   end
 
-  test "compose_stop_operation treats children with empty node_pids as not found",
+  test "compose_stop_operation asks every hub node about a child with empty node_pids",
        %{hub: hub} do
-    # Insert a child into the process registry with empty node_pids.
-    # Since lookup filters out entries with empty nodes, the child
-    # is treated as "not found" by compose_stop_operation.
+    # A row with no nodes may be a child that is moving between nodes.
     child_spec = %{id: :empty_pids_child, start: {Agent, :start_link, [fn -> nil end]}}
     ProcessRegistry.insert(hub.hub_id, child_spec, [])
 
@@ -311,7 +313,22 @@ defmodule Test.Service.DistributorTest do
     assert {:ok, %ProcessHub.Service.RequestManager{} = operation} =
              Distributor.compose_stop_operation(hub, [:empty_pids_child], opts)
 
-    assert :empty_pids_child in Keyword.get(operation.options, :not_found_children, [])
+    assert Keyword.get(operation.options, :not_found_children) == []
+
+    assert Enum.sort(Keyword.keys(operation.nodes_data)) ==
+             Enum.sort(Cluster.nodes(hub.storage.misc, [:include_local]))
+  end
+
+  test "compose_stop_operation sends a stop for a child with no row to where its start went",
+       %{hub: hub} do
+    Storage.insert(hub.storage.misc, {StorageKey.sif(), :in_flight_child}, [:target@host])
+    opts = Distributor.default_init_opts([])
+
+    assert {:ok, %ProcessHub.Service.RequestManager{} = operation} =
+             Distributor.compose_stop_operation(hub, [:in_flight_child], opts)
+
+    assert Keyword.keys(operation.nodes_data) == [:target@host]
+    assert Dispatcher.take_start_targets(hub, :in_flight_child) == []
   end
 
   test "compose_start_operation returns error when distribution assigns no nodes",

@@ -40,6 +40,38 @@ defmodule ProcessHub.Service.Dispatcher do
         members: [target_node]
       })
     end)
+
+    track_starts(hub, node_start_requests)
+  end
+
+  # The registry only learns where a child runs once that node has started it.
+  # Until then this node remembers where it sent the start, so a stop issued
+  # meanwhile can still find the child. Written after the send, so a stop
+  # forwarded from here always arrives after the start.
+  @start_ttl 30_000
+
+  defp track_starts(hub, requests) do
+    requests
+    |> Enum.flat_map(fn %StartChildrenRequest{node: node, children: children} ->
+      Enum.map(children, &{&1.child_spec.id, node})
+    end)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.map(fn {cid, nodes} -> {{StorageKey.sif(), cid}, nodes, [ttl: @start_ttl]} end)
+    |> then(&Storage.insert_many(hub.storage.misc, &1))
+
+    :ok
+  end
+
+  @doc """
+  Returns the nodes this node recently sent a start for `child_id` to, and
+  forgets them, so the same stop is not forwarded twice.
+  """
+  @spec take_start_targets(ProcessHub.Hub.t(), ProcessHub.child_id()) :: [node()]
+  def take_start_targets(hub, child_id) do
+    key = {StorageKey.sif(), child_id}
+    targets = Storage.get(hub.storage.misc, key) || []
+    if targets !== [], do: Storage.remove(hub.storage.misc, key)
+    targets
   end
 
   @doc """

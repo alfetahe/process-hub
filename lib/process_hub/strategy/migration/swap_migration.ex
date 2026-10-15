@@ -24,6 +24,7 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Utility.Extractor
+  alias ProcessHub.Worker.WorkerQueue
   alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
   alias ProcessHub.Request.PostAction
@@ -139,14 +140,37 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   def migrate(hub, strategy, forward_to, stop_local) do
     if strategy.handover, do: handover_states(hub, strategy, stop_local)
 
-    if match?(%ColdSwap{}, strategy) and stop_local !== [] do
-      Distributor.children_terminate(hub, stop_local)
-    end
+    # Stops are handled on the worker queue too, so they can't overlap this
+    # step: an earlier stop means the child isn't moved, a later one finds
+    # where the child was sent.
+    WorkerQueue.run_on(hub.procs.worker_queue, fn ->
+      forward_to = Enum.reject(forward_to, fn {cspec, _, _} -> stopped?(hub, cspec.id) end)
 
-    forward_to
-    |> group_children_by_node()
-    |> create_migration_requests(hub, strategy, stop_local)
-    |> then(&send_start_requests(hub, &1))
+      if match?(%ColdSwap{}, strategy) and stop_local !== [] do
+        Distributor.children_terminate(hub, stop_local)
+      end
+
+      forward_to
+      |> group_children_by_node()
+      |> create_migration_requests(hub, strategy, stop_local)
+      |> then(&send_start_requests(hub, &1))
+    end)
+  end
+
+  # True when the child was stopped before we got to move it: its process
+  # here is gone, or its whole row is. An empty row means it never ran here.
+  defp stopped?(hub, child_id) do
+    case ProcessRegistry.lookup(hub.hub_id, child_id, include_empty: true) do
+      nil ->
+        true
+
+      {_cspec, []} ->
+        false
+
+      {_cspec, node_pids} ->
+        pid = Keyword.get(node_pids, node())
+        not (is_pid(pid) and Process.alive?(pid))
+    end
   end
 
   @doc """

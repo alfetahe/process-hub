@@ -461,6 +461,16 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
+  def handle_info({:reconcile_round, :demand}, state) do
+    {:noreply, Recovery.trigger_round(state, :demand)}
+  end
+
+  @impl true
+  def handle_info(:reconcile_retry, state) do
+    {:noreply, Recovery.retry_round(state)}
+  end
+
+  @impl true
   def handle_info(:cluster_settled, state) do
     {:noreply, state |> Recovery.cluster_settled() |> Recovery.trigger_round(:evidence)}
   end

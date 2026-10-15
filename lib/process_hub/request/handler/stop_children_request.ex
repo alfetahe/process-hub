@@ -118,6 +118,9 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
         Distributor.children_terminate(hub, local_cids, on_empty: :delete)
       end
 
+      # If this node recently sent a start for the child elsewhere, stop it there too.
+      forward_data = forward_in_flight(hub, request.children, forward_data)
+
       # Forward misplaced children to their actual nodes
       if forward_data != [] do
         stop_opts = to_stop_opts(request)
@@ -295,6 +298,14 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
             {local, RequestManager.populate_forward(forward, new_targets, child_data), stopped}
           end
       end
+    end)
+  end
+
+  defp forward_in_flight(hub, children, forward_data) do
+    Enum.reduce(children, forward_data, fn child_data, acc ->
+      targets = Dispatcher.take_start_targets(hub, child_data.child_id)
+      new_targets = Enum.reject(targets, &(child_data in Keyword.get(acc, &1, [])))
+      RequestManager.populate_forward(acc, new_targets, child_data)
     end)
   end
 
