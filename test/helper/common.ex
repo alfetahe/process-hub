@@ -51,6 +51,15 @@ defmodule Test.Helper.Common do
   def bind_child_locally(node, hub_id, child_spec),
     do: :erpc.call(node, __MODULE__, :bind_child_locally, [node, hub_id, child_spec])
 
+  @doc "A hook handler that parks its caller until `test_pid` sends it `:release`."
+  def hold_until_released(test_pid, hook_data) do
+    send(test_pid, {:held, self(), hook_data})
+
+    receive do
+      :release -> :ok
+    end
+  end
+
   def even_sum_sequence(start, total) do
     Enum.reduce(start..total, 2, fn num, acc ->
       2 * num + acc
