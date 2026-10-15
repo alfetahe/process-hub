@@ -6,6 +6,13 @@ defmodule Test.Strategy.Migration.SwapMigrationTest do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Request.Handler.StartChildrenRequest.PostStartData
+  alias ProcessHub.Service.Migration
+  alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Strategy.Migration.ColdSwap
+  alias ProcessHub.Strategy.Migration.HotSwap
+  alias Test.Helper.Bootstrap
+  alias Test.Helper.Common
+  alias Test.Helper.TestNode
 
   describe "group_children_by_node/1" do
     test "groups children by target node" do
@@ -471,6 +478,70 @@ defmodule Test.Strategy.Migration.SwapMigrationTest do
         )
 
       assert result == :ok
+    end
+  end
+
+  describe "a stop while the child moves" do
+    @describetag :multinode
+
+    for strategy <- [HotSwap, ColdSwap] do
+      test "leaves no #{inspect(strategy)} copy on the target" do
+        name = unquote(strategy) |> Module.split() |> List.last() |> Macro.underscore()
+        [{peer, peer_pid}] = TestNode.start_nodes(1, prefix: "stop_mid_#{name}")
+        :erlang.unlink(peer_pid)
+        hub_id = :"stop_mid_#{name}"
+
+        conf = %ProcessHub{
+          hub_id: hub_id,
+          migration_strategy: struct(unquote(strategy)),
+          hubs_discover_interval: 300,
+          cluster_event_debounce: 0
+        }
+
+        Bootstrap.start_hub_on_node(conf, [])
+        :erpc.call(peer, Bootstrap, :start_hub_on_node, [conf, []])
+
+        on_exit(fn ->
+          ProcessHub.Initializer.stop(hub_id)
+          :peer.stop(peer_pid)
+        end)
+
+        assert Common.eventually(
+                 fn ->
+                   peer in ProcessHub.nodes(hub_id) and
+                     node() in :erpc.call(peer, ProcessHub, :nodes, [hub_id])
+                 end,
+                 15_000
+               )
+
+        cspec = %{id: :moving, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+        :ok = Common.bind_child_locally(node(), hub_id, cspec)
+
+        # Hold the target right after it starts the new process and before it
+        # registers it, so the registry can't lead the stop below to it.
+        peer_hub = :erpc.call(peer, ProcessHub.Coordinator, :get_hub, [hub_id])
+        hold = %HookManager{id: :hold, m: Common, f: :hold_until_released, a: [self(), :_]}
+
+        :erpc.call(peer, HookManager, :register_handler, [
+          peer_hub.storage.hook,
+          Hook.post_children_start(),
+          hold
+        ])
+
+        assert :ok = Migration.migrate_child(hub_id, :moving, peer)
+        assert_receive {:held, holder, %{children: [%{child_id: :moving, pid: new_pid}]}}, 5_000
+
+        stop = ProcessHub.stop_children(hub_id, [:moving], awaitable: true)
+        send(holder, :release)
+        assert %ProcessHub.StopResult{status: :ok} = ProcessHub.await(stop)
+
+        assert Common.eventually(fn ->
+                 not :erpc.call(peer, Process, :alive?, [new_pid]) and
+                   ProcessRegistry.lookup(hub_id, :moving) == nil and
+                   :erpc.call(peer, ProcessRegistry, :lookup, [hub_id, :moving]) == nil
+               end),
+               "the move left the stopped child running on #{peer}"
+      end
     end
   end
 end

@@ -98,15 +98,12 @@ defmodule ProcessHub.Service.Distributor do
     # Also track children that were not found
     {nodes_data, not_found} =
       Enum.reduce(child_ids, {[], []}, fn child_id, {acc, not_found_acc} ->
-        registry_result = ProcessRegistry.lookup(hub.hub_id, child_id)
-
-        case registry_result do
-          nil ->
+        case stop_nodes(hub, child_id) do
+          [] ->
             # Child not found in registry
             {acc, [child_id | not_found_acc]}
 
-          {_, node_pids} ->
-            child_nodes = Keyword.keys(node_pids)
+          child_nodes ->
             child_data = %{nodes: child_nodes, child_id: child_id}
 
             append_items =
@@ -137,6 +134,17 @@ defmodule ProcessHub.Service.Distributor do
         opts_with_not_found = Keyword.put(opts, :not_found_children, not_found)
         operation = RequestManager.new(hub, StopChildrenRequest, nodes_data, opts_with_not_found)
         dispatch_operation(hub, operation)
+    end
+  end
+
+  # No row yet: the child may still be starting on the node we sent it to. A
+  # row with no nodes: the child may be moving, and only the node moving it
+  # knows where to, so every hub node gets the stop.
+  defp stop_nodes(hub, child_id) do
+    case ProcessRegistry.lookup(hub.hub_id, child_id, include_empty: true) do
+      nil -> Dispatcher.take_start_targets(hub, child_id)
+      {_, []} -> Cluster.nodes(hub.storage.misc, [:include_local])
+      {_, node_pids} -> Keyword.keys(node_pids)
     end
   end
 

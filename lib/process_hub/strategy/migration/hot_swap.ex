@@ -156,8 +156,7 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
   Called via generic `:post_action_callback` message from the target node.
   Delivers stored handover states (if any) to new processes, then terminates
-  old local processes. A child whose old process is already gone was stopped
-  while it migrated, so its new process on `target_node` is stopped as well.
+  old local processes.
   """
   @spec complete_migration(ProcessHub.Hub.t(), node(), [{ProcessHub.child_id(), pid()}]) :: :ok
   def complete_migration(hub, target_node, cid_pids) do
@@ -185,20 +184,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
       )
     end
 
-    # A child with no old process left here was stopped while it migrated. The
-    # stop reached only the nodes its registry named, so the new process goes too.
-    stopped_meanwhile =
-      for {cid, result, _node} <- Distributor.children_terminate(hub, child_ids),
-          result !== :ok,
-          do: cid
-
-    if stopped_meanwhile !== [] do
-      send(
-        {hub.hub_id, target_node},
-        {:post_action_callback, Distributor, :children_terminate,
-         [stopped_meanwhile, [on_empty: :delete]]}
-      )
-    end
+    # Always terminate old local processes after remote start succeeded.
+    Distributor.children_terminate(hub, child_ids)
 
     :ok
   end

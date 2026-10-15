@@ -11,6 +11,17 @@ defmodule ProcessHub.Worker.WorkerQueue do
     GenServer.start_link(__MODULE__, {hub_id, misc_storage}, name: pname)
   end
 
+  @doc """
+  Runs `fun` on the worker queue once the work already queued is done. Called
+  from the queue itself, it runs right away.
+  """
+  @spec run(GenServer.server(), (-> result)) :: result when result: term()
+  def run(worker_queue, fun) do
+    if GenServer.whereis(worker_queue) === self(),
+      do: fun.(),
+      else: GenServer.call(worker_queue, {:handle_work, fun}, :infinity)
+  end
+
   @impl true
   def init({hub_id, _misc_storage}) do
     {:ok, %{hub_id: hub_id}}

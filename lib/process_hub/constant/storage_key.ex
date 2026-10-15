@@ -44,6 +44,8 @@ defmodule ProcessHub.Constant.StorageKey do
   def rp, do: :registry_populated
   @spec mdl() :: :migration_deferred_list
   def mdl, do: :migration_deferred_list
+  @spec sif() :: :starts_in_flight
+  def sif, do: :starts_in_flight
   @spec drn() :: :node_draining
   def drn, do: :node_draining
   @spec sbt() :: :self_boot_token
