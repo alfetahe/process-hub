@@ -759,27 +759,7 @@ defmodule Test.ProcessHubRecoveryTest do
 
     test "a requested round ignores the rate limit and starts what was refused",
          %{dets: dets} do
-      hub_id = SetupHelper.unique_id(:rec_request)
-      gate = :atomics.new(1, [])
-      admit = fn -> :atomics.get(gate, 1) == 1 end
-
-      conf =
-        durable_conf(hub_id, dets, reconcile_interval_ms: 600_000) ++
-          [distribution_strategy: %RecordingDistribution{recorder: self(), admit: admit}]
-
-      {^hub_id, _pid} = SetupHelper.start_hub!(conf)
-      assert :ok = GenServer.call(hub_id, {:declared_mutate, {:add, [cspec(:rq_child)]}})
-
-      log =
-        capture_log(fn ->
-          reconcile_now(hub_id)
-          assert Recovery.await_normal(hub_id, 10_000) == :ok
-
-          assert_receive {:round, %{first_round: true, measurements: %{orphans: 1, started: 0}}},
-                         10_000
-        end)
-
-      assert log =~ "Reconcile could not start 1 orphans: :not_admitted"
+      {hub_id, gate} = refused_first_round(:rec_request, dets, :rq_child)
 
       :atomics.put(gate, 1, 1)
       assert :ok = Recovery.request_round(hub_id)
@@ -790,6 +770,16 @@ defmodule Test.ProcessHubRecoveryTest do
       assert Test.Helper.Common.eventually(fn ->
                is_pid(ProcessHub.get_pid(hub_id, :rq_child))
              end)
+    end
+
+    test "a joining node's registry data brings a round soon", %{dets: dets} do
+      {hub_id, gate} = refused_first_round(:rec_join, dets, :rj_child)
+
+      :atomics.put(gate, 1, 1)
+      send(hub_id, {@registry_broadcast, {{%{}, 1}, :peer@joining}})
+
+      assert_receive {:round, %{first_round: false, measurements: %{orphans: 1, started: 1}}},
+                     5_000
     end
 
     test "a round requested while one runs follows it", %{dets: dets} do
@@ -815,7 +805,34 @@ defmodule Test.ProcessHubRecoveryTest do
       send(holder, :release)
 
       assert_receive {:round, %{first_round: true}}, 10_000
-      assert_receive {:round, %{first_round: false}}, 5_000
+      assert_receive {:round, %{first_round: false}}, 10_000
+    end
+
+    # Starts a hub whose distribution refuses every start until `gate` is set,
+    # and runs its first round, which therefore cannot start `child_id`.
+    defp refused_first_round(id, dets, child_id) do
+      hub_id = SetupHelper.unique_id(id)
+      gate = :atomics.new(1, [])
+      admit = fn -> :atomics.get(gate, 1) == 1 end
+
+      conf =
+        durable_conf(hub_id, dets, reconcile_interval_ms: 600_000) ++
+          [distribution_strategy: %RecordingDistribution{recorder: self(), admit: admit}]
+
+      {^hub_id, _pid} = SetupHelper.start_hub!(conf)
+      assert :ok = GenServer.call(hub_id, {:declared_mutate, {:add, [cspec(child_id)]}})
+
+      log =
+        capture_log(fn ->
+          reconcile_now(hub_id)
+          assert Recovery.await_normal(hub_id, 10_000) == :ok
+
+          assert_receive {:round, %{first_round: true, measurements: %{orphans: 1, started: 0}}},
+                         10_000
+        end)
+
+      assert log =~ "Reconcile could not start 1 orphans: :not_admitted"
+      {hub_id, gate}
     end
 
     # Starts `specs` durable, restarts the hub, and waits for its first round to

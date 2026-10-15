@@ -196,10 +196,12 @@ start and every connected peer the hub knows about has delivered its registry
 data. `reconcile_grace_ms` caps that wait — it opens the round whatever the
 evidence says, so a peer that is connected but never answers cannot hold a node
 in `:recovering`, and `:normal` is always reached. Later rounds follow completed
-synchronisation rounds, rate-limited to one per `reconcile_interval_ms`. A host
-that knows a refused start can now succeed (its placement target gained a member,
-say) calls `ProcessHub.Service.Recovery.request_round/1` for a round that skips
-the rate limit; it never overlaps a running round, and runs after it instead.
+synchronisation rounds, rate-limited to one per `reconcile_interval_ms`. When a
+node joins the hub, a round follows within a couple of seconds instead, so a
+child that could not start for want of a node is not left waiting for the full
+interval. A host that knows of another reason a refused start can now succeed
+(its placement target gained a member, say) calls
+`ProcessHub.Service.Recovery.request_round/1` for the same.
 
 Every node submits from its adopted copy of the list. Duplicates are prevented by
 `check_existing: true` and by the ring routing concurrent submissions to the same

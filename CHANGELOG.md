@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 ## v0.7.1 - Upcoming
 
 ### Added
-- **Experimental:** `Recovery.request_round/1` asks a hub for a recovery round now instead of at the next `:reconcile_interval_ms`. Call it when a start the last round refused can now succeed, for example when the node a distribution strategy needs for a child has just joined. A request made while a round runs is served right after it.
+- **Experimental:** when a node joins a hub with `:auto_recovery`, a recovery round now follows within a couple of seconds instead of at the next `:reconcile_interval_ms`, so a child that could not start for want of a node starts as soon as one is there. `Recovery.request_round/1` asks for such a round yourself, for example when the group a distribution strategy needs for a child has just gained a member.
 - **Experimental:** a new `:auto_recovery` option, `:cluster_settle_ms` (default `2_000`). When a hub starts, this is how long it waits for other nodes to show up before it decides it is running alone. If your application connects the cluster before it starts its hubs, you can set it to `0`.
 
 ### Changed
