@@ -318,7 +318,10 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
       alias Test.Support.RecordingDistribution
 
       previous = Storage.get(hub.storage.misc, StorageKey.strdist())
-      Storage.insert(hub.storage.misc, StorageKey.strdist(), %RecordingDistribution{recorder: self()})
+
+      Storage.insert(hub.storage.misc, StorageKey.strdist(), %RecordingDistribution{
+        recorder: self()
+      })
 
       HookManager.register_handler(hub.storage.hook, Hook.pre_children_start(), %HookManager{
         id: :scr_order_probe,
