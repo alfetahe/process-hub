@@ -21,6 +21,12 @@ defmodule ProcessHub.Service.RequestManager do
   alias ProcessHub.Coordinator.State
   alias ProcessHub.Hub
 
+  @typedoc """
+  Who answers a sub-request: the node, or the node and the nodes that
+  forwarded the request to it.
+  """
+  @type responder() :: node() | {node(), [node()]}
+
   @max_children_per_request 1000
   @max_pids_per_request 10_000
 
@@ -33,7 +39,6 @@ defmodule ProcessHub.Service.RequestManager do
           handler: module(),
           nodes_data: [{node(), [map()]}],
           sub_requests: [struct()],
-          completed_nodes: MapSet.t(),
           expires_at: integer(),
           awaiter: {pid(), reference()} | nil,
           future: ProcessHub.Future.t() | nil,
@@ -51,7 +56,6 @@ defmodule ProcessHub.Service.RequestManager do
     :future,
     :result,
     sub_requests: [],
-    completed_nodes: MapSet.new(),
     options: []
   ]
 
@@ -108,9 +112,9 @@ defmodule ProcessHub.Service.RequestManager do
   @doc """
   Records a node's response and checks if operation is complete.
   """
-  @spec process_response(t(), node(), term()) :: {:complete, t()} | {:pending, t()}
-  def process_response(%__MODULE__{} = operation, response_node, results) do
-    updated = record_response(operation, response_node, results, :results)
+  @spec process_response(t(), responder(), term()) :: {:complete, t()} | {:pending, t()}
+  def process_response(%__MODULE__{} = operation, responder, results) do
+    updated = record_response(operation, responder, results, :results)
 
     if all_responded?(updated) do
       {:complete, updated}
@@ -169,9 +173,9 @@ defmodule ProcessHub.Service.RequestManager do
   # GenServer handlers (called from Coordinator)
   ##############################################################################
 
-  @spec handle_response(State.t(), reference(), node(), term()) ::
+  @spec handle_response(State.t(), reference(), responder(), term()) ::
           {:noreply, State.t()}
-  def handle_response(state, transaction_id, response_node, results) do
+  def handle_response(state, transaction_id, responder, results) do
     case get(state, transaction_id) do
       nil ->
         {:noreply, state}
@@ -181,7 +185,7 @@ defmodule ProcessHub.Service.RequestManager do
         {:noreply, state}
 
       operation ->
-        case process_response(operation, response_node, results) do
+        case process_response(operation, responder, results) do
           {:complete, updated} ->
             result = finalize(updated, state.hub)
 
@@ -259,9 +263,8 @@ defmodule ProcessHub.Service.RequestManager do
   end
 
   @spec all_responded?(map()) :: boolean()
-  def all_responded?(%{nodes_data: nodes_data, completed_nodes: completed}) do
-    expected_nodes = nodes_data |> Enum.map(fn {node, _} -> node end) |> MapSet.new()
-    MapSet.equal?(expected_nodes, completed)
+  def all_responded?(%{sub_requests: sub_requests}) do
+    Enum.all?(sub_requests, &(&1.status == :completed))
   end
 
   @spec set_awaiter(map(), {pid(), reference()}) :: map()
@@ -269,32 +272,49 @@ defmodule ProcessHub.Service.RequestManager do
     %{request | awaiter: from}
   end
 
-  @spec record_response(map(), node(), term(), atom()) :: map()
-  def record_response(
-        %{sub_requests: sub_requests} = request,
-        response_node,
-        results,
-        results_field
-      ) do
-    updated_sub_requests =
-      Enum.map(sub_requests, fn sub_req ->
-        if sub_req.node == response_node do
-          sub_req
-          |> Map.put(results_field, results)
-          |> Map.put(:status, :completed)
-        else
-          sub_req
-        end
+  @doc """
+  Records the answer of `responder` to its sub-request.
+
+  An answer naming a child as `{:forwarded, node}` adds a sub-request for that
+  node's answer to the forward. A forward's answer can arrive before the
+  answer announcing it; it is kept, and the announcement then finds it.
+  """
+  @spec record_response(map(), responder(), term(), atom()) :: map()
+  def record_response(%{sub_requests: sub_requests} = request, responder, results, results_field) do
+    {node, path} = key = responder_key(responder)
+    {forwards, results} = Enum.split_with(results, &match?({_, {:forwarded, _}}, &1))
+
+    sub_requests =
+      sub_requests
+      |> expect_answer(request, key, [])
+      |> Enum.map(fn sub_req ->
+        if sub_key(sub_req) == key,
+          do: sub_req |> Map.put(results_field, results) |> Map.put(:status, :completed),
+          else: sub_req
       end)
 
-    request
-    |> Map.put(:sub_requests, updated_sub_requests)
-    |> mark_completed(response_node)
+    forwards
+    |> Enum.group_by(fn {_cid, {:forwarded, target}} -> target end, &elem(&1, 0))
+    |> Enum.reduce(sub_requests, fn {target, cids}, acc ->
+      expect_answer(acc, request, {target, path ++ [node]}, cids)
+    end)
+    |> then(&%{request | sub_requests: &1})
   end
 
-  defp mark_completed(%{completed_nodes: completed} = request, node) do
-    %{request | completed_nodes: MapSet.put(completed, node)}
+  defp expect_answer(sub_requests, request, {node, path} = key, cids) do
+    if Enum.any?(sub_requests, &(sub_key(&1) == key)) do
+      sub_requests
+    else
+      children = Enum.map(cids, &%{child_id: &1})
+      opts = [forward_path: path]
+      sub_requests ++ [struct(request.handler, node: node, children: children, options: opts)]
+    end
   end
+
+  defp sub_key(sub_req), do: {sub_req.node, forward_path(sub_req.options)}
+
+  defp responder_key({node, path}), do: {node, path}
+  defp responder_key(node), do: {node, []}
 
   ##############################################################################
   # Execution utilities
@@ -335,11 +355,15 @@ defmodule ProcessHub.Service.RequestManager do
     originating_node = Keyword.get(opts, :originating_node)
 
     if hub_id && transaction_id && originating_node do
-      local_node = node()
+      responder =
+        case forward_path(opts) do
+          [] -> node()
+          path -> {node(), path}
+        end
 
       GenServer.cast(
         {hub_id, originating_node},
-        {response_type, transaction_id, local_node, results}
+        {response_type, transaction_id, responder, results}
       )
 
       :ok
@@ -441,6 +465,49 @@ defmodule ProcessHub.Service.RequestManager do
   ##############################################################################
   # Forwarding utilities
   ##############################################################################
+
+  @doc """
+  The nodes that forwarded the request whose options are `opts`, in order.
+  """
+  @spec forward_path(keyword()) :: [node()]
+  def forward_path(opts), do: Keyword.get(opts, :forward_path, [])
+
+  @doc """
+  The fields of a request this node forwards on behalf of the request whose
+  options are `opts`: the same transaction and originating node, so the
+  target answers the coordinator that is waiting, and the forward path
+  extended by this node, which names the answer and bounds the forwarding.
+  """
+  @spec forward_fields(Hub.t(), keyword()) :: map()
+  def forward_fields(hub, opts) do
+    passthrough = Keyword.drop(opts, [:reply_to, :transaction_id, :hub_id, :originating_node])
+
+    %{
+      transaction_id: Keyword.get(opts, :transaction_id),
+      hub_id: hub.hub_id,
+      originating_node: Keyword.get(opts, :originating_node),
+      options: Keyword.put(passthrough, :forward_path, forward_path(opts) ++ [node()]),
+      status: :dispatched
+    }
+  end
+
+  @doc """
+  True when every node a child belongs to already forwarded it, so forwarding
+  it again would only send it back.
+  """
+  @spec forward_loop?([node()], [node()]) :: boolean()
+  def forward_loop?(nodes, path), do: nodes != [] and Enum.all?(nodes, &(&1 in path))
+
+  @doc """
+  The answers a node gives for the children it forwarded, one
+  `{child_id, {:forwarded, node}}` per target.
+  """
+  @spec forwarded_answers(keyword()) :: [{ProcessHub.child_id(), {:forwarded, node()}}]
+  def forwarded_answers(forward_data) do
+    for {target, children} <- forward_data,
+        %{child_id: cid} <- children,
+        do: {cid, {:forwarded, target}}
+  end
 
   @doc """
   Groups children by target node into a keyword list `[{node, [child_data, ...]}, ...]`.

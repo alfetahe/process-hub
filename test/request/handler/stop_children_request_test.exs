@@ -20,7 +20,6 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
       hub_id: Keyword.get(opts, :hub_id, @hub_id),
       handler: StopChildrenRequest,
       nodes_data: [{node(), []}],
-      completed_nodes: MapSet.new(),
       expires_at: System.monotonic_time(:millisecond) + 60_000,
       sub_requests: [],
       options: Keyword.get(opts, :options, [])

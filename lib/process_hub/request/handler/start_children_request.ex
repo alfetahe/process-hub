@@ -187,7 +187,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
         hub: hub
       })
 
-      validated_children = validate_children(request, hub, strategies)
+      {validated_children, answers} = validate_children(request, hub, strategies)
 
       # Start children locally
       post_start_results = start_children(hub, validated_children, start_opts)
@@ -199,7 +199,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       update_registry(hub, post_start_results, start_opts)
 
       # Build and send response
-      send_response(post_start_results, start_opts)
+      send_response(post_start_results, answers, start_opts)
 
       # Sync propagate to other nodes
       sync_propagate(hub, post_start_results, start_opts)
@@ -227,9 +227,22 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
   """
   @spec aggregate_results(RequestManager.t()) :: ProcessHub.StartResult.t()
   def aggregate_results(%RequestManager{} = operation) do
+    per_sub_request = Enum.map(operation.sub_requests, &collect_sub_request_results/1)
+
+    # A child two forwards both reached starts once: the other answer names the
+    # pid the first sub-request started, and is not a failure.
+    starters =
+      for {results, index} <- Enum.with_index(per_sub_request),
+          {:started, cid, _node, pid} <- results,
+          into: %{},
+          do: {{cid, pid}, index}
+
     {started, errors} =
-      operation.sub_requests
-      |> Enum.flat_map(&collect_sub_request_results/1)
+      per_sub_request
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {results, index} ->
+        Enum.reject(results, &repeated_start?(&1, index, starters))
+      end)
       |> Enum.reduce({[], []}, fn result_tuple, {started_acc, errors_acc} ->
         case result_tuple do
           {:started, cid, node, pid} ->
@@ -247,6 +260,11 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       rollback: false
     }
   end
+
+  defp repeated_start?({:error, cid, {:already_started, pid}}, index, starters),
+    do: Map.get(starters, {cid, pid}, index) != index
+
+  defp repeated_start?(_result, _index, _starters), do: false
 
   @doc """
   Returns the response message type for routing.
@@ -363,30 +381,6 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
         do: {cid, res}
   end
 
-  @doc false
-  def build_request(
-        hub_id,
-        transaction_id,
-        request_signature,
-        originating_node,
-        reply_to,
-        target_node,
-        children,
-        opts
-      ) do
-    %__MODULE__{
-      transaction_id: transaction_id,
-      request_signature: request_signature,
-      hub_id: hub_id,
-      originating_node: originating_node,
-      reply_to: reply_to,
-      node: target_node,
-      children: children,
-      options: opts,
-      status: :dispatched
-    }
-  end
-
   ##############################################################################
   # Private helpers
   ##############################################################################
@@ -420,9 +414,8 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
 
     if request_sig != nil and request_sig == current_sig and is_deterministic do
       # FAST PATH: Topology unchanged and strategy is deterministic.
-      Enum.filter(request.children, fn %{nodes: nodes} ->
-        Enum.member?(nodes, local_node)
-      end)
+      {Enum.filter(request.children, fn %{nodes: nodes} -> Enum.member?(nodes, local_node) end),
+       []}
     else
       # SLOW PATH: Topology changed, no signature, or non-deterministic strategy.
       validate_children_full(
@@ -435,9 +428,12 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     end
   end
 
+  # Returns the children to start here, and the answers for the rest: a
+  # forward, or a refusal when every node they belong to already forwarded them.
   defp validate_children_full(hub, children, dist_strat, redun_strat, start_opts) do
     local_node = node()
     cids = Enum.map(children, & &1.child_spec.id)
+    path = RequestManager.forward_path(start_opts)
 
     cid_node_pairs =
       DistributionStrategy.belongs_to(
@@ -448,16 +444,20 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       )
       |> Enum.filter(fn {cid, _} -> Enum.member?(cids, cid) end)
 
-    {valid, forw} =
-      Enum.reduce(children, {[], []}, fn %{child_id: cid, nodes: n_orig} = cdata, {valid, forw} ->
+    {valid, forw, loops} =
+      Enum.reduce(children, {[], [], []}, fn %{child_id: cid, nodes: n_orig} = cdata,
+                                             {valid, forw, loops} ->
         nodes = Bag.get_by_key(cid_node_pairs, cid, [])
 
-        case Enum.member?(nodes, local_node) do
-          true ->
-            {[cdata | valid], forw}
+        cond do
+          Enum.member?(nodes, local_node) ->
+            {[cdata | valid], forw, loops}
 
-          false ->
-            {valid, populate_forward(forw, nodes, n_orig, cdata)}
+          RequestManager.forward_loop?(nodes, path) ->
+            {valid, forw, [{cid, {:error, :forward_loop}} | loops]}
+
+          true ->
+            {valid, populate_forward(forw, nodes, n_orig ++ path, cdata), loops}
         end
       end)
 
@@ -468,7 +468,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
       HookManager.dispatch_hook(hub.storage.hook, Hook.children_forwarded(), %{forwards: forw})
     end
 
-    valid
+    {valid, RequestManager.forwarded_answers(forw) ++ loops}
   end
 
   defp insert_pending_entries(hub, forw_data) do
@@ -498,33 +498,25 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     :ok
   end
 
-  defp populate_forward(forw_data, valid_nodes, invalid_nodes, child_data) do
-    new_nodes = Enum.reject(valid_nodes, &(&1 in invalid_nodes))
+  defp populate_forward(forw_data, valid_nodes, excluded_nodes, child_data) do
+    new_nodes = Enum.reject(valid_nodes, &(&1 in excluded_nodes))
     RequestManager.populate_forward(forw_data, new_nodes, child_data)
   end
 
   defp create_forward_requests(hub, forw, start_opts) do
-    transaction_id = make_ref()
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
-    request_signature = DistributionStrategy.distribution_signature(dist_strat, hub)
-    reply_to = Keyword.get(start_opts, :reply_to)
 
-    passthrough_opts =
-      Keyword.drop(start_opts, [:reply_to, :transaction_id, :hub_id, :originating_node])
+    fields =
+      hub
+      |> RequestManager.forward_fields(start_opts)
+      |> Map.merge(%{
+        request_signature: DistributionStrategy.distribution_signature(dist_strat, hub),
+        reply_to: Keyword.get(start_opts, :reply_to)
+      })
 
     Enum.map(forw, fn {target_node, children} ->
       updated_children = Enum.map(children, fn child -> %{child | nodes: [target_node]} end)
-
-      build_request(
-        hub.hub_id,
-        transaction_id,
-        request_signature,
-        nil,
-        reply_to,
-        target_node,
-        updated_children,
-        passthrough_opts
-      )
+      struct!(__MODULE__, Map.merge(fields, %{node: target_node, children: updated_children}))
     end)
   end
 
@@ -600,8 +592,8 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     )
   end
 
-  defp send_response(post_start_results, start_opts) do
-    results = build_node_response(post_start_results)
+  defp send_response(post_start_results, answers, start_opts) do
+    results = build_node_response(post_start_results) ++ answers
 
     RequestManager.send_response(
       :operation_response,

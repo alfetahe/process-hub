@@ -7,7 +7,9 @@ defmodule ProcessHub.DistributedSupervisor do
   child processes.
   """
 
+  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.Storage
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Hub
   alias ProcessHub.Request.Handler.PidsUnregisterRequest
@@ -19,7 +21,7 @@ defmodule ProcessHub.DistributedSupervisor do
     override: [:init, :start_link, :terminate_child, :start_child],
     base_module: :supervisor
 
-  @pd_cid_to_pid :ph_cid_to_pid
+  @pd_children :ph_children
 
   @doc """
   Starts the distributed supervisor with the given arguments.
@@ -49,7 +51,7 @@ defmodule ProcessHub.DistributedSupervisor do
   def init(args) do
     # Store hub_id in process dictionary for later retrieval
     Process.put(:hub_id, args.hub_id)
-    Process.put(@pd_cid_to_pid, %{})
+    Process.put(@pd_children, children_table(args.hub_id))
 
     children =
       args.hub_id
@@ -78,6 +80,25 @@ defmodule ProcessHub.DistributedSupervisor do
     Supervisor.delete_child(distributed_sup, child_id)
   end
 
+  @doc """
+  Returns the pid of `child_id` when it runs under this node's supervisor,
+  else `nil`. Read from the supervisor's table, so it never waits on the
+  supervisor, which may be busy starting a child whose init calls the hub.
+  """
+  @spec running_pid(Hub.t(), ProcessHub.child_id()) :: pid() | nil
+  def running_pid(hub, child_id) do
+    with table when table != nil <- Storage.get(hub.storage.misc, StorageKey.dsc()),
+         [{_child_id, pid}] <- :ets.lookup(table, child_id),
+         true <- Process.alive?(pid) do
+      pid
+    else
+      _ -> nil
+    end
+  rescue
+    # A supervisor that just restarted has dropped its old table.
+    ArgumentError -> nil
+  end
+
   # @doc """
   # Returns only the child IDs that are currently running (have a valid PID).
   # This filters out children that are :undefined or {:restarting, _}.
@@ -86,6 +107,17 @@ defmodule ProcessHub.DistributedSupervisor do
   # def running_child_ids(supervisor) do
   #   GenServer.call(supervisor, :running_child_ids)
   # end
+
+  # Child pids by id. Only this process writes them; the hub's storage names
+  # the table so a lookup reads it without asking the supervisor.
+  defp children_table(hub_id) do
+    table = :ets.new(__MODULE__, [:set, :protected, read_concurrency: true])
+
+    with %Hub{storage: %{misc: misc}} <- Hub.get(hub_id),
+         do: Storage.insert(misc, StorageKey.dsc(), table)
+
+    table
+  end
 
   defp children(hub_id) do
     ProcessRegistry.local_child_specs(hub_id)
@@ -117,10 +149,8 @@ defmodule ProcessHub.DistributedSupervisor do
     end
   end
 
-  defp register_child_pid(child_id, pid) do
-    cid_to_pid = Process.get(@pd_cid_to_pid, %{})
-    Process.put(@pd_cid_to_pid, Map.put(cid_to_pid, child_id, pid))
-  end
+  defp register_child_pid(child_id, pid),
+    do: :ets.insert(Process.get(@pd_children), {child_id, pid})
 
   @doc """
   Handles the process exit messages for the child processes.
@@ -131,18 +161,21 @@ defmodule ProcessHub.DistributedSupervisor do
   """
   def handle_info({:EXIT, pid, _reason} = request, state) do
     # Look up child_id from pid via reverse scan (only on EXIT)
-    cid_to_pid = Process.get(@pd_cid_to_pid, %{})
-    child_id = Enum.find_value(cid_to_pid, fn {cid, p} -> if p === pid, do: cid end)
+    table = Process.get(@pd_children)
+
+    child_id =
+      case :ets.match(table, {:"$1", pid}) do
+        [[cid] | _] -> cid
+        [] -> nil
+      end
 
     # Remove old mapping
-    if child_id do
-      Process.put(@pd_cid_to_pid, Map.delete(cid_to_pid, child_id))
-    end
+    if child_id, do: :ets.delete(table, child_id)
 
-    # Delegate to supervisor (may trigger restart → start_proxy updates map)
+    # Delegate to supervisor (may trigger restart → start_proxy updates the table)
     result = :supervisor.handle_info(request, state)
 
-    # Check outcome via map
+    # Check outcome via the table
     if child_id do
       handle_child_exit(child_id, pid)
     end
@@ -165,7 +198,11 @@ defmodule ProcessHub.DistributedSupervisor do
     hub = Hub.get(Process.get(:hub_id))
 
     if hub do
-      new_pid = Process.get(@pd_cid_to_pid, %{}) |> Map.get(child_id)
+      new_pid =
+        case :ets.lookup(Process.get(@pd_children), child_id) do
+          [{_child_id, new_pid}] -> new_pid
+          [] -> nil
+        end
 
       cond do
         is_pid(new_pid) and new_pid !== old_pid ->

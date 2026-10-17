@@ -33,7 +33,6 @@ defmodule Test.Service.RequestManagerTest do
       hub_id: hub_id,
       handler: StartChildrenRequest,
       nodes_data: nodes_data,
-      completed_nodes: MapSet.new(),
       expires_at: System.monotonic_time(:millisecond) + timeout,
       sub_requests: [],
       options: []
@@ -157,27 +156,30 @@ defmodule Test.Service.RequestManagerTest do
   end
 
   describe "all_responded?/1" do
-    test "returns true when completed_nodes matches expected" do
+    test "returns true when every sub-request is completed" do
       op = %{
-        nodes_data: [{:node1, []}, {:node2, []}],
-        completed_nodes: MapSet.new([:node1, :node2])
+        sub_requests: [
+          %StartChildrenRequest{status: :completed},
+          %StartChildrenRequest{status: :completed}
+        ]
       }
 
       assert RequestManager.all_responded?(op)
     end
 
-    test "returns false when some nodes pending" do
+    test "returns false when some sub-requests are pending" do
       op = %{
-        nodes_data: [{:node1, []}, {:node2, []}],
-        completed_nodes: MapSet.new([:node1])
+        sub_requests: [
+          %StartChildrenRequest{status: :completed},
+          %StartChildrenRequest{status: :dispatched}
+        ]
       }
 
       refute RequestManager.all_responded?(op)
     end
 
-    test "returns true for empty nodes_data with empty completed" do
-      op = %{nodes_data: [], completed_nodes: MapSet.new()}
-      assert RequestManager.all_responded?(op)
+    test "returns true when there are no sub-requests" do
+      assert RequestManager.all_responded?(%{sub_requests: []})
     end
   end
 
@@ -200,15 +202,11 @@ defmodule Test.Service.RequestManagerTest do
         children: []
       }
 
-      op = %{
-        sub_requests: [sub_req],
-        completed_nodes: MapSet.new()
-      }
+      op = %{sub_requests: [sub_req]}
 
       results = [{:child1, {:ok, self()}}]
       updated = RequestManager.record_response(op, :node1, results, :results)
 
-      assert MapSet.member?(updated.completed_nodes, :node1)
       [updated_sub] = updated.sub_requests
       assert updated_sub.results == results
       assert updated_sub.status == :completed
@@ -218,16 +216,52 @@ defmodule Test.Service.RequestManagerTest do
       sub1 = %StartChildrenRequest{node: :node1, results: nil, status: :dispatched, children: []}
       sub2 = %StartChildrenRequest{node: :node2, results: nil, status: :dispatched, children: []}
 
-      op = %{
-        sub_requests: [sub1, sub2],
-        completed_nodes: MapSet.new()
-      }
+      op = %{sub_requests: [sub1, sub2]}
 
       updated = RequestManager.record_response(op, :node1, [:result], :results)
 
       [u1, u2] = updated.sub_requests
       assert u1.results == [:result]
       assert u2.results == nil
+    end
+
+    test "a forwarded child waits for the answer of the node it was forwarded to" do
+      sub = %StartChildrenRequest{node: :node1, status: :dispatched, children: []}
+      op = %{make_operation() | sub_requests: [sub]}
+      answer = [{:child1, {:ok, self()}}, {:child2, {:forwarded, :node2}}]
+
+      updated = RequestManager.record_response(op, :node1, answer, :results)
+
+      assert [%{results: [{:child1, {:ok, _}}], status: :completed}, forward] =
+               updated.sub_requests
+
+      assert %StartChildrenRequest{node: :node2, results: nil, children: [%{child_id: :child2}]} =
+               forward
+
+      assert forward.options == [forward_path: [:node1]]
+      refute RequestManager.all_responded?(updated)
+
+      done =
+        RequestManager.record_response(updated, {:node2, [:node1]}, [{:child2, :ok}], :results)
+
+      assert RequestManager.all_responded?(done)
+      assert List.last(done.sub_requests).results == [{:child2, :ok}]
+    end
+
+    test "a forward's answer arriving before the answer announcing it is kept" do
+      sub = %StartChildrenRequest{node: :node1, status: :dispatched, children: []}
+      op = %{make_operation() | sub_requests: [sub]}
+
+      early = RequestManager.record_response(op, {:node2, [:node1]}, [{:child2, :ok}], :results)
+      refute RequestManager.all_responded?(early)
+
+      done =
+        RequestManager.record_response(early, :node1, [{:child2, {:forwarded, :node2}}], :results)
+
+      assert RequestManager.all_responded?(done)
+
+      assert [%{node: :node1, results: []}, %{node: :node2, results: [{:child2, :ok}]}] =
+               done.sub_requests
     end
   end
 
@@ -250,7 +284,7 @@ defmodule Test.Service.RequestManagerTest do
       {:complete, updated} =
         RequestManager.process_response(op, node(), [{:child1, {:ok, self()}}])
 
-      assert MapSet.member?(updated.completed_nodes, node())
+      assert [%{status: :completed}] = updated.sub_requests
     end
 
     test "returns {:pending, op} when some nodes still pending" do
@@ -263,8 +297,7 @@ defmodule Test.Service.RequestManagerTest do
       {:pending, updated} =
         RequestManager.process_response(op, :node1, [{:child1, {:ok, self()}}])
 
-      assert MapSet.member?(updated.completed_nodes, :node1)
-      refute MapSet.member?(updated.completed_nodes, :node2)
+      assert [%{status: :completed}, %{status: :dispatched}] = updated.sub_requests
     end
   end
 
@@ -414,8 +447,7 @@ defmodule Test.Service.RequestManagerTest do
                ])
 
       updated_op = new_state.pending_operations[op.transaction_id]
-      assert MapSet.member?(updated_op.completed_nodes, :node1)
-      refute MapSet.member?(updated_op.completed_nodes, :node2)
+      assert [%{status: :completed}, %{status: :dispatched}] = updated_op.sub_requests
     end
 
     test "retains an awaitable result until a late await claims it" do
@@ -496,7 +528,7 @@ defmodule Test.Service.RequestManagerTest do
       }
 
       op = make_operation(nodes_data: [{node(), []}])
-      op = %{op | sub_requests: [sub_req], completed_nodes: MapSet.new([node()])}
+      op = %{op | sub_requests: [sub_req]}
       state = hub_state(%{op.transaction_id => op})
       from = {self(), make_ref()}
 
@@ -723,7 +755,6 @@ defmodule Test.Service.RequestManagerTest do
       assert op.handler == StartChildrenRequest
       assert op.nodes_data == nodes_data
       assert is_reference(op.transaction_id)
-      assert op.completed_nodes == MapSet.new()
       assert op.sub_requests == []
       assert %ProcessHub.Future{} = op.future
       assert op.future.action == :start

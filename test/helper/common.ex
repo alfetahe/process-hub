@@ -12,6 +12,18 @@ defmodule Test.Helper.Common do
 
   use ExUnit.Case, async: false
 
+  @doc """
+  A `post_children_start` hook handler that stops `cid` from inside the hook,
+  before the start has written the child's row, and sends `pid` the stop's
+  future with the row it saw.
+  """
+  def stop_from_hook(pid, hub_id, cid, %{children: children}) do
+    if Enum.any?(children, &(&1.child_id == cid)) do
+      future = ProcessHub.stop_child(hub_id, cid, awaitable: true)
+      send(pid, {:stop_from_hook, future, ProcessHub.Service.ProcessRegistry.lookup(hub_id, cid)})
+    end
+  end
+
   @doc "Drops the hub-owned `:__process_hub__` bookkeeping from a metadata map."
   def caller_meta(metadata) when is_map(metadata), do: Map.delete(metadata, :__process_hub__)
 

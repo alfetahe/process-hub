@@ -151,6 +151,13 @@ ProcessHub.stop_child(:my_hub, "my_process_1", awaitable: true)
 }
 ```
 
+### When nodes disagree on where a child belongs
+A node that receives a start or stop for a child it does not hold passes the request on to the node it thinks holds it, and the result names the node that started or stopped the child. If every node the child belongs to has already passed it on, the child is reported in `errors` as `{child_id, :forward_loop}`, and nothing is started or stopped for it:
+
+```elixir
+%ProcessHub.StartResult{status: :error, started: [], errors: [{"my_process_1", :forward_loop}]}
+```
+
 ## Formatting and extracting information from the results
 
 When using awaitable operations, ProcessHub returns `ProcessHub.StartResult` and `ProcessHub.StopResult` structs that contain detailed information about the operation. These structs provide both formatting functions and convenient accessor functions to extract specific information.

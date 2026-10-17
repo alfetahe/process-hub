@@ -62,4 +62,6 @@ defmodule ProcessHub.Constant.StorageKey do
   def dcl, do: :declared_list
   @spec dclp() :: :declared_list_parked
   def dclp, do: :declared_list_parked
+  @spec dsc() :: :dist_sup_children
+  def dsc, do: :dist_sup_children
 end

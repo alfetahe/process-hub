@@ -17,7 +17,6 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
       hub_id: Keyword.get(opts, :hub_id, :test_hub),
       handler: StartChildrenRequest,
       nodes_data: [{node(), []}],
-      completed_nodes: MapSet.new(),
       expires_at: System.monotonic_time(:millisecond) + 60_000,
       sub_requests: [],
       options: Keyword.get(opts, :options, [])
@@ -137,6 +136,41 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
       assert result.rollback == false
     end
 
+    test "a child two forwards both reached counts once, as started" do
+      pid = self()
+
+      started = %StartChildrenRequest{
+        node: :d,
+        results: [{:c1, {:ok, pid}}],
+        options: [forward_path: [:b]]
+      }
+
+      repeated = %StartChildrenRequest{
+        node: :d,
+        results: [{:c1, {:error, {:already_started, pid}}}],
+        options: [forward_path: [:c]]
+      }
+
+      op = %RequestManager{sub_requests: [started, repeated], options: []}
+
+      assert %ProcessHub.StartResult{status: :ok, started: [{:c1, [{:d, ^pid}]}], errors: []} =
+               StartChildrenRequest.aggregate_results(op)
+    end
+
+    test "a child already running before the start stays an error" do
+      pid = self()
+
+      sub_req = %StartChildrenRequest{
+        node: :d,
+        results: [{:c1, {:error, {:already_started, pid}}}]
+      }
+
+      op = %RequestManager{sub_requests: [sub_req], options: []}
+
+      assert %ProcessHub.StartResult{status: :error, errors: [{:c1, {:already_started, ^pid}}]} =
+               StartChildrenRequest.aggregate_results(op)
+    end
+
     test "handles nil results as no_response errors" do
       sub_req = %StartChildrenRequest{
         node: :node1,
@@ -245,35 +279,6 @@ defmodule Test.Request.Handler.StartChildrenRequestTest do
       assert is_list(result)
       assert Keyword.get(result, :hub_id) == :test_hub
       assert Keyword.get(result, :originating_node) == node()
-    end
-  end
-
-  describe "build_request/8" do
-    test "builds correct struct" do
-      txn_id = make_ref()
-
-      req =
-        StartChildrenRequest.build_request(
-          :hub1,
-          txn_id,
-          42,
-          :node1,
-          [self()],
-          :target,
-          [%{child_id: :c1}],
-          opt: true
-        )
-
-      assert %StartChildrenRequest{} = req
-      assert req.hub_id == :hub1
-      assert req.transaction_id == txn_id
-      assert req.request_signature == 42
-      assert req.originating_node == :node1
-      assert req.reply_to == [self()]
-      assert req.node == :target
-      assert req.children == [%{child_id: :c1}]
-      assert req.options == [opt: true]
-      assert req.status == :dispatched
     end
   end
 

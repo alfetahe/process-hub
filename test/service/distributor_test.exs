@@ -331,6 +331,23 @@ defmodule Test.Service.DistributorTest do
     assert Dispatcher.take_start_targets(hub, :in_flight_child) == []
   end
 
+  test "compose_stop_operation sends a stop for a child running here before its row is written",
+       %{hub: hub} do
+    child_spec = %{id: :unregistered_local_child, start: {Agent, :start_link, [fn -> nil end]}}
+    {:ok, _pid} = ProcessHub.DistributedSupervisor.start_child(hub.procs.dist_sup, child_spec)
+    opts = Distributor.default_init_opts([])
+
+    assert {:ok, %ProcessHub.Service.RequestManager{} = operation} =
+             Distributor.compose_stop_operation(
+               hub,
+               [:unregistered_local_child, :held_nowhere],
+               opts
+             )
+
+    assert Keyword.keys(operation.nodes_data) == [node()]
+    assert Keyword.get(operation.options, :not_found_children) == [:held_nowhere]
+  end
+
   test "compose_start_operation returns error when distribution assigns no nodes",
        %{hub: hub} do
     # Replace the hash ring with an empty one so belongs_to returns no nodes,

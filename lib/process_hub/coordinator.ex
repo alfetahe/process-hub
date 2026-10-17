@@ -198,8 +198,8 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_cast({:operation_response, transaction_id, response_node, results}, state) do
-    RequestManager.handle_response(state, transaction_id, response_node, results)
+  def handle_cast({:operation_response, transaction_id, responder, results}, state) do
+    RequestManager.handle_response(state, transaction_id, responder, results)
   end
 
   @impl true

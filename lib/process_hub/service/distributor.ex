@@ -137,15 +137,25 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  # No row yet: the child may still be starting on the node we sent it to. A
-  # row with no nodes: the child may be moving, and only the node moving it
-  # knows where to, so every hub node gets the stop.
+  # No row yet: the child may already run here, its row not yet written, or
+  # still be starting on the node we sent it to. A row with no nodes: the child
+  # may be moving, and only the node moving it knows where to, so every hub
+  # node gets the stop.
   defp stop_nodes(hub, child_id) do
     case ProcessRegistry.lookup(hub.hub_id, child_id, include_empty: true) do
-      nil -> Dispatcher.take_start_targets(hub, child_id)
-      {_, []} -> Cluster.nodes(hub.storage.misc, [:include_local])
-      {_, node_pids} -> Keyword.keys(node_pids)
+      nil ->
+        Enum.uniq(running_here(hub, child_id) ++ Dispatcher.take_start_targets(hub, child_id))
+
+      {_, []} ->
+        Cluster.nodes(hub.storage.misc, [:include_local])
+
+      {_, node_pids} ->
+        Keyword.keys(node_pids)
     end
+  end
+
+  defp running_here(hub, child_id) do
+    if DistributedSupervisor.running_pid(hub, child_id), do: [node()], else: []
   end
 
   # Dispatches an operation's sub-requests to target nodes
