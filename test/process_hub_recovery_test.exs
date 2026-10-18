@@ -1170,7 +1170,7 @@ defmodule Test.ProcessHubRecoveryTest do
       :ok =
         :dets.insert(
           table,
-          {:manifest, %{format: 99, version: 1, mutated_by: node(), entries: %{}}}
+          {:meta, %{format: 99, version: 1, mutated_by: node()}}
         )
 
       :ok = :dets.close(table)

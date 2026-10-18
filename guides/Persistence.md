@@ -120,9 +120,11 @@ single integer comparison and adoption replaces the whole list. The list
 mutation always commits before the process action — add before start, remove
 before terminate — so either half of a crashed command heals in the next round.
 
-Every node keeps its adopted copy in a store beside the registry file, and on
-boot adopts the highest version among its local copy, its peers, and the remote
-manifest. The list is exactly as durable as the registry: a backend with a
+Every node keeps its adopted copy in a store beside the registry file, one row
+per declared child plus a version row, so a mutation writes only the rows it
+changes. After each write the leader announces the new version, and a peer
+behind it pulls the list and adopts it. On boot a node adopts the highest
+version among its local copy, its peers, and the remote manifest. The list is exactly as durable as the registry: a backend with a
 `:path` gets a DETS-backed list beside that file, while an `:ets` hub keeps the
 list in memory and starts from an empty one after a restart. To keep a list
 across restarts without putting the registry on disk, use `:remote_manifest`. With

@@ -16,9 +16,9 @@ defmodule ProcessHub.Service.DeclaredChildren do
   The list commits before the process action, so the orphan reconcile heals a
   crashed command in the next round.
 
-  The list persists in its own DETS-backed store beside the registry, is
-  cached in misc storage for reads, and optionally ships to an off-cluster
-  `ProcessHub.Storage.RemoteManifest`. A missing or corrupt list with durable
+  The list persists in its own DETS-backed store beside the registry, one row
+  per child, is read from that store's in-memory side, and optionally ships
+  to an off-cluster `ProcessHub.Storage.RemoteManifest`. A missing or corrupt list with durable
   evidence behind it parks the reconcile instead of opening empty; `clear/1`
   is the operator override. See `guides/Persistence.md` for the full model.
   """
@@ -53,9 +53,20 @@ defmodule ProcessHub.Service.DeclaredChildren do
   """
   @type precommit() ::
           :ok
-          | {:pending, manifest()}
+          | {:pending, pending()}
           | {:remote, node(), mutation(), :ok | {:error, :no_leader}}
           | {:error, term()}
+
+  @typedoc """
+  A batch's changes not yet written: the version it started from, the version
+  it reaches, and the specs it adds or replaces and the ids it removes.
+  """
+  @type pending() :: %{
+          base: non_neg_integer(),
+          version: non_neg_integer(),
+          puts: %{ProcessHub.child_id() => ProcessHub.child_spec()},
+          removes: MapSet.t(ProcessHub.child_id())
+        }
 
   @typedoc "A command held back by its precommit; it answers its caller."
   @type command() :: (State.t() -> {:reply, term(), State.t()})
@@ -75,9 +86,9 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @doc "Builds a manifest at `version` with `entries`, mutated by this node."
   @spec new_manifest(non_neg_integer(), %{ProcessHub.child_id() => ProcessHub.child_spec()}) ::
           manifest()
-  def new_manifest(version, entries) do
-    %{format: @format, version: version, mutated_by: node(), entries: entries}
-  end
+  def new_manifest(version, entries), do: Map.put(new_meta(version), :entries, entries)
+
+  defp new_meta(version), do: %{format: @format, version: version, mutated_by: node()}
 
   # --- reads ------------------------------------------------------------------
 
@@ -96,10 +107,20 @@ defmodule ProcessHub.Service.DeclaredChildren do
     end
   end
 
-  @doc "Returns the full cached manifest, or `nil` when none exists."
+  @doc "Returns the full manifest, or `nil` when none exists."
   @spec snapshot(ProcessHub.hub_id()) :: manifest() | nil
   def snapshot(hub_id) when is_atom(hub_id) do
     with %Hub{} = hub <- Hub.get(hub_id), do: manifest(hub)
+  end
+
+  @doc """
+  Returns the declared spec of `child_id`, or `nil` when the hub is not
+  running or does not declare it. Reads one row, whatever the list's size.
+  """
+  @spec declared_child(ProcessHub.hub_id(), ProcessHub.child_id()) ::
+          ProcessHub.child_spec() | nil
+  def declared_child(hub_id, child_id) when is_atom(hub_id) do
+    with %Hub{} = hub <- Hub.get(hub_id), do: Store.entry(hub, child_id)
   end
 
   @doc "Returns whether the hub's reconcile is parked over a lost declared list."
@@ -108,9 +129,18 @@ defmodule ProcessHub.Service.DeclaredChildren do
     Storage.get(misc, StorageKey.dclp()) === true
   end
 
-  @doc "Returns the cached manifest read directly from the hub's misc storage."
+  @doc "Returns the stored manifest, or `nil` when none exists."
   @spec manifest(Hub.t()) :: manifest() | nil
-  def manifest(%Hub{storage: %{misc: misc}}), do: Storage.get(misc, StorageKey.dcl())
+  def manifest(hub) do
+    with %{} = meta <- Store.meta(hub), do: Map.put(meta, :entries, Store.entries(hub))
+  end
+
+  defp version(hub) do
+    case Store.meta(hub) do
+      nil -> 0
+      %{version: version} -> version
+    end
+  end
 
   # --- command precommit ------------------------------------------------------
 
@@ -139,11 +169,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
   def precommit_stop(%State{hub: %Hub{recovery_config: %{enabled?: false}}}, _child_ids), do: :ok
 
   def precommit_stop(%State{hub: hub} = state, child_ids) do
-    locally_declared? =
-      case working_manifest(state) do
-        nil -> false
-        %{entries: entries} -> Enum.any?(child_ids, &Map.has_key?(entries, &1))
-      end
+    locally_declared? = Enum.any?(child_ids, &(working_entry(state, &1) !== nil))
 
     cond do
       parked?(hub) and locally_declared? -> {:error, :declared_list_parked}
@@ -250,13 +276,13 @@ defmodule ProcessHub.Service.DeclaredChildren do
   Applies a mutation as the leader; MUST run inside the coordinator process so
   writes serialize. A mutation that changes nothing does not bump the version.
 
-  A mutation that changes the list answers `{:pending, manifest}`: the new
-  manifest is the batch's working copy, not yet written. The coordinator parks
-  the command behind `defer/4` and runs it from `flush/1`, after the one write
-  and sync that persists the whole batch — so N commands cost one manifest
-  write, not N rewrites of a list that grows with every child.
+  A mutation that changes the list answers `{:pending, pending}`: the batch's
+  changes so far, not yet written. The coordinator parks the command behind
+  `defer/4` and runs it from `flush/1`, after the one write and sync that
+  persists the whole batch — so N commands cost one write of their own rows,
+  and none of them rewrites the list.
   """
-  @spec apply_mutation(State.t(), mutation()) :: :ok | {:pending, manifest()} | {:error, term()}
+  @spec apply_mutation(State.t(), mutation()) :: :ok | {:pending, pending()} | {:error, term()}
   def apply_mutation(%State{hub: hub} = state, mutation) do
     cond do
       not hub.recovery_config.enabled? ->
@@ -266,49 +292,80 @@ defmodule ProcessHub.Service.DeclaredChildren do
         {:error, :declared_list_parked}
 
       true ->
-        manifest = working_manifest(state) || new_manifest(0, %{})
-        entries = mutate_entries(manifest.entries, mutation)
+        pending = state.declared_unsynced || open_batch(hub)
+        changed = change(state, pending, mutation)
 
-        if entries === manifest.entries do
+        if changed === pending do
           :ok
         else
-          {:pending, new_manifest(manifest.version + 1, entries)}
+          {:pending, %{changed | version: pending.version + 1}}
         end
     end
   end
 
-  defp mutate_entries(entries, {:add, child_specs}) do
-    Enum.reduce(child_specs, entries, &Map.put(&2, &1.id, &1))
+  defp open_batch(hub) do
+    version = version(hub)
+    %{base: version, version: version, puts: %{}, removes: MapSet.new()}
   end
 
-  defp mutate_entries(entries, {:remove, child_ids}) do
-    Map.drop(entries, child_ids)
+  # Each child the mutation names, with the spec it should end up with: `nil`
+  # for a removal. A child already there is left out of the batch.
+  defp change(state, pending, {:add, child_specs}),
+    do: Enum.reduce(child_specs, pending, &set_entry(state, &2, &1.id, &1))
+
+  defp change(state, pending, {:remove, child_ids}),
+    do: Enum.reduce(child_ids, pending, &set_entry(state, &2, &1, nil))
+
+  defp set_entry(state, pending, id, target) do
+    cond do
+      working_entry(state, pending, id) === target ->
+        pending
+
+      target === nil ->
+        %{pending | puts: Map.delete(pending.puts, id), removes: MapSet.put(pending.removes, id)}
+
+      true ->
+        %{
+          pending
+          | puts: Map.put(pending.puts, id, target),
+            removes: MapSet.delete(pending.removes, id)
+        }
+    end
   end
 
-  # The batch's working manifest while one is open, else the persisted one.
-  defp working_manifest(%State{declared_unsynced: nil, hub: hub}), do: manifest(hub)
-  defp working_manifest(%State{declared_unsynced: manifest}), do: manifest
+  # A child's spec as the open batch leaves it, else as stored.
+  defp working_entry(%State{declared_unsynced: pending} = state, id),
+    do: working_entry(state, pending, id)
+
+  defp working_entry(%State{hub: hub}, nil, id), do: Store.entry(hub, id)
+
+  defp working_entry(%State{hub: hub}, pending, id) do
+    cond do
+      Map.has_key?(pending.puts, id) -> Map.fetch!(pending.puts, id)
+      MapSet.member?(pending.removes, id) -> nil
+      true -> Store.entry(hub, id)
+    end
+  end
 
   @doc """
-  Parks `continuation` behind the write of `manifest`, the batch's working
-  copy. One `:flush_declared` is queued per batch (`Batch.add/3`) and lands
+  Parks `continuation` behind the write of `pending`, the batch's changes. One `:flush_declared` is queued per batch (`Batch.add/3`) and lands
   behind every request already in the coordinator's mailbox, so concurrent
   durable commands share one write and sync — and none of them runs before
   the write that covers its entry. MUST run inside the coordinator process.
   """
-  @spec defer(State.t(), manifest(), GenServer.from(), command()) :: State.t()
-  def defer(%State{} = state, manifest, from, continuation) do
+  @spec defer(State.t(), pending(), GenServer.from(), command()) :: State.t()
+  def defer(%State{} = state, pending, from, continuation) do
     %{
       state
-      | declared_unsynced: manifest,
+      | declared_unsynced: pending,
         declared_batch: Batch.add(state.declared_batch, :flush_declared, {from, continuation})
     }
   end
 
   @doc """
-  Writes and syncs the batch's working manifest once, publishes it (peers
-  adopt the newest version, so the batch's intermediate versions need no
-  broadcast of their own), then runs every parked command in arrival order
+  Writes and syncs the batch's rows once, announces the version it reached
+  (peers behind it pull the list, so the batch's intermediate versions need
+  no announce of their own), then runs every parked command in arrival order
   and replies to its caller. A write that fails answers every parked caller
   with the error and runs none of them — no child starts on an intent that
   did not persist. MUST run inside the coordinator process; the coordinator
@@ -318,15 +375,17 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @spec flush(State.t()) :: State.t()
   def flush(%State{declared_unsynced: nil} = state), do: state
 
-  def flush(%State{declared_unsynced: manifest, hub: hub} = state) do
+  def flush(%State{declared_unsynced: changes, hub: hub} = state) do
     {pending, batch} = Batch.take(state.declared_batch)
     state = %{state | declared_unsynced: nil, declared_batch: batch}
+    puts = Map.to_list(changes.puts)
+    removes = MapSet.to_list(changes.removes)
 
     result =
-      case Store.write(hub, manifest) do
+      case Store.persist(hub, new_meta(changes.version), puts, removes) do
         :ok ->
-          broadcast(hub, manifest)
-          Store.ship(hub, manifest)
+          announce(hub, changes.version)
+          Store.ship(hub, changes.version)
           :ok
 
         {:error, reason} ->
@@ -442,18 +501,20 @@ defmodule ProcessHub.Service.DeclaredChildren do
 
   def announce_version(hub) do
     with false <- parked?(hub),
-         %{version: version} when version > 0 <- manifest(hub) do
-      Dispatcher.dispatch_event(
-        hub.procs.event_queue,
-        @event_declared_version,
-        {node(), version},
-        %{members: :external}
-      )
+         version when version > 0 <- version(hub),
+         do: announce(hub, version),
+         else: (_ -> :ok)
+  end
 
-      :ok
-    else
-      _ -> :ok
-    end
+  defp announce(hub, version) do
+    Dispatcher.dispatch_event(
+      hub.procs.event_queue,
+      @event_declared_version,
+      {node(), version},
+      %{members: :external}
+    )
+
+    :ok
   end
 
   @doc """
@@ -462,13 +523,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
   """
   @spec maybe_pull(Hub.t(), node(), non_neg_integer()) :: :ok
   def maybe_pull(hub, from_node, version) do
-    local_version =
-      case manifest(hub) do
-        nil -> 0
-        %{version: v} -> v
-      end
-
-    if hub.recovery_config.enabled? and version > local_version do
+    if hub.recovery_config.enabled? and version > version(hub) do
       hub_id = hub.hub_id
       event_queue = hub.procs.event_queue
 
@@ -517,11 +572,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @doc false
   @spec handle_clear(Hub.t()) :: :ok | {:error, term()}
   def handle_clear(hub) do
-    local_version =
-      case manifest(hub) do
-        nil -> 0
-        %{version: version} -> version
-      end
+    local_version = version(hub)
 
     remote_version =
       case Boot.remote_fetch(hub) do
@@ -534,8 +585,8 @@ defmodule ProcessHub.Service.DeclaredChildren do
     case Store.write(hub, manifest) do
       :ok ->
         Store.clear_parked(hub)
-        Store.ship(hub, manifest)
-        broadcast(hub, manifest)
+        Store.ship(hub, manifest.version)
+        announce(hub, manifest.version)
 
         LoggerService.warning(
           "Declared list cleared by operator call at v@version",
@@ -559,10 +610,4 @@ defmodule ProcessHub.Service.DeclaredChildren do
           declared_path: String.t()
         }
   defdelegate open_storage(hub_id, registry_backend), to: Store, as: :open
-
-  defp broadcast(hub, manifest) do
-    Dispatcher.dispatch_event(hub.procs.event_queue, @event_declared_adopt, manifest, %{
-      members: :external
-    })
-  end
 end

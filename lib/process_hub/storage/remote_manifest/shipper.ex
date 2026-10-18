@@ -2,7 +2,8 @@ defmodule ProcessHub.Storage.RemoteManifest.Shipper do
   @moduledoc """
   Ships declared-list versions to the configured remote manifest adapter:
   asynchronously, retried with exponential backoff, coalescing superseded
-  versions so only the newest one is ever in flight. Failures emit the
+  versions so only the newest one is ever in flight. It is told a version and
+  reads the list itself when it ships, so a write never copies the list. Failures emit the
   `manifest_ship_failed` hook and never affect the originating command.
 
   Started per hub only when the declared-children gate is on and a remote
@@ -10,6 +11,7 @@ defmodule ProcessHub.Storage.RemoteManifest.Shipper do
   """
 
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Storage.RemoteManifest
@@ -57,10 +59,10 @@ defmodule ProcessHub.Storage.RemoteManifest.Shipper do
   def init(state), do: {:ok, state}
 
   @impl true
-  def handle_cast({:ship, manifest}, state) do
-    if manifest.version > max(state.shipped, pending_version(state)) do
+  def handle_cast({:ship, version}, state) do
+    if version > max(state.shipped, state.pending || 0) do
       send(self(), :attempt)
-      {:noreply, %{state | pending: manifest, attempt: 0}}
+      {:noreply, %{state | pending: version, attempt: 0}}
     else
       {:noreply, state}
     end
@@ -69,10 +71,19 @@ defmodule ProcessHub.Storage.RemoteManifest.Shipper do
   @impl true
   def handle_info(:attempt, %{pending: nil} = state), do: {:noreply, state}
 
-  def handle_info(:attempt, %{pending: manifest} = state) do
-    blob = RemoteManifest.encode(manifest)
+  def handle_info(:attempt, %{pending: version} = state) do
+    case DeclaredChildren.snapshot(state.hub_id) do
+      %{version: current} = manifest when current >= version ->
+        ship(state, manifest)
 
-    case safe_store(state, manifest.version, blob) do
+      # The hub is gone or its list was replaced by an older one: nothing to ship.
+      _none ->
+        {:noreply, %{state | pending: nil}}
+    end
+  end
+
+  defp ship(state, manifest) do
+    case safe_store(state, manifest.version, RemoteManifest.encode(manifest)) do
       :ok ->
         {:noreply, %{state | pending: nil, shipped: manifest.version, attempt: 0}}
 
@@ -83,9 +94,6 @@ defmodule ProcessHub.Storage.RemoteManifest.Shipper do
         {:noreply, %{state | attempt: attempt}}
     end
   end
-
-  defp pending_version(%{pending: nil}), do: 0
-  defp pending_version(%{pending: %{version: version}}), do: version
 
   defp safe_store(state, version, blob) do
     state.adapter.store(state.hub_id, version, blob, state.adapter_opts)

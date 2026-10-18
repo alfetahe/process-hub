@@ -13,6 +13,7 @@ defmodule Test.Service.DeclaredChildrenTest do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.DeclaredChildren
+  alias ProcessHub.Service.DeclaredChildren.Store
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
   alias ProcessHub.Service.Storage.DurableEts
@@ -58,7 +59,7 @@ defmodule Test.Service.DeclaredChildrenTest do
     }
   end
 
-  defp persisted(ref), do: DurableEts.get(ref, :manifest)
+  defp persisted(ref), do: DurableEts.get(ref, :meta)
 
   describe "adopt/2" do
     test "a higher version replaces the local copy wholesale and persists",
@@ -160,7 +161,68 @@ defmodule Test.Service.DeclaredChildrenTest do
     end
   end
 
+  describe "the store" do
+    test "a batch writes its own rows, and a removal leaves no row behind",
+         %{hub: hub, backend_ref: ref} do
+      :ok = Store.write(hub, manifest(1, node(), [:a, :b]))
+
+      meta = %{format: DeclaredChildren.format(), version: 2, mutated_by: node()}
+      :ok = Store.persist(hub, meta, [{:c, %{id: :c, start: {:m, :f, []}}}], [:a])
+
+      assert %{version: 2, entries: entries} = DeclaredChildren.manifest(hub)
+      assert Map.keys(entries) |> Enum.sort() == [:b, :c]
+      assert Store.entry(hub, :a) == nil
+      assert DurableEts.get(ref, {:declared, :a}) == nil
+    end
+
+    test "a full write drops the rows its manifest no longer names", %{hub: hub, backend_ref: ref} do
+      :ok = Store.write(hub, manifest(1, node(), [:a, :b]))
+      DurableEts.insert(ref, {:declared, :a}, :untouched_marker)
+
+      :ok = Store.write(hub, manifest(2, node(), [:b, :c]))
+
+      assert DurableEts.get(ref, {:declared, :a}) == nil
+      assert Map.keys(DeclaredChildren.manifest(hub).entries) |> Enum.sort() == [:b, :c]
+    end
+
+    test "a list stored whole by an earlier release is read and rewritten per row",
+         %{hub: hub, backend_ref: ref} do
+      legacy = manifest(7, :peer@host, [:x, :y])
+      :ok = DurableEts.insert(ref, :manifest, legacy)
+
+      assert {:ok, ^legacy} = Store.read(hub)
+      assert DurableEts.get(ref, :manifest) == nil
+      assert %{version: 7, mutated_by: :peer@host} = persisted(ref)
+      assert {:ok, ^legacy} = Store.read(hub)
+    end
+
+    test "a list stored whole in a newer format refuses to read", %{hub: hub, backend_ref: ref} do
+      :ok = DurableEts.insert(ref, :manifest, %{manifest(1, node(), []) | format: 99})
+      assert {:error, {:declared_list_format_unsupported, 99}} = Store.read(hub)
+    end
+
+    test "a tombstone a crash left behind reads as absent and is dropped on read",
+         %{hub: hub, backend_ref: ref} do
+      :ok = Store.write(hub, manifest(1, node(), [:a]))
+      :ok = DurableEts.insert(ref, {:declared, :gone}, :removed)
+
+      assert {:ok, %{entries: entries}} = Store.read(hub)
+      assert Map.keys(entries) == [:a]
+      assert DurableEts.get(ref, {:declared, :gone}) == nil
+    end
+  end
+
   describe "reads" do
+    test "declared_child/2 reads one declared spec", %{hub: hub} do
+      Hub.put(hub)
+      on_exit(fn -> Hub.delete(hub.hub_id) end)
+      :ok = Store.write(hub, manifest(1, node(), [:a]))
+
+      assert %{id: :a} = DeclaredChildren.declared_child(hub.hub_id, :a)
+      assert DeclaredChildren.declared_child(hub.hub_id, :missing) == nil
+      assert DeclaredChildren.declared_child(:no_such_hub, :a) == nil
+    end
+
     test "declared_children/1 answers empty for an unknown hub" do
       assert DeclaredChildren.declared_children(:no_such_hub) == %{version: 0, children: []}
     end

@@ -40,9 +40,9 @@ defmodule ProcessHub.Coordinator.State do
           reconcile_last_at: integer() | nil,
           cluster_settled?: boolean(),
           registry_delivered_by: MapSet.t(node()),
-          # The declared-list batch's working manifest, not yet written, and the
-          # commands parked behind its write.
-          declared_unsynced: map() | nil,
+          # The declared-list batch's changes, not yet written, and the
+          # commands parked behind their write.
+          declared_unsynced: ProcessHub.Service.DeclaredChildren.pending() | nil,
           declared_batch: ProcessHub.Service.Batch.t()
         }
 

@@ -39,12 +39,10 @@ defmodule ProcessHub.Service.DeclaredChildren.Boot do
         settle_versions(hub, local, remote_manifest)
 
       {%{} = local, remote} when remote in [:not_configured, :not_found] ->
-        Store.cache(hub, local)
-        if remote === :not_found, do: Store.ship(hub, local)
+        if remote === :not_found, do: Store.ship(hub, local.version)
         {:ok, :ready}
 
-      {%{} = local, {:error, reason}} ->
-        Store.cache(hub, local)
+      {%{}, {:error, reason}} ->
         warn_remote_unreachable(hub, reason)
         {:ok, {:remote_error, reason}}
 
@@ -79,11 +77,10 @@ defmodule ProcessHub.Service.DeclaredChildren.Boot do
         DeclaredChildren.adopt(hub, remote_manifest)
 
       remote_manifest.version < local.version ->
-        Store.cache(hub, local)
-        Store.ship(hub, local)
+        Store.ship(hub, local.version)
 
       true ->
-        Store.cache(hub, local)
+        :ok
     end
 
     {:ok, :ready}
@@ -117,7 +114,7 @@ defmodule ProcessHub.Service.DeclaredChildren.Boot do
 
     case Store.write(hub, manifest) do
       :ok ->
-        if version > 0, do: Store.ship(hub, manifest)
+        if version > 0, do: Store.ship(hub, version)
 
         LoggerService.notice(
           "Declared list seeded at v@version with @count children",
@@ -187,7 +184,7 @@ defmodule ProcessHub.Service.DeclaredChildren.Boot do
   end
 
   def remote_recompare(hub, :not_found) do
-    with %{} = local <- DeclaredChildren.manifest(hub), do: Store.ship(hub, local)
+    with %{version: version} <- Store.meta(hub), do: Store.ship(hub, version)
     :ok
   end
 

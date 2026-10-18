@@ -1,10 +1,10 @@
 defmodule ProcessHub.Service.DeclaredChildren.Store do
   @moduledoc """
   Local persistence of the declared list: the DETS-backed store beside the
-  registry file, the misc-storage read cache, the seeded marker, the park flag,
-  and the hand-off to the remote-manifest shipper. Every stored manifest goes
-  through `write/2`, so the persist-before-cache order and the seeded marker
-  are maintained in one place.
+  registry file, one row per declared child plus a version row, the seeded
+  marker, the park flag, and the hand-off to the remote-manifest shipper.
+  Every write goes through `persist/4`, so the seeded marker is maintained in
+  one place, and reads come from the store's in-memory side.
   """
 
   alias ProcessHub.Constant.StorageKey
@@ -14,6 +14,14 @@ defmodule ProcessHub.Service.DeclaredChildren.Store do
   alias ProcessHub.Service.Storage.DurableEts
   alias ProcessHub.Service.Storage.Ets
   alias ProcessHub.Hub
+
+  @meta :meta
+  @entry :declared
+  @tombstone :removed
+  @legacy :manifest
+
+  @typedoc "The manifest without its entries: what the version row holds."
+  @type meta() :: %{format: pos_integer(), version: non_neg_integer(), mutated_by: node()}
 
   @doc """
   Opens the list's store; returns the `:declared_backend` entry for the hub's
@@ -54,47 +62,133 @@ defmodule ProcessHub.Service.DeclaredChildren.Store do
 
   defp list_path(_registry_backend), do: nil
 
-  @doc "Persists `manifest`, refreshes the read cache, and sets the seeded marker."
+  @doc """
+  Persists `manifest` in full: the version row, and only the entries that
+  differ from the stored ones. Removed children are dropped.
+  """
   @spec write(Hub.t(), DeclaredChildren.manifest()) :: :ok | {:error, term()}
-  def write(hub, manifest) do
-    {module, ref} = hub.storage.declared_backend
+  def write(hub, %{entries: entries} = manifest) do
+    stored = entries(hub)
+    puts = Enum.reject(entries, fn {id, spec} -> Map.get(stored, id) === spec end)
+    removes = for id <- Map.keys(stored), not Map.has_key?(entries, id), do: id
 
-    case module.insert(ref, :manifest, manifest) do
-      :ok ->
-        cache(hub, manifest)
-        mark_seeded(hub)
-        :ok
+    persist(hub, Map.delete(manifest, :entries), puts, removes)
+  end
 
-      {:error, _} = error ->
-        error
+  @doc """
+  Persists a batch: `puts` (`[{child_id, spec}]`) and `removes` (child ids)
+  under the version row `meta`, in one synced write.
+
+  Each child is its own row, so a batch costs its own size rather than the
+  whole list's. A removal is written as a tombstone in that same write, so
+  the version and every change of the batch land together, and the tombstone
+  row is dropped after the sync.
+  """
+  @spec persist(Hub.t(), meta(), [{ProcessHub.child_id(), ProcessHub.child_spec()}], [
+          ProcessHub.child_id()
+        ]) :: :ok | {:error, term()}
+  def persist(hub, meta, puts, removes) do
+    backend = hub.storage.declared_backend
+
+    items =
+      [{@meta, meta, []} | for({id, spec} <- puts, do: {{@entry, id}, spec, []})] ++
+        for id <- removes, do: {{@entry, id}, @tombstone, []}
+
+    with :ok <- Storage.insert_many(backend, items) do
+      drop(backend, removes)
+      mark_seeded(hub)
+      :ok
     end
   end
 
-  @doc "Refreshes the misc-storage read cache for an already-persisted manifest."
-  @spec cache(Hub.t(), DeclaredChildren.manifest()) :: :ok | boolean()
-  def cache(hub, manifest) do
-    Storage.insert(hub.storage.misc, StorageKey.dcl(), manifest)
+  @doc "The stored version row, or `nil` when no list was ever stored."
+  @spec meta(Hub.t()) :: meta() | nil
+  def meta(hub) do
+    case get(hub, @meta) do
+      %{format: _, version: _, mutated_by: _} = meta -> meta
+      _ -> nil
+    end
   end
+
+  @doc "The stored spec of `child_id`, or `nil` when it is not declared."
+  @spec entry(Hub.t(), ProcessHub.child_id()) :: ProcessHub.child_spec() | nil
+  def entry(hub, child_id) do
+    case get(hub, {@entry, child_id}) do
+      @tombstone -> nil
+      spec -> spec
+    end
+  end
+
+  @doc "Every stored entry, as `%{child_id => spec}`."
+  @spec entries(Hub.t()) :: %{ProcessHub.child_id() => ProcessHub.child_spec()}
+  def entries(%Hub{storage: %{declared_backend: backend}}) do
+    Storage.foldl_entries(backend, %{}, fn
+      {{@entry, _id}, @tombstone}, acc -> acc
+      {{@entry, id}, spec}, acc -> Map.put(acc, id, spec)
+      _other, acc -> acc
+    end)
+  end
+
+  def entries(_hub_without_list), do: %{}
+
+  # A hub with the gate off has no list store, and reads as declaring nothing.
+  defp get(%Hub{storage: %{declared_backend: backend}}, key), do: Storage.get(backend, key)
+  defp get(_hub_without_list, _key), do: nil
 
   @doc """
   Reads the persisted manifest: `{:ok, manifest | nil}` (missing and malformed
   both read as absent), or an error for a format newer than this release.
+  A list stored whole by an earlier release is rewritten one row per child.
   """
   @spec read(Hub.t()) :: {:ok, DeclaredChildren.manifest() | nil} | {:error, term()}
   def read(hub) do
-    {module, ref} = hub.storage.declared_backend
+    backend = hub.storage.declared_backend
     supported = DeclaredChildren.format()
 
-    case module.get(ref, :manifest) do
-      %{format: format} when format > supported ->
+    # The legacy row outlives the version row only when a migration was cut
+    # short; either one in a newer format refuses the open.
+    case {Storage.get(backend, @meta), Storage.get(backend, @legacy)} do
+      {%{format: format}, _legacy} when format > supported ->
         {:error, {:declared_list_format_unsupported, format}}
 
-      %{format: _, version: _, mutated_by: _, entries: %{}} = manifest ->
-        {:ok, manifest}
+      {_meta, %{format: format}} when format > supported ->
+        {:error, {:declared_list_format_unsupported, format}}
+
+      {%{format: _, version: _, mutated_by: _} = meta, _legacy} ->
+        Storage.remove(backend, @legacy, sync: false)
+        drop(backend, tombstones(backend))
+        {:ok, Map.put(meta, :entries, entries(hub))}
+
+      {nil, %{format: _, version: _, mutated_by: _, entries: %{}} = legacy} ->
+        migrate(hub, legacy)
 
       _missing_or_malformed ->
         {:ok, nil}
     end
+  end
+
+  defp migrate(hub, manifest) do
+    case write(hub, manifest) do
+      :ok ->
+        Storage.remove(hub.storage.declared_backend, @legacy)
+        {:ok, manifest}
+
+      {:error, reason} ->
+        {:error, {:declared_list_write_failed, reason}}
+    end
+  end
+
+  # A crash between a batch's sync and its tombstone drop leaves the rows behind.
+  defp tombstones(backend) do
+    Storage.foldl_entries(backend, [], fn
+      {{@entry, id}, @tombstone}, acc -> [id | acc]
+      _other, acc -> acc
+    end)
+  end
+
+  defp drop(backend, ids) do
+    for id <- ids, do: Storage.remove(backend, {@entry, id}, sync: false)
+    :ok
   end
 
   # The marker is a separate file beside the list so it survives the list
@@ -127,12 +221,15 @@ defmodule ProcessHub.Service.DeclaredChildren.Store do
   @spec clear_parked(Hub.t()) :: :ok | boolean()
   def clear_parked(hub), do: Storage.remove(hub.storage.misc, StorageKey.dclp())
 
-  @doc "Hands the manifest to the remote shipper; a no-op without a remote."
-  @spec ship(Hub.t(), DeclaredChildren.manifest()) :: :ok
-  def ship(%Hub{recovery_config: %{remote_manifest: nil}}, _manifest), do: :ok
+  @doc """
+  Tells the remote shipper the list reached `version`; it reads the list
+  itself when it ships. A no-op without a remote.
+  """
+  @spec ship(Hub.t(), non_neg_integer()) :: :ok
+  def ship(%Hub{recovery_config: %{remote_manifest: nil}}, _version), do: :ok
 
-  def ship(hub, manifest) do
-    GenServer.cast(hub.procs.manifest_shipper, {:ship, manifest})
+  def ship(hub, version) do
+    GenServer.cast(hub.procs.manifest_shipper, {:ship, version})
     :ok
   catch
     _, _ -> :ok

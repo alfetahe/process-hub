@@ -22,19 +22,26 @@ defmodule ProcessHub.Service.Storage do
   alias ProcessHub.Hub
   alias ProcessHub.Service.Storage.Ets, as: EtsBackend
 
-  @type table_id() :: atom() | :ets.tid()
+  @typedoc """
+  A plain ETS table, a hub id (its registry backend), or an opened
+  `{module, ref}` backend such as the declared list's.
+  """
+  @type table_id() :: atom() | :ets.tid() | {module(), term()}
 
   @doc """
   Returns `{module, ref}` for the registry backend of the running hub
-  `hub_id`, or `nil` if no such hub is running.
+  `hub_id`, the backend itself when given one, or `nil` if no such hub is
+  running.
   """
-  @spec registered_backend(atom()) :: {module(), term()} | nil
+  @spec registered_backend(table_id()) :: {module(), term()} | nil
   def registered_backend(hub_id) when is_atom(hub_id) do
     case Hub.get(hub_id) do
       %Hub{storage: %{registry_backend: backend}} -> backend
       _ -> nil
     end
   end
+
+  def registered_backend({module, _ref} = backend) when is_atom(module), do: backend
 
   def registered_backend(_), do: nil
 

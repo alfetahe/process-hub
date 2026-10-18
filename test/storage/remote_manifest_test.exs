@@ -86,7 +86,10 @@ defmodule Test.Storage.RemoteManifestShipperTest do
   import ExUnit.CaptureLog
 
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Hub
+  alias ProcessHub.Service.DeclaredChildren.Store
   alias ProcessHub.Service.HookManager
+  alias ProcessHub.Service.Storage.Ets
   alias ProcessHub.Storage.RemoteManifest.Shipper
   alias ProcessHub.Utility.Bag
 
@@ -110,7 +113,19 @@ defmodule Test.Storage.RemoteManifestShipperTest do
     %{format: 1, version: version, mutated_by: node(), entries: %{}}
   end
 
+  # The shipper is told a version and reads the list from its hub, so each
+  # test stores the version it ships.
+  defp ship(%{shipper: shipper, hub: hub}, version) do
+    :ok = Store.write(hub, manifest(version))
+    GenServer.cast(shipper, {:ship, version})
+  end
+
   setup do
+    {:ok, list} = Ets.open(:"shipper_list_#{System.unique_integer([:positive])}", [])
+    hub = %Hub{hub_id: :shipper_hub, storage: %{declared_backend: {Ets, list}}}
+    Hub.put(hub)
+    on_exit(fn -> Hub.delete(:shipper_hub) end)
+
     {:ok, verdicts} = Agent.start_link(fn -> [] end)
     hook_storage = :ets.new(:shipper_hooks, [:set, :public])
 
@@ -128,11 +143,11 @@ defmodule Test.Storage.RemoteManifestShipperTest do
 
     on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
 
-    {:ok, %{shipper: pid, verdicts: verdicts}}
+    {:ok, %{shipper: pid, verdicts: verdicts, hub: hub}}
   end
 
-  test "ships the manifest once on success", %{shipper: shipper} do
-    GenServer.cast(shipper, {:ship, manifest(3)})
+  test "ships the manifest once on success", ctx do
+    ship(ctx, 3)
 
     assert_receive {:store_attempt, :shipper_hub, 3, blob}, 2_000
     assert is_binary(blob)
@@ -140,12 +155,12 @@ defmodule Test.Storage.RemoteManifestShipperTest do
     refute_receive {:ship_failed, _}, 100
   end
 
-  test "retries with the failure hook and recovers", %{shipper: shipper, verdicts: verdicts} do
+  test "retries with the failure hook and recovers", %{verdicts: verdicts} = ctx do
     Agent.update(verdicts, fn _ -> [{:error, :boom}] end)
 
     log =
       capture_log(fn ->
-        GenServer.cast(shipper, {:ship, manifest(4)})
+        ship(ctx, 4)
         assert_receive {:store_attempt, :shipper_hub, 4, _blob}, 2_000
         assert_receive {:ship_failed, %{version: 4, error: :boom, attempt: 1}}, 2_000
       end)
@@ -157,19 +172,19 @@ defmodule Test.Storage.RemoteManifestShipperTest do
     refute_receive {:ship_failed, _}, 300
   end
 
-  test "a newer version replaces the pending one", %{shipper: shipper, verdicts: verdicts} do
+  test "a newer version replaces the pending one", %{verdicts: verdicts} = ctx do
     Agent.update(verdicts, fn _ -> [{:error, :boom}, {:error, :boom}] end)
 
     log =
       capture_log(fn ->
-        GenServer.cast(shipper, {:ship, manifest(5)})
+        ship(ctx, 5)
         assert_receive {:store_attempt, :shipper_hub, 5, _}, 2_000
 
         # While v5 waits out its backoff, v6 and then v7 arrive; each newer version
         # replaces the pending one, and once v7 lands nothing is retried again.
-        GenServer.cast(shipper, {:ship, manifest(6)})
+        ship(ctx, 6)
         assert_receive {:store_attempt, :shipper_hub, 6, _}, 2_000
-        GenServer.cast(shipper, {:ship, manifest(7)})
+        ship(ctx, 7)
         assert_receive {:store_attempt, :shipper_hub, 7, _}, 2_000
 
         # The stale backoff timers fire against an empty pending slot.
@@ -180,11 +195,16 @@ defmodule Test.Storage.RemoteManifestShipperTest do
     assert log =~ "ship of v6 failed"
   end
 
-  test "a superseded version is dropped without an attempt", %{shipper: shipper} do
-    GenServer.cast(shipper, {:ship, manifest(9)})
+  test "a superseded version is dropped without an attempt", %{shipper: shipper} = ctx do
+    ship(ctx, 9)
     assert_receive {:store_attempt, :shipper_hub, 9, _}, 2_000
 
-    GenServer.cast(shipper, {:ship, manifest(8)})
+    GenServer.cast(shipper, {:ship, 8})
+    refute_receive {:store_attempt, _, _, _}, 300
+  end
+
+  test "a version the list does not hold is not shipped", %{shipper: shipper} do
+    GenServer.cast(shipper, {:ship, 3})
     refute_receive {:store_attempt, _, _, _}, 300
   end
 end
