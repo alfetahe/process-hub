@@ -7,6 +7,8 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Utility.Bag
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Constant.StorageKey
 
   @hub_id :stop_req_test_hub
 
@@ -257,6 +259,36 @@ defmodule Test.Request.Handler.StopChildrenRequestTest do
 
       # Cleanup
       Process.exit(fake_pid, :kill)
+      ProcessRegistry.delete(@hub_id, child_id)
+    end
+
+    test "does not forward to a node that took the child's start and has since left",
+         %{hub: hub} do
+      child_id = :"departed_start_#{System.unique_integer([:positive])}"
+      pid = spawn(fn -> receive do: (_ -> :ok) end)
+      child_spec = %{id: child_id, start: {Agent, :start_link, [fn -> :ok end]}}
+      ProcessRegistry.insert(@hub_id, child_spec, [{node(), pid}])
+      # Nothing would answer a stop forwarded there.
+      Storage.insert(hub.storage.misc, {StorageKey.sif(), child_id}, [:"departed@127.0.0.1"])
+
+      hook_handler = Bag.recv_hook(:departed_forward_hook, self())
+      HookManager.register_handler(hub.storage.hook, Hook.children_forwarded(), hook_handler)
+
+      request = %StopChildrenRequest{
+        transaction_id: make_ref(),
+        hub_id: @hub_id,
+        originating_node: node(),
+        reply_to: nil,
+        node: node(),
+        children: [%{child_id: child_id}],
+        options: [],
+        status: :dispatched
+      }
+
+      assert :ok = StopChildrenRequest.execute(request, hub)
+      refute_receive {:departed_forward_hook, _}, 500
+
+      Process.exit(pid, :kill)
       ProcessRegistry.delete(@hub_id, child_id)
     end
 

@@ -321,6 +321,7 @@ defmodule Test.Service.DistributorTest do
 
   test "compose_stop_operation sends a stop for a child with no row to where its start went",
        %{hub: hub} do
+    Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :target@host])
     Storage.insert(hub.storage.misc, {StorageKey.sif(), :in_flight_child}, [:target@host])
     opts = Distributor.default_init_opts([])
 
@@ -329,6 +330,19 @@ defmodule Test.Service.DistributorTest do
 
     assert Keyword.keys(operation.nodes_data) == [:target@host]
     assert Dispatcher.take_start_targets(hub, :in_flight_child) == []
+  end
+
+  test "compose_stop_operation finds no child whose start went to a node that has left",
+       %{hub: hub} do
+    # Nothing would answer a stop sent there.
+    Storage.insert(hub.storage.misc, {StorageKey.sif(), :departed_child}, [:gone@host])
+    opts = Distributor.default_init_opts([])
+
+    assert {:ok, %ProcessHub.Service.RequestManager{} = operation} =
+             Distributor.compose_stop_operation(hub, [:departed_child], opts)
+
+    assert operation.nodes_data == []
+    assert Keyword.get(operation.options, :not_found_children) == [:departed_child]
   end
 
   test "compose_stop_operation sends a stop for a child running here before its row is written",

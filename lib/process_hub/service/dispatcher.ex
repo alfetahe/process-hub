@@ -5,6 +5,7 @@ defmodule ProcessHub.Service.Dispatcher do
 
   alias ProcessHub.Request.Handler.StartChildrenRequest
   alias ProcessHub.Request.Handler.StopChildrenRequest
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.RequestManager
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.StorageKey
@@ -64,14 +65,17 @@ defmodule ProcessHub.Service.Dispatcher do
 
   @doc """
   Returns the nodes this node recently sent a start for `child_id` to, and
-  forgets them, so the same stop is not forwarded twice.
+  forgets them, so the same stop is not forwarded twice. A target that has
+  since left the cluster is dropped: a stop sent there is never answered, and
+  the child it may have started went with it.
   """
   @spec take_start_targets(ProcessHub.Hub.t(), ProcessHub.child_id()) :: [node()]
   def take_start_targets(hub, child_id) do
     key = {StorageKey.sif(), child_id}
     targets = Storage.get(hub.storage.misc, key) || []
     if targets !== [], do: Storage.remove(hub.storage.misc, key)
-    targets
+    members = Cluster.nodes(hub.storage.misc, [:include_local])
+    Enum.filter(targets, &(&1 in members))
   end
 
   @doc """
