@@ -16,6 +16,7 @@ defmodule ProcessHub.Service.Migration do
   alias ProcessHub.Strategy.Migration.MigrationConsent
   alias ProcessHub.Strategy.Migration.SwapMigration
   alias ProcessHub.Task.ClusterUpdateTask.NodeUp
+  alias ProcessHub.Worker.WorkerQueue
 
   @drain_timeout 60_000
 
@@ -179,10 +180,9 @@ defmodule ProcessHub.Service.Migration do
     HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_leave(), %{node: draining_node})
 
     if member? and draining_node !== node() do
-      GenServer.cast(
-        hub.procs.worker_queue,
-        {:handle_work, fn -> Cluster.lock_on_departure(hub, [draining_node], :leave) end}
-      )
+      WorkerQueue.run_async(hub.procs.worker_queue, fn ->
+        Cluster.lock_on_departure(hub, [draining_node], :leave)
+      end)
     end
 
     :ok

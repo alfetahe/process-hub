@@ -23,6 +23,10 @@ defmodule ProcessHub.Worker.WorkerQueue do
       else: GenServer.call(worker_queue, {:handle_work, fun}, :infinity)
   end
 
+  @doc "Queues `fun` behind the work already queued, without waiting for it."
+  @spec run_async(GenServer.server(), (-> term())) :: :ok
+  def run_async(worker_queue, fun), do: GenServer.cast(worker_queue, {:handle_work, fun})
+
   @impl true
   def init({hub_id, _misc_storage}) do
     {:ok, %{hub_id: hub_id}}

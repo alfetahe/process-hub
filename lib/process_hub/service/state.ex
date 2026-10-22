@@ -33,18 +33,16 @@ defmodule ProcessHub.Service.State do
   @spec toggle_quorum_failure(Hub.t()) :: :ok | {:error, :already_partitioned}
   def toggle_quorum_failure(hub) do
     unless is_partitioned?(hub) do
-      local_rows = ProcessRegistry.local_data(hub.hub_id)
       Supervisor.terminate_child(hub.procs.initializer, :dist_sup)
+      withdrawn = Cluster.purge_node(hub.hub_id, node())
 
       held = Storage.get(hub.storage.misc, StorageKey.plh()) || MapSet.new()
-      held = MapSet.union(held, MapSet.new(local_rows, &elem(&1, 0)))
-      Storage.insert(hub.storage.misc, StorageKey.plh(), held)
 
-      local_node = node()
-
-      ProcessRegistry.withdraw_observations(hub.hub_id, local_rows, fn _id, n ->
-        n === local_node
-      end)
+      Storage.insert(
+        hub.storage.misc,
+        StorageKey.plh(),
+        MapSet.union(held, MapSet.new(withdrawn))
+      )
 
       :ok
     else
@@ -76,8 +74,8 @@ defmodule ProcessHub.Service.State do
     end
   end
 
-  # A node still in partition mode holds rows as stale as this one's and is
-  # not asked; a node that does not answer adds nothing.
+  # A node still in partition mode holds rows as stale as this one's and
+  # sends none; a node that does not answer adds nothing.
   defp merge_from_quorum(hub) do
     local_node = node()
 
@@ -85,8 +83,7 @@ defmodule ProcessHub.Service.State do
       for {:ok, rows} <-
             hub.storage.misc
             |> Cluster.nodes([:connected])
-            |> with_quorum(hub.hub_id)
-            |> :erpc.multicall(ProcessRegistry, :dump_all, [hub.hub_id], @peer_call_ms),
+            |> :erpc.multicall(__MODULE__, :quorum_rows, [hub.hub_id], @peer_call_ms),
           {_child_id, {spec, node_pids, meta}} <- rows,
           {node, pid} <- node_pids,
           node !== local_node,
@@ -97,13 +94,9 @@ defmodule ProcessHub.Service.State do
     Synchronizer.append_data(hub, observed)
   end
 
-  defp with_quorum(nodes, hub_id) do
-    nodes
-    |> Enum.zip(:erpc.multicall(nodes, ProcessHub, :is_partitioned?, [hub_id], @peer_call_ms))
-    |> Enum.flat_map(fn
-      {node, {:ok, false}} -> [node]
-      _partitioned_or_silent -> []
-    end)
+  @doc false
+  def quorum_rows(hub_id) do
+    if ProcessHub.is_partitioned?(hub_id), do: %{}, else: ProcessRegistry.dump_all(hub_id)
   end
 
   # The supervisor comes back empty: the hub withdrew its claim on every local

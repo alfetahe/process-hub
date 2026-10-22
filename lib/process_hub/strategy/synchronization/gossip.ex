@@ -34,6 +34,7 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Hub
+  alias ProcessHub.Worker.WorkerQueue
 
   use Event
 
@@ -121,10 +122,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
   @doc false
   def remote_propagate_cast(hub_id, strategy, data) do
     with %Hub{} = local_hub <- Hub.get(hub_id) do
-      GenServer.cast(
-        local_hub.procs.worker_queue,
-        {:handle_work, fn -> __MODULE__.handle_propagation(strategy, local_hub, data) end}
-      )
+      WorkerQueue.run_async(local_hub.procs.worker_queue, fn ->
+        __MODULE__.handle_propagation(strategy, local_hub, data)
+      end)
     end
   end
 
@@ -153,13 +153,9 @@ defmodule ProcessHub.Strategy.Synchronization.Gossip do
 
   @doc false
   def remote_sync_cast(worker_queue, hub_id, strategy, sync_data, from_node) do
-    GenServer.cast(
-      worker_queue,
-      {:handle_work,
-       fn ->
-         Synchronizer.exec_interval_sync(hub_id, strategy, sync_data, from_node)
-       end}
-    )
+    WorkerQueue.run_async(worker_queue, fn ->
+      Synchronizer.exec_interval_sync(hub_id, strategy, sync_data, from_node)
+    end)
   end
 
   defimpl SynchronizationStrategy, for: ProcessHub.Strategy.Synchronization.Gossip do
