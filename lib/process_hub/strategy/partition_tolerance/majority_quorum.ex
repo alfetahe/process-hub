@@ -1,11 +1,13 @@
 defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
+  @moduledoc deprecated: "Use StaticQuorum or DynamicQuorum; removed in v0.8.0"
   @moduledoc """
   The majority quorum strategy provides automatic partition tolerance that adapts to cluster size.
 
-  > #### Experimental {: .warning}
+  > #### Deprecated {: .error}
   >
-  > This strategy is experimental and may change in future releases.
-  > Use in production at your own discretion.
+  > This strategy is deprecated and will be removed in v0.8.0. Use
+  > `ProcessHub.Strategy.PartitionTolerance.StaticQuorum` when the number of nodes is known, or
+  > `ProcessHub.Strategy.PartitionTolerance.DynamicQuorum` when it changes.
 
   This strategy is ideal for clusters that:
   - Start with a single node (development or initial deployment)

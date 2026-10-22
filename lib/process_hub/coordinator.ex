@@ -171,24 +171,8 @@ defmodule ProcessHub.Coordinator do
       Task.Supervisor.terminate_child(task_sup, pid)
     end)
 
-    close_storage(reason, hub)
-  end
-
-  # Only the hub's stop closes its storage; after a crash the restarted
-  # coordinator is handed the same, still open, backends.
-  defp close_storage({:shutdown, _}, hub), do: close_storage(:shutdown, hub)
-
-  defp close_storage(reason, hub) when reason in [:normal, :shutdown] do
-    Hub.delete(hub.hub_id)
-
-    for key <- [:registry_backend, :declared_backend],
-        {module, ref} <- [Map.get(hub.storage, key)],
-        do: module.close(ref)
-
     :ok
   end
-
-  defp close_storage(_reason, _hub), do: :ok
 
   @impl true
   def handle_cast({:exec_cast, {m, f, a}}, state) do

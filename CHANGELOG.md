@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 - **Experimental:** when a node joins a hub with `:auto_recovery`, a recovery round now follows within a couple of seconds instead of at the next `:reconcile_interval_ms`, so a child that could not start for want of a node starts as soon as one is there. `Recovery.request_round/1` asks for such a round yourself, for example when the group a distribution strategy needs for a child has just gained a member.
 - **Experimental:** a new `:auto_recovery` option, `:cluster_settle_ms` (default `2_000`). When a hub starts, this is how long it waits for other nodes to show up before it decides it is running alone. If your application connects the cluster before it starts its hubs, you can set it to `0`.
 
+### Deprecated
+- `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum` is deprecated and will be removed in v0.8.0. It cannot be scaled down without `reset_cluster_size/2`, and a node that restarts alone runs as a cluster of one. Use `StaticQuorum` when the number of nodes is known, or `DynamicQuorum` when it changes.
+
 ### Changed
 - **BREAKING:** `ProcessHub.Strategy.PartitionTolerance.Base.toggle_lock?/3` is now `toggle_lock?/4`. The new last argument is `:leave` when the node drained or its hub stopped, and `:down` when it disappeared. A custom strategy that should behave as before ignores it. Strategies also implement `validate/1`, which checks their settings before the hub starts.
 - **BREAKING:** `ProcessHub.Strategy.PartitionTolerance.DynamicQuorum` refuses a `:quorum_size` outside 51..100 (`{:error, {:invalid_config, :quorum_size}}`): with 50 or less both halves of an even split kept running. It no longer counts a node that drains or stops its hub as lost, so several nodes can be scaled down at once.
@@ -20,6 +23,7 @@ All notable changes to this project will be documented in this file.
 - **Experimental:** an out-of-range `:auto_recovery` value now makes `ProcessHub.start_link/1` return `{:error, {:invalid_auto_recovery, reason}}` itself, before anything is opened. It used to arrive wrapped in a supervisor start failure, after the registry and the declared-list file had already been opened.
 
 ### Fixed
+- Stopping a hub no longer crashes the requests it still had queued. Its registry tables were closed before its worker queue stopped, so each such request failed on a missing table and logged an error.
 - A node that loses its quorum now stops before it takes over the children of the nodes it lost. It used to start them first, so on every split the smaller side briefly ran children the larger side was also taking over. A drained node under `StaticQuorum` now stops the hub too when it leaves too few nodes.
 - A node that leaves partition mode no longer restarts every child it held. While stopped it no longer claims them; when it comes back it first merges the registry of the nodes that kept their quorum and starts only the children no node runs. Children the other side had taken over used to run twice, or not at all.
 - An awaited start or stop whose target node goes away before it answers now returns at once with `{:error, :no_response}` for its children, instead of waiting out its whole timeout.

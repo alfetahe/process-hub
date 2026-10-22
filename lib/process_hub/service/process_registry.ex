@@ -42,17 +42,30 @@ defmodule ProcessHub.Service.ProcessRegistry do
           optional(:__process_hub__) => Row.t()
         }
 
-  def start_link({hub_id, via_tuple}) do
-    GenServer.start_link(__MODULE__, hub_id, name: via_tuple)
+  def start_link({hub_id, via_tuple, storage}) do
+    GenServer.start_link(__MODULE__, {hub_id, storage}, name: via_tuple)
+  end
+
+  # The hub's storage is opened by the initializer and closed here, when the
+  # hub stops: this server stops after the worker queue, so no queued request
+  # outlives its tables. After a crash the restarted server keeps them open.
+  @impl GenServer
+  def init({hub_id, storage}) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{hub_id: hub_id, storage: storage, batch: Batch.new(), dirty: MapSet.new()}}
   end
 
   @impl GenServer
-  def init(hub_id) do
-    # The registry table is opened by the Coordinator (via the
-    # configured Storage.Behaviour backend). This GenServer exists to
-    # serialise mutations through `handle_call/3`; it does not own the
-    # underlying storage handle.
-    {:ok, %{hub_id: hub_id, batch: Batch.new(), dirty: MapSet.new()}}
+  def terminate(reason, state) do
+    if reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
+      ProcessHub.Hub.delete(state.hub_id)
+
+      for key <- [:registry_backend, :declared_backend],
+          {module, ref} <- [Map.get(state.storage, key)],
+          do: module.close(ref)
+    end
+
+    :ok
   end
 
   @impl GenServer

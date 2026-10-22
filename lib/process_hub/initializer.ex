@@ -124,7 +124,7 @@ defmodule ProcessHub.Initializer do
     children =
       [
         {Registry, keys: :unique, name: procs.system_registry},
-        {ProcessHub.Service.ProcessRegistry, {hub_id, procs.process_registry}},
+        {ProcessHub.Service.ProcessRegistry, {hub_id, procs.process_registry, storage}},
         {Blockade, %{name: procs.event_queue, priority_sync: false}},
         dist_sup(hub_conf, procs),
         {Task.Supervisor, name: procs.task_sup}

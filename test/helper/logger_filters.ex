@@ -9,7 +9,11 @@ defmodule Test.Helper.LoggerFilters do
   # tests provoke by design and that carries no diagnostic value.
   @noise [
     # OTP ':global' disconnects a peer on every cluster churn in multinode tests.
-    "overlapping partitions"
+    "overlapping partitions",
+    # The split tests keep peers apart with mismatched cookies, and 'global'
+    # then fails to connect them.
+    "Invalid challenge reply",
+    "failed to connect to"
   ]
 
   @doc """
@@ -40,6 +44,9 @@ defmodule Test.Helper.LoggerFilters do
   rescue
     _ -> nil
   end
+
+  # error_logger (the kernel's distribution, among others) logs as a report.
+  defp render({:report, %{format: format, args: args}}), do: render({format, args})
 
   defp render(_), do: nil
 

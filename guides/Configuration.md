@@ -137,7 +137,8 @@ nodes in the cluster. When a partition happens, the `ProcessHub.DistributedSuper
 will terminate along with its children.
 A node that drains or stops its hub is not counted as lost, so any number of nodes can be
 scaled down that way at once. `:quorum_size` must be 51 to 100.
-- `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum` - this strategy provides automatic
+- `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum` - **deprecated, removed in v0.8.0;**
+use `StaticQuorum` or `DynamicQuorum` instead. This strategy provides automatic
 partition tolerance that adapts to cluster size. It tracks the maximum cluster size ever seen
 and requires a majority of those nodes to be present for the cluster to operate. The quorum is
 calculated as `floor(max_cluster_size / 2) + 1`. This strategy is ideal for clusters that start
