@@ -196,7 +196,7 @@ defmodule CoordinatorTest do
       Cluster.add_hub_node(hub.storage.misc, :node_to_remove)
 
       # process_node_down_batch should dispatch the hook with the node name
-      result = Coordinator.process_node_down_batch(state, [:node_to_remove])
+      result = Coordinator.process_node_down_batch(state, [:node_to_remove], :down)
 
       assert result.hub === hub
 
@@ -217,7 +217,7 @@ defmodule CoordinatorTest do
       HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Try to remove a node that doesn't exist in the hub
-      result = Coordinator.process_node_down_batch(state, [:non_existent_node])
+      result = Coordinator.process_node_down_batch(state, [:non_existent_node], :down)
 
       assert result.hub === hub
       refute_receive {:hook_called, :node_down_ignore, _}, 100
@@ -243,7 +243,11 @@ defmodule CoordinatorTest do
 
       # Process batch with some valid and one invalid node
       result =
-        Coordinator.process_node_down_batch(state, [:batch_node1, :batch_node2, :non_existent])
+        Coordinator.process_node_down_batch(
+          state,
+          [:batch_node1, :batch_node2, :non_existent],
+          :down
+        )
 
       assert result.hub === hub
 
@@ -275,12 +279,16 @@ defmodule CoordinatorTest do
 
       # Process batch with all valid nodes
       result =
-        Coordinator.process_node_down_batch(state, [
-          :all_node1,
-          :all_node2,
-          :all_node3,
-          :all_node4
-        ])
+        Coordinator.process_node_down_batch(
+          state,
+          [
+            :all_node1,
+            :all_node2,
+            :all_node3,
+            :all_node4
+          ],
+          :down
+        )
 
       assert result.hub === hub
 
@@ -307,10 +315,37 @@ defmodule CoordinatorTest do
       HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), handler)
 
       # Try to remove nodes that don't exist
-      result = Coordinator.process_node_down_batch(state, [:non_existent1, :non_existent2])
+      result = Coordinator.process_node_down_batch(state, [:non_existent1, :non_existent2], :down)
 
       assert result.hub === hub
       refute_receive {:hook_called, :batch_empty, _}, 100
+    end
+  end
+
+  describe "departure kind" do
+    test "a disconnect reaches the strategy as :down and an announced leave as :leave" do
+      hub_id = :coord_departure_kind
+
+      {:ok, pid} =
+        ProcessHub.start_link(%ProcessHub{
+          hub_id: hub_id,
+          cluster_event_debounce: 0,
+          partition_tolerance_strategy: %Test.Support.RecordingPartition{recorder: self()}
+        })
+
+      :erlang.unlink(pid)
+      on_exit(fn -> ProcessHub.stop(hub_id) end)
+
+      hub = ProcessHub.Hub.get(hub_id)
+      Cluster.add_hub_node(hub.storage.misc, :vanished@host)
+      Cluster.add_hub_node(hub.storage.misc, :announced@host)
+
+      send(hub_id, {:nodedown, :vanished@host})
+      send(hub_id, {@event_cluster_leave, :announced@host})
+
+      local = node()
+      assert_receive {:toggle_lock, ^local, :vanished@host, :down}, 2_000
+      assert_receive {:toggle_lock, ^local, :announced@host, :leave}, 2_000
     end
   end
 

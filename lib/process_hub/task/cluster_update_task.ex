@@ -4,6 +4,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.Event
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.State
@@ -11,7 +12,6 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
-  alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias ProcessHub.Hub
 
@@ -127,7 +127,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
 
     @type t() :: %__MODULE__{
             removed_nodes: [node()],
-            partition_strat: PartitionToleranceStrategy.t(),
+            kind: :down | :leave,
             redun_strat: RedundancyStrategy.t(),
             dist_strat: DistributionStrategy.t(),
             migr_strat: MigrationStrategy.t(),
@@ -144,11 +144,11 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
     ]
     defstruct @enforce_keys ++
                 [
-                  :partition_strat,
                   :redun_strat,
                   :dist_strat,
                   :migr_strat,
                   :rem_node_cids,
+                  kind: :down,
                   calculated_cids: %{}
                 ]
 
@@ -156,15 +156,14 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
     def handle(%__MODULE__{hub: hub} = arg) do
       %__MODULE__{
         arg
-        | partition_strat: Storage.get(hub.storage.misc, StorageKey.strpart()),
-          redun_strat: Storage.get(hub.storage.misc, StorageKey.strred()),
+        | redun_strat: Storage.get(hub.storage.misc, StorageKey.strred()),
           dist_strat: Storage.get(hub.storage.misc, StorageKey.strdist()),
           migr_strat: Storage.get(hub.storage.misc, StorageKey.strmigr())
       }
       |> dispatch_down_hooks()
+      |> handle_locking()
       |> distribute_processes()
       |> clear_registry()
-      |> handle_locking()
       |> dispatch_post_hooks()
     end
 
@@ -182,22 +181,10 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
       )
     end
 
+    # Before redistribution, so a node that loses quorum never starts the
+    # children of the nodes it lost.
     defp handle_locking(arg) do
-      # Check partition tolerance for all removed nodes
-      # If any requires it, trigger quorum failure
-      any_lock =
-        Enum.any?(arg.removed_nodes, fn node ->
-          PartitionToleranceStrategy.toggle_lock?(
-            arg.partition_strat,
-            arg.hub,
-            node
-          )
-        end)
-
-      if any_lock do
-        State.toggle_quorum_failure(arg.hub)
-      end
-
+      Cluster.lock_on_departure(arg.hub, arg.removed_nodes, arg.kind)
       arg
     end
 
@@ -249,7 +236,12 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
       # Get affected children for registry cleanup and redundancy updates
       affected = removed_nodes_processes(arg, registry_data)
       rem_cids = Enum.map(affected, fn {cid, _, _, _, _, rem} -> {cid, rem} end)
+      arg = Map.put(arg, :rem_node_cids, rem_cids)
 
+      if State.is_partitioned?(arg.hub), do: arg, else: redistribute(arg)
+    end
+
+    defp redistribute(arg) do
       # Build redundancy list from ALL local children (ring changes affect any child)
       redun = build_redundancy_list(arg)
 
@@ -272,7 +264,7 @@ defmodule ProcessHub.Task.ClusterUpdateTask do
         arg.removed_nodes
       )
 
-      Map.put(arg, :rem_node_cids, rem_cids)
+      arg
     end
 
     defp build_redundancy_list(arg) do

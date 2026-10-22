@@ -135,10 +135,8 @@ network partitions by using a dynamic quorum. The quorum size is defined by the 
 option and `:threshold_time` option. The system automatically over time adapts to the number of
 nodes in the cluster. When a partition happens, the `ProcessHub.DistributedSupervisor` process
 will terminate along with its children.
-  > #### Using DynamicQuorum Strategy {: .error}
-  > When scaling down too many nodes at once, the system may consider itself to be in a
-  > network partition. Read the documentation for the
-  >`ProcessHub.Strategy.PartitionTolerance.DynamicQuorum` strategy for more information.
+A node that drains or stops its hub is not counted as lost, so any number of nodes can be
+scaled down that way at once. `:quorum_size` must be 51 to 100.
 - `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum` - this strategy provides automatic
 partition tolerance that adapts to cluster size. It tracks the maximum cluster size ever seen
 and requires a majority of those nodes to be present for the cluster to operate. The quorum is

@@ -75,6 +75,11 @@ defmodule Test.Constant.StorageKeyTest do
     assert StorageKey.mqms() === :majority_quorum_max_seen
   end
 
+  test "storage key quorum startup and held children" do
+    assert StorageKey.dqsp() === :dynamic_quorum_startup_pending
+    assert StorageKey.plh() === :partition_lock_held
+  end
+
   test "storage key cluster event debounce" do
     assert StorageKey.ced() === :cluster_event_debounce
   end

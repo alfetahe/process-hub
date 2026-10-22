@@ -11,12 +11,12 @@ defmodule Test.Strategy.PartitionTolerance.DivergenceTest do
     end
   end
 
-  describe "toggle_lock?/3" do
+  describe "toggle_lock?/4" do
     test "returns false regardless of node" do
       strategy = %Divergence{}
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, %{}, :some_node)
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, %{}, node())
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, %{}, :fake@host)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, %{}, :some_node, :down)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, %{}, node(), :down)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, %{}, :fake@host, :down)
     end
   end
 

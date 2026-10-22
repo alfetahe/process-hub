@@ -30,10 +30,17 @@ defmodule Test.Helper.TestServer do
 
   @impl GenServer
   def init(args) do
-    # Process.flag(:trap_exit, true)
+    # Reports each start, so a test sees even a child that is stopped at once.
+    with %{report_to: pid} <- args, do: send(pid, {:child_started, args[:name], node()})
+    # Takes `slow_stop_ms` to stop, so a test can act while a stop is pending.
+    if args[:slow_stop_ms], do: Process.flag(:trap_exit, true)
 
     {:ok, args}
   end
+
+  @impl GenServer
+  def terminate(_reason, %{slow_stop_ms: ms}), do: Process.sleep(ms)
+  def terminate(_reason, _state), do: :ok
 
   # def terminate(reason, state) do
   #   :ok

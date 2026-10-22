@@ -127,6 +127,9 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
     alias ProcessHub.Constant.StorageKey
 
     @impl true
+    def validate(_strategy), do: :ok
+
+    @impl true
     def init(strategy, hub) do
       cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
       current_size = length(cluster_nodes)
@@ -161,7 +164,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.MajorityQuorum do
     end
 
     @impl true
-    def toggle_lock?(strategy, hub, _down_node) do
+    def toggle_lock?(strategy, hub, _down_node, _kind) do
       cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
       current_size = length(cluster_nodes)
 

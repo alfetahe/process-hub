@@ -222,7 +222,7 @@ defmodule ProcessHub.Service.RequestManager do
         timeout = Keyword.get(operation.options, :timeout, 5000)
 
         cond do
-          all_responded?(operation) ->
+          all_responded?(operation) or waits_only_on_departed?(operation) ->
             {:reply, finalize(operation, state.hub), remove(state, transaction_id)}
 
           timeout == 0 ->
@@ -234,6 +234,31 @@ defmodule ProcessHub.Service.RequestManager do
             {:noreply, update(state, updated)}
         end
     end
+  end
+
+  @doc """
+  Answers each awaited operation that now waits only on nodes this node is no
+  longer connected to. Their children answer `:no_response` at once, as they
+  would at the timeout, so a caller can try again while the time it was given
+  lasts. Called when a node goes down.
+  """
+  @spec handle_departed(State.t()) :: State.t()
+  def handle_departed(state) do
+    Enum.reduce(state.pending_operations, state, fn {transaction_id, operation}, acc ->
+      if operation.awaiter != nil and operation.result == nil and
+           waits_only_on_departed?(operation) do
+        GenServer.reply(operation.awaiter, finalize(operation, acc.hub))
+        remove(acc, transaction_id)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp waits_only_on_departed?(%{sub_requests: sub_requests}) do
+    connected = [node() | Node.list()]
+    waiting = for sub_req <- sub_requests, sub_req.status != :completed, do: sub_req.node
+    waiting != [] and Enum.all?(waiting, &(&1 not in connected))
   end
 
   @spec handle_timeout(State.t(), reference(), {pid(), reference()}) ::

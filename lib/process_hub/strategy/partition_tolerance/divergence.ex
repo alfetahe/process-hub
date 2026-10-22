@@ -23,12 +23,15 @@ defmodule ProcessHub.Strategy.PartitionTolerance.Divergence do
 
   defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.Divergence do
     @impl true
+    def validate(_strategy), do: :ok
+
+    @impl true
     def init(strategy, _hub), do: strategy
 
     @impl true
     def toggle_unlock?(_strategy, _hub, _up_node), do: false
 
     @impl true
-    def toggle_lock?(_strategy, _hub, _down_node), do: false
+    def toggle_lock?(_strategy, _hub, _down_node, _kind), do: false
   end
 end

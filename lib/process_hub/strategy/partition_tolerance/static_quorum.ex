@@ -92,6 +92,9 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
     alias ProcessHub.Service.Cluster
 
     @impl true
+    def validate(_strategy), do: :ok
+
+    @impl true
     def init(strategy, hub) do
       cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
@@ -105,7 +108,7 @@ defmodule ProcessHub.Strategy.PartitionTolerance.StaticQuorum do
     end
 
     @impl true
-    def toggle_lock?(strategy, hub, _down_node) do
+    def toggle_lock?(strategy, hub, _down_node, _kind) do
       cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
       !quorum_present?(strategy, cluster_nodes)

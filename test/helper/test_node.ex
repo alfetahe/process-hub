@@ -31,7 +31,7 @@ defmodule Test.Helper.TestNode do
           :peer.start_link(%{
             host: ~c"127.0.0.1",
             name: name,
-            args: [args]
+            args: [args | Keyword.get(options, :args, [])]
           })
 
         {name, pid}
@@ -78,6 +78,42 @@ defmodule Test.Helper.TestNode do
     end
 
     nodes
+  end
+
+  @doc """
+  Cuts every connection between `side_a` and `side_b` (lists of peer nodes) and
+  keeps them cut until `heal/2`. Each node is given a cookie for the other side
+  that the other side does not share, so automatic reconnects fail. The calling
+  node stays connected to both sides; start the peers with
+  `args: [~c"-kernel", ~c"prevent_overlapping_partitions", ~c"false"]` so `global` does not
+  take that connection down too.
+  """
+  def split(side_a, side_b) do
+    pairs = for a <- side_a, b <- side_b, do: {a, b}
+
+    Enum.each(pairs, fn {a, b} ->
+      :erpc.call(a, :erlang, :set_cookie, [b, :"split_from_#{a}"])
+      :erpc.call(b, :erlang, :set_cookie, [a, :"split_from_#{b}"])
+    end)
+
+    Enum.each(pairs, fn {a, b} -> :erpc.call(a, :erlang, :disconnect_node, [b]) end)
+  end
+
+  @doc "Restores the connections `split/2` cut."
+  def heal(side_a, side_b) do
+    cookie = :erlang.get_cookie()
+
+    for a <- side_a, b <- side_b do
+      :erpc.call(a, :erlang, :set_cookie, [b, cookie])
+      :erpc.call(b, :erlang, :set_cookie, [a, cookie])
+    end
+
+    # A connection cut a moment ago can refuse the first attempt.
+    for a <- side_a, b <- side_b do
+      true = Test.Helper.Common.eventually(fn -> :erpc.call(a, Node, :connect, [b]) end)
+    end
+
+    :ok
   end
 
   def stop_nodes(peer_pids) when is_list(peer_pids) do

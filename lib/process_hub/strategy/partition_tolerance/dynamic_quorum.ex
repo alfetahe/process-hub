@@ -26,12 +26,9 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
   partition or not. If we lose all those nodes in less than 10 seconds, the system will be considered
   to be in a network partition.
 
-  > #### `Scaling down` {: .error}
-  > When scaling down the cluster, make sure to scale down one node at a time
-  > and wait for the `threshold_time` before scaling down the next node.
-  >
-  > Do not scale down too many nodes at once because the system may think that it is in a network partition
-  > and terminate the `ProcessHub.DistributedSupervisor` process and all its children.
+  Only a node that disappears is logged. A node that drains or whose hub stops
+  was reachable when it went, so any number of nodes can be scaled down that way
+  at once.
   """
 
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
@@ -42,23 +39,41 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
   @typedoc """
   Dynamic quorum strategy configuration.
 
-  - `quorum_size` - The quorum size is measured in percentage. This is the required quorum size.
-  For example, `50` means that if we have 10 nodes in the cluster, the system will be
-  considered to be in a network partition if we lose 6 (60% of the cluster) nodes or more within
-  the `threshold_time` period.
+  - `quorum_size` - The quorum size is measured in percentage, from 51 to 100. For example,
+  `60` means that if we have 10 nodes in the cluster, the system will be considered to be in a
+  network partition if we lose 5 nodes or more within the `threshold_time` period. With 50 or
+  less two equal halves would both keep running, so the hub refuses to start.
   - `threshold_time` - The threshold time is measured in seconds. This is how long a node should be
   listed in the quorum log before it is removed from the quorum log.
+  - `startup_nodes` - Optional. A hub that starts with fewer hub nodes than this stays in
+  partition mode until that many are present, so a node that starts alone does not run as a
+  cluster of one. Default: `nil`.
   """
   @type t :: %__MODULE__{
-          quorum_size: non_neg_integer(),
-          threshold_time: non_neg_integer()
+          quorum_size: 51..100,
+          threshold_time: non_neg_integer(),
+          startup_nodes: pos_integer() | nil
         }
   @enforce_keys [:quorum_size]
-  defstruct [:quorum_size, threshold_time: 30]
+  defstruct [:quorum_size, threshold_time: 30, startup_nodes: nil]
 
   defimpl PartitionToleranceStrategy, for: ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
+    alias ProcessHub.Service.State
+
+    # With 50 or less, both halves of an even split keep their quorum.
     @impl true
-    def init(strategy, _hub), do: strategy
+    def validate(%{quorum_size: size}) when size in 51..100, do: :ok
+    def validate(_strategy), do: {:error, {:invalid_config, :quorum_size}}
+
+    @impl true
+    def init(strategy, hub) do
+      if strategy.startup_nodes && node_count(hub) < strategy.startup_nodes do
+        Storage.insert(hub.storage.misc, StorageKey.dqsp(), true)
+        State.toggle_quorum_failure(hub)
+      end
+
+      strategy
+    end
 
     @impl true
     def toggle_unlock?(strategy, hub, up_node) do
@@ -67,16 +82,34 @@ defmodule ProcessHub.Strategy.PartitionTolerance.DynamicQuorum do
       node_log_func(strategy, hub, up_node, :up)
       propagate_quorum_log(hub, up_node)
 
-      !quorum_failure?(strategy, cluster_nodes, hub.storage.misc)
+      !quorum_failure?(strategy, cluster_nodes, hub.storage.misc) and
+        startup_reached?(strategy, hub)
     end
 
     @impl true
-    def toggle_lock?(strategy, hub, down_node) do
+    def toggle_lock?(strategy, hub, down_node, kind) do
       cluster_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
-      node_log_func(strategy, hub, down_node, :down)
+      if kind === :down, do: node_log_func(strategy, hub, down_node, :down)
 
       quorum_failure?(strategy, cluster_nodes, hub.storage.misc)
     end
+
+    # The startup wait ends for good the first time enough nodes are present.
+    defp startup_reached?(strategy, hub) do
+      cond do
+        Storage.get(hub.storage.misc, StorageKey.dqsp()) == nil ->
+          true
+
+        node_count(hub) < strategy.startup_nodes ->
+          false
+
+        true ->
+          Storage.remove(hub.storage.misc, StorageKey.dqsp())
+          true
+      end
+    end
+
+    defp node_count(hub), do: length(Cluster.nodes(hub.storage.misc, [:include_local]))
 
     defp propagate_quorum_log(hub, node) do
       local_log =

@@ -523,6 +523,22 @@ defmodule ProcessHubTest do
              {:error, {:invalid_config, :handover_with_replication_not_supported}}
   end
 
+  test "initializer rejects a dynamic quorum outside 51..100" do
+    for size <- [50, 101] do
+      conf = %ProcessHub{
+        hub_id: :invalid_dynamic_quorum_test,
+        partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.DynamicQuorum{
+          quorum_size: size
+        }
+      }
+
+      assert ProcessHub.Initializer.start_link(conf) ===
+               {:error, {:invalid_config, :quorum_size}}
+
+      refute ProcessHub.is_alive?(:invalid_dynamic_quorum_test)
+    end
+  end
+
   test "stop", %{hub_id: hub_id} = _context do
     assert ProcessHub.stop(:none) === {:error, :not_alive}
     assert ProcessHub.stop(hub_id) === :ok

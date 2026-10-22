@@ -26,6 +26,10 @@ defmodule ProcessHub.Constant.StorageKey do
   @spec dqdn() :: :dynamic_quorum_down_nodes
   def dqdn, do: :dynamic_quorum_down_nodes
   def mqms, do: :majority_quorum_max_seen
+  @spec dqsp() :: :dynamic_quorum_startup_pending
+  def dqsp, do: :dynamic_quorum_startup_pending
+  @spec plh() :: :partition_lock_held
+  def plh, do: :partition_lock_held
   @spec gct() :: :gossip_node_timestamps
   def gct, do: :gossip_node_timestamps
   @spec hodw() :: :handover_data_wait

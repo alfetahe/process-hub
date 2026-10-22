@@ -9,6 +9,7 @@ defmodule ProcessHub.Initializer do
   alias ProcessHub.Hub
   alias ProcessHub.Service.Recovery
   alias ProcessHub.Service.LoggerService
+  alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
 
   use Supervisor
 
@@ -29,7 +30,8 @@ defmodule ProcessHub.Initializer do
           | {:error, {:invalid_auto_recovery, term()}}
   defp validate_config(%ProcessHub{} = hub) do
     with :ok <- validate_handover_replication(hub),
-         :ok <- validate_registry_backend_path(hub) do
+         :ok <- validate_registry_backend_path(hub),
+         :ok <- PartitionToleranceStrategy.validate(hub.partition_tolerance_strategy) do
       Recovery.config_or_disabled(hub)
     end
   end

@@ -31,13 +31,13 @@ defmodule Test.Strategy.PartitionTolerance.DynamicQuorumTest do
     end
   end
 
-  describe "toggle_lock?/3" do
+  describe "toggle_lock?/4" do
     test "returns false when no nodes are down", %{hub: hub} do
       # 3 connected nodes, 0 down nodes = 100% quorum
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host, :n3@host])
       strategy = %DynamicQuorum{quorum_size: 50, threshold_time: 30}
 
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake@host)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake@host, :down)
     end
 
     test "returns true when many nodes are down recently", %{hub: hub} do
@@ -56,7 +56,7 @@ defmodule Test.Strategy.PartitionTolerance.DynamicQuorumTest do
       strategy = %DynamicQuorum{quorum_size: 50, threshold_time: 30}
 
       # 1 connected / (1 + 3) = 25% quorum < 50%
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n5@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n5@host, :down)
     end
 
     test "returns false when threshold removes old entries", %{hub: hub} do
@@ -75,7 +75,7 @@ defmodule Test.Strategy.PartitionTolerance.DynamicQuorumTest do
 
       # toggle_lock? will call node_log_func which filters old entries
       # Then quorum check: 2 connected / (2 + 0 remaining down) = 100% > 50%
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n5@host)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n5@host, :down)
     end
   end
 
@@ -138,6 +138,60 @@ defmodule Test.Strategy.PartitionTolerance.DynamicQuorumTest do
     test "threshold_time defaults to 30" do
       strategy = %DynamicQuorum{quorum_size: 50}
       assert strategy.threshold_time == 30
+    end
+  end
+
+  describe "leave and down" do
+    test "a node that leaves is not logged as lost", %{hub: hub} do
+      Storage.insert(hub.storage.misc, StorageKey.hn(), [node()])
+      strategy = %DynamicQuorum{quorum_size: 51, threshold_time: 30}
+
+      # Four nodes leave cleanly at once: nothing is lost, the last one runs.
+      for n <- [:n2@host, :n3@host, :n4@host, :n5@host] do
+        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, n, :leave)
+      end
+
+      assert Storage.get(hub.storage.misc, StorageKey.dqdn()) in [nil, []]
+    end
+
+    test "an even split locks both halves with the minimum quorum_size", %{hub: hub} do
+      strategy = %DynamicQuorum{quorum_size: 51, threshold_time: 30}
+
+      # Each half of a four-node cluster loses the other two within the window.
+      Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host])
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host, :down)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n4@host, :down)
+    end
+  end
+
+  describe "startup_nodes" do
+    test "a hub that starts alone waits for the startup count" do
+      hub_id = :"dynamic_startup_#{System.unique_integer([:positive])}"
+
+      {:ok, pid} =
+        ProcessHub.Initializer.start_link(%ProcessHub{
+          hub_id: hub_id,
+          partition_tolerance_strategy: %DynamicQuorum{quorum_size: 60, startup_nodes: 3}
+        })
+
+      :erlang.unlink(pid)
+      on_exit(fn -> ProcessHub.Initializer.stop(hub_id) end)
+
+      assert Test.Helper.Common.eventually(fn -> ProcessHub.is_partitioned?(hub_id) end)
+
+      hub = ProcessHub.Hub.get(hub_id)
+      strategy = Storage.get(hub.storage.misc, StorageKey.strpart())
+
+      # A second node is not enough, although nothing was lost.
+      Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host])
+      refute PartitionToleranceStrategy.toggle_unlock?(strategy, hub, :n2@host)
+
+      Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host, :n3@host])
+      assert PartitionToleranceStrategy.toggle_unlock?(strategy, hub, :n3@host)
+
+      # The wait is over for good: a later loss is judged by the quorum alone.
+      Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host])
+      assert PartitionToleranceStrategy.toggle_unlock?(strategy, hub, :n3@host)
     end
   end
 end

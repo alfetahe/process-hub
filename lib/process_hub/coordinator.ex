@@ -345,7 +345,11 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({:nodedown, node}, state) do
-    {:noreply, state |> cancel_nodeup_reconcile(node) |> batch_event(:nodedown, node)}
+    {:noreply,
+     state
+     |> cancel_nodeup_reconcile(node)
+     |> RequestManager.handle_departed()
+     |> batch_event(:nodedown, node)}
   end
 
   @impl true
@@ -364,7 +368,7 @@ defmodule ProcessHub.Coordinator do
       Dispatcher.dispatch_event(
         state.hub.procs.event_queue,
         @event_cluster_leave_batch,
-        valid_down_nodes,
+        {:down, valid_down_nodes},
         %{members: :local}
       )
     end
@@ -382,7 +386,7 @@ defmodule ProcessHub.Coordinator do
       Dispatcher.dispatch_event(
         state.hub.procs.event_queue,
         @event_cluster_leave_batch,
-        nodes,
+        {:leave, nodes},
         %{members: :local}
       )
     end
@@ -391,8 +395,8 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_cluster_leave_batch, nodes}, state) do
-    {:noreply, process_node_down_batch(state, nodes)}
+  def handle_info({@event_cluster_leave_batch, {kind, nodes}}, state) do
+    {:noreply, process_node_down_batch(state, nodes, kind)}
   end
 
   @impl true
@@ -802,14 +806,17 @@ defmodule ProcessHub.Coordinator do
   end
 
   @doc false
-  def process_node_down_batch(%State{hub: hub} = state, down_nodes) do
+  def process_node_down_batch(%State{hub: hub} = state, down_nodes, kind) do
     hub_nodes = Cluster.nodes(hub.storage.misc, [:include_local])
 
     # Filter to only nodes that are actually in the hub.
     valid_down_nodes = Enum.filter(down_nodes, &Enum.member?(hub_nodes, &1))
 
     if length(valid_down_nodes) > 0 do
-      delegate_work(state, {:handle_node_down, %{removed_nodes: valid_down_nodes, hub: hub}})
+      delegate_work(
+        state,
+        {:handle_node_down, %{removed_nodes: valid_down_nodes, hub: hub, kind: kind}}
+      )
     else
       state
     end

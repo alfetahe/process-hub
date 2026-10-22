@@ -559,7 +559,7 @@ defmodule Test.Service.RequestManagerTest do
 
     test "sets awaiter and returns noreply when waiting" do
       sub_req = %StartChildrenRequest{
-        node: :node1,
+        node: node(),
         results: nil,
         status: :dispatched,
         children: [%{child_id: :child1}]
@@ -575,6 +575,47 @@ defmodule Test.Service.RequestManagerTest do
 
       updated_op = new_state.pending_operations[op.transaction_id]
       assert updated_op.awaiter == from
+    end
+  end
+
+  describe "a request waiting only on departed nodes" do
+    test "is answered by an await at once, its children with no response" do
+      sub_req = %StartChildrenRequest{
+        node: :departed@nowhere,
+        results: nil,
+        status: :dispatched,
+        children: [%{child_id: :child1}]
+      }
+
+      op = make_operation(nodes_data: [{:departed@nowhere, []}])
+      op = %{op | sub_requests: [sub_req], options: [timeout: 5000]}
+      state = hub_state(%{op.transaction_id => op})
+
+      assert {:reply, _result, new_state} =
+               RequestManager.handle_await(state, op.transaction_id, {self(), make_ref()})
+
+      refute Map.has_key?(new_state.pending_operations, op.transaction_id)
+    end
+
+    test "is answered when a node goes down, and one still waiting on a connected node is not" do
+      departed = %StartChildrenRequest{node: :departed@nowhere, status: :dispatched, children: []}
+      waiting = %StartChildrenRequest{node: node(), status: :dispatched, children: []}
+      ref = make_ref()
+
+      gone = %{make_operation([]) | sub_requests: [departed], awaiter: {self(), ref}}
+
+      held = %{
+        make_operation([])
+        | sub_requests: [waiting, departed],
+          awaiter: {self(), make_ref()}
+      }
+
+      state = hub_state(%{gone.transaction_id => gone, held.transaction_id => held})
+
+      new_state = RequestManager.handle_departed(state)
+
+      assert_receive {^ref, _result}
+      assert Map.keys(new_state.pending_operations) == [held.transaction_id]
     end
   end
 

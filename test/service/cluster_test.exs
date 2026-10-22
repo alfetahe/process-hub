@@ -112,7 +112,7 @@ defmodule Test.Service.ClusterTest do
     assert :down_node2 in nodes_before
 
     # Call handle_node_down
-    Cluster.handle_node_down(%{removed_nodes: [:down_node1, :down_node2], hub: hub})
+    Cluster.handle_node_down(%{removed_nodes: [:down_node1, :down_node2], hub: hub, kind: :down})
 
     # Verify nodes were removed from storage
     nodes_after = Cluster.nodes(hub.storage.misc, [:include_local])
@@ -184,14 +184,14 @@ defmodule Test.Service.ClusterTest do
 
     assert :single_down in Cluster.nodes(hub.storage.misc, [:include_local])
 
-    Cluster.handle_node_down(%{removed_nodes: [:single_down], hub: hub})
+    Cluster.handle_node_down(%{removed_nodes: [:single_down], hub: hub, kind: :down})
 
     refute :single_down in Cluster.nodes(hub.storage.misc, [:include_local])
   end
 
   test "handle_node_down with non-existent node does not crash", %{hub: hub} = _context do
     # Should not crash even though the node was never added
-    Cluster.handle_node_down(%{removed_nodes: [:never_existed], hub: hub})
+    Cluster.handle_node_down(%{removed_nodes: [:never_existed], hub: hub, kind: :down})
 
     # Local node should still be present
     assert node() in Cluster.nodes(hub.storage.misc, [:include_local])

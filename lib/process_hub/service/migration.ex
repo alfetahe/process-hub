@@ -170,10 +170,21 @@ defmodule ProcessHub.Service.Migration do
 
   @doc false
   # Runs on every cluster node: drops the draining node from the membership and
-  # the distribution, so no child is assigned to it any more.
+  # the distribution, so no child is assigned to it any more. Its later
+  # disconnect finds it gone, so the partition strategy hears of it only here,
+  # on the worker queue where every other quorum decision runs.
   def handle_drain_distribution_removal(hub, draining_node) do
+    member? = draining_node in Cluster.nodes(hub.storage.misc, [:include_local])
     Cluster.rem_hub_node(hub.storage.misc, draining_node)
     HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_leave(), %{node: draining_node})
+
+    if member? and draining_node !== node() do
+      GenServer.cast(
+        hub.procs.worker_queue,
+        {:handle_work, fn -> Cluster.lock_on_departure(hub, [draining_node], :leave) end}
+      )
+    end
+
     :ok
   end
 

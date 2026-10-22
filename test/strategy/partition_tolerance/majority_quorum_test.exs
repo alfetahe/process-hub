@@ -34,7 +34,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       strategy = PartitionToleranceStrategy.init(strategy, hub)
 
       # Single node should have quorum (1/1 = majority)
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake_node)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake_node, :down)
       assert PartitionToleranceStrategy.toggle_unlock?(strategy, hub, :fake_node)
     end
 
@@ -45,7 +45,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       strategy = PartitionToleranceStrategy.init(strategy, hub)
 
       # Should have quorum
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake_node)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake_node, :down)
       assert PartitionToleranceStrategy.toggle_unlock?(strategy, hub, :fake_node)
     end
   end
@@ -67,7 +67,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node()])
 
       # With 1 node remaining, no longer has majority of 2
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :other@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :other@host, :down)
     end
 
     test "remembers max size even after node leaves", %{hub: hub} do
@@ -89,7 +89,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node()])
 
       # Should require lock because we had 2, now have 1 (not majority)
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :other@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :other@host, :down)
     end
   end
 
@@ -103,15 +103,15 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
 
       # 3 nodes, quorum = 2 (majority)
       # With all 3: has quorum
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
       # Lose 1 node, now have 2: still has quorum
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :node2@host])
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :node3@host)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :node3@host, :down)
 
       # Lose another node, now have 1: no longer has quorum
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node()])
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :node2@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :node2@host, :down)
     end
 
     test "five nodes: quorum is 3", %{hub: hub} do
@@ -123,15 +123,15 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
 
       # 5 nodes, quorum = 3 (majority)
       # With all 5: has quorum
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
       # Lose 2 nodes, now have 3: still has quorum
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host, :n3@host])
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n4@host)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n4@host, :down)
 
       # Lose another node, now have 2: no longer has quorum
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host])
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host, :down)
     end
   end
 
@@ -149,7 +149,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       Storage.insert(hub.storage.misc, StorageKey.hn(), majority_side)
 
       # Majority side should keep quorum (3 >= 3)
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n4@host)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n4@host, :down)
       assert PartitionToleranceStrategy.toggle_unlock?(strategy, hub, node())
 
       # Simulate partition: minority side (2 nodes)
@@ -157,7 +157,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       Storage.insert(hub.storage.misc, StorageKey.hn(), minority_side)
 
       # Minority side should lose quorum (2 < 3)
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host, :down)
       refute PartitionToleranceStrategy.toggle_unlock?(strategy, hub, :n4@host)
     end
 
@@ -170,11 +170,11 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
 
       # Majority side (2 nodes)
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host])
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host, :down)
 
       # Minority side (1 node)
       Storage.insert(hub.storage.misc, StorageKey.hn(), [:n3@host])
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n2@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n2@host, :down)
     end
   end
 
@@ -187,7 +187,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
 
       # Initial quorum based on initial_cluster_size = 3, quorum = 2
       # With 1 node: no quorum
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
       # Add nodes to make 5 total
       Storage.insert(hub.storage.misc, StorageKey.hn(), [
@@ -201,7 +201,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       # Even with 5 nodes, still uses initial_cluster_size: 3 for calculation
       # Because track_max_size is false, max_seen stays at 3
       # Quorum = 2, we have 5, so we have quorum
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
     end
 
     test "with track_max_size: true, adapts to cluster growth", %{hub: hub} do
@@ -239,7 +239,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), :n2@host])
 
       # Should require lock because quorum = 3 (majority of 5), we only have 2
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host, :down)
     end
   end
 
@@ -254,7 +254,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       assert Storage.get(hub.storage.misc, StorageKey.mqms()) == 5
 
       # Quorum = 3 (majority of 5), we have 1: no quorum
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
     end
 
     test "initial_cluster_size provides baseline until exceeded", %{hub: hub} do
@@ -268,7 +268,7 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       assert Storage.get(hub.storage.misc, StorageKey.mqms()) == 3
 
       # Quorum = 2 (majority of 3), we have 2: has quorum
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
     end
   end
 
@@ -328,17 +328,17 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
       strategy = %MajorityQuorum{initial_cluster_size: 1, track_max_size: true}
 
       # With max_seen=5, quorum=3. We have 3 nodes, so has quorum
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
       # Drop to 2 nodes - should lose quorum (2 < 3)
       Storage.insert(misc_storage, StorageKey.hn(), [node(), :n2@host])
-      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host)
+      assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :n3@host, :down)
 
       # Now reset max_seen to 3 (quorum = 2)
       Storage.insert(misc_storage, StorageKey.mqms(), 3)
 
       # With max_seen=3, quorum=2. We have 2 nodes, so has quorum now
-      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+      refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
       :ets.delete(hub_id)
     end
@@ -360,15 +360,15 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
         strategy = PartitionToleranceStrategy.init(strategy, hub)
 
         # With all nodes: has quorum
-        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
         # With quorum nodes: has quorum
         Storage.insert(hub.storage.misc, StorageKey.hn(), Enum.take(nodes, expected_quorum))
-        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
         # With quorum - 1 nodes: no quorum
         Storage.insert(hub.storage.misc, StorageKey.hn(), Enum.take(nodes, expected_quorum - 1))
-        assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+        assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
       end
     end
 
@@ -387,16 +387,16 @@ defmodule Test.Strategy.PartitionTolerance.MajorityQuorumTest do
         strategy = PartitionToleranceStrategy.init(strategy, hub)
 
         # With all nodes: has quorum
-        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
         # With quorum nodes: has quorum
         Storage.insert(hub.storage.misc, StorageKey.hn(), Enum.take(nodes, expected_quorum))
-        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+        refute PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
 
         # With quorum - 1 nodes: no quorum
         if expected_quorum > 1 do
           Storage.insert(hub.storage.misc, StorageKey.hn(), Enum.take(nodes, expected_quorum - 1))
-          assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake)
+          assert PartitionToleranceStrategy.toggle_lock?(strategy, hub, :fake, :down)
         end
       end
     end

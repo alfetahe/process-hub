@@ -121,7 +121,7 @@ defmodule ProcessHub.Service.Cluster do
   Handles the node down event by dispatching hooks, removing nodes from cluster state,
   and triggering the node down update task.
   """
-  def handle_node_down(%{removed_nodes: removed_nodes, hub: hub}) do
+  def handle_node_down(%{removed_nodes: removed_nodes, hub: hub, kind: kind}) do
     # Dispatch pre hooks for all nodes
     Enum.each(removed_nodes, fn n ->
       HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_leave(), %{node: n})
@@ -137,9 +137,26 @@ defmodule ProcessHub.Service.Cluster do
 
     ClusterUpdateTask.NodeDown.handle(%ClusterUpdateTask.NodeDown{
       removed_nodes: removed_nodes,
+      kind: kind,
       hub_nodes: updated_hub_nodes,
       hub: hub
     })
+  end
+
+  @doc """
+  Asks the partition tolerance strategy about each departed node and locks the
+  hub when it says so. `kind` is `:leave` for an announced or drained departure
+  and `:down` for a node that disappeared. Call it after the nodes have left
+  the membership.
+  """
+  @spec lock_on_departure(Hub.t(), [node()], :down | :leave) :: :ok
+  def lock_on_departure(hub, nodes, kind) do
+    part_strat = Storage.get(hub.storage.misc, StorageKey.strpart())
+
+    if any_of_all(nodes, &PartitionToleranceStrategy.toggle_lock?(part_strat, hub, &1, kind)),
+      do: State.toggle_quorum_failure(hub)
+
+    :ok
   end
 
   @doc """
@@ -228,6 +245,10 @@ defmodule ProcessHub.Service.Cluster do
     end
   end
 
+  # Asks about every node, even after one answered yes: a strategy may keep
+  # per-node state.
+  defp any_of_all(nodes, ask), do: nodes |> Enum.map(ask) |> Enum.any?()
+
   defp purge_from(hub_id, registry, nodes_to_purge) do
     ProcessRegistry.withdraw_observations(hub_id, registry, fn _child_id, node ->
       MapSet.member?(nodes_to_purge, node)
@@ -252,14 +273,8 @@ defmodule ProcessHub.Service.Cluster do
     # Check if any node should trigger quorum recovery (AFTER adding)
     part_strat = Storage.get(hub.storage.misc, StorageKey.strpart())
 
-    unlock_status =
-      Enum.any?(joined_nodes, fn n ->
-        PartitionToleranceStrategy.toggle_unlock?(part_strat, hub, n)
-      end)
-
-    if unlock_status do
-      State.toggle_quorum_success(hub)
-    end
+    if any_of_all(joined_nodes, &PartitionToleranceStrategy.toggle_unlock?(part_strat, hub, &1)),
+      do: State.toggle_quorum_success(hub)
 
     ClusterUpdateTask.NodeUp.handle(%ClusterUpdateTask.NodeUp{
       joined_nodes: joined_nodes,
