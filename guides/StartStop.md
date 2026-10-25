@@ -158,6 +158,8 @@ A node that receives a start or stop for a child it does not hold passes the req
 %ProcessHub.StartResult{status: :error, started: [], errors: [{"my_process_1", :forward_loop}]}
 ```
 
+A child the hub is migrating between nodes is never refused this way, since it no longer runs where it came from: a hub member that finds it looping starts it, and a node that is draining passes it on.
+
 ## Formatting and extracting information from the results
 
 When using awaitable operations, ProcessHub returns `ProcessHub.StartResult` and `ProcessHub.StopResult` structs that contain detailed information about the operation. These structs provide both formatting functions and convenient accessor functions to extract specific information.

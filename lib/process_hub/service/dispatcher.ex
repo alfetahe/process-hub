@@ -35,14 +35,22 @@ defmodule ProcessHub.Service.Dispatcher do
     node_start_requests
     |> Enum.group_by(fn %StartChildrenRequest{node: node} -> node end)
     |> Enum.each(fn {target_node, requests} ->
-      split_requests = Enum.flat_map(requests, &RequestManager.split/1)
-
-      Blockade.dispatch_sync(hub.procs.event_queue, @event_requests_handle, split_requests, %{
-        members: [target_node]
-      })
+      send_requests(hub, Enum.flat_map(requests, &RequestManager.split/1), [target_node])
     end)
 
     track_starts(hub, node_start_requests)
+  end
+
+  @doc """
+  Sends requests to the worker queues of `members` over the channel every
+  request travels, so on each node they run after every request sent there
+  before them from this node.
+  """
+  @spec send_requests(ProcessHub.Hub.t(), [struct()], :global | :local | :external | [node()]) ::
+          :ok
+  def send_requests(hub, requests, members) do
+    dispatch_event(hub.procs.event_queue, @event_requests_handle, requests, %{members: members})
+    :ok
   end
 
   # The registry only learns where a child runs once that node has started it.
@@ -89,11 +97,7 @@ defmodule ProcessHub.Service.Dispatcher do
     node_stop_requests
     |> Enum.group_by(fn %StopChildrenRequest{node: node} -> node end)
     |> Enum.each(fn {target_node, requests} ->
-      split_requests = Enum.flat_map(requests, &RequestManager.split/1)
-
-      Blockade.dispatch_sync(hub.procs.event_queue, @event_requests_handle, split_requests, %{
-        members: [target_node]
-      })
+      send_requests(hub, Enum.flat_map(requests, &RequestManager.split/1), [target_node])
     end)
   end
 

@@ -11,7 +11,7 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
 
   use ExUnit.Case, async: false
 
-  alias ProcessHub.Strategy.PartitionTolerance.{DynamicQuorum, StaticQuorum}
+  alias ProcessHub.Strategy.PartitionTolerance.{Divergence, DynamicQuorum, StaticQuorum}
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Utility.Bag
@@ -88,10 +88,7 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
                20_000
              ),
              "after the heal a child runs other than once: " <>
-               inspect(
-                 running_counts(hub_id, peers, children)
-                 |> Enum.reject(&(elem(&1, 1) == 1))
-               )
+               inspect(not_once(hub_id, peers, children))
 
       stop_hub(peers, hub_id)
     end
@@ -119,6 +116,21 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
     stop_hub(remaining, hub_id)
   end
 
+  test "two nodes drained at the same moment leave every child running once on the rest",
+       %{peers: peers} do
+    hub_id = start_hub(peers, %Divergence{})
+    children = start_children(hub_id, hd(peers), 30)
+    {remaining, leaving} = Enum.split(peers, 3)
+
+    drain_away(leaving, hub_id, peers)
+
+    assert eventually(fn -> running_counts(hub_id, remaining, children) == ones(children) end),
+           "after two concurrent drains a child runs other than once: " <>
+             inspect(not_once(hub_id, remaining, children))
+
+    stop_hub(remaining, hub_id)
+  end
+
   test "a drained node is reported once, as a leave, and its disconnect not at all",
        %{peers: peers} do
     hub_id = start_hub(peers, %Test.Support.RecordingPartition{recorder: self()})
@@ -141,7 +153,7 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
   test "a hub that leaves partition mode restarts only the held children nobody runs",
        %{peers: peers} do
     [a, b] = Enum.take(peers, 2)
-    hub_id = start_hub([a, b], %ProcessHub.Strategy.PartitionTolerance.Divergence{})
+    hub_id = start_hub([a, b], %Divergence{})
     children = start_children(hub_id, a, 10)
     [taken | _] = local_running(a, :erpc.call(a, ProcessHub.Hub, :get, [hub_id]))
     hub_b = :erpc.call(b, ProcessHub.Hub, :get, [hub_id])
@@ -166,7 +178,7 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
 
   test "two hubs that both lost their quorum both restart what they held", %{peers: peers} do
     [a, b] = Enum.take(peers, 2)
-    hub_id = start_hub([a, b], %ProcessHub.Strategy.PartitionTolerance.Divergence{})
+    hub_id = start_hub([a, b], %Divergence{})
     children = start_children(hub_id, a, 10)
     hubs = for n <- [a, b], do: {n, :erpc.call(n, ProcessHub.Hub, :get, [hub_id])}
 
@@ -196,7 +208,7 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
 
   test "a stop waiting on a node that is cut off answers at once", %{peers: peers} do
     [a, b] = Enum.take(peers, 2)
-    hub_id = start_hub([a, b], %ProcessHub.Strategy.PartitionTolerance.Divergence{})
+    hub_id = start_hub([a, b], %Divergence{})
 
     specs =
       for i <- 1..10 do
@@ -335,6 +347,10 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
   end
 
   defp ones(children), do: Map.new(children, &{&1, 1})
+
+  defp not_once(hub_id, nodes, children) do
+    Enum.reject(running_counts(hub_id, nodes, children), &(elem(&1, 1) == 1))
+  end
 
   defp membership(node, hub_id) do
     Enum.sort(:erpc.call(node, ProcessHub, :nodes, [hub_id, [:include_local]]))

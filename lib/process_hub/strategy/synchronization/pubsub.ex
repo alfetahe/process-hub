@@ -6,6 +6,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   """
 
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.Synchronizer
   alias ProcessHub.Service.Storage
   alias ProcessHub.Constant.Event
@@ -40,14 +41,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
 
     @impl SynchronizationStrategy
     def propagate(_strategy, %Hub{} = hub, requests, opts) when is_list(requests) do
-      Blockade.dispatch_sync(
-        hub.procs.event_queue,
-        @event_requests_handle,
-        requests,
-        %{members: Keyword.get(opts, :members, :global)}
-      )
-
-      :ok
+      Dispatcher.send_requests(hub, requests, Keyword.get(opts, :members, :global))
     end
 
     @impl SynchronizationStrategy

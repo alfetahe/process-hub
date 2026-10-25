@@ -7,7 +7,9 @@ defmodule ProcessHub.Service.Migration do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Hub
+  alias ProcessHub.Request.PostAction
   alias ProcessHub.Service.Cluster
+  alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Service.ProcessRegistry
@@ -152,6 +154,12 @@ defmodule ProcessHub.Service.Migration do
   cluster-wide, migrates every local child away through the consent gate, and
   force-migrates whatever is still deferred at the `:timeout` deadline
   (default #{@drain_timeout} ms). Leaves children untouched on error.
+
+  Returns once every other node has confirmed it dropped this node. A node
+  confirms behind the children it moved here before, during its own drain or
+  redistribution, so those have been passed on by then. A node silent at the
+  deadline is logged as a warning, and one whose hub or node goes away is not
+  waited for.
   """
   @spec drain(ProcessHub.hub_id() | Hub.t(), keyword()) ::
           {:ok, %{migrated: non_neg_integer(), forced: non_neg_integer()}}
@@ -170,19 +178,31 @@ defmodule ProcessHub.Service.Migration do
   def draining?(hub), do: Storage.get(hub.storage.misc, StorageKey.drn()) !== nil
 
   @doc false
-  # Runs on every cluster node: drops the draining node from the membership and
-  # the distribution, so no child is assigned to it any more. Its later
-  # disconnect finds it gone, so the partition strategy hears of it only here,
-  # on the worker queue where every other quorum decision runs.
+  # Runs on every cluster node's worker queue, where every membership change
+  # and every start runs: drops the draining node from the membership and the
+  # distribution, so no child is assigned to it any more. Its later disconnect
+  # finds it gone, so the partition strategy hears of it only here. A peer then
+  # tells the draining node, behind every start it sent there before.
   def handle_drain_distribution_removal(hub, draining_node) do
     member? = draining_node in Cluster.nodes(hub.storage.misc, [:include_local])
     Cluster.rem_hub_node(hub.storage.misc, draining_node)
     HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_leave(), %{node: draining_node})
 
-    if member? and draining_node !== node() do
-      WorkerQueue.run_async(hub.procs.worker_queue, fn ->
-        Cluster.lock_on_departure(hub, [draining_node], :leave)
-      end)
+    if draining_node !== node() do
+      # Queued on its own: stopping on a lost quorum may outlast a request's
+      # time limit.
+      if member? do
+        WorkerQueue.run_async(hub.procs.worker_queue, fn ->
+          Cluster.lock_on_departure(hub, [draining_node], :leave)
+        end)
+      end
+
+      applied =
+        PostAction.new(__MODULE__, :notify_drain_waiter, [
+          {:ph_drain_removal_applied, hub.hub_id, node()}
+        ])
+
+      Dispatcher.send_requests(hub, [applied], [draining_node])
     end
 
     :ok
@@ -202,12 +222,19 @@ defmodule ProcessHub.Service.Migration do
     selected = if mode === :force, do: warn_forced(movable), else: select(movable, settings(hub))
     migrated_ids = Enum.map(selected, & &1.child_id)
 
-    SwapMigration.migrate(
-      hub,
-      Storage.get(hub.storage.misc, StorageKey.strmigr()),
-      Enum.map(selected, fn %{cspec: cs, meta: m, target: t} -> {cs, m, [t]} end),
-      selected |> Enum.filter(& &1.stop_local?) |> Enum.map(& &1.child_id)
-    )
+    # Targets are taken again on the worker queue, behind every membership
+    # change that arrived during the consent wait, so no move goes to a node
+    # that has drained away meanwhile.
+    WorkerQueue.run_on(hub.procs.worker_queue, fn ->
+      {moves, _settled} = split_movable(hub, selected)
+
+      SwapMigration.migrate(
+        hub,
+        Storage.get(hub.storage.misc, StorageKey.strmigr()),
+        Enum.map(moves, fn %{cspec: cs, meta: m, target: t} -> {cs, m, [t]} end),
+        moves |> Enum.filter(& &1.stop_local?) |> Enum.map(& &1.child_id)
+      )
+    end)
 
     done = MapSet.new(pruned ++ migrated_ids)
 
@@ -220,7 +247,8 @@ defmodule ProcessHub.Service.Migration do
 
     # The forced pass already runs inside the drain caller; only a retry tick
     # has to wake it.
-    if remaining === [] and mode === :consent, do: notify_drain_waiter(hub)
+    if remaining === [] and mode === :consent,
+      do: notify_drain_waiter(hub, :ph_drain_deferred_empty)
 
     %{remaining: length(remaining), migrated: length(selected)}
   end
@@ -319,25 +347,19 @@ defmodule ProcessHub.Service.Migration do
     deadline = System.monotonic_time(:millisecond) + timeout
     Storage.insert(hub.storage.misc, StorageKey.drn(), %{waiter: self()})
 
-    Enum.each(Cluster.nodes(hub.storage.misc), fn peer ->
-      GenServer.cast(
-        {hub.hub_id, peer},
-        {:exec_cast, {__MODULE__, :handle_drain_distribution_removal, [node()]}}
-      )
-    end)
+    peers = Cluster.nodes(hub.storage.misc)
+    removal = PostAction.new(__MODULE__, :handle_drain_distribution_removal, [node()])
+    Dispatcher.send_requests(hub, [removal], peers)
 
-    handle_drain_distribution_removal(hub, node())
-    local_count = map_size(ProcessRegistry.local_children(hub.hub_id))
-
-    # Every local child now computes as "must move"; the normal redistribution
-    # path migrates them through the consent gate.
-    NodeUp.handle(%NodeUp{joined_nodes: [], hub: hub})
+    local_count = drain_pass(hub, deadline)
 
     forced =
       case await_drained(hub, deadline) do
         :drained -> 0
         :deadline -> run_pass(hub, :force).migrated
       end
+
+    await_peers(hub, peers, deadline)
 
     # The marker stays: a drained node must not re-announce its presence and be
     # pulled back into the distribution. Restart the hub to rejoin.
@@ -348,14 +370,38 @@ defmodule ProcessHub.Service.Migration do
     {:ok, summary}
   end
 
+  # Every local child now computes as "must move"; the normal redistribution
+  # path migrates them through the consent gate. On the worker queue, where
+  # starts run: a start queued earlier lands here and is moved by this pass,
+  # one queued later finds the node gone and is forwarded. Returns the number
+  # of local children it moves.
+  defp drain_pass(hub, deadline) do
+    WorkerQueue.run_on(
+      hub.procs.worker_queue,
+      fn ->
+        handle_drain_distribution_removal(hub, node())
+        local_count = map_size(ProcessRegistry.local_children(hub.hub_id))
+        NodeUp.handle(%NodeUp{joined_nodes: [], hub: hub})
+        local_count
+      end,
+      remaining(deadline)
+    )
+  catch
+    :exit, {:timeout, _} ->
+      LoggerService.warning("Drain pass still queued at the deadline", %{}, prefix: "Migration")
+      map_size(ProcessRegistry.local_children(hub.hub_id))
+  end
+
+  defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
+
   defp await_drained(hub, deadline) do
-    wait = deadline - System.monotonic_time(:millisecond)
+    wait = remaining(deadline)
 
     cond do
       deferred_list(hub) === [] ->
         :drained
 
-      wait <= 0 ->
+      wait === 0 ->
         :deadline
 
       true ->
@@ -367,9 +413,45 @@ defmodule ProcessHub.Service.Migration do
     end
   end
 
-  defp notify_drain_waiter(hub) do
+  # A peer that moved a child here before it heard of this drain answers
+  # behind that move, which has then run and been passed on, so the hub can
+  # stop. Bounded by the drain deadline. A peer whose hub or node goes away is
+  # not waited for, and a move it sent may then still be on its way.
+  defp await_peers(hub, peers, deadline) do
+    monitors = Map.new(peers, &{&1, Process.monitor({hub.hub_id, &1})})
+    silent = collect_peers(hub.hub_id, monitors, deadline)
+    Enum.each(monitors, fn {_peer, ref} -> Process.demonitor(ref, [:flush]) end)
+
+    if silent !== [] do
+      LoggerService.warning(
+        "Drain finished without hearing from @nodes",
+        %{"nodes" => silent},
+        prefix: "Migration"
+      )
+    end
+  end
+
+  defp collect_peers(_hub_id, monitors, _deadline) when map_size(monitors) == 0, do: []
+
+  defp collect_peers(hub_id, monitors, deadline) do
+    wait = remaining(deadline)
+
+    receive do
+      {:ph_drain_removal_applied, ^hub_id, peer} ->
+        collect_peers(hub_id, Map.delete(monitors, peer), deadline)
+
+      {:DOWN, ref, :process, {^hub_id, peer}, _reason}
+      when :erlang.map_get(peer, monitors) === ref ->
+        collect_peers(hub_id, Map.delete(monitors, peer), deadline)
+    after
+      wait -> Map.keys(monitors)
+    end
+  end
+
+  @doc false
+  def notify_drain_waiter(hub, message) do
     case Storage.get(hub.storage.misc, StorageKey.drn()) do
-      %{waiter: pid} when is_pid(pid) -> send(pid, :ph_drain_deferred_empty)
+      %{waiter: pid} when is_pid(pid) -> send(pid, message)
       _ -> :ok
     end
   end

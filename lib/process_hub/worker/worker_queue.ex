@@ -14,13 +14,14 @@ defmodule ProcessHub.Worker.WorkerQueue do
 
   @doc """
   Runs `fun` on the worker queue once the work already queued is done. Called
-  from the queue itself, it runs right away.
+  from the queue itself, it runs right away. Waiting longer than `timeout`
+  exits the caller; `fun` stays queued and still runs.
   """
-  @spec run_on(GenServer.server(), (-> result)) :: result when result: term()
-  def run_on(worker_queue, fun) do
+  @spec run_on(GenServer.server(), (-> result), timeout()) :: result when result: term()
+  def run_on(worker_queue, fun, timeout \\ :infinity) do
     if GenServer.whereis(worker_queue) === self(),
       do: fun.(),
-      else: GenServer.call(worker_queue, {:handle_work, fun}, :infinity)
+      else: GenServer.call(worker_queue, {:handle_work, fun}, timeout)
   end
 
   @doc "Queues `fun` behind the work already queued, without waiting for it."

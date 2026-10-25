@@ -8,6 +8,9 @@ defmodule ProcessHub.Request.PostAction do
 
   The callback function will be invoked as: `apply(m, f, [hub, results | a])`
   where `hub` is the Hub struct and `results` is the list of PostStartData structs.
+
+  Sent to a node as a request of its own, a post-action runs on that node's
+  worker queue as `apply(m, f, [hub | a])`, after the requests sent there before it.
   """
 
   @type t :: %__MODULE__{
@@ -32,5 +35,9 @@ defmodule ProcessHub.Request.PostAction do
   @spec new(module(), atom(), list()) :: t()
   def new(m, f, a \\ []) do
     %__MODULE__{m: m, f: f, a: a}
+  end
+
+  defimpl ProcessHub.Request.CrossNodeRequest do
+    def handle(%{m: m, f: f, a: a}, hub), do: apply(m, f, [hub | a])
   end
 end

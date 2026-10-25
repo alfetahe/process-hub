@@ -23,6 +23,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
   alias ProcessHub.DistributedSupervisor
   alias ProcessHub.Strategy.Redundancy.Base, as: RedundancyStrategy
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Dispatcher
   alias ProcessHub.Service.HookManager
@@ -454,7 +455,7 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
             {[cdata | valid], forw, loops}
 
           RequestManager.forward_loop?(nodes, path) ->
-            {valid, forw, [{cid, {:error, :forward_loop}} | loops]}
+            settle_loop(hub, cdata, nodes, {valid, forw, loops})
 
           true ->
             {valid, populate_forward(forw, nodes, n_orig ++ path, cdata), loops}
@@ -469,6 +470,24 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
     end
 
     {valid, RequestManager.forwarded_answers(forw) ++ loops}
+  end
+
+  # Nodes that see different memberships can pass a child round in a loop. A
+  # migrating child no longer runs where it came from, so it is not refused: a
+  # member starts it, and a node that has left passes it on to the node it
+  # computes, which has heard of that departure first and so never sends it
+  # back. A plain start is refused, and its caller hears so.
+  defp settle_loop(hub, %{child_id: cid} = cdata, nodes, {valid, forw, loops}) do
+    cond do
+      not Map.get(cdata, :migration, false) ->
+        {valid, forw, [{cid, {:error, :forward_loop}} | loops]}
+
+      node() in Cluster.nodes(hub.storage.misc, [:include_local]) ->
+        {[cdata | valid], forw, loops}
+
+      true ->
+        {valid, RequestManager.populate_forward(forw, nodes, cdata), loops}
+    end
   end
 
   defp insert_pending_entries(hub, forw_data) do
