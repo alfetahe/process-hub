@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - New `forward_messages` option on `HotSwap` and `ColdSwap` (default `false`, needs `handover: true`). Messages that reach the old process after its state was read are no longer lost: they are passed on to the new process, which handles them after the state. Your process code stays the same. The State Handover guide lists what to know. Nothing changes unless you set it.
+- A child moved by `HotSwap` or `ColdSwap` now names the node it left: the child data your `:child_data_alter_hook` receives holds `migrated_from: node()`. Use it to fetch anything the child kept on that node, which matters most with `ColdSwap`, where the old process is gone before the new one starts. Children started any other way have no such key.
 - New `:coordinator_restarted_hook`, fired when a hub's coordinator crashed and was restarted (not on the hub's first start). Children keep running, but anything you kept for the coordinator's lifetime may be gone; this is where to rebuild it.
 - New `:nodedown_grace_period` hub setting (milliseconds, default `0`). When a node's connection drops, its children stay where they are for this long, and nothing moves if the node comes back in time. A node that leaves on purpose still hands its children over at once.
 - `DynamicQuorum` takes an optional `:startup_nodes`, so a node that starts alone waits in partition mode instead of acting as a whole cluster.

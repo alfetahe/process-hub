@@ -421,6 +421,8 @@ defmodule ProcessHub.Service.RequestManager do
 
   @doc """
   Factory: Creates a migration request for topology expansion.
+
+  Each child carries `migrated_from`, the node it is moving away from.
   """
   @spec migration_request(Hub.t(), node(), [{ProcessHub.child_spec(), map()}], keyword()) ::
           StartChildrenRequest.t()
@@ -437,7 +439,8 @@ defmodule ProcessHub.Service.RequestManager do
           child_spec: child_spec,
           metadata: metadata,
           nodes: [target_node],
-          migration: true
+          migration: true,
+          migrated_from: node()
         }
       end)
 

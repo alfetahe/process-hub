@@ -377,7 +377,7 @@ Alter hooks **must return** the modified data in the same format as the original
 {: .width-100}
 | Event Key                           | Trigger                                     | Data                                               |
 | ----------------------------------- | ------------------------------------------- | -------------------------------------------------- |
-| `:child_data_alter_hook`            | Before supervisor starts the child process  | `map()` including child spec, metadata and nodes   |
+| `:child_data_alter_hook`            | Before supervisor starts the child process  | `map()` including child spec, metadata and nodes; a migrated child also has `migrated_from: node()` |
 
 
 See `ProcessHub.Constant.Hook` module for more information on available hooks.

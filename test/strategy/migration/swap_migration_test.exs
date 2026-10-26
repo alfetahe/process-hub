@@ -481,6 +481,66 @@ defmodule Test.Strategy.Migration.SwapMigrationTest do
     end
   end
 
+  describe "a moved child" do
+    @describetag :multinode
+
+    for strategy <- [HotSwap, ColdSwap] do
+      test "names the node it left to the #{inspect(strategy)} target's alter hook" do
+        name = unquote(strategy) |> Module.split() |> List.last() |> Macro.underscore()
+        [{peer, peer_pid}] = TestNode.start_nodes(1, prefix: "migr_from_#{name}")
+        :erlang.unlink(peer_pid)
+        hub_id = :"migr_from_#{name}"
+
+        conf = %ProcessHub{
+          hub_id: hub_id,
+          migration_strategy: struct(unquote(strategy), handover: true),
+          hubs_discover_interval: 300,
+          cluster_event_debounce: 0
+        }
+
+        report = %{
+          Hook.child_data_alter() => [
+            %HookManager{id: :report, m: Common, f: :report_unchanged, a: [self(), :_]}
+          ]
+        }
+
+        Bootstrap.start_hub_on_node(conf, report)
+        :erpc.call(peer, Bootstrap, :start_hub_on_node, [conf, report])
+
+        on_exit(fn ->
+          ProcessHub.Initializer.stop(hub_id)
+          :peer.stop(peer_pid)
+        end)
+
+        assert Common.eventually(
+                 fn ->
+                   peer in ProcessHub.nodes(hub_id) and
+                     node() in :erpc.call(peer, ProcessHub, :nodes, [hub_id])
+                 end,
+                 15_000
+               )
+
+        # A child that never moved is placed by the hub itself.
+        fresh = %{id: :fresh, start: {Test.Helper.TestServer, :start_link, [%{name: :fresh}]}}
+        {:ok, future} = ProcessHub.start_children(hub_id, [fresh], awaitable: true)
+        ProcessHub.Future.await(future)
+        assert_receive {:altered, %{child_id: :fresh} = fresh_data}, 5_000
+        refute Map.has_key?(fresh_data, :migrated_from)
+
+        cspec = %{id: :moving, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+        :ok = Common.bind_child_locally(node(), hub_id, cspec)
+
+        assert :ok = Migration.migrate_child(hub_id, :moving, peer)
+        local = node()
+        assert_receive {:altered, %{child_id: :moving, migrated_from: ^local}}, 5_000
+
+        assert Common.eventually(fn ->
+                 match?({_, [{^peer, _}]}, ProcessHub.child_lookup(hub_id, :moving))
+               end)
+      end
+    end
+  end
+
   describe "a stop while the child moves" do
     @describetag :multinode
 

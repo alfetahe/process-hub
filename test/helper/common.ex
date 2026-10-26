@@ -70,6 +70,12 @@ defmodule Test.Helper.Common do
   def bind_child_locally(node, hub_id, child_spec),
     do: :erpc.call(node, __MODULE__, :bind_child_locally, [node, hub_id, child_spec])
 
+  @doc "An alter hook handler that sends `test_pid` the data it alters and keeps it unchanged."
+  def report_unchanged(test_pid, hook_data) do
+    send(test_pid, {:altered, hook_data})
+    hook_data
+  end
+
   @doc "A hook handler that parks its caller until `test_pid` sends it `:release`."
   def hold_until_released(test_pid, hook_data) do
     send(test_pid, {:held, self(), hook_data})

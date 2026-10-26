@@ -910,6 +910,7 @@ defmodule Test.Service.RequestManagerTest do
       assert length(req.children) == 1
       assert hd(req.children).child_id == :migr_child
       assert hd(req.children).migration == true
+      assert hd(req.children).migrated_from == node()
       assert req.request_signature != nil
     end
   end
@@ -928,6 +929,7 @@ defmodule Test.Service.RequestManagerTest do
       assert length(req.children) == 1
       assert hd(req.children).child_id == :contr_child
       assert hd(req.children).migration == true
+      refute Map.has_key?(hd(req.children), :migrated_from)
       assert req.request_signature != nil
     end
   end

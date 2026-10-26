@@ -156,7 +156,9 @@ defmodule ProcessHub.Constant.Hook do
 
   This is an alter hook used to modify child process data before it is started.
 
-  Data: `map()` (the child data map, returned modified)
+  Data: `map()` (the child data map, returned modified). A child moved here by
+  `HotSwap` or `ColdSwap` has `migration: true` and `migrated_from`, the node
+  it moved away from; a child started any other way has no `migrated_from`.
   """
   @spec child_data_alter() :: atom()
   def child_data_alter(), do: :child_data_alter_hook
