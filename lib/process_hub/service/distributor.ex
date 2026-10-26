@@ -63,7 +63,10 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
-  @doc "Composes and dispatches a start children operation."
+  @doc """
+  Composes and dispatches a start children operation. `async: true` dispatches
+  without waiting on the event queue (see `Dispatcher.send_requests/4`).
+  """
   @spec compose_start_operation(Hub.t(), [ProcessHub.child_spec()], keyword()) ::
           {:ok, RequestManager.t()}
           | {:error,
@@ -73,31 +76,38 @@ defmodule ProcessHub.Service.Distributor do
   def compose_start_operation(_hub, [], _opts), do: {:error, :no_children}
 
   def compose_start_operation(hub, child_specs, opts) do
+    {dispatch_opts, opts} = Keyword.split(opts, [:async])
+
     with {:ok, strategies} <- init_strategies(hub),
          :ok <- init_distribution(hub, child_specs, opts, strategies),
          :ok <- init_registry_check(hub, child_specs, opts),
          {:ok, mappings} <- init_attach_nodes(hub, child_specs, strategies),
          {:ok, nodes_data} <- init_compose_data(hub, mappings, opts) do
-      build_and_dispatch_start(hub, nodes_data, opts)
+      build_and_dispatch_start(hub, nodes_data, opts, dispatch_opts)
     end
   end
 
   # Builds and dispatches the start operation
-  defp build_and_dispatch_start(hub, nodes_data, opts) do
+  defp build_and_dispatch_start(hub, nodes_data, opts, dispatch_opts) do
     dist_strat = Storage.get(hub.storage.misc, StorageKey.strdist())
     signature = DistributionStrategy.distribution_signature(dist_strat, hub)
     opts = Keyword.put(opts, :request_signature, signature)
 
     operation = RequestManager.new(hub, StartChildrenRequest, nodes_data, opts)
-    dispatch_operation(hub, operation)
+    dispatch_operation(hub, operation, dispatch_opts)
   end
 
-  @doc "Composes and dispatches a stop children operation."
+  @doc """
+  Composes and dispatches a stop children operation. Takes `async:` like
+  `compose_start_operation/3`.
+  """
   @spec compose_stop_operation(Hub.t(), [ProcessHub.child_id()], keyword()) ::
           {:ok, RequestManager.t()} | {:error, :no_children}
   def compose_stop_operation(_hub, [], _opts), do: {:error, :no_children}
 
   def compose_stop_operation(hub, child_ids, opts) do
+    {dispatch_opts, opts} = Keyword.split(opts, [:async])
+
     # Group children by the nodes where they exist
     # Also track children that were not found
     {nodes_data, not_found} =
@@ -134,7 +144,7 @@ defmodule ProcessHub.Service.Distributor do
         # Pass not_found to include them as errors in the result
         opts_with_not_found = Keyword.put(opts, :not_found_children, not_found)
         operation = RequestManager.new(hub, StopChildrenRequest, nodes_data, opts_with_not_found)
-        dispatch_operation(hub, operation)
+        dispatch_operation(hub, operation, dispatch_opts)
     end
   end
 
@@ -203,16 +213,16 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   # Dispatches an operation's sub-requests to target nodes
-  defp dispatch_operation(hub, %RequestManager{} = operation) do
+  defp dispatch_operation(hub, %RequestManager{} = operation, dispatch_opts) do
     case RequestManager.compose_sub_requests(operation) do
       {:ok, updated_operation} ->
         # Dispatch sub-requests based on handler type
         case updated_operation.handler do
           StartChildrenRequest ->
-            Dispatcher.children_start(hub, updated_operation.sub_requests)
+            Dispatcher.children_start(hub, updated_operation.sub_requests, dispatch_opts)
 
           StopChildrenRequest ->
-            Dispatcher.children_stop(hub, updated_operation.sub_requests)
+            Dispatcher.children_stop(hub, updated_operation.sub_requests, dispatch_opts)
         end
 
         {:ok, updated_operation}
@@ -228,6 +238,7 @@ defmodule ProcessHub.Service.Distributor do
 
   ## Options
     - `:on_empty` - see `unregister_bindings/3`.
+    - `:async` - see `unregister_bindings/3`.
   """
   @spec children_terminate(Hub.t(), [ProcessHub.child_id()], keyword()) ::
           [{ProcessHub.child_id(), term(), node()}]
@@ -256,6 +267,8 @@ defmodule ProcessHub.Service.Distributor do
     - `:on_empty` - applied locally and on every peer; see
       `ProcessHub.Service.ProcessRegistry.bulk_delete/3` for the values. Defaults
       to `:churn`, which is what placement churn (migration, redistribution) wants.
+    - `:async` - tell the peers without waiting on the event queue; see
+      `ProcessHub.Service.Dispatcher.send_requests/4`. Defaults to `false`.
   """
   @spec unregister_bindings(Hub.t(), [{ProcessHub.child_id(), [node()]}], keyword()) :: :ok
   def unregister_bindings(hub, cid_nodes, opts \\ [])
@@ -271,7 +284,8 @@ defmodule ProcessHub.Service.Distributor do
     )
 
     Dispatcher.propagate_event(hub, PidsUnregisterRequest.new(cid_nodes, on_empty: on_empty),
-      members: :external
+      members: :external,
+      async: Keyword.get(opts, :async, false)
     )
 
     :ok

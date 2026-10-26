@@ -173,7 +173,7 @@ defmodule ProcessHub.Coordinator do
     )
 
     # Notify all the nodes in the cluster that this node is leaving the hub.
-    Dispatcher.dispatch_event(hub.procs.event_queue, @event_cluster_leave, node(), %{
+    Dispatcher.dispatch_event_async(hub.procs.event_queue, @event_cluster_leave, node(), %{
       members: :external
     })
 
@@ -225,7 +225,7 @@ defmodule ProcessHub.Coordinator do
     # in between converges through the reconcile instead of losing the intent.
     start = fn state ->
       init_children(state, opts, :start_initiated, fn ->
-        Distributor.compose_start_operation(state.hub, child_specs, opts)
+        Distributor.compose_start_operation(state.hub, child_specs, [async: true] ++ opts)
       end)
     end
 
@@ -245,7 +245,7 @@ defmodule ProcessHub.Coordinator do
     # order would let the reconcile resurrect a half-completed stop.
     stop = fn state ->
       init_children(state, opts, :stop_initiated, fn ->
-        Distributor.compose_stop_operation(state.hub, child_ids, opts)
+        Distributor.compose_stop_operation(state.hub, child_ids, [async: true] ++ opts)
       end)
     end
 
@@ -618,7 +618,7 @@ defmodule ProcessHub.Coordinator do
     # A draining node must not announce presence — a heartbeat would re-add it
     # to its peers' distribution.
     unless Migration.draining?(hub) do
-      Dispatcher.dispatch_event(hub.procs.event_queue, @event_cluster_heartbeat, node(), %{
+      Dispatcher.dispatch_event_async(hub.procs.event_queue, @event_cluster_heartbeat, node(), %{
         members: :external
       })
     end
@@ -866,7 +866,7 @@ defmodule ProcessHub.Coordinator do
   defp dispatch_departure(state, _kind, []), do: state
 
   defp dispatch_departure(state, kind, nodes) do
-    Dispatcher.dispatch_event(
+    Dispatcher.dispatch_event_async(
       state.hub.procs.event_queue,
       @event_cluster_leave_batch,
       {kind, nodes},

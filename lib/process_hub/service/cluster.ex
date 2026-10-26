@@ -212,7 +212,7 @@ defmodule ProcessHub.Service.Cluster do
   """
   @spec announce_boot(Hub.t(), integer(), :external | [node()]) :: :ok
   def announce_boot(%Hub{} = hub, token, members \\ :external) do
-    Dispatcher.dispatch_event(
+    Dispatcher.dispatch_event_async(
       hub.procs.event_queue,
       @event_node_restarted,
       {node(), token},

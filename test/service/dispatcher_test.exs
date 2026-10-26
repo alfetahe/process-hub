@@ -23,11 +23,41 @@ defmodule Test.Service.DispatcherTest do
     :blockade.add_handler(hub.procs.event_queue, :dispatch_test)
     :blockade.add_handler(hub.procs.event_queue, :dispatch_test2)
 
-    Dispatcher.dispatch_event(hub.procs.event_queue, :dispatch_test, "test_data")
+    assert {:ok, _} =
+             Dispatcher.dispatch_event(hub.procs.event_queue, :dispatch_test, "test_data")
+
     Dispatcher.dispatch_event(hub.procs.event_queue, :dispatch_test2, "test_data2")
 
     assert_receive {:dispatch_test, "test_data"}, @default_receive_timeout
     assert_receive {:dispatch_test2, "test_data2"}, @default_receive_timeout
+  end
+
+  test "dispatch_event_async keeps one sender's order with dispatch_event", %{hub: hub} do
+    :blockade.add_handler(hub.procs.event_queue, :dispatch_async_test)
+
+    assert :ok =
+             Dispatcher.dispatch_event_async(hub.procs.event_queue, :dispatch_async_test, 1)
+
+    Dispatcher.dispatch_event(hub.procs.event_queue, :dispatch_async_test, 2)
+    Dispatcher.dispatch_event_async(hub.procs.event_queue, :dispatch_async_test, 3)
+
+    received =
+      for _ <- 1..3 do
+        receive do
+          {:dispatch_async_test, n} -> n
+        after
+          @default_receive_timeout -> nil
+        end
+      end
+
+    assert received == [1, 2, 3]
+  end
+
+  test "send_requests/4 with async: true hands the requests over without waiting", %{hub: hub} do
+    :blockade.add_handler(hub.procs.event_queue, @event_requests_handle)
+
+    assert :ok = Dispatcher.send_requests(hub, [:async_request], :local, async: true)
+    assert_receive {@event_requests_handle, [:async_request]}, @default_receive_timeout
   end
 
   test "propagate_event/3 propagates request to event queue", %{hub: hub} do

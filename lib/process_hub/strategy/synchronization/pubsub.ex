@@ -40,7 +40,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
 
     @impl SynchronizationStrategy
     def propagate(_strategy, %Hub{} = hub, requests, opts) when is_list(requests) do
-      Dispatcher.send_requests(hub, requests, Keyword.get(opts, :members, :global))
+      Dispatcher.send_requests(hub, requests, Keyword.get(opts, :members, :global), opts)
     end
 
     @impl SynchronizationStrategy
@@ -77,7 +77,7 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       timestamp = Bag.timestamp(:microsecond)
       sync_data = {local_data, timestamp}
 
-      Dispatcher.dispatch_event(
+      Dispatcher.dispatch_event_async(
         hub.procs.event_queue,
         @event_node_registry_broadcast,
         {sync_data, local_node},

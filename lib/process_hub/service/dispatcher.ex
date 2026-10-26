@@ -28,14 +28,16 @@ defmodule ProcessHub.Service.Dispatcher do
   Sends StartChildrenRequest structs to their target coordinator processes.
 
   Each StartChildrenRequest contains all routing information needed by the
-  remote node to process the request and send responses back.
+  remote node to process the request and send responses back. Options are
+  those of `send_requests/4`.
   """
-  @spec children_start(ProcessHub.Hub.t(), [StartChildrenRequest.t()]) :: :ok
-  def children_start(hub, node_start_requests) when is_list(node_start_requests) do
+  @spec children_start(ProcessHub.Hub.t(), [StartChildrenRequest.t()], keyword()) :: :ok
+  def children_start(hub, node_start_requests, opts \\ []) when is_list(node_start_requests) do
     node_start_requests
     |> Enum.group_by(fn %StartChildrenRequest{node: node} -> node end)
     |> Enum.each(fn {target_node, requests} ->
-      send_requests(hub, Enum.flat_map(requests, &RequestManager.split/1), [target_node])
+      requests = Enum.flat_map(requests, &RequestManager.split/1)
+      send_requests(hub, requests, [target_node], opts)
     end)
 
     track_starts(hub, node_start_requests)
@@ -45,11 +47,23 @@ defmodule ProcessHub.Service.Dispatcher do
   Sends requests to the worker queues of `members` over the channel every
   request travels, so on each node they run after every request sent there
   before them from this node.
+
+  ## Options
+    - `:async` - when `true`, hands the requests to the event queue without
+      waiting (`dispatch_event_async/4`), for the coordinator's own paths.
+      Defaults to `false`.
   """
-  @spec send_requests(ProcessHub.Hub.t(), [struct()], :global | :local | :external | [node()]) ::
-          :ok
-  def send_requests(hub, requests, members) do
-    dispatch_event(hub.procs.event_queue, @event_requests_handle, requests, %{members: members})
+  @spec send_requests(
+          ProcessHub.Hub.t(),
+          [struct()],
+          :global | :local | :external | [node()],
+          keyword()
+        ) :: :ok
+  def send_requests(hub, requests, members, opts \\ []) do
+    dispatch =
+      if Keyword.get(opts, :async, false), do: &dispatch_event_async/4, else: &dispatch_event/4
+
+    dispatch.(hub.procs.event_queue, @event_requests_handle, requests, %{members: members})
     :ok
   end
 
@@ -90,14 +104,16 @@ defmodule ProcessHub.Service.Dispatcher do
   Sends StopChildrenRequest structs to their target coordinator processes.
 
   Each StopChildrenRequest contains all routing information needed by the
-  remote node to process the request and send responses back.
+  remote node to process the request and send responses back. Options are
+  those of `send_requests/4`.
   """
-  @spec children_stop(ProcessHub.Hub.t(), [StopChildrenRequest.t()]) :: :ok
-  def children_stop(hub, node_stop_requests) when is_list(node_stop_requests) do
+  @spec children_stop(ProcessHub.Hub.t(), [StopChildrenRequest.t()], keyword()) :: :ok
+  def children_stop(hub, node_stop_requests, opts \\ []) when is_list(node_stop_requests) do
     node_stop_requests
     |> Enum.group_by(fn %StopChildrenRequest{node: node} -> node end)
     |> Enum.each(fn {target_node, requests} ->
-      send_requests(hub, Enum.flat_map(requests, &RequestManager.split/1), [target_node])
+      requests = Enum.flat_map(requests, &RequestManager.split/1)
+      send_requests(hub, requests, [target_node], opts)
     end)
   end
 
@@ -106,34 +122,52 @@ defmodule ProcessHub.Service.Dispatcher do
 
   ## Options
     - `:members` - Target members (`:global`, `:local`, `:external`, or `[node()]`). Defaults to `:global`.
+    - `:async` - see `send_requests/4`. Defaults to `false`.
   """
   @spec propagate_event(ProcessHub.Hub.t(), struct(), keyword()) :: :ok
   def propagate_event(hub, request, opts \\ []) do
     sync_strategy = Storage.get(hub.storage.misc, StorageKey.strsyn())
-    members = Keyword.get(opts, :members, :global)
 
     SynchronizationStrategy.propagate(
       sync_strategy,
       hub,
       RequestManager.split(request),
-      members: members
+      Keyword.put_new(opts, :members, :global)
+    )
+  end
+
+  @doc """
+  Dispatches an event to the event queue.
+  """
+  @spec dispatch_event(atom(), atom(), term(), %{
+          optional(:discard_event) => boolean,
+          optional(:members) => :global | :local | :external | [node()]
+        }) :: {:ok, :event_discarded | :event_dispatched | :event_queued}
+  def dispatch_event(event_queue, event_id, event_data, opts \\ %{})
+
+  def dispatch_event(event_queue, event_id, event_data, opts) do
+    Blockade.dispatch_sync(
+      event_queue,
+      event_id,
+      event_data,
+      opts
     )
   end
 
   @doc """
   Dispatches an event to the event queue without waiting for it.
 
-  The event queue sends to every member in turn, and a send to a peer whose
-  connection has stopped draining holds it until the connection recovers or
-  drops, so a caller never waits on it. Events sent from one process keep
-  their order. Nothing slows a caller down while the queue is held: its backlog
-  grows until the connection drains or the tick timeout drops it.
+  The event queue sends to every member in turn, so a peer whose connection
+  has stopped draining holds it until the connection recovers or drops. The
+  coordinator uses this for its own events so it never waits on such a peer.
+  Events sent from one process keep their order, also relative to the ones it
+  sends with `dispatch_event/4`.
   """
-  @spec dispatch_event(atom(), atom(), term(), %{
+  @spec dispatch_event_async(atom(), atom(), term(), %{
           optional(:discard_event) => boolean,
           optional(:members) => :global | :local | :external | [node()]
         }) :: :ok
-  def dispatch_event(event_queue, event_id, event_data, opts \\ %{}) do
+  def dispatch_event_async(event_queue, event_id, event_data, opts \\ %{}) do
     Blockade.dispatch(event_queue, event_id, event_data, opts)
   end
 end

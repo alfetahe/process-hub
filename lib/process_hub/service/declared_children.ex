@@ -507,7 +507,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
   end
 
   defp announce(hub, version) do
-    Dispatcher.dispatch_event(
+    Dispatcher.dispatch_event_async(
       hub.procs.event_queue,
       @event_declared_version,
       {node(), version},
