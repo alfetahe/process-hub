@@ -143,6 +143,28 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
     end
   end
 
+  describe "handover_state_taken/1" do
+    test "is called after the state query and its state is kept" do
+      {:ok, pid} = GenServer.start_link(Test.Strategy.Migration.ColdSwapTest.Holder, :serving)
+
+      send(pid, {:process_hub, :query_cold_handover_state, self(), :cid})
+      assert_receive {:process_hub, :coldswap_state, :cid, {:prepared, :serving}}
+      assert :sys.get_state(pid) == {:holding, :serving}
+
+      GenServer.stop(pid)
+    end
+
+    test "keeps the state unchanged by default" do
+      {:ok, pid} = GenServer.start_link(Test.Strategy.Migration.ColdSwapTest.Plain, :serving)
+
+      send(pid, {:process_hub, :query_cold_handover_state, self(), :cid})
+      assert_receive {:process_hub, :coldswap_state, :cid, :serving}
+      assert :sys.get_state(pid) == :serving
+
+      GenServer.stop(pid)
+    end
+  end
+
   describe "handle_post_action_state_fetch/4" do
     test "sends callback to originating node for successful results", %{hub: hub} do
       results = [
@@ -223,4 +245,26 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
       assert cs.state_query_timeout == 5000
     end
   end
+end
+
+defmodule Test.Strategy.Migration.ColdSwapTest.Holder do
+  use GenServer
+  use ProcessHub.Strategy.Migration.ColdSwap
+
+  @impl GenServer
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def prepare_handover_state(state), do: {:prepared, state}
+
+  @impl true
+  def handover_state_taken(state), do: {:holding, state}
+end
+
+defmodule Test.Strategy.Migration.ColdSwapTest.Plain do
+  use GenServer
+  use ProcessHub.Strategy.Migration.ColdSwap
+
+  @impl GenServer
+  def init(state), do: {:ok, state}
 end

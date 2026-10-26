@@ -26,23 +26,35 @@ defmodule ProcessHub.Strategy.Migration.HandoverBehaviour do
   @callback alter_handover_state(current_state :: term(), handover_state :: term()) :: term()
 
   @doc """
-  Called on the process whose state is queried, in place of
-  `c:prepare_handover_state/1`. Returns the state to hand over and the
-  process's own new state, so the process can change how it behaves from the
-  moment its state leaves, for example to stop accepting work.
+  Called on the old process right after `c:prepare_handover_state/1`.
+  Returns the process's own new state, so the process can stop applying work
+  once its state has been read, for example to hold it and forward it later.
 
-  `HotSwap` only. The default returns `{prepare_handover_state(state), state}`.
+  The default implementation returns the state unchanged.
   """
-  @callback take_handover_state(state :: term()) :: {handover_state :: term(), state :: term()}
+  @callback handover_state_taken(state :: term()) :: term()
 
-  @doc """
-  Called on the old process when its replacement is running and has been sent
-  the handed over state, just before the old process is terminated. Sent only
-  to a process whose state was handed over. Return the new state.
+  @optional_callbacks handover_state_taken: 1
 
-  `HotSwap` only. The default returns the state unchanged.
-  """
-  @callback replaced_by(state :: term(), replacement :: pid()) :: term()
+  @doc false
+  # The behaviour declaration and default callbacks that the `HotSwap` and
+  # `ColdSwap` `use` macros share.
+  def __default_callbacks__ do
+    quote do
+      @behaviour ProcessHub.Strategy.Migration.HandoverBehaviour
 
-  @optional_callbacks take_handover_state: 1, replaced_by: 2
+      @impl ProcessHub.Strategy.Migration.HandoverBehaviour
+      def prepare_handover_state(state), do: state
+
+      @impl ProcessHub.Strategy.Migration.HandoverBehaviour
+      def alter_handover_state(_current_state, handover_state), do: handover_state
+
+      @impl ProcessHub.Strategy.Migration.HandoverBehaviour
+      def handover_state_taken(state), do: state
+
+      defoverridable prepare_handover_state: 1,
+                     alter_handover_state: 2,
+                     handover_state_taken: 1
+    end
+  end
 end

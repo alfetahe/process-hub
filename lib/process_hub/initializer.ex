@@ -30,6 +30,7 @@ defmodule ProcessHub.Initializer do
           | {:error, {:invalid_auto_recovery, term()}}
   defp validate_config(%ProcessHub{} = hub) do
     with :ok <- validate_handover_replication(hub),
+         :ok <- validate_forward_messages(hub),
          :ok <- validate_registry_backend_path(hub),
          :ok <- PartitionToleranceStrategy.validate(hub.partition_tolerance_strategy) do
       Recovery.config_or_disabled(hub)
@@ -96,6 +97,16 @@ defmodule ProcessHub.Initializer do
       :ok
     end
   end
+
+  defp validate_forward_messages(%ProcessHub{
+         migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
+           forward_messages: true,
+           handover: false
+         }
+       }),
+       do: {:error, {:invalid_config, :forward_messages_without_handover}}
+
+  defp validate_forward_messages(%ProcessHub{}), do: :ok
 
   @doc "Starts a `ProcessHub` instance with all its children."
   @spec stop(atom()) :: :ok | {:error, :not_alive}

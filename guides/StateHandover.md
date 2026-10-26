@@ -117,23 +117,73 @@ leaving node will be handed over to the remaining nodes but only if the node is 
 This leaves the hub with the time to handover the process states to the remaining nodes.
 It is advised to scale nodes down one at a time to avoid any data loss(30 second - 10 minute intervals).
 
-## The handover window
-With `HotSwap` the old process keeps running while its replacement starts. In order:
+## Messages that arrive during a handover
+A handover happens in three steps: the hub reads the old process's state, starts the new process and gives it that state, then stops the old process. The old process keeps running until the last step, so messages can still reach it after its state was read. Whatever it does with them is not part of the state the new process received.
 
-1. the hub queries the old process's state (`take_handover_state/1`, which by default calls `prepare_handover_state/1`);
-2. the hub starts the replacement on the target node and registers it;
-3. the hub sends the stored state to the replacement (`alter_handover_state/2`), sends the old process `{:process_hub, :replaced_by, child_id, replacement_pid}` (`replaced_by/2`) and terminates it.
+Nothing changes unless you opt in. With `HotSwap`, set both options:
 
-Between step 1 and the termination the old process is still registered and still reachable by anyone holding its pid. Everything it accepts in that window happened after its state was taken, so it is not in the state the replacement receives. Unless the process does something about it, that work is lost, and a caller it answered believes it was done.
+```elixir
+migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{handover: true, forward_messages: true}
+```
 
-Pick one of these remedies:
+Then hold messages from the moment the state is read, and pass them on once the hub names the new process:
 
-- **Refuse with a retryable error.** Switch to a refusing mode in `take_handover_state/1` and answer every request with an error the caller retries. The retry finds the replacement once the registry names it. Simple, but only works for callers that can retry.
-- **Hold and forward.** Switch to a holding mode in `take_handover_state/1`, keep each request with its caller in arrival order, and forward them, oldest first, once `replaced_by/2` names the replacement. Forwarded calls carry the original caller, so the replacement answers them directly. Finish with an end marker, after the last message that could still arrive (for example, after every process that sends to you has confirmed it switched). On the replacement, apply the handed over state first, then the forwarded messages, then messages sent to it directly, and stop waiting for the end marker after a timeout, so a holder that died never blocks it. Bound the holding list and refuse past it. If `replaced_by/2` never comes, for example because the hub's coordinator went away, stop holding after `state_ttl`, past which the hub can no longer deliver the state, take your work back and apply what you held.
-- **`ColdSwap` with handover**, where a short downtime is acceptable: the old process is stopped before its state is taken, so there is no window.
-- **A durable log the replacement replays.** When every accepted request is first written to a log the replacement can read from the old node, the replacement replays what came after the state it received.
+```elixir
+defmodule MyProcess do
+  use GenServer
+  use ProcessHub.Strategy.Migration.HotSwap
 
-`replaced_by/2` is only sent to a process whose state was handed over. A process that did not answer the state query within `state_query_timeout` is terminated without it, and so is every process on a node that shuts down without draining (see "Handover on node leave"), whose states are sent ahead of the replacements' start.
+  @impl true
+  def init(state) do
+    Process.flag(:trap_exit, true)
+    {:ok, {:serving, state}}
+  end
+
+  @impl true
+  def prepare_handover_state({:serving, state}), do: state
+  def alter_handover_state(_current, handover), do: {:serving, handover}
+
+  # Called right after the state was read: stop applying work, hold it instead.
+  @impl true
+  def handover_state_taken({:serving, state}), do: {:holding, state, []}
+
+  @impl true
+  def handle_info({:process_hub, :forward_to, _child_id, pid}, {:holding, state, held}) do
+    held |> Enum.reverse() |> Enum.each(&send(pid, &1))
+    {:noreply, {:forwarding, state, pid}}
+  end
+
+  def handle_info({:work, item}, {:serving, items}), do: {:noreply, {:serving, [item | items]}}
+  def handle_info(msg, {:holding, state, held}), do: {:noreply, {:holding, state, [msg | held]}}
+
+  def handle_info(msg, {:forwarding, _state, pid} = s) do
+    send(pid, msg)
+    {:noreply, s}
+  end
+
+  def handle_info(_msg, s), do: {:noreply, s}
+
+  # The process is stopped right after `forward_to`: pass on what is still in
+  # the mailbox. Needs `trap_exit`, set in `init/1`.
+  @impl true
+  def terminate(_reason, {:forwarding, _state, pid}), do: forward_rest(pid)
+  def terminate(_reason, _state), do: :ok
+
+  defp forward_rest(pid) do
+    receive do
+      msg ->
+        send(pid, msg)
+        forward_rest(pid)
+    after
+      0 -> :ok
+    end
+  end
+end
+```
+
+`handover_state_taken/1` is optional and returns the process's new state; by default it returns the state unchanged. `{:process_hub, :forward_to, child_id, pid}` is only sent with `handover: true` and `forward_messages: true`, and only to a process whose state was handed over. Calls arrive in `handle_call/3`, not `handle_info/2`; while holding, the simplest is to answer them with an error the caller retries, and the retry reaches the new process.
+
+`ColdSwap` calls `handover_state_taken/1` as well, so a process can stop applying work once its state was read, but it has no forwarding: the new process does not exist yet when the old one stops. Between the two, the child cannot be reached; senders that must not lose work retry until the new process answers.
 
 ## More info can be found in the `Hotswap` module
 Check out the [Hotswap](https://hexdocs.pm/process_hub/ProcessHub.Strategy.Migration.HotSwap.html) module for more information.

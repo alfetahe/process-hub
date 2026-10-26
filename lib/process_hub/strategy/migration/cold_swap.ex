@@ -18,6 +18,11 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   4. Send start requests to new nodes
   5. When new processes are registered, deliver stored state via hook
 
+  A process can stop applying work once its state was read by overriding
+  `handover_state_taken/1`; see "Messages that arrive during a handover" in the
+  State Handover guide. ColdSwap has no message forwarding: the replacement does
+  not exist yet when the old process stops.
+
   To use state handover, your GenServer must `use ProcessHub.Strategy.Migration.ColdSwap`:
 
       defmodule MyServer do
@@ -27,6 +32,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         # Optionally override these callbacks:
         # def prepare_handover_state(state), do: state
         # def alter_handover_state(_current, handover), do: handover
+        # def handover_state_taken(state), do: state
       end
 
   > #### State Handover with Replication {: .warning}
@@ -83,17 +89,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
 
     behaviour_ast =
       if declare_behaviour do
-        quote do
-          @behaviour ProcessHub.Strategy.Migration.HandoverBehaviour
-
-          @impl ProcessHub.Strategy.Migration.HandoverBehaviour
-          def prepare_handover_state(state), do: state
-
-          @impl ProcessHub.Strategy.Migration.HandoverBehaviour
-          def alter_handover_state(_current_state, handover_state), do: handover_state
-
-          defoverridable prepare_handover_state: 1, alter_handover_state: 2
-        end
+        ProcessHub.Strategy.Migration.HandoverBehaviour.__default_callbacks__()
       else
         quote do
         end
@@ -105,7 +101,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         def handle_info({:process_hub, :query_cold_handover_state, receiver, child_id}, state) do
           prepared_state = prepare_handover_state(state)
           send(receiver, {:process_hub, :coldswap_state, child_id, prepared_state})
-          {:noreply, state}
+          {:noreply, handover_state_taken(state)}
         end
 
         @doc false
