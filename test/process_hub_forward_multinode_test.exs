@@ -116,7 +116,7 @@ defmodule Test.ProcessHubForwardMultiNodeTest do
 
   test "a start a node can place nowhere is refused at once", %{hub_id: hub_id, b: b, c: c} do
     cid = :no_target_child
-    start_hubs(hub_id, %{node() => %{cid => [b]}, b => %{cid => []}, c => %{}})
+    Bootstrap.start_placed_hubs(hub_id, %{node() => %{cid => [b]}, b => %{cid => []}, c => %{}})
 
     assert %ProcessHub.StartResult{
              status: :error,
