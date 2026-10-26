@@ -115,6 +115,35 @@ defmodule Test.Helper.Bootstrap do
     end
   end
 
+  @doc """
+  Starts `hub_id` on every node `placements` names, each with a
+  `RecordingDistribution` holding that node's own placement table, stops them
+  when the test exits, and waits until every node sees all of them.
+  """
+  def start_placed_hubs(hub_id, placements) do
+    nodes = placements |> Map.keys() |> Enum.sort()
+
+    for {n, placement} <- placements do
+      spec = %ProcessHub{
+        hub_id: hub_id,
+        distribution_strategy: %Test.Support.RecordingDistribution{placement: placement}
+      }
+
+      :erpc.call(n, __MODULE__, :start_hub_on_node, [spec, %{}])
+    end
+
+    on_exit(fn -> for n <- nodes, do: :erpc.call(n, ProcessHub.Initializer, :stop, [hub_id]) end)
+
+    for n <- nodes do
+      assert Test.Helper.Common.eventually(
+               fn ->
+                 Enum.sort(:erpc.call(n, ProcessHub, :nodes, [hub_id, [:include_local]])) == nodes
+               end,
+               10_000
+             )
+    end
+  end
+
   def start_hubs(%ProcessHub{} = hub, nodes, listed_hooks, opts \\ []) do
     host_pid = self()
     local_node = node()

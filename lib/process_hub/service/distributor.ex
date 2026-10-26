@@ -25,6 +25,10 @@ defmodule ProcessHub.Service.Distributor do
   @base_call_timeout 5000
   @timeout_per_child 1
 
+  # Inside `@base_call_timeout`: the stop's caller waits on the coordinator
+  # that makes this call.
+  @peer_locate_ms 2000
+
   @doc """
   Calculates the GenServer.call timeout based on child count.
 
@@ -97,23 +101,20 @@ defmodule ProcessHub.Service.Distributor do
     # Group children by the nodes where they exist
     # Also track children that were not found
     {nodes_data, not_found} =
-      Enum.reduce(child_ids, {[], []}, fn child_id, {acc, not_found_acc} ->
-        case stop_nodes(hub, child_id) do
-          [] ->
-            # Child not found in registry
-            {acc, [child_id | not_found_acc]}
+      Enum.reduce(children_stop_nodes(hub, child_ids), {[], []}, fn
+        {child_id, []}, {acc, not_found_acc} ->
+          {acc, [child_id | not_found_acc]}
 
-          child_nodes ->
-            child_data = %{nodes: child_nodes, child_id: child_id}
+        {child_id, child_nodes}, {acc, not_found_acc} ->
+          child_data = %{nodes: child_nodes, child_id: child_id}
 
-            append_items =
-              Enum.map(child_nodes, fn child_node ->
-                existing_children = acc[child_node] || []
-                {child_node, [child_data | existing_children]}
-              end)
+          append_items =
+            Enum.map(child_nodes, fn child_node ->
+              existing_children = acc[child_node] || []
+              {child_node, [child_data | existing_children]}
+            end)
 
-            {Keyword.merge(acc, append_items), not_found_acc}
-        end
+          {Keyword.merge(acc, append_items), not_found_acc}
       end)
 
     case {nodes_data, not_found} do
@@ -151,6 +152,49 @@ defmodule ProcessHub.Service.Distributor do
 
       {_, node_pids} ->
         Keyword.keys(node_pids)
+    end
+  end
+
+  # A start answers once its own node registered the child, before the row
+  # reaches the other copies, and placement cannot always name that node from
+  # here (it may rest on the start's options or on load). A child this node
+  # knows nothing of is therefore looked for on the peers, all of them in one
+  # bounded call.
+  defp children_stop_nodes(hub, child_ids) do
+    targets = Enum.map(child_ids, &{&1, stop_nodes(hub, &1)})
+    found = running_on_peers(hub, for({child_id, []} <- targets, do: child_id))
+
+    Enum.map(targets, fn
+      {child_id, []} -> {child_id, Map.get(found, child_id, [])}
+      target -> target
+    end)
+  end
+
+  defp running_on_peers(_hub, []), do: %{}
+
+  defp running_on_peers(hub, child_ids) do
+    peers = Cluster.nodes(hub.storage.misc, [:connected])
+
+    answers =
+      :erpc.multicall(
+        peers,
+        __MODULE__,
+        :running_children,
+        [hub.hub_id, child_ids],
+        @peer_locate_ms
+      )
+
+    for {peer, {:ok, running}} <- Enum.zip(peers, answers), child_id <- running, reduce: %{} do
+      acc -> Map.update(acc, child_id, [peer], &[peer | &1])
+    end
+  end
+
+  @doc false
+  @spec running_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
+  def running_children(hub_id, child_ids) do
+    case Hub.get(hub_id) do
+      nil -> []
+      hub -> Enum.filter(child_ids, &DistributedSupervisor.running_pid(hub, &1))
     end
   end
 

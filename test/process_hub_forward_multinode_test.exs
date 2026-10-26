@@ -13,7 +13,6 @@ defmodule Test.ProcessHubForwardMultiNodeTest do
   alias Test.Helper.Bootstrap
   alias Test.Helper.Common
   alias Test.Helper.TestNode
-  alias Test.Support.RecordingDistribution
 
   @moduletag :multinode
 
@@ -32,7 +31,7 @@ defmodule Test.ProcessHubForwardMultiNodeTest do
 
   test "a forwarded start is answered by the node that ran it", %{hub_id: hub_id, b: b, c: c} do
     cid = :fwd_start_child
-    start_hubs(hub_id, %{node() => %{cid => [b]}, b => %{cid => [c]}, c => %{}})
+    Bootstrap.start_placed_hubs(hub_id, %{node() => %{cid => [b]}, b => %{cid => [c]}, c => %{}})
 
     result = await_start(hub_id, cid)
 
@@ -46,7 +45,7 @@ defmodule Test.ProcessHubForwardMultiNodeTest do
        %{hub_id: hub_id, b: b, c: c} do
     cid = :fwd_stop_child
     on_c = %{cid => [c]}
-    start_hubs(hub_id, %{node() => on_c, b => on_c, c => on_c})
+    Bootstrap.start_placed_hubs(hub_id, %{node() => on_c, b => on_c, c => on_c})
 
     assert %ProcessHub.StartResult{started: [{^cid, [{^c, pid}]}]} = await_start(hub_id, cid)
 
@@ -72,7 +71,7 @@ defmodule Test.ProcessHubForwardMultiNodeTest do
        %{hub_id: hub_id, b: b, c: c} do
     cid = :stop_before_row_child
     on_c = %{cid => [c]}
-    start_hubs(hub_id, %{node() => on_c, b => on_c, c => on_c})
+    Bootstrap.start_placed_hubs(hub_id, %{node() => on_c, b => on_c, c => on_c})
 
     hook = %HookManager{
       id: :stop_from_hook,
@@ -100,7 +99,12 @@ defmodule Test.ProcessHubForwardMultiNodeTest do
   test "a start two nodes keep forwarding to each other is refused",
        %{hub_id: hub_id, b: b, c: c} do
     cid = :fwd_loop_child
-    start_hubs(hub_id, %{node() => %{cid => [b]}, b => %{cid => [c]}, c => %{cid => [b]}})
+
+    Bootstrap.start_placed_hubs(hub_id, %{
+      node() => %{cid => [b]},
+      b => %{cid => [c]},
+      c => %{cid => [b]}
+    })
 
     assert %ProcessHub.StartResult{status: :error, started: [], errors: [{^cid, :forward_loop}]} =
              await_start(hub_id, cid)
@@ -116,28 +120,4 @@ defmodule Test.ProcessHubForwardMultiNodeTest do
   end
 
   defp child_spec(cid), do: %{id: cid, start: {Test.Helper.TestServer, :start_link, [%{}]}}
-
-  defp start_hubs(hub_id, placements) do
-    nodes = placements |> Map.keys() |> Enum.sort()
-
-    for {n, placement} <- placements do
-      spec = %ProcessHub{
-        hub_id: hub_id,
-        distribution_strategy: %RecordingDistribution{placement: placement}
-      }
-
-      :erpc.call(n, Bootstrap, :start_hub_on_node, [spec, %{}])
-    end
-
-    on_exit(fn -> for n <- nodes, do: :erpc.call(n, ProcessHub.Initializer, :stop, [hub_id]) end)
-
-    for n <- nodes do
-      assert Common.eventually(
-               fn ->
-                 Enum.sort(:erpc.call(n, ProcessHub, :nodes, [hub_id, [:include_local]])) == nodes
-               end,
-               10_000
-             )
-    end
-  end
 end
