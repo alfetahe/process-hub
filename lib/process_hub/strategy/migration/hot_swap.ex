@@ -20,7 +20,14 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   3. Send start requests to new nodes
   4. When new processes start on the target node, the post-action callback
      notifies the originating node
-  5. Originating node delivers stored state and terminates old local process
+  5. Originating node delivers stored state, sends the old process
+     `{:process_hub, :replaced_by, child_id, new_pid}` and terminates it
+
+  The old process stays reachable from the state query until it is terminated,
+  so whatever it accepts in that window is not in the handed over state. See
+  "The handover window" in the State Handover guide for how a process can
+  keep that work: `take_handover_state/1` changes its own state at the
+  query, and `replaced_by/2` names its replacement.
 
   To use state handover, your GenServer must `use ProcessHub.Strategy.Migration.HotSwap`:
 
@@ -31,6 +38,8 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         # Optionally override these callbacks:
         # def prepare_handover_state(state), do: state
         # def alter_handover_state(_current, handover), do: handover
+        # def take_handover_state(state), do: {prepare_handover_state(state), state}
+        # def replaced_by(state, _new_pid), do: state
       end
 
   > #### State Handover with Replication {: .warning}
@@ -107,9 +116,17 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
 
     handlers_ast =
       quote do
+        @impl ProcessHub.Strategy.Migration.HandoverBehaviour
+        def take_handover_state(state), do: {prepare_handover_state(state), state}
+
+        @impl ProcessHub.Strategy.Migration.HandoverBehaviour
+        def replaced_by(state, _pid), do: state
+
+        defoverridable take_handover_state: 1, replaced_by: 2
+
         @doc false
         def handle_info({:process_hub, :query_hot_handover_state, receiver, child_id}, state) do
-          prepared_state = prepare_handover_state(state)
+          {prepared_state, state} = take_handover_state(state)
           send(receiver, {:process_hub, :hotswap_state, child_id, prepared_state})
           {:noreply, state}
         end
@@ -117,6 +134,11 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         @doc false
         def handle_info({:process_hub, :hotswap_handover, _child_id, handover_state}, state) do
           {:noreply, alter_handover_state(state, handover_state)}
+        end
+
+        @doc false
+        def handle_info({:process_hub, :replaced_by, _child_id, pid}, state) do
+          {:noreply, replaced_by(state, pid)}
         end
       end
 
@@ -155,8 +177,9 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   Callback executed on the originating node to complete migration.
 
   Called via generic `:post_action_callback` message from the target node.
-  Delivers stored handover states (if any) to new processes, then terminates
-  old local processes.
+  Delivers stored handover states (if any) to new processes, tells each old
+  process whose state was handed over the pid of its replacement, then
+  terminates old local processes.
   """
   @spec complete_migration(ProcessHub.Hub.t(), node(), [{ProcessHub.child_id(), pid()}]) :: :ok
   def complete_migration(hub, target_node, cid_pids) do
@@ -169,8 +192,12 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
           nil ->
             acc
 
-          {state, _old_pid} ->
-            if is_pid(pid), do: send(pid, {:process_hub, :hotswap_handover, child_id, state})
+          {state, old_pid} ->
+            if is_pid(pid) do
+              send(pid, {:process_hub, :hotswap_handover, child_id, state})
+              if is_pid(old_pid), do: send(old_pid, {:process_hub, :replaced_by, child_id, pid})
+            end
+
             Storage.remove(hub.storage.misc, {:hotswap_state, child_id})
             [child_id | acc]
         end

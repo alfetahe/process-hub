@@ -187,6 +187,61 @@ defmodule Test.Strategy.Migration.HotSwapTest do
     end
   end
 
+  describe "the replaced_by message" do
+    test "tells the old process its replacement after the state went to it", %{hub: hub} do
+      child_id = :replaced_child
+      Storage.insert(hub.storage.misc, {:hotswap_state, child_id}, {:my_state, self()})
+      sync_strategy(hub)
+
+      try do
+        HotSwap.complete_migration(hub, :target_node, [{child_id, self()}])
+      catch
+        _, _ -> :ok
+      end
+
+      # The test process is both the old and the new process here, so the
+      # mailbox shows the order: the state first, then the replacement.
+      assert_receive {:process_hub, kind, ^child_id, _}
+      assert kind == :hotswap_handover
+      assert_receive {:process_hub, :replaced_by, ^child_id, pid}
+      assert pid == self()
+    end
+
+    test "is not sent to a process whose state was not handed over", %{hub: hub} do
+      sync_strategy(hub)
+
+      try do
+        HotSwap.complete_migration(hub, :target_node, [{:no_state, self()}])
+      catch
+        _, _ -> :ok
+      end
+
+      refute_receive {:process_hub, :replaced_by, _, _}
+    end
+
+    test "reaches replaced_by/2, and take_handover_state/1 keeps the state it returns" do
+      {:ok, pid} = GenServer.start_link(Test.Strategy.Migration.HotSwapTest.Taker, :serving)
+
+      send(pid, {:process_hub, :query_hot_handover_state, self(), :cid})
+      assert_receive {:process_hub, :hotswap_state, :cid, {:handover, :serving}}
+      assert :sys.get_state(pid) == :holding
+
+      replacement = spawn(fn -> :ok end)
+      send(pid, {:process_hub, :replaced_by, :cid, replacement})
+      assert :sys.get_state(pid) == {:forwarding_to, replacement}
+
+      GenServer.stop(pid)
+    end
+  end
+
+  defp sync_strategy(hub) do
+    Storage.insert(
+      hub.storage.misc,
+      :synchronization_strategy,
+      %ProcessHub.Strategy.Synchronization.PubSub{}
+    )
+  end
+
   describe "handle_post_action_migrate_complete/4" do
     test "sends callback to originating node for successful results", %{hub: hub} do
       results = [
@@ -266,4 +321,18 @@ defmodule Test.Strategy.Migration.HotSwapTest do
       assert hs.state_query_timeout == 5000
     end
   end
+end
+
+defmodule Test.Strategy.Migration.HotSwapTest.Taker do
+  use GenServer
+  use ProcessHub.Strategy.Migration.HotSwap
+
+  @impl GenServer
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def take_handover_state(state), do: {{:handover, state}, :holding}
+
+  @impl true
+  def replaced_by(:holding, pid), do: {:forwarding_to, pid}
 end

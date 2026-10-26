@@ -117,5 +117,23 @@ leaving node will be handed over to the remaining nodes but only if the node is 
 This leaves the hub with the time to handover the process states to the remaining nodes.
 It is advised to scale nodes down one at a time to avoid any data loss(30 second - 10 minute intervals).
 
+## The handover window
+With `HotSwap` the old process keeps running while its replacement starts. In order:
+
+1. the hub queries the old process's state (`take_handover_state/1`, which by default calls `prepare_handover_state/1`);
+2. the hub starts the replacement on the target node and registers it;
+3. the hub sends the stored state to the replacement (`alter_handover_state/2`), sends the old process `{:process_hub, :replaced_by, child_id, replacement_pid}` (`replaced_by/2`) and terminates it.
+
+Between step 1 and the termination the old process is still registered and still reachable by anyone holding its pid. Everything it accepts in that window happened after its state was taken, so it is not in the state the replacement receives. Unless the process does something about it, that work is lost, and a caller it answered believes it was done.
+
+Pick one of these remedies:
+
+- **Refuse with a retryable error.** Switch to a refusing mode in `take_handover_state/1` and answer every request with an error the caller retries. The retry finds the replacement once the registry names it. Simple, but only works for callers that can retry.
+- **Hold and forward.** Switch to a holding mode in `take_handover_state/1`, keep each request with its caller in arrival order, and forward them, oldest first, once `replaced_by/2` names the replacement. Forwarded calls carry the original caller, so the replacement answers them directly. Finish with an end marker, after the last message that could still arrive (for example, after every process that sends to you has confirmed it switched). On the replacement, apply the handed over state first, then the forwarded messages, then messages sent to it directly, and stop waiting for the end marker after a timeout, so a holder that died never blocks it. Bound the holding list and refuse past it. If `replaced_by/2` never comes, for example because the hub's coordinator went away, stop holding after `state_ttl`, past which the hub can no longer deliver the state, take your work back and apply what you held.
+- **`ColdSwap` with handover**, where a short downtime is acceptable: the old process is stopped before its state is taken, so there is no window.
+- **A durable log the replacement replays.** When every accepted request is first written to a log the replacement can read from the old node, the replacement replays what came after the state it received.
+
+`replaced_by/2` is only sent to a process whose state was handed over. A process that did not answer the state query within `state_query_timeout` is terminated without it, and so is every process on a node that shuts down without draining (see "Handover on node leave"), whose states are sent ahead of the replacements' start.
+
 ## More info can be found in the `Hotswap` module
 Check out the [Hotswap](https://hexdocs.pm/process_hub/ProcessHub.Strategy.Migration.HotSwap.html) module for more information.
