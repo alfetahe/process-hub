@@ -185,5 +185,61 @@ end
 
 `ColdSwap` calls `handover_state_taken/1` as well, so a process can stop applying work once its state was read, but it has no forwarding: the new process does not exist yet when the old one stops. Between the two, the child cannot be reached; senders that must not lose work retry until the new process answers.
 
+### When forwarding has ended
+With `HotSwap` forwarding, the new process can watch the old one. Put the old pid into the handed-over state and monitor it. The runtime delivers the `:DOWN` message after every message the old process sent before it stopped, so `:DOWN` means nothing more will be forwarded. The old process may also send its own end marker from `terminate/2`; `:DOWN` still covers a crash.
+
+Messages from one process arrive in the order they were sent, but messages from different senders are not ordered against each other. So tag what the old process passes on, for example `send(pid, {:forwarded, msg})` instead of `send(pid, msg)` above. The new process applies forwarded messages as they come, holds its own messages until `:DOWN`, then applies them. Give the wait a time limit.
+
+Some sources reach both processes: for a moment, the old and the new process may each have their own connection to the same external stream. Only an id or sequence number per message lets the new process skip what was already applied; carry the last applied one in the handed-over state. Without ids, the overlap cannot be resolved exactly: a message may be applied twice or missed.
+
+```elixir
+defmodule MyProcess do
+  use GenServer
+  use ProcessHub.Strategy.Migration.HotSwap
+
+  @impl true
+  def prepare_handover_state({:serving, items, last_seq}), do: {self(), items, last_seq}
+
+  @impl true
+  def alter_handover_state(_current, {old_pid, items, last_seq}) do
+    Process.monitor(old_pid)
+    Process.send_after(self(), :catch_up_timeout, 5_000)
+    {:catching_up, items, last_seq, []}
+  end
+
+  @impl true
+  def handle_info({:forwarded, msg}, {:catching_up, items, last_seq, held}) do
+    {items, last_seq} = apply_work(msg, {items, last_seq})
+    {:noreply, {:catching_up, items, last_seq, held}}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, {:catching_up, _, _, _} = s),
+    do: {:noreply, serve(s)}
+
+  def handle_info(:catch_up_timeout, {:catching_up, _, _, _} = s), do: {:noreply, serve(s)}
+
+  def handle_info(msg, {:catching_up, items, last_seq, held}),
+    do: {:noreply, {:catching_up, items, last_seq, [msg | held]}}
+
+  def handle_info({:work, _seq, _item} = msg, {:serving, items, last_seq}) do
+    {items, last_seq} = apply_work(msg, {items, last_seq})
+    {:noreply, {:serving, items, last_seq}}
+  end
+
+  def handle_info(_msg, s), do: {:noreply, s}
+
+  defp serve({:catching_up, items, last_seq, held}) do
+    {items, last_seq} = held |> Enum.reverse() |> Enum.reduce({items, last_seq}, &apply_work/2)
+    {:serving, items, last_seq}
+  end
+
+  # The sequence number skips a message that was already applied.
+  defp apply_work({:work, seq, item}, {items, last_seq}) when seq > last_seq,
+    do: {[item | items], seq}
+
+  defp apply_work(_msg, acc), do: acc
+end
+```
+
 ## More info can be found in the `Hotswap` module
 Check out the [Hotswap](https://hexdocs.pm/process_hub/ProcessHub.Strategy.Migration.HotSwap.html) module for more information.
