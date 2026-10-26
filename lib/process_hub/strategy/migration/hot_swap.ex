@@ -22,10 +22,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
      notifies the originating node
   5. Originating node delivers stored state and terminates old local process
 
-  With `forward_messages: true` as well, the old process is sent
-  `{:process_hub, :forward_to, child_id, new_pid}` between the delivery in step 5
-  and the termination, so it can pass on messages that arrived after its state was
-  read. See "Messages that arrive during a handover" in the State Handover guide.
+  With `forward_messages: true` as well, messages that reach the old process after
+  its state was read are not lost: it keeps them, and passes them on to the new
+  process once that one has its state. See "Messages that arrive during a
+  handover" in the State Handover guide.
 
   To use state handover, your GenServer must `use ProcessHub.Strategy.Migration.HotSwap`:
 
@@ -36,7 +36,6 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         # Optionally override these callbacks:
         # def prepare_handover_state(state), do: state
         # def alter_handover_state(_current, handover), do: handover
-        # def handover_state_taken(state), do: state
       end
 
   > #### State Handover with Replication {: .warning}
@@ -70,10 +69,10 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
   - `:handover` - Enable state handover before termination (default: false)
   - `:state_ttl` - TTL for stored states in milliseconds (default: 30000)
   - `:state_query_timeout` - Timeout for querying state from local process (default: 5000)
-  - `:forward_messages` - With `handover: true`, send the old process
-    `{:process_hub, :forward_to, child_id, new_pid}` after its state was delivered and
-    before it is terminated (default: false). Without `handover: true` the hub
-    fails to start with `{:error, {:invalid_config, :forward_messages_without_handover}}`.
+  - `:forward_messages` - With `handover: true`, pass the messages that reach the old
+    process after its state was read on to the new process (default: false). Without
+    `handover: true` the hub fails to start with
+    `{:error, {:invalid_config, :forward_messages_without_handover}}`.
   - `:consent_settings` - `MigrationConsent` struct enabling migration consent (default: nil)
   """
   @type t() :: %__MODULE__{
@@ -113,12 +112,28 @@ defmodule ProcessHub.Strategy.Migration.HotSwap do
         def handle_info({:process_hub, :query_hot_handover_state, receiver, child_id}, state) do
           prepared_state = prepare_handover_state(state)
           send(receiver, {:process_hub, :hotswap_state, child_id, prepared_state})
-          {:noreply, handover_state_taken(state)}
+          {:noreply, state}
+        end
+
+        def handle_info(
+              {:process_hub, :query_hot_handover_state, receiver, child_id, keep},
+              state
+            ) do
+          send(receiver, {:process_hub, :hotswap_state, child_id, prepare_handover_state(state)})
+
+          ProcessHub.Strategy.Migration.HandoverBehaviour.keep_messages(
+            :hot,
+            child_id,
+            keep,
+            state
+          )
         end
 
         @doc false
         def handle_info({:process_hub, :hotswap_handover, _child_id, handover_state}, state) do
-          {:noreply, alter_handover_state(state, handover_state)}
+          state
+          |> alter_handover_state(handover_state)
+          |> ProcessHub.Strategy.Migration.HandoverBehaviour.handed_over()
         end
       end
 

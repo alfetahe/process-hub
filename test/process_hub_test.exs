@@ -524,13 +524,15 @@ defmodule ProcessHubTest do
   end
 
   test "initializer rejects forward_messages without handover" do
-    conf = %ProcessHub{
-      hub_id: :forward_without_handover_test,
-      migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{forward_messages: true}
-    }
+    for strategy <- [
+          %ProcessHub.Strategy.Migration.HotSwap{forward_messages: true},
+          %ProcessHub.Strategy.Migration.ColdSwap{forward_messages: true}
+        ] do
+      conf = %ProcessHub{hub_id: :forward_without_handover_test, migration_strategy: strategy}
 
-    assert ProcessHub.Initializer.start_link(conf) ===
-             {:error, {:invalid_config, :forward_messages_without_handover}}
+      assert ProcessHub.Initializer.start_link(conf) ===
+               {:error, {:invalid_config, :forward_messages_without_handover}}
+    end
   end
 
   test "initializer rejects a dynamic quorum outside 51..100" do

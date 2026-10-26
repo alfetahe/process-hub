@@ -306,16 +306,22 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
 
   defp handover_states(hub, strategy, cids) do
     {query_msg, response_msg} = handover_msgs(strategy)
-    self_pid = self()
     pids = alive_local_pids(hub, cids)
 
-    Enum.each(pids, fn {cid, pid} -> send(pid, {:process_hub, query_msg, self_pid, cid}) end)
+    Enum.each(pids, fn {cid, pid} -> send(pid, handover_query(hub, strategy, query_msg, cid)) end)
 
     pids
     |> Map.keys()
     |> collect_states(strategy.state_query_timeout, [], response_msg)
     |> Enum.each(&store_handover_state(hub, strategy, &1, pids))
   end
+
+  # With `forward_messages`, the query also tells the process to keep what
+  # arrives after its state was read (`HandoverBehaviour.keep_messages/4`).
+  defp handover_query(hub, %{forward_messages: true} = strategy, query_msg, cid),
+    do: {:process_hub, query_msg, self(), cid, {hub.hub_id, strategy.state_ttl}}
+
+  defp handover_query(_hub, _strategy, query_msg, cid), do: {:process_hub, query_msg, self(), cid}
 
   defp alive_local_pids(hub, cids) do
     cids

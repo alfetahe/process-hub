@@ -2,6 +2,7 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
   use ExUnit.Case, async: false
 
   alias ProcessHub.Strategy.Migration.ColdSwap
+  alias Test.Strategy.Migration.ColdSwapTest.Holder
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
@@ -143,25 +144,49 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
     end
   end
 
-  describe "handover_state_taken/1" do
-    test "is called after the state query and its state is kept" do
-      {:ok, pid} = GenServer.start_link(Test.Strategy.Migration.ColdSwapTest.Holder, :serving)
+  describe "forwarding messages" do
+    test "the old process stores what it kept when it is stopped", %{hub: hub} do
+      ProcessHub.Hub.put(hub)
+      on_exit(fn -> ProcessHub.Hub.delete(hub.hub_id) end)
+      {:ok, old} = GenServer.start(Holder, [])
+      ref = Process.monitor(old)
 
-      send(pid, {:process_hub, :query_cold_handover_state, self(), :cid})
-      assert_receive {:process_hub, :coldswap_state, :cid, {:prepared, :serving}}
-      assert :sys.get_state(pid) == {:holding, :serving}
+      send(old, {:process_hub, :query_cold_handover_state, self(), :cid, {hub.hub_id, 5_000}})
+      assert_receive {:process_hub, :coldswap_state, :cid, []}
+      send(old, {:work, 1})
+      GenServer.cast(old, {:work, 2})
 
-      GenServer.stop(pid)
+      # The test process started it, so it is the parent whose exit stops it.
+      Process.exit(old, :shutdown)
+      assert_receive {:DOWN, ^ref, :process, ^old, :shutdown}
+
+      assert Storage.get(hub.storage.misc, {:coldswap_kept, :cid}) ==
+               [{:work, 1}, {:"$gen_cast", {:work, 2}}]
     end
 
-    test "keeps the state unchanged by default" do
-      {:ok, pid} = GenServer.start_link(Test.Strategy.Migration.ColdSwapTest.Plain, :serving)
+    test "the kept messages reach the new process after its state", %{hub: hub} do
+      Storage.insert(hub.storage.misc, {:coldswap_state, :cid}, [1])
+      Storage.insert(hub.storage.misc, {:coldswap_kept, :cid}, [{:work, 2}])
+      {:ok, new} = GenServer.start(Holder, [])
 
-      send(pid, {:process_hub, :query_cold_handover_state, self(), :cid})
-      assert_receive {:process_hub, :coldswap_state, :cid, :serving}
-      assert :sys.get_state(pid) == :serving
+      ColdSwap.deliver_handover_states(hub, :target_node, [{:cid, new}])
 
-      GenServer.stop(pid)
+      # A passed-on message is handled after the ones already waiting.
+      :sys.get_state(new)
+      assert :sys.get_state(new) == [2, 1]
+      assert Storage.get(hub.storage.misc, {:coldswap_kept, :cid}) == nil
+      GenServer.stop(new)
+    end
+
+    test "the old process works as before without forwarding" do
+      {:ok, old} = GenServer.start(Holder, [])
+
+      send(old, {:process_hub, :query_cold_handover_state, self(), :cid})
+      assert_receive {:process_hub, :coldswap_state, :cid, []}
+      send(old, {:work, 1})
+
+      assert :sys.get_state(old) == [1]
+      GenServer.stop(old)
     end
   end
 
@@ -243,6 +268,7 @@ defmodule Test.Strategy.Migration.ColdSwapTest do
       assert cs.handover == false
       assert cs.state_ttl == 30000
       assert cs.state_query_timeout == 5000
+      assert cs.forward_messages == false
     end
   end
 end
@@ -252,19 +278,11 @@ defmodule Test.Strategy.Migration.ColdSwapTest.Holder do
   use ProcessHub.Strategy.Migration.ColdSwap
 
   @impl GenServer
-  def init(state), do: {:ok, state}
-
-  @impl true
-  def prepare_handover_state(state), do: {:prepared, state}
-
-  @impl true
-  def handover_state_taken(state), do: {:holding, state}
-end
-
-defmodule Test.Strategy.Migration.ColdSwapTest.Plain do
-  use GenServer
-  use ProcessHub.Strategy.Migration.ColdSwap
+  def init(items), do: {:ok, items}
 
   @impl GenServer
-  def init(state), do: {:ok, state}
+  def handle_cast({:work, item}, items), do: {:noreply, [item | items]}
+
+  @impl GenServer
+  def handle_info({:work, item}, items), do: {:noreply, [item | items]}
 end

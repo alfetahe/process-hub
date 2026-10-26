@@ -118,15 +118,34 @@ This leaves the hub with the time to handover the process states to the remainin
 It is advised to scale nodes down one at a time to avoid any data loss(30 second - 10 minute intervals).
 
 ## Messages that arrive during a handover
-A handover happens in three steps: the hub reads the old process's state, starts the new process and gives it that state, then stops the old process. The old process keeps running until the last step, so messages can still reach it after its state was read. Whatever it does with them is not part of the state the new process received.
+A handover reads the old process's state, gives it to the new process and stops the old one. With `HotSwap` the old process keeps running until the new one has its state; with `ColdSwap` it runs until it is stopped. Messages can still reach it after its state was read, and whatever it does with them is not part of the state the new process received.
 
-Nothing changes unless you opt in. With `HotSwap`, set both options:
+To keep those messages, turn on `forward_messages` in the migration strategy. Your process code stays the same:
 
 ```elixir
 migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{handover: true, forward_messages: true}
+# or
+migration_strategy: %ProcessHub.Strategy.Migration.ColdSwap{handover: true, forward_messages: true}
 ```
 
-Then hold messages from the moment the state is read, and pass them on once the hub names the new process:
+From the moment its state is read, the old process stops handling messages and keeps them instead.
+
+- With `HotSwap`, it passes them on to the new process once that one has its state. It then passes on whatever else arrives until it is stopped, including what is still in its mailbox.
+- With `ColdSwap`, it keeps them until it is stopped. They are stored with its state, and the new process gets them right after the state.
+
+The new process handles each passed-on message as if it had been sent to it: `handle_cast/2`, `handle_info/2`, or `handle_call/3` with the answer going to the original caller.
+
+Things to know:
+
+- **Only processes that `use` the `HotSwap` or `ColdSwap` macro** take part, as with state handover itself.
+- **If no new process takes over in time**, the old one goes back to work after `state_ttl` and handles the kept messages itself, in order.
+- **Order:** passed-on messages keep their order among themselves. They are handled after the messages already waiting in the new process, and they are not ordered against messages sent to the new process directly.
+- **Calls:** the old process stops right after passing on its last messages, and a caller waiting on it may see that exit before the new process answers, even though the call is still handled. With `ColdSwap` the gap is longer, so callers usually time out. Make such calls safe to retry.
+- **A message that reaches the old process as it exits is lost**, as it is with any process that stops. Senders that keep its pid should look it up again once it is gone.
+- **Node shutdown:** messages are passed on when a child moves while the hub keeps running. When a node shuts down and hands its states over (see above), nothing is passed on.
+
+### Messages that reach both processes
+For a moment, the old and the new process may each receive the same thing: two connections to one external stream, or a sender that retried a call. Only an id or sequence number per message lets the new process skip what was already applied; carry the last applied one in the handed-over state. Without ids, the overlap cannot be resolved exactly: a message may be applied twice or missed.
 
 ```elixir
 defmodule MyProcess do
@@ -134,110 +153,11 @@ defmodule MyProcess do
   use ProcessHub.Strategy.Migration.HotSwap
 
   @impl true
-  def init(state) do
-    Process.flag(:trap_exit, true)
-    {:ok, {:serving, state}}
-  end
+  def handle_info({:work, seq, item}, {items, last_seq}) when seq > last_seq,
+    do: {:noreply, {[item | items], seq}}
 
-  @impl true
-  def prepare_handover_state({:serving, state}), do: state
-  def alter_handover_state(_current, handover), do: {:serving, handover}
-
-  # Called right after the state was read: stop applying work, hold it instead.
-  @impl true
-  def handover_state_taken({:serving, state}), do: {:holding, state, []}
-
-  @impl true
-  def handle_info({:process_hub, :forward_to, _child_id, pid}, {:holding, state, held}) do
-    held |> Enum.reverse() |> Enum.each(&send(pid, &1))
-    {:noreply, {:forwarding, state, pid}}
-  end
-
-  def handle_info({:work, item}, {:serving, items}), do: {:noreply, {:serving, [item | items]}}
-  def handle_info(msg, {:holding, state, held}), do: {:noreply, {:holding, state, [msg | held]}}
-
-  def handle_info(msg, {:forwarding, _state, pid} = s) do
-    send(pid, msg)
-    {:noreply, s}
-  end
-
-  def handle_info(_msg, s), do: {:noreply, s}
-
-  # The process is stopped right after `forward_to`: pass on what is still in
-  # the mailbox. Needs `trap_exit`, set in `init/1`.
-  @impl true
-  def terminate(_reason, {:forwarding, _state, pid}), do: forward_rest(pid)
-  def terminate(_reason, _state), do: :ok
-
-  defp forward_rest(pid) do
-    receive do
-      msg ->
-        send(pid, msg)
-        forward_rest(pid)
-    after
-      0 -> :ok
-    end
-  end
-end
-```
-
-`handover_state_taken/1` is optional and returns the process's new state; by default it returns the state unchanged. `{:process_hub, :forward_to, child_id, pid}` is only sent with `handover: true` and `forward_messages: true`, and only to a process whose state was handed over. Calls arrive in `handle_call/3`, not `handle_info/2`; while holding, the simplest is to answer them with an error the caller retries, and the retry reaches the new process.
-
-`ColdSwap` calls `handover_state_taken/1` as well, so a process can stop applying work once its state was read, but it has no forwarding: the new process does not exist yet when the old one stops. Between the two, the child cannot be reached; senders that must not lose work retry until the new process answers.
-
-### When forwarding has ended
-With `HotSwap` forwarding, the new process can watch the old one. Put the old pid into the handed-over state and monitor it. The runtime delivers the `:DOWN` message after every message the old process sent before it stopped, so `:DOWN` means nothing more will be forwarded. The old process may also send its own end marker from `terminate/2`; `:DOWN` still covers a crash.
-
-Messages from one process arrive in the order they were sent, but messages from different senders are not ordered against each other. So tag what the old process passes on, for example `send(pid, {:forwarded, msg})` instead of `send(pid, msg)` above. The new process applies forwarded messages as they come, holds its own messages until `:DOWN`, then applies them. Give the wait a time limit.
-
-Some sources reach both processes: for a moment, the old and the new process may each have their own connection to the same external stream. Only an id or sequence number per message lets the new process skip what was already applied; carry the last applied one in the handed-over state. Without ids, the overlap cannot be resolved exactly: a message may be applied twice or missed.
-
-```elixir
-defmodule MyProcess do
-  use GenServer
-  use ProcessHub.Strategy.Migration.HotSwap
-
-  @impl true
-  def prepare_handover_state({:serving, items, last_seq}), do: {self(), items, last_seq}
-
-  @impl true
-  def alter_handover_state(_current, {old_pid, items, last_seq}) do
-    Process.monitor(old_pid)
-    Process.send_after(self(), :catch_up_timeout, 5_000)
-    {:catching_up, items, last_seq, []}
-  end
-
-  @impl true
-  def handle_info({:forwarded, msg}, {:catching_up, items, last_seq, held}) do
-    {items, last_seq} = apply_work(msg, {items, last_seq})
-    {:noreply, {:catching_up, items, last_seq, held}}
-  end
-
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, {:catching_up, _, _, _} = s),
-    do: {:noreply, serve(s)}
-
-  def handle_info(:catch_up_timeout, {:catching_up, _, _, _} = s), do: {:noreply, serve(s)}
-
-  def handle_info(msg, {:catching_up, items, last_seq, held}),
-    do: {:noreply, {:catching_up, items, last_seq, [msg | held]}}
-
-  def handle_info({:work, _seq, _item} = msg, {:serving, items, last_seq}) do
-    {items, last_seq} = apply_work(msg, {items, last_seq})
-    {:noreply, {:serving, items, last_seq}}
-  end
-
-  def handle_info(_msg, s), do: {:noreply, s}
-
-  defp serve({:catching_up, items, last_seq, held}) do
-    {items, last_seq} = held |> Enum.reverse() |> Enum.reduce({items, last_seq}, &apply_work/2)
-    {:serving, items, last_seq}
-  end
-
-  # The sequence number skips a message that was already applied.
-  defp apply_work({:work, seq, item}, {items, last_seq}) when seq > last_seq,
-    do: {[item | items], seq}
-
-  defp apply_work(_msg, acc), do: acc
+  # Already applied, by this process or before the handover.
+  def handle_info({:work, _seq, _item}, state), do: {:noreply, state}
 end
 ```
 

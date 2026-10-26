@@ -2,6 +2,7 @@ defmodule Test.Strategy.Migration.HotSwapTest do
   use ExUnit.Case, async: false
 
   alias ProcessHub.Strategy.Migration.HotSwap
+  alias Test.Strategy.Migration.HotSwapTest.Holder
   alias ProcessHub.Strategy.Migration.Base, as: MigrationStrategy
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
@@ -220,16 +221,77 @@ defmodule Test.Strategy.Migration.HotSwapTest do
     end
   end
 
-  describe "handover_state_taken/1" do
-    test "is called after the state query and its state is kept" do
-      {:ok, pid} = GenServer.start_link(Test.Strategy.Migration.HotSwapTest.Holder, :serving)
+  describe "forwarding messages" do
+    test "the old process keeps what arrives after its state was read and passes it on" do
+      {:ok, old} = GenServer.start(Holder, [])
+      ref = Process.monitor(old)
 
-      send(pid, {:process_hub, :query_hot_handover_state, self(), :cid})
-      assert_receive {:process_hub, :hotswap_state, :cid, {:prepared, :serving}}
-      assert :sys.get_state(pid) == {:holding, :serving}
+      send(old, {:process_hub, :query_hot_handover_state, self(), :cid, {:no_hub, 5_000}})
+      assert_receive {:process_hub, :hotswap_state, :cid, []}
 
-      GenServer.stop(pid)
+      send(old, {:work, 1})
+      GenServer.cast(old, {:work, 2})
+      send(old, {:process_hub, :forward_to, :cid, self()})
+      assert_receive {:process_hub, :forwarded, :cid, [{:work, 1}, {:"$gen_cast", {:work, 2}}]}
+
+      send(old, {:work, 3})
+      assert_receive {:process_hub, :forwarded, :cid, [{:work, 3}]}
+
+      # The test process started it, so it is the parent whose exit stops it.
+      Process.exit(old, :shutdown)
+      assert_receive {:DOWN, ^ref, :process, ^old, :shutdown}
     end
+
+    test "the old process goes back to work when no replacement is named in time" do
+      {:ok, old} = GenServer.start(Holder, [])
+
+      send(old, {:process_hub, :query_hot_handover_state, self(), :cid, {:no_hub, 50}})
+      assert_receive {:process_hub, :hotswap_state, :cid, []}
+      send(old, {:work, 1})
+
+      # Kept with the work and handled after it once the process is back.
+      assert :sys.get_state(old) == [1]
+      GenServer.stop(old)
+    end
+
+    test "the old process works as before without forwarding" do
+      {:ok, old} = GenServer.start(Holder, [])
+
+      send(old, {:process_hub, :query_hot_handover_state, self(), :cid})
+      assert_receive {:process_hub, :hotswap_state, :cid, []}
+      send(old, {:work, 1})
+
+      assert :sys.get_state(old) == [1]
+      GenServer.stop(old)
+    end
+
+    test "the new process handles passed-on messages after its state" do
+      {:ok, new} = GenServer.start(Holder, [])
+
+      send(new, {:process_hub, :forwarded, :cid, [{:work, 2}]})
+      send(new, {:process_hub, :hotswap_handover, :cid, [1]})
+
+      assert settled_state(new) == [2, 1]
+      GenServer.stop(new)
+    end
+
+    test "a passed-on call is answered to its caller by the new process" do
+      {:ok, new} = GenServer.start(Holder, [])
+      tag = make_ref()
+
+      send(new, {:process_hub, :hotswap_handover, :cid, [1]})
+      send(new, {:process_hub, :forwarded, :cid, [{:"$gen_call", {self(), tag}, :get}]})
+
+      assert_receive {^tag, [1]}
+      GenServer.stop(new)
+    end
+  end
+
+  # A passed-on message is handled after the messages already waiting, so the
+  # first read lets those through and the second sees the result.
+  defp settled_state(pid) do
+    :sys.get_state(pid)
+    :sys.get_state(pid)
   end
 
   defp prepare_completion(hub, child_id, strategy) do
@@ -340,11 +402,14 @@ defmodule Test.Strategy.Migration.HotSwapTest.Holder do
   use ProcessHub.Strategy.Migration.HotSwap
 
   @impl GenServer
-  def init(state), do: {:ok, state}
+  def init(items), do: {:ok, items}
 
-  @impl true
-  def prepare_handover_state(state), do: {:prepared, state}
+  @impl GenServer
+  def handle_call(:get, _from, items), do: {:reply, items, items}
 
-  @impl true
-  def handover_state_taken(state), do: {:holding, state}
+  @impl GenServer
+  def handle_cast({:work, item}, items), do: {:noreply, [item | items]}
+
+  @impl GenServer
+  def handle_info({:work, item}, items), do: {:noreply, [item | items]}
 end

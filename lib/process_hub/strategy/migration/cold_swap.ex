@@ -18,10 +18,10 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   4. Send start requests to new nodes
   5. When new processes are registered, deliver stored state via hook
 
-  A process can stop applying work once its state was read by overriding
-  `handover_state_taken/1`; see "Messages that arrive during a handover" in the
-  State Handover guide. ColdSwap has no message forwarding: the replacement does
-  not exist yet when the old process stops.
+  With `forward_messages: true` as well, messages that reach the old process after
+  its state was read are not lost: it keeps them, they are stored with its state
+  when it stops, and the new process gets them right after the state. See
+  "Messages that arrive during a handover" in the State Handover guide.
 
   To use state handover, your GenServer must `use ProcessHub.Strategy.Migration.ColdSwap`:
 
@@ -32,7 +32,6 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         # Optionally override these callbacks:
         # def prepare_handover_state(state), do: state
         # def alter_handover_state(_current, handover), do: handover
-        # def handover_state_taken(state), do: state
       end
 
   > #### State Handover with Replication {: .warning}
@@ -64,18 +63,24 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
   - `:handover` - Enable state handover before termination (default: false)
   - `:state_ttl` - TTL for stored states in milliseconds (default: 30000)
   - `:state_query_timeout` - Timeout for querying state from dying process (default: 5000)
+  - `:forward_messages` - With `handover: true`, pass the messages that reach the old
+    process after its state was read on to the new process (default: false). Without
+    `handover: true` the hub fails to start with
+    `{:error, {:invalid_config, :forward_messages_without_handover}}`.
   - `:consent_settings` - `MigrationConsent` struct enabling migration consent (default: nil)
   """
   @type t() :: %__MODULE__{
           handover: boolean(),
           state_ttl: pos_integer(),
           state_query_timeout: pos_integer(),
+          forward_messages: boolean(),
           consent_settings: MigrationConsent.t() | nil
         }
 
   defstruct handover: false,
             state_ttl: 30000,
             state_query_timeout: 5000,
+            forward_messages: false,
             consent_settings: nil
 
   @doc """
@@ -101,12 +106,28 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
         def handle_info({:process_hub, :query_cold_handover_state, receiver, child_id}, state) do
           prepared_state = prepare_handover_state(state)
           send(receiver, {:process_hub, :coldswap_state, child_id, prepared_state})
-          {:noreply, handover_state_taken(state)}
+          {:noreply, state}
+        end
+
+        def handle_info(
+              {:process_hub, :query_cold_handover_state, receiver, child_id, keep},
+              state
+            ) do
+          send(receiver, {:process_hub, :coldswap_state, child_id, prepare_handover_state(state)})
+
+          ProcessHub.Strategy.Migration.HandoverBehaviour.keep_messages(
+            :cold,
+            child_id,
+            keep,
+            state
+          )
         end
 
         @doc false
         def handle_info({:process_hub, :coldswap_handover, _child_id, handover_state}, state) do
-          {:noreply, alter_handover_state(state, handover_state)}
+          state
+          |> alter_handover_state(handover_state)
+          |> ProcessHub.Strategy.Migration.HandoverBehaviour.handed_over()
         end
       end
 
@@ -151,7 +172,7 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
             acc
 
           state ->
-            if is_pid(pid), do: send(pid, {:process_hub, :coldswap_handover, child_id, state})
+            if is_pid(pid), do: deliver(hub, child_id, pid, state)
             Storage.remove(hub.storage.misc, {:coldswap_state, child_id})
             [child_id | acc]
         end
@@ -166,6 +187,21 @@ defmodule ProcessHub.Strategy.Migration.ColdSwap do
     end
 
     :ok
+  end
+
+  # The messages the old process kept after its state was read follow the
+  # state, from the same sender, so they reach the new process after it.
+  defp deliver(hub, child_id, pid, state) do
+    send(pid, {:process_hub, :coldswap_handover, child_id, state})
+
+    case Storage.get(hub.storage.misc, {:coldswap_kept, child_id}) do
+      nil ->
+        :ok
+
+      kept ->
+        send(pid, {:process_hub, :forwarded, child_id, kept})
+        Storage.remove(hub.storage.misc, {:coldswap_kept, child_id})
+    end
   end
 
   # Graceful shutdown handlers - delegate to SwapMigration

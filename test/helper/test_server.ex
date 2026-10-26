@@ -93,6 +93,18 @@ defmodule Test.Helper.TestServer do
     raise("intentional raise")
   end
 
+  # Records how many numbered messages the handed-over state held, so a test
+  # can tell them from the ones passed on after it.
+  @impl true
+  def alter_handover_state(_current, handover) when is_map(handover),
+    do: Map.put(handover, :handed_over_log, length(Map.get(handover, :log, [])))
+
+  def alter_handover_state(_current, handover), do: handover
+
+  # Numbered messages, kept newest first under `:log`.
+  @impl GenServer
+  def handle_info({:append, n}, state), do: {:noreply, Map.update(state, :log, [n], &[n | &1])}
+
   # Redundancy signal handler
   @impl GenServer
   def handle_info({:process_hub, :redundancy_signal, mode}, state) do

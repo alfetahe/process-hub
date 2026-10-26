@@ -4,8 +4,7 @@ All notable changes to this project will be documented in this file.
 ## v0.7.1 - Upcoming
 
 ### Added
-- New optional handover callback `handover_state_taken/1`, for `HotSwap` and `ColdSwap`. It runs on the old process right after its state was read for a handover and returns the process's new state, so the process can stop applying work it would otherwise lose. Nothing changes unless you override it.
-- New `HotSwap` option `forward_messages` (default `false`, needs `handover: true`). When set, the old process is sent `{:process_hub, :forward_to, child_id, new_pid}` just before it is stopped, so it can pass on messages that arrived after its state was read. The State Handover guide shows how. Nothing changes unless you set it.
+- New `forward_messages` option on `HotSwap` and `ColdSwap` (default `false`, needs `handover: true`). Messages that reach the old process after its state was read are no longer lost: they are passed on to the new process, which handles them after the state. Your process code stays the same. The State Handover guide lists what to know. Nothing changes unless you set it.
 - New `:coordinator_restarted_hook`, fired when a hub's coordinator crashed and was restarted (not on the hub's first start). Children keep running, but anything you kept for the coordinator's lifetime may be gone; this is where to rebuild it.
 - New `:nodedown_grace_period` hub setting (milliseconds, default `0`). When a node's connection drops, its children stay where they are for this long, and nothing moves if the node comes back in time. A node that leaves on purpose still hands its children over at once.
 - `DynamicQuorum` takes an optional `:startup_nodes`, so a node that starts alone waits in partition mode instead of acting as a whole cluster.

@@ -99,10 +99,7 @@ defmodule ProcessHub.Initializer do
   end
 
   defp validate_forward_messages(%ProcessHub{
-         migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
-           forward_messages: true,
-           handover: false
-         }
+         migration_strategy: %{forward_messages: true, handover: false}
        }),
        do: {:error, {:invalid_config, :forward_messages_without_handover}}
 
