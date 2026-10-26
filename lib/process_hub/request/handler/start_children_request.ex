@@ -430,7 +430,8 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
   end
 
   # Returns the children to start here, and the answers for the rest: a
-  # forward, or a refusal when every node they belong to already forwarded them.
+  # forward, or a refusal when every node they belong to already forwarded them
+  # or, for a plain start, when they belong to no node at all.
   defp validate_children_full(hub, children, dist_strat, redun_strat, start_opts) do
     local_node = node()
     cids = Enum.map(children, & &1.child_spec.id)
@@ -453,6 +454,9 @@ defmodule ProcessHub.Request.Handler.StartChildrenRequest do
         cond do
           Enum.member?(nodes, local_node) ->
             {[cdata | valid], forw, loops}
+
+          nodes == [] and not Map.get(cdata, :migration, false) ->
+            {valid, forw, [{cid, {:error, :no_target_nodes}} | loops]}
 
           RequestManager.forward_loop?(nodes, path) ->
             settle_loop(hub, cdata, nodes, {valid, forw, loops})

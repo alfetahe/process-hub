@@ -114,6 +114,22 @@ defmodule Test.ProcessHubForwardMultiNodeTest do
     end
   end
 
+  test "a start a node can place nowhere is refused at once", %{hub_id: hub_id, b: b, c: c} do
+    cid = :no_target_child
+    start_hubs(hub_id, %{node() => %{cid => [b]}, b => %{cid => []}, c => %{}})
+
+    assert %ProcessHub.StartResult{
+             status: :error,
+             started: [],
+             errors: [{^cid, :no_target_nodes}]
+           } =
+             await_start(hub_id, cid)
+
+    for n <- [node(), b, c] do
+      assert {^n, []} = :erpc.call(n, ProcessHub, :which_children, [hub_id])
+    end
+  end
+
   defp await_start(hub_id, cid) do
     ProcessHub.start_child(hub_id, child_spec(cid), awaitable: true, timeout: 5000)
     |> ProcessHub.Future.await()
