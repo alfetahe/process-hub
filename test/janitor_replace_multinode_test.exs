@@ -58,8 +58,10 @@ defmodule Test.JanitorReplaceMultiNodeTest do
 
     log =
       capture_log(fn ->
-        assert {1, _next_at} = Janitor.purge_pending_registry(hub_id)[cspec.id]
+        assert Janitor.purge_pending_registry(hub_id) === :ok
       end)
+
+    assert [{{_next_at, _}, 1}] = expiry_keys(hub_id, cspec.id)
 
     refute log =~ "Re-placing churn placeholder"
     assert running_on(hub_id, nodes, cspec.id) == []
@@ -72,8 +74,10 @@ defmodule Test.JanitorReplaceMultiNodeTest do
 
     log =
       capture_log(fn ->
-        assert {1, _next_at} = Janitor.purge_pending_registry(hub_id)[cspec.id]
+        assert Janitor.purge_pending_registry(hub_id) === :ok
       end)
+
+    assert [{{_next_at, _}, 1}] = expiry_keys(hub_id, cspec.id)
 
     :erpc.call(peer, :sys, :resume, [dist_sup])
     assert running_on(hub_id, nodes, cspec.id) == []
@@ -108,8 +112,8 @@ defmodule Test.JanitorReplaceMultiNodeTest do
     :erpc.call(peer, :sys, :resume, [dist_sup])
     log = Task.await(purge, 10_000)
 
-    assert_received {:progress, %{} = progress}
-    assert {1, _next_at} = progress[cspec.id]
+    assert_received {:progress, :ok}
+    assert expiry_keys(hub_id, cspec.id) == []
     refute log =~ "submitted"
     assert running_on(hub_id, nodes, cspec.id) == []
     assert ProcessHub.get_pid(hub_id, cspec.id) == nil
@@ -132,6 +136,10 @@ defmodule Test.JanitorReplaceMultiNodeTest do
     end)
 
     cspec
+  end
+
+  defp expiry_keys(hub_id, child_id) do
+    :ets.match_object(ProcessHub.Hub.get(hub_id).storage.expiry, {{:_, child_id}, :_})
   end
 
   defp suspend_dist_sup(node, hub_id) do

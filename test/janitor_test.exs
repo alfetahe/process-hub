@@ -95,7 +95,7 @@ defmodule Test.JanitorTest do
     end
 
     test "returns no re-placement progress when nothing expired", %{hub_id: hub_id} do
-      assert Janitor.purge_pending_registry(hub_id) == %{}
+      assert Janitor.purge_pending_registry(hub_id) === :ok
     end
 
     test "delete_if_expired returns false for a re-populated entry", %{hub_id: hub_id} do
@@ -108,14 +108,14 @@ defmodule Test.JanitorTest do
       assert ProcessRegistry.lookup(hub_id, :repop_guard) != nil
     end
 
-    test "handles malformed 3-tuple entries gracefully" do
-      # Create a public ETS table with a malformed 3-tuple that matches {$1, $2, $3}
-      # but does NOT match [child_id, {child_spec, _nodes, metadata}, ttl_expire]
-      table = :ets.new(:test_malformed_purge, [:set, :public])
-      :ets.insert(table, {:malformed_child, "not_a_tuple_value", 0})
+    test "a due key whose row lost its TTL leaves the index", %{hub_id: hub_id} do
+      child_spec = %{id: :registered_meanwhile, start: {TestModule, :start_link, []}}
+      ProcessRegistry.insert(hub_id, child_spec, [], metadata: %{}, ttl: -1000)
+      ProcessRegistry.insert(hub_id, child_spec, [{:node1, self()}], metadata: %{})
 
-      # Should not crash — hits the catch-all `_ -> nil` branch
-      assert Janitor.purge_pending_registry(table) == %{}
+      assert Janitor.purge_pending_registry(hub_id) === :ok
+      assert expiry_keys(hub_id, :registered_meanwhile) === []
+      assert ProcessRegistry.lookup(hub_id, :registered_meanwhile) != nil
     end
   end
 
@@ -153,7 +153,7 @@ defmodule Test.JanitorTest do
       ProcessHub.Future.await(future)
 
       assert ProcessRegistry.lookup(hub.hub_id, cspec.id, include_empty: true) === nil
-      assert Janitor.purge_pending_registry(hub.hub_id) === %{}
+      assert Janitor.purge_pending_registry(hub.hub_id) === :ok
       assert ProcessHub.get_pid(hub.hub_id, cspec.id) === nil
     end
 
@@ -164,7 +164,7 @@ defmodule Test.JanitorTest do
 
       log =
         capture_log(fn ->
-          assert Janitor.purge_pending_registry(hub.hub_id) === %{}
+          assert Janitor.purge_pending_registry(hub.hub_id) === :ok
         end)
 
       assert ProcessRegistry.lookup(hub.hub_id, cspec.id, include_empty: true) === nil
@@ -179,14 +179,13 @@ defmodule Test.JanitorTest do
       cspec = %{id: :never_starts, start: {Test.Helper.TestServer, :start_link_err, [%{}]}}
       ProcessRegistry.insert(hub.hub_id, cspec, [], metadata: %{}, ttl: -1000)
       later = System.os_time(:millisecond) + 600_000
+      schedule!(hub.hub_id, :never_starts, later, 2)
 
-      assert Janitor.purge_pending_registry(hub.hub_id, %{never_starts: {2, later}}) ===
-               %{never_starts: {2, later}}
+      assert Janitor.purge_pending_registry(hub.hub_id) === :ok
+      assert expiry_keys(hub.hub_id, :never_starts) === [{{later, :never_starts}, 2}]
 
-      log =
-        capture_log(fn ->
-          assert Janitor.purge_pending_registry(hub.hub_id, %{never_starts: {5, 0}}) === %{}
-        end)
+      schedule!(hub.hub_id, :never_starts, 0, 5)
+      log = capture_log(fn -> assert Janitor.purge_pending_registry(hub.hub_id) === :ok end)
 
       assert ProcessRegistry.lookup(hub.hub_id, :never_starts, include_empty: true) === nil
       assert log =~ "outcome: removed; not re-placed after 5 attempts"
@@ -198,12 +197,23 @@ defmodule Test.JanitorTest do
 
       log =
         capture_log(fn ->
-          assert Janitor.purge_pending_registry(hub.hub_id) === %{}
+          assert Janitor.purge_pending_registry(hub.hub_id) === :ok
         end)
 
       assert ProcessRegistry.lookup(hub.hub_id, :durable_placeholder, include_empty: true) === nil
       assert log =~ "outcome: removed; a durable child is restarted by the reconcile"
     end
+  end
+
+  # Puts the child's expiry index key at `due_at` with `made` attempts.
+  defp schedule!(hub_id, child_id, due_at, made) do
+    index = ProcessHub.Hub.get(hub_id).storage.expiry
+    :ets.match_delete(index, {{:_, child_id}, :_})
+    :ets.insert(index, {{due_at, child_id}, made})
+  end
+
+  defp expiry_keys(hub_id, child_id) do
+    :ets.match_object(ProcessHub.Hub.get(hub_id).storage.expiry, {{:_, child_id}, :_})
   end
 
   defp start_server!(hub_id, child_id) do

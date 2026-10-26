@@ -198,6 +198,7 @@ defmodule ProcessHub.Initializer do
     %{
       hook: :ets.new(hub_id, [:set, :public]),
       misc: :ets.new(hub_id, [:set, :public]),
+      expiry: :ets.new(hub_id, [:ordered_set, :public]),
       registry_backend: {backend_module, backend_ref}
     }
     |> setup_declared_storage(hub_id, hub_conf, recovery_config)

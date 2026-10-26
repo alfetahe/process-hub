@@ -20,16 +20,22 @@ defmodule ProcessHub.Service.Storage.Entry do
     * `:ttl` — a duration in ms, resolved against the current time.
   """
   @spec build(term(), term(), keyword()) :: {term(), term()} | {term(), term(), integer()}
+  def build(key, value, []), do: {key, value}
+
   def build(key, value, opts) do
+    case expire_at(opts, now_ms()) do
+      nil -> {key, value}
+      expire -> {key, value, expire}
+    end
+  end
+
+  @doc "The expiry `opts` give an entry written at `now` (see `build/3`), or `nil` for none."
+  @spec expire_at(keyword(), integer()) :: integer() | nil
+  def expire_at(opts, now) do
     case {Keyword.get(opts, :expire_at), Keyword.get(opts, :ttl)} do
-      {expire, _} when is_integer(expire) ->
-        {key, value, expire}
-
-      {_, ttl} when is_integer(ttl) ->
-        {key, value, now_ms() + ttl}
-
-      _ ->
-        {key, value}
+      {expire, _} when is_integer(expire) -> expire
+      {_, ttl} when is_integer(ttl) -> now + ttl
+      _ -> nil
     end
   end
 

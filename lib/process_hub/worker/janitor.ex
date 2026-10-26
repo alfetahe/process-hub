@@ -22,6 +22,7 @@ defmodule ProcessHub.Worker.Janitor do
   """
 
   alias ProcessHub.Hub
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.LoggerService
   alias ProcessHub.Service.ProcessRegistry
@@ -35,9 +36,8 @@ defmodule ProcessHub.Worker.Janitor do
   @replace_attempts 5
   @replace_backoff_ms 15_000
   @peer_check_ms 5_000
-
-  @typedoc "Re-placement progress per churn placeholder: `{attempts_made, next_attempt_at_ms}`."
-  @type replacing() :: %{ProcessHub.child_id() => {non_neg_integer(), integer()}}
+  # Bounds one tick after a mass expiry; the rest falls due on the next.
+  @due_per_tick 10_000
 
   def start_link({hub_id, pname, misc_storage, purge_interval}) do
     GenServer.start_link(__MODULE__, {hub_id, pname, misc_storage, purge_interval}, name: pname)
@@ -52,18 +52,17 @@ defmodule ProcessHub.Worker.Janitor do
        hub_id: hub_id,
        pname: pname,
        misc_storage: misc_storage,
-       purge_interval: purge_interval,
-       replacing: %{}
+       purge_interval: purge_interval
      }}
   end
 
   @impl true
   def handle_info(:ttl_cleanup, state) do
     purge_expired_cache(state.misc_storage)
-    replacing = purge_pending_registry(state.hub_id, state.replacing)
+    purge_pending_registry(state.hub_id)
     schedule_cleanup(state.purge_interval)
 
-    {:noreply, %{state | replacing: replacing}}
+    {:noreply, state}
   end
 
   defp schedule_cleanup(purge_interval) do
@@ -73,27 +72,17 @@ defmodule ProcessHub.Worker.Janitor do
   @doc """
   Purges expired TTL cache entries from the given storage table.
 
-  Scans for 3-tuple entries `{key, value, expire_timestamp}` and removes
-  any where the timestamp has passed.
+  Removes every 3-tuple entry `{key, value, expire_timestamp}` whose timestamp
+  has passed, in one atomic delete, so an entry re-written with a fresh TTL
+  meanwhile is kept.
   """
   @spec purge_expired_cache(:ets.tid()) :: :ok
   def purge_expired_cache(misc_storage) do
-    # Match only items with TTL.
-    ttl_items = :ets.match(misc_storage, {:"$1", :_, :"$2"})
-    curr_timestamp = now_ms()
+    now = now_ms()
 
-    Enum.each(ttl_items, fn
-      nil ->
-        nil
-
-      [] ->
-        []
-
-      [cache_key, ttl_expire] ->
-        if curr_timestamp > ttl_expire do
-          Storage.remove(misc_storage, cache_key)
-        end
-    end)
+    :ets.select_delete(misc_storage, [
+      {{:_, :_, :"$1"}, [{:is_integer, :"$1"}, {:<, :"$1", now}], [true]}
+    ])
 
     :ok
   end
@@ -101,71 +90,93 @@ defmodule ProcessHub.Worker.Janitor do
   @doc """
   Handles the expired TTL rows of the registry table (see the moduledoc).
 
-  Takes the re-placement progress returned by the previous call and returns
-  the progress to pass to the next one.
+  Only rows whose key in the hub's expiry index has fallen due are read, each
+  by its child id, so the cost follows the rows due, not the registry's size.
   """
-  @spec purge_pending_registry(ProcessHub.hub_id(), replacing()) :: replacing()
-  def purge_pending_registry(hub_id, replacing \\ %{}) do
+  @spec purge_pending_registry(ProcessHub.hub_id()) :: :ok
+  def purge_pending_registry(hub_id) do
     now = now_ms()
 
-    {placeholders, removable} =
-      hub_id
-      |> Storage.match({:"$1", :"$2", :"$3"})
-      |> Enum.flat_map(fn
-        {child_id, {%{} = child_spec, _nodes, %{} = metadata}, expire}
-        when is_integer(expire) and now > expire ->
-          [{child_id, child_spec, metadata}]
+    case ProcessRegistry.due_expiries(hub_id, now, @due_per_tick) do
+      [] -> :ok
+      due -> purge_due(hub_id, due_by_child(due), now)
+    end
+  end
 
-        _ ->
-          []
-      end)
+  # A child can hold more than one due key: a re-lease adds its own.
+  defp due_by_child(due) do
+    Enum.reduce(due, %{}, fn {{_due_at, child_id} = key, made}, acc ->
+      Map.update(acc, child_id, {[key], made}, fn {keys, n} -> {[key | keys], max(n, made)} end)
+    end)
+  end
+
+  defp purge_due(hub_id, due, now) do
+    {placeholders, removable} =
+      due
+      |> Enum.flat_map(fn {child_id, _} -> expired_row(hub_id, child_id, now) end)
       |> Enum.split_with(&replaceable?/1)
 
     Enum.each(removable, &remove_expired(hub_id, &1, :reconcile))
-    replace_placeholders(hub_id, placeholders, replacing, now)
+    counted = replace_placeholders(hub_id, placeholders, due)
+
+    ProcessRegistry.reschedule_expiries(
+      hub_id,
+      Enum.map(due, fn {child_id, {keys, _made}} ->
+        {child_id, keys, next_attempt(Map.get(counted, child_id), now)}
+      end)
+    )
   end
+
+  # A key is only a hint: the row, read by its key, decides.
+  defp expired_row(hub_id, child_id, now) do
+    case Storage.match(hub_id, {child_id, :"$1", :"$2"}) do
+      [{{%{} = child_spec, _nodes, %{} = metadata}, expire}]
+      when is_integer(expire) and now > expire ->
+        [{child_id, child_spec, metadata}]
+
+      _ ->
+        []
+    end
+  end
+
+  defp next_attempt(nil, _now), do: nil
+  defp next_attempt(made, now), do: {now + @replace_backoff_ms * Integer.pow(2, made - 1), made}
 
   defp replaceable?({_child_id, _child_spec, metadata}) do
     not Map.has_key?(metadata, :target_nodes) and not Row.durable?(metadata)
   end
 
-  defp replace_placeholders(_hub_id, [], _replacing, _now), do: %{}
+  defp replace_placeholders(_hub_id, [], _due), do: %{}
 
-  defp replace_placeholders(hub_id, placeholders, replacing, now) do
-    {due, waiting} =
-      Enum.split_with(placeholders, fn {child_id, _, _} ->
-        elem(Map.get(replacing, child_id, {0, 0}), 1) <= now
-      end)
-
+  defp replace_placeholders(hub_id, placeholders, due) do
     {spent, attempts} =
-      Enum.split_with(due, fn {child_id, _, _} ->
-        attempts_made(replacing, child_id) >= @replace_attempts
+      Enum.split_with(placeholders, fn {child_id, _, _} ->
+        attempts_made(due, child_id) >= @replace_attempts
       end)
 
     Enum.each(spent, &remove_expired(hub_id, &1, :spent))
-    attempted = attempt_replace(Hub.get(hub_id), attempts, replacing, now)
-    Map.merge(Map.take(replacing, Enum.map(waiting, &elem(&1, 0))), attempted)
+    attempt_replace(Hub.get(hub_id), attempts, due)
   end
 
-  defp attempts_made(replacing, child_id), do: elem(Map.get(replacing, child_id, {0, 0}), 0)
+  defp attempts_made(due, child_id), do: elem(Map.fetch!(due, child_id), 1)
 
   # Every node holding the placeholder counts the attempt, so each removes its
   # row after the same number of attempts when the one that submits fails.
-  defp attempt_replace(_hub, [], _replacing, _now), do: %{}
+  defp attempt_replace(_hub, [], _due), do: %{}
 
-  defp attempt_replace(hub, placeholders, replacing, now) do
+  defp attempt_replace(hub, placeholders, due) do
     own = placed_here(hub, placeholders)
 
     case running_anywhere(hub, own) do
       {:ok, running} ->
-        {stale, idle} = Enum.split_with(own, fn {cid, _, _} -> MapSet.member?(running, cid) end)
+        {stale, idle} = Enum.split_with(own, &MapSet.member?(running, elem(&1, 0)))
         Enum.each(stale, &remove_expired(hub.hub_id, &1, :running))
-        submit_start(hub, Enum.filter(idle, &still_placeholder?(hub.hub_id, &1)), replacing)
-        count_attempts(placeholders -- stale, replacing, now)
+        submit_start(hub, Enum.filter(idle, &still_placeholder?(hub.hub_id, &1)), due)
+        count_attempts(Enum.reject(placeholders, &MapSet.member?(running, elem(&1, 0))), due)
 
       :unknown ->
-        Enum.each(own, &log_attempt(&1, replacing, "deferred, a node did not answer"))
-        count_attempts(placeholders, replacing, now)
+        Enum.each(own, &log_attempt(&1, due, "deferred, a node did not answer"))
+        count_attempts(placeholders, due)
     end
   end
 
@@ -180,10 +191,9 @@ defmodule ProcessHub.Worker.Janitor do
     )
   end
 
-  defp count_attempts(placeholders, replacing, now) do
+  defp count_attempts(placeholders, due) do
     Map.new(placeholders, fn {child_id, _child_spec, _metadata} ->
-      made = attempts_made(replacing, child_id) + 1
-      {child_id, {made, now + @replace_backoff_ms * Integer.pow(2, made - 1)}}
+      {child_id, attempts_made(due, child_id) + 1}
     end)
   end
 
@@ -201,29 +211,29 @@ defmodule ProcessHub.Worker.Janitor do
 
   # A row can miss a registration made elsewhere, so the supervisors decide
   # whether the child runs; a node that does not answer leaves it unknown.
+  # Every hub node is asked: a child can run where its strategy does not
+  # place it now, and the row names no node.
   defp running_anywhere(_hub, []), do: {:ok, MapSet.new()}
 
-  defp running_anywhere(hub, _placeholders) do
-    replies = Distributor.which_children_global(hub, timeout: @peer_check_ms)
+  defp running_anywhere(hub, placeholders) do
+    args = [hub.hub_id, Enum.map(placeholders, &elem(&1, 0)), [settle: true]]
 
-    if Enum.all?(replies, &match?({node, children} when is_atom(node) and is_list(children), &1)) do
-      running =
-        for {_node, children} <- replies,
-            {child_id, pid, _type, _modules} <- children,
-            is_pid(pid),
-            into: MapSet.new(),
-            do: child_id
+    hub.storage.misc
+    |> Cluster.nodes([:include_local])
+    |> :erpc.multicall(Distributor, :running_children, args, @peer_check_ms)
+    |> Enum.reduce_while({:ok, MapSet.new()}, fn
+      {:ok, running}, {:ok, acc} when is_list(running) ->
+        {:cont, {:ok, Enum.into(running, acc)}}
 
-      {:ok, running}
-    else
-      :unknown
-    end
+      _, _ ->
+        {:halt, :unknown}
+    end)
   end
 
-  defp submit_start(_hub, [], _replacing), do: :ok
+  defp submit_start(_hub, [], _due), do: :ok
 
-  defp submit_start(hub, placeholders, replacing) do
-    Enum.each(placeholders, &log_attempt(&1, replacing, "submitted"))
+  defp submit_start(hub, placeholders, due) do
+    Enum.each(placeholders, &log_attempt(&1, due, "submitted"))
 
     opts =
       Distributor.default_init_opts(
@@ -245,14 +255,14 @@ defmodule ProcessHub.Worker.Janitor do
     end
   end
 
-  defp log_attempt({child_id, child_spec, _metadata}, replacing, outcome) do
+  defp log_attempt({child_id, child_spec, _metadata}, due, outcome) do
     LoggerService.notice(
       "Re-placing churn placeholder - child_id: @child_id, module: @module, " <>
         "attempt: @made of @limit, @outcome",
       %{
         "child_id" => child_id,
         "module" => elem(child_spec.start, 0),
-        "made" => attempts_made(replacing, child_id) + 1,
+        "made" => attempts_made(due, child_id) + 1,
         "limit" => @replace_attempts,
         "outcome" => outcome
       }

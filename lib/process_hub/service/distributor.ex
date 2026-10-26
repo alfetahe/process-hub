@@ -200,11 +200,22 @@ defmodule ProcessHub.Service.Distributor do
   end
 
   @doc false
-  @spec running_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
-  def running_children(hub_id, child_ids) do
+  # The given children that run under this node's supervisor. With
+  # `settle: true` one call to the supervisor comes first: it is answered only
+  # after every start queued before it, so a child still in its init is seen.
+  # The stop path leaves it off, since a child's init may call the hub.
+  @spec running_children(ProcessHub.hub_id(), [ProcessHub.child_id()], keyword()) ::
+          [ProcessHub.child_id()]
+  def running_children(hub_id, child_ids, opts \\ []) do
     case Hub.get(hub_id) do
-      nil -> []
-      hub -> Enum.filter(child_ids, &DistributedSupervisor.running_pid(hub, &1))
+      nil ->
+        []
+
+      hub ->
+        if child_ids != [] and Keyword.get(opts, :settle, false),
+          do: :supervisor.get_childspec(hub.procs.dist_sup, hd(child_ids))
+
+        Enum.filter(child_ids, &DistributedSupervisor.running_pid(hub, &1))
     end
   end
 

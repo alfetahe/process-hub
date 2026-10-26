@@ -43,6 +43,7 @@ defmodule ProcessHub.Hub do
             optional(:declared_backend) => {module(), term()},
             optional(:declared_path) => String.t(),
             misc: :ets.tid(),
+            expiry: :ets.tid(),
             hook: :ets.tid()
           },
           recovery_config: recovery_config()

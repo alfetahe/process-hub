@@ -6,8 +6,10 @@ defmodule ProcessHub.Service.ProcessRegistry do
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.Batch
   alias ProcessHub.Service.HookManager
+  alias ProcessHub.Hub
   alias ProcessHub.Service.ProcessRegistry.Row
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.Storage.Entry
 
   require Logger
 
@@ -52,7 +54,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
   @impl GenServer
   def init({hub_id, storage}) do
     Process.flag(:trap_exit, true)
-    {:ok, %{hub_id: hub_id, storage: storage, batch: Batch.new(), dirty: MapSet.new()}}
+    state = %{hub_id: hub_id, storage: storage, batch: Batch.new(), dirty: MapSet.new()}
+    seed_expiries(state)
+    {:ok, state}
   end
 
   @impl GenServer
@@ -116,8 +120,13 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @impl GenServer
-  def handle_call({:clear_all, hub_id}, _from, state) do
-    {:reply, with_storage(fn -> handle_clear_all(hub_id) end), state}
+  def handle_call({:clear_all, _hub_id}, _from, state) do
+    {:reply, with_storage(fn -> handle_clear_all(state) end), state}
+  end
+
+  @impl GenServer
+  def handle_call({:reschedule_expiries, entries}, _from, state) do
+    {:reply, with_storage(fn -> handle_reschedule(state, entries) end), state}
   end
 
   @impl GenServer
@@ -255,18 +264,11 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   @spec contains_children(ProcessHub.hub_id(), [ProcessHub.child_id()]) :: [ProcessHub.child_id()]
-  @doc "Returns a list of child_ids that match the given `child_ids` variable."
+  @doc "Returns the given `child_ids` that are registered on at least one node, without duplicates."
   def contains_children(hub_id, child_ids) do
-    child_id_set = MapSet.new(child_ids)
-
-    Storage.foldl_entries(hub_id, [], fn
-      {_child_id, {_spec, [], _meta}}, acc ->
-        acc
-
-      {child_id, _}, acc ->
-        if MapSet.member?(child_id_set, child_id), do: [child_id | acc], else: acc
-    end)
-    |> Enum.reverse()
+    child_ids
+    |> Enum.uniq()
+    |> Enum.filter(&match?({_spec, [_ | _], _meta}, Storage.get(hub_id, &1)))
   end
 
   @doc "Returns all children that match the given tag."
@@ -569,6 +571,43 @@ defmodule ProcessHub.Service.ProcessRegistry do
     GenServer.call(via(hub_id), {:delete_if_expired, hub_id, child_id})
   end
 
+  @typedoc """
+  A key of the hub's expiry index with its re-placement attempts so far: the
+  child's row is due to be looked at from `due_at` on.
+  """
+  @type expiry() :: {{due_at :: integer(), ProcessHub.child_id()}, attempts :: non_neg_integer()}
+
+  @doc false
+  # The index keys due before `now`, at most `limit`, earliest first: a dirty
+  # read that stops at the first key not yet due.
+  @spec due_expiries(ProcessHub.hub_id(), integer(), pos_integer()) :: [expiry()]
+  def due_expiries(hub_id, now, limit) do
+    index = Hub.get(hub_id).storage.expiry
+    index |> take_due(:ets.first(index), now, limit, []) |> Enum.reverse()
+  end
+
+  defp take_due(_index, :"$end_of_table", _now, _left, acc), do: acc
+  defp take_due(_index, _key, _now, 0, acc), do: acc
+  defp take_due(_index, {due_at, _child_id}, now, _left, acc) when due_at >= now, do: acc
+
+  defp take_due(index, key, now, left, acc) do
+    take_due(index, :ets.next(index, key), now, left - 1, :ets.lookup(index, key) ++ acc)
+  end
+
+  @doc false
+  # Replaces each child's due keys with one key for its row's current expiry,
+  # moved to `retry_at` when given, or with none when the row no longer
+  # carries a TTL. `next` is `{retry_at, attempts}`, or `nil` to start over.
+  @spec reschedule_expiries(ProcessHub.hub_id(), [
+          {ProcessHub.child_id(), [{integer(), ProcessHub.child_id()}],
+           {integer(), pos_integer()} | nil}
+        ]) :: :ok
+  def reschedule_expiries(_hub_id, []), do: :ok
+
+  def reschedule_expiries(hub_id, entries) do
+    GenServer.call(via(hub_id), {:reschedule_expiries, entries})
+  end
+
   @doc """
   Updates the row on the registry.
 
@@ -651,7 +690,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
   defp handle_insert(state, child_spec, child_nodes, opts) do
     table = Keyword.get(opts, :table, state.hub_id)
     row = staged_row(state, table, child_spec.id, child_spec, child_nodes, opts)
-    Storage.insert_many(table, [row], @deferred)
+    commit_rows(state, table, [row])
 
     hook_storage = Keyword.get(opts, :hook_storage, nil)
 
@@ -666,9 +705,32 @@ defmodule ProcessHub.Service.ProcessRegistry do
     :ok
   end
 
-  defp handle_clear_all(hub_id) do
-    Storage.clear_all(hub_id)
+  defp handle_clear_all(state) do
+    :ets.delete_all_objects(state.storage.expiry)
+    Storage.clear_all(state.hub_id)
   end
+
+  # Runs in this process, after every write queued before it: a registration
+  # that cleared the TTL meanwhile leaves no row to re-index, and a fresh TTL
+  # is re-indexed at its own expiry.
+  defp handle_reschedule(state, entries) do
+    index = state.storage.expiry
+
+    Enum.each(entries, fn {child_id, keys, next} ->
+      Enum.each(keys, &:ets.delete(index, &1))
+
+      case Storage.match(state.hub_id, {child_id, :_, :"$1"}) do
+        [{expire}] when is_integer(expire) ->
+          :ets.insert(index, retry_key(child_id, expire, next))
+
+        _ ->
+          :ok
+      end
+    end)
+  end
+
+  defp retry_key(child_id, expire, nil), do: {{expire, child_id}, 0}
+  defp retry_key(child_id, expire, {at, made}), do: {{max(expire, at), child_id}, made}
 
   defp handle_delete_if_expired(hub_id, child_id) do
     now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
@@ -742,7 +804,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
         end
       end)
 
-    Storage.insert_many(hub_id, rows, @deferred)
+    commit_rows(state, hub_id, rows)
 
     if hook_storage do
       HookManager.dispatch_hooks(hook_storage, Enum.reverse(hooks))
@@ -802,7 +864,7 @@ defmodule ProcessHub.Service.ProcessRegistry do
         end
       end)
 
-    Storage.insert_many(hub_id, rows, @deferred)
+    commit_rows(state, hub_id, rows)
     Enum.each(deletes, &Storage.remove(hub_id, &1, @deferred))
     hooks = Enum.reverse(hooks)
 
@@ -834,6 +896,34 @@ defmodule ProcessHub.Service.ProcessRegistry do
   end
 
   ## Row bookkeeping ---------------------------------------------------------
+
+  # Every registry write goes through here, so each TTL row of the hub's table
+  # gets an index key. `now` is read before the backend stamps its own
+  # `now + ttl`, so the key never falls after the row's expiry. A cleared TTL
+  # or a removed row leaves its key, which the janitor drops when it falls due.
+  defp commit_rows(state, table, rows) do
+    now = Entry.now_ms()
+    result = Storage.insert_many(table, rows, @deferred)
+
+    if table === state.hub_id do
+      for {child_id, _value, [_ | _] = opts} <- rows,
+          due_at = Entry.expire_at(opts, now),
+          is_integer(due_at),
+          do: :ets.insert(state.storage.expiry, {{due_at, child_id}, 0})
+    end
+
+    result
+  end
+
+  # Rows a backend replayed from disk, expired ones too. A restarted server
+  # finds the index it kept writing; seeding again would undo the back-off.
+  defp seed_expiries(%{hub_id: hub_id, storage: %{expiry: index}}) do
+    if :ets.info(index, :size) === 0 do
+      for {child_id, expire} <- Storage.match(hub_id, {:"$1", :_, :"$2"}),
+          is_integer(expire),
+          do: :ets.insert(index, {{expire, child_id}, 0})
+    end
+  end
 
   # The churn expiry closes a race where a bulk_delete would wipe the entry
   # before the new node's PidsRegisterRequest re-populates it.

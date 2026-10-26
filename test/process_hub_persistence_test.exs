@@ -170,7 +170,7 @@ defmodule Test.ProcessHubPersistenceTest do
     registry_proc = ProcessHub.Hub.get(hub_id).procs.process_registry
     registry_pid = GenServer.whereis(registry_proc)
 
-    assert Janitor.purge_pending_registry(hub_id) === %{}
+    assert Janitor.purge_pending_registry(hub_id) === :ok
 
     assert Storage.match(hub_id, {:swept_stub, :_, :"$1"}) === []
     assert GenServer.whereis(registry_proc) === registry_pid
@@ -204,7 +204,7 @@ defmodule Test.ProcessHubPersistenceTest do
     registry_proc = ProcessHub.Hub.get(hub_id).procs.process_registry
     registry_pid = GenServer.whereis(registry_proc)
 
-    assert Janitor.purge_pending_registry(hub_id) === %{}
+    assert Janitor.purge_pending_registry(hub_id) === :ok
 
     assert Storage.match(hub_id, {:swept_stub, :_, :"$1"}) === []
     assert GenServer.whereis(registry_proc) === registry_pid
