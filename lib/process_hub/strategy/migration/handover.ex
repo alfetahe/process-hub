@@ -82,7 +82,7 @@ defmodule ProcessHub.Strategy.Migration.HandoverBehaviour do
   defp keeping(ctx, kept, deadline) do
     receive do
       {:process_hub, :forward_to, child_id, pid} when child_id === ctx.child_id ->
-        send(pid, {:process_hub, :forwarded, child_id, Enum.reverse(kept)})
+        send(pid, {:process_hub, :forwarded, child_id, passable(Enum.reverse(kept))})
         forwarding(ctx, pid)
 
       {:EXIT, from, reason} = msg ->
@@ -104,11 +104,10 @@ defmodule ProcessHub.Strategy.Migration.HandoverBehaviour do
 
   defp forwarding(ctx, pid) do
     receive do
-      {:EXIT, from, reason} = msg ->
+      {:EXIT, from, reason} ->
         case exit_signal(ctx, from, reason) do
           {:stop, reason} -> stop(ctx, [], pid, reason)
-          :ignore -> forwarding(ctx, pid)
-          :message -> pass_on(ctx, pid, [msg])
+          _not_passed_on -> forwarding(ctx, pid)
         end
 
       msg ->
@@ -117,8 +116,20 @@ defmodule ProcessHub.Strategy.Migration.HandoverBehaviour do
   end
 
   defp pass_on(ctx, pid, messages) do
-    send(pid, {:process_hub, :forwarded, ctx.child_id, messages})
+    with [_ | _] = messages <- passable(messages),
+         do: send(pid, {:process_hub, :forwarded, ctx.child_id, messages})
+
     forwarding(ctx, pid)
+  end
+
+  # The old process's own monitor and link notices mean nothing to the new
+  # one. They are kept while the old process may still go back to work.
+  defp passable(messages) do
+    Enum.reject(messages, fn
+      {:DOWN, _ref, _type, _object, _info} -> true
+      {:EXIT, _from, _reason} -> true
+      _msg -> false
+    end)
   end
 
   # Stopped: what is still in the mailbox goes with the kept messages, to the
@@ -126,7 +137,7 @@ defmodule ProcessHub.Strategy.Migration.HandoverBehaviour do
   # A `HotSwap` process stopped before the hub named its replacement has nobody
   # to pass them to.
   defp stop(ctx, kept, pid, reason) do
-    messages = Enum.reverse(kept, drain(ctx, []))
+    messages = passable(Enum.reverse(kept, drain([])))
 
     cond do
       messages === [] -> :ok
@@ -138,10 +149,9 @@ defmodule ProcessHub.Strategy.Migration.HandoverBehaviour do
     {:stop, reason, ctx.state}
   end
 
-  defp drain(ctx, acc) do
+  defp drain(acc) do
     receive do
-      {:EXIT, _from, _reason} when not ctx.trapping? -> drain(ctx, acc)
-      msg -> drain(ctx, [msg | acc])
+      msg -> drain([msg | acc])
     after
       0 -> Enum.reverse(acc)
     end

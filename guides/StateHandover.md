@@ -141,6 +141,7 @@ Things to know:
 - **If no new process takes over in time**, the old one goes back to work after `state_ttl` and handles the kept messages itself, in order.
 - **Order:** passed-on messages keep their order among themselves. They are handled after the messages already waiting in the new process, and they are not ordered against messages sent to the new process directly.
 - **Calls:** the old process stops right after passing on its last messages, and a caller waiting on it may see that exit before the new process answers, even though the call is still handled. With `ColdSwap` the gap is longer, so callers usually time out. Make such calls safe to retry.
+- **Not passed on:** the old process's own `:DOWN` and `:EXIT` notices, which are about its monitors and links, not the new process's.
 - **A message that reaches the old process as it exits is lost**, as it is with any process that stops. Senders that keep its pid should look it up again once it is gone.
 - **Node shutdown:** messages are passed on when a child moves while the hub keeps running. When a node shuts down and hands its states over (see above), nothing is passed on.
 

@@ -242,6 +242,19 @@ defmodule Test.Strategy.Migration.HotSwapTest do
       assert_receive {:DOWN, ^ref, :process, ^old, :shutdown}
     end
 
+    test "the old process's monitor notices are not passed on" do
+      {:ok, old} = GenServer.start(Holder, [])
+
+      send(old, {:process_hub, :query_hot_handover_state, self(), :cid, {:no_hub, 5_000}})
+      assert_receive {:process_hub, :hotswap_state, :cid, []}
+      send(old, {:DOWN, make_ref(), :process, self(), :normal})
+      send(old, {:work, 1})
+      send(old, {:process_hub, :forward_to, :cid, self()})
+
+      assert_receive {:process_hub, :forwarded, :cid, [{:work, 1}]}
+      Process.exit(old, :shutdown)
+    end
+
     test "the old process goes back to work when no replacement is named in time" do
       {:ok, old} = GenServer.start(Holder, [])
 
