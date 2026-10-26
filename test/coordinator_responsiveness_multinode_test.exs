@@ -90,6 +90,14 @@ defmodule Test.CoordinatorResponsivenessMultinodeTest do
     assert_receive {:started, {:ok, :start_initiated}}, 5_000
 
     assert [%{id: :resp_durable_child}] =
-             on(follower, DeclaredChildren, :declared_children, [hub_id]).children
+             on(leader, DeclaredChildren, :declared_children, [hub_id]).children
+
+    # The follower pulls the leader's announced version on its own schedule.
+    assert Common.eventually(fn ->
+             match?(
+               [%{id: :resp_durable_child}],
+               on(follower, DeclaredChildren, :declared_children, [hub_id]).children
+             )
+           end)
   end
 end

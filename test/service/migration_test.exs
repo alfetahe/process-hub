@@ -22,7 +22,9 @@ defmodule Test.Service.MigrationTest do
   alias ProcessHub.Worker.WorkerQueue
   alias Test.Helper.ConsentServer
 
-  @remote_node :ph_fake_remote@localhost
+  # A legal host under long names: drain monitors its peers, and reaching for
+  # a node on an illegal host logs an error.
+  @remote_node :"ph_fake_remote@127.0.0.1"
 
   # Stands in for the coordinator: answers whether it is locked, serializes
   # deferred-list writes, and forwards the messages it would receive to the

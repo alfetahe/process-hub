@@ -300,8 +300,22 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
     ids = Enum.map(specs, & &1.id)
 
     assert eventually(fn -> running_counts(hub_id, Node.list(), ids) == ones(ids) end)
+
+    # A node learns of a child started elsewhere only once its registration
+    # arrives; a split before that leaves the other side unaware of the child.
+    hub_nodes = membership(node, hub_id)
+    assert eventually(fn -> Enum.all?(hub_nodes, &registered_all?(&1, hub_id, ids)) end)
     Bag.all_messages()
     ids
+  end
+
+  defp registered_all?(node, hub_id, ids) do
+    Enum.all?(ids, fn id ->
+      match?(
+        {_, [_]},
+        :erpc.call(node, ProcessHub.Service.ProcessRegistry, :lookup, [hub_id, id])
+      )
+    end)
   end
 
   # Drains `group` at once, stops its hubs and cuts it off from the rest.
