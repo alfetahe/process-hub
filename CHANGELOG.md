@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 ## v0.7.1 - Upcoming
 
 ### Added
+- `:nodedown_grace_period` on `%ProcessHub{}` (milliseconds, default `0`): a node whose connection is lost keeps its children for this long before the other nodes take them over. If it rejoins within the grace nothing moves; a node that leaves gracefully (a hub stop or a drain) still has its children moved at once. With the default nothing changes.
 - `ProcessHub.Strategy.PartitionTolerance.DynamicQuorum` takes an optional `:startup_nodes`: a hub that starts with fewer hub nodes stays in partition mode until that many are present, so a node that starts alone does not run as a cluster of one.
 - **Experimental:** when a node joins a hub with `:auto_recovery`, a recovery round now follows within a couple of seconds instead of at the next `:reconcile_interval_ms`, so a child that could not start for want of a node starts as soon as one is there. `Recovery.request_round/1` asks for such a round yourself, for example when the group a distribution strategy needs for a child has just gained a member.
 - **Experimental:** a new `:auto_recovery` option, `:cluster_settle_ms` (default `2_000`). When a hub starts, this is how long it waits for other nodes to show up before it decides it is running alone. If your application connects the cluster before it starts its hubs, you can set it to `0`.

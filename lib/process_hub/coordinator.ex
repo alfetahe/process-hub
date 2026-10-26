@@ -340,42 +340,32 @@ defmodule ProcessHub.Coordinator do
   def handle_info({:process_batch, :nodedown}, state) do
     {state, nodes} = take_batch(state, :nodedown)
 
-    current_connected = Node.list()
+    # Only nodes still disconnected; they wait out the nodedown grace first.
+    {:noreply, hold_down_nodes(state, nodes -- Node.list())}
+  end
 
-    # Only process nodes that are actually disconnected.
-    valid_down_nodes =
-      Enum.filter(nodes, fn node ->
-        not Enum.member?(current_connected, node)
-      end)
+  @impl true
+  def handle_info({:nodedown_grace, node}, state) do
+    {:noreply, state |> release_held([node]) |> batch_event(:grace_expired, node)}
+  end
 
-    if length(valid_down_nodes) > 0 do
-      Dispatcher.dispatch_event(
-        state.hub.procs.event_queue,
-        @event_cluster_leave_batch,
-        {:down, valid_down_nodes},
-        %{members: :local}
-      )
-    end
+  @impl true
+  def handle_info({:process_batch, :grace_expired}, state) do
+    {state, nodes} = take_batch(state, :grace_expired)
 
-    {:noreply, state}
+    # A node back as a same-hub peer kept its place, and one lost again since
+    # its timer fired waits out a grace of its own.
+    kept = Map.keys(state.nodedown_grace_timers) ++ external_hub_nodes(state.hub)
+    {:noreply, dispatch_departure(state, :down, nodes -- kept)}
   end
 
   @impl true
   def handle_info({:process_batch, :cluster_leave}, state) do
     {state, nodes} = take_batch(state, :cluster_leave)
 
-    if length(nodes) > 0 do
-      # Graceful leaves don't need connection validation (the node announced
-      # its departure before shutting down), so dispatch them directly.
-      Dispatcher.dispatch_event(
-        state.hub.procs.event_queue,
-        @event_cluster_leave_batch,
-        {:leave, nodes},
-        %{members: :local}
-      )
-    end
-
-    {:noreply, state}
+    # Graceful leaves need neither connection validation (the node announced
+    # its departure before shutting down) nor a grace.
+    {:noreply, dispatch_departure(state, :leave, nodes)}
   end
 
   @impl true
@@ -411,8 +401,18 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   def handle_info({@event_node_restarted, {peer, token}}, state) when is_atom(peer) do
-    Cluster.handle_boot_announcement(state.hub, peer, token)
-    {:noreply, state}
+    # A node that restarted inside its nodedown grace lost its children; with no
+    # recovery round to restart them, its grace ends here and they move through
+    # the node-down path, which also drops its stale bindings.
+    end_grace? = held?(state, peer) and not state.hub.recovery_config.enabled?
+
+    case Cluster.handle_boot_announcement(state.hub, peer, token, not end_grace?) do
+      :restarted when end_grace? ->
+        {:noreply, state |> release_held([peer]) |> dispatch_departure(:down, [peer])}
+
+      _ ->
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -770,18 +770,29 @@ defmodule ProcessHub.Coordinator do
         Cluster.new_node?(hub_nodes, n) and n !== local_node
       end)
 
+    # A node back within its nodedown grace kept its place, so nothing is
+    # redistributed; it is greeted like a joining node in case it restarted.
+    returned = Enum.filter(nodes, &held?(state, &1))
+    state = release_held(state, returned)
+
+    # Broadcast local registry data to joining nodes, and the declared-list
+    # version so a rejoining node catches up on stops it missed before its
+    # first reconcile round.
+    case Enum.uniq(new_nodes ++ returned) do
+      [] ->
+        :ok
+
+      greeted ->
+        Synchronizer.broadcast_local_registry(hub, greeted)
+        DeclaredChildren.announce_version(hub)
+    end
+
     if length(new_nodes) > 0 do
       LoggerService.info(
         "hub merge: adding nodes @new (current membership @existing)",
         %{"new" => new_nodes, "existing" => hub_nodes},
         prefix: "Coordinator"
       )
-
-      # Broadcast local registry data to joining nodes, and the declared-list
-      # version so a rejoining node catches up on stops it missed before its
-      # first reconcile round.
-      Synchronizer.broadcast_local_registry(hub, new_nodes)
-      DeclaredChildren.announce_version(hub)
 
       delegate_work(state, {:handle_node_up, %{joined_nodes: new_nodes, hub: hub}})
     else
@@ -804,6 +815,49 @@ defmodule ProcessHub.Coordinator do
     else
       state
     end
+  end
+
+  # A failed node keeps its children for the nodedown grace (0 = none). The
+  # grace runs from the first loss: a node that flaps without rejoining the
+  # hub does not extend it.
+  defp hold_down_nodes(state, nodes) do
+    case Storage.get(state.hub.storage.misc, StorageKey.ndg()) || 0 do
+      0 ->
+        dispatch_departure(state, :down, nodes)
+
+      grace ->
+        timers =
+          nodes
+          |> Enum.reject(&Map.has_key?(state.nodedown_grace_timers, &1))
+          |> Enum.reduce(state.nodedown_grace_timers, fn node, timers ->
+            TimerMap.put(timers, node, {:nodedown_grace, node}, grace)
+          end)
+
+        %{state | nodedown_grace_timers: timers}
+    end
+  end
+
+  # Held: its grace timer runs, or it fired and the expiry batch has the node.
+  defp held?(state, node) do
+    Map.has_key?(state.nodedown_grace_timers, node) or
+      node in state.event_batches.grace_expired.nodes
+  end
+
+  defp release_held(state, nodes) do
+    %{state | nodedown_grace_timers: TimerMap.cancel_all(state.nodedown_grace_timers, nodes)}
+  end
+
+  defp dispatch_departure(state, _kind, []), do: state
+
+  defp dispatch_departure(state, kind, nodes) do
+    Dispatcher.dispatch_event(
+      state.hub.procs.event_queue,
+      @event_cluster_leave_batch,
+      {kind, nodes},
+      %{members: :local}
+    )
+
+    state
   end
 
   # Adds a node to the event batch and (re)schedules the flush timer with a
@@ -979,6 +1033,7 @@ defmodule ProcessHub.Coordinator do
     Storage.insert(storage.misc, StorageKey.cnrt(), settings.cross_node_request_timeout)
     Storage.insert(storage.misc, StorageKey.rci(), settings.req_cleanup_interval)
     Storage.insert(storage.misc, StorageKey.nri(), settings.nodeup_reconcile_interval)
+    Storage.insert(storage.misc, StorageKey.ndg(), settings.nodedown_grace_period)
   end
 
   defp register_handlers(%{event_queue: eq}) do

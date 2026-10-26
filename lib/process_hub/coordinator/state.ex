@@ -26,10 +26,13 @@ defmodule ProcessHub.Coordinator.State do
           event_batches: %{
             nodedown: batch_state(),
             cluster_leave: batch_state(),
-            cluster_join: batch_state()
+            cluster_join: batch_state(),
+            grace_expired: batch_state()
           },
           # Per-node membership reconciliation fail-safe timers, keyed by node.
           nodeup_reconcile_timers: %{node() => reference()},
+          # Per-node nodedown grace timers: a failed node not yet given up on.
+          nodedown_grace_timers: %{node() => reference()},
           pending_operations: %{reference() => ProcessHub.Service.RequestManager.t()},
           pending_work_count: non_neg_integer(),
           migration_retry_timer: reference() | {:running, reference()} | nil,
@@ -57,9 +60,11 @@ defmodule ProcessHub.Coordinator.State do
     event_batches: %{
       nodedown: @default_batch,
       cluster_leave: @default_batch,
-      cluster_join: @default_batch
+      cluster_join: @default_batch,
+      grace_expired: @default_batch
     },
     nodeup_reconcile_timers: %{},
+    nodedown_grace_timers: %{},
     pending_operations: %{},
     pending_work_count: 0,
     migration_retry_timer: nil,

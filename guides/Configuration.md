@@ -147,6 +147,20 @@ split-brain protection once established without requiring manual quorum configur
 intentionally downsizing your cluster, you can reset the expected cluster size using
 `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum.reset_cluster_size/2`.
 
+#### Waiting out a node failure
+By default a node whose connection is lost has its children started on the other nodes as
+soon as the loss is confirmed (`:cluster_event_debounce`). A process that keeps state
+locally loses what it had not handed over, even when the node is back seconds later. Set
+`:nodedown_grace_period` (milliseconds) to keep such a node's children placed for that
+long: the node stays a hub member, its registry rows stay, and nothing starts its children
+elsewhere. A start placed on it fails as it would on any unreachable node. If it rejoins
+within the grace, nothing moves. If it restarted, its children are gone: with
+`:auto_recovery` the reconcile round restarts them (see the Persistence guide); without
+it, the grace ends at once and they move as below, then back to the node as it rejoins.
+Once the grace runs out, the children move as they would without it, and a split that
+lasts longer is then handled by the partition tolerance strategy. A node that leaves
+gracefully, by stopping its hub or draining, is never waited for.
+
 ### Distribution Strategy:
 `ProcessHub.Strategy.Distribution.Base` - defines the base protocol for distribution
 strategies which define the method to determine the node/process mapping.

@@ -46,7 +46,7 @@ defmodule Test.HubTest do
       assert state.pending_operations == %{}
       assert state.pending_work_count == 0
 
-      for event <- [:nodedown, :cluster_leave, :cluster_join] do
+      for event <- [:nodedown, :cluster_leave, :cluster_join, :grace_expired] do
         assert state.event_batches[event] == State.default_batch_state()
       end
     end

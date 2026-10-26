@@ -44,6 +44,8 @@ defmodule ProcessHub.Constant.StorageKey do
   def rci, do: :req_cleanup_interval
   @spec nri() :: :nodeup_reconcile_interval
   def nri, do: :nodeup_reconcile_interval
+  @spec ndg() :: :nodedown_grace_period
+  def ndg, do: :nodedown_grace_period
   @spec rp() :: :registry_populated
   def rp, do: :registry_populated
   @spec mdl() :: :migration_deferred_list

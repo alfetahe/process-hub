@@ -227,21 +227,26 @@ defmodule ProcessHub.Service.Cluster do
 
   This closes the fast-restart stale-binding gap for every backend — the stale
   `{peer, dead_pid}` rows live on the local (peer) node, independent of the
-  restarted node's `:registry_backend`. Purging only withdraws observations; the
-  child's re-placement is handled by the normal redistribution path, and any
-  binding wiped by a late announcement is re-asserted by the returning node's next
-  sync.
+  restarted node's `:registry_backend`. Purging only withdraws observations: a
+  child left with no observation is restarted by the `:auto_recovery` reconcile
+  round, and nothing restarts it without one. Any binding wiped by a late
+  announcement is re-asserted by the returning node's next sync.
+
+  With `purge?` false the token is recorded and the bindings are left for the
+  caller, which re-places the node's children through the node-down path.
+  Answers `:restarted` for a new token and `:unchanged` otherwise.
   """
-  @spec handle_boot_announcement(Hub.t(), node(), integer()) :: :ok
-  def handle_boot_announcement(%Hub{} = hub, peer, token) do
+  @spec handle_boot_announcement(Hub.t(), node(), integer(), boolean()) ::
+          :restarted | :unchanged
+  def handle_boot_announcement(%Hub{} = hub, peer, token, purge? \\ true) do
     tokens = Storage.get(hub.storage.misc, StorageKey.nbt()) || %{}
 
     if Map.get(tokens, peer) === token do
-      :ok
+      :unchanged
     else
-      purge_node(hub.hub_id, peer)
+      if purge?, do: purge_node(hub.hub_id, peer)
       Storage.insert(hub.storage.misc, StorageKey.nbt(), Map.put(tokens, peer, token))
-      :ok
+      :restarted
     end
   end
 

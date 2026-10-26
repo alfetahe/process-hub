@@ -67,9 +67,13 @@ backend — the stale rows live on the peer.
 Every node broadcasts a per-boot token on startup. A peer purges another
 node's bindings only when that node's token **changes**, which distinguishes
 a genuine restart (new token → reap the dead pids) from a transient network
-flap (same token → keep the live bindings). The purged children are then
-re-placed by the normal redistribution path. This runs for all backends,
-including the default `:ets`, and requires no `:auto_recovery`.
+flap (same token → keep the live bindings). This runs for all backends,
+including the default `:ets`, and requires no `:auto_recovery`. Purging only
+withdraws the bindings: the `:auto_recovery` reconcile round restarts the
+children left running nowhere, and without it nothing does. The one exception
+is a node held in its `:nodedown_grace_period`: without `:auto_recovery` its
+restart ends the grace, so its children move as after any failure and back to
+it as it rejoins.
 
 ## Observability
 

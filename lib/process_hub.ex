@@ -184,6 +184,18 @@ defmodule ProcessHub do
   This reconciles cluster *membership* and is unrelated to process-placement reconciliation.
   The default is `3000` (3 seconds); `0` disables the fail-safe.
   This fail-safe is **experimental** and may change in future releases.
+  - `:nodedown_grace_period` is optional and defines how long, in milliseconds, a node whose
+  connection is lost keeps its children before the other nodes take them over. During the
+  grace the node stays a hub member and its registry rows stay bound, so nothing starts its
+  children elsewhere and starts placed on it fail as they would on any unreachable node. If
+  the node rejoins the hub within the grace, nothing moves. If it restarted, its children
+  are gone: with `:auto_recovery` its stale bindings are reaped and the reconcile round
+  restarts them; without it, its grace ends and they move as after a grace that ran out,
+  and back to it as it rejoins. Once the grace runs out, the node is removed and its
+  children are redistributed as without a grace. Only a lost connection waits: a node that
+  leaves gracefully (a hub stop or a drain) has its children moved at once. A network split
+  longer than the grace is then handled by the partition tolerance strategy. The default is
+  `0`: no grace, the children move as soon as the loss is confirmed.
   - `:registry_backend` is optional and selects the storage backend for the
   process registry table. The default is `:ets`. Accepted shapes:
     - `:ets` — in-memory only. Registry contents are lost when the
@@ -279,6 +291,7 @@ defmodule ProcessHub do
           cross_node_request_timeout: pos_integer(),
           req_cleanup_interval: pos_integer(),
           nodeup_reconcile_interval: non_neg_integer(),
+          nodedown_grace_period: non_neg_integer(),
           registry_backend:
             :ets
             | {:dets, keyword()}
@@ -307,6 +320,7 @@ defmodule ProcessHub do
     cross_node_request_timeout: 5000,
     req_cleanup_interval: 60000,
     nodeup_reconcile_interval: 3000,
+    nodedown_grace_period: 0,
     registry_backend: :ets,
     auto_recovery: false
   ]
