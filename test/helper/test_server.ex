@@ -73,6 +73,13 @@ defmodule Test.Helper.TestServer do
     {:stop, reason, state}
   end
 
+  # Answers once `pid` is gone; every message it sent here arrived before that.
+  @impl GenServer
+  def handle_call({:await_down, pid}, _from, state) do
+    ref = Process.monitor(pid)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> {:reply, :ok, state})
+  end
+
   @impl GenServer
   def handle_call(:ping, _from, state) do
     {:reply, :pong, state}

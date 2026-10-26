@@ -26,7 +26,7 @@ defmodule Test.ProcessHubNodedownGraceMultiNodeTest do
   @moduletag :multinode
   @moduletag timeout: 180_000
 
-  @grace 5_000
+  @grace 2_500
 
   setup_all do
     peers =

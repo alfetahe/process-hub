@@ -58,7 +58,8 @@ defmodule Test.HandoverForwardMultiNodeTest do
     ProcessHub.Future.await(future)
 
     test_pid = self()
-    writers = Map.new(ids, &{&1, spawn_writer(hub_id, &1, test_pid)})
+    olds = Map.new(ids, &{&1, ProcessHub.get_pid(hub_id, &1)})
+    writers = Map.new(olds, fn {id, old} -> {id, spawn_writer(hub_id, id, old, test_pid)} end)
 
     start_hub_on(peer, hub_id, strategy)
 
@@ -78,20 +79,36 @@ defmodule Test.HandoverForwardMultiNodeTest do
            "the children never moved"
 
     Enum.each(writers, fn {_id, writer} -> send(writer, :stop) end)
-    sent = Map.new(ids, fn id -> assert_receive({:sent, ^id, n}, 5_000) && {id, n} end)
+
+    sent =
+      Map.new(ids, fn id ->
+        assert_receive({:sent, ^id, n}, 5_000)
+        {id, n}
+      end)
 
     for id <- moved do
       pid = ProcessHub.get_pid(hub_id, id)
-      # The last passed-on messages may still be on their way to the new process.
-      Common.eventually(fn -> length(log(pid)) >= sent[id] end, 2_000)
-      {id, log(pid), GenServer.call(pid, {:get_value, :handed_over_log}), sent[id]}
+      handed_over = handed_over(pid)
+      # The old process's DOWN reaches the new one after all it passed on, and
+      # ColdSwap's kept messages follow the state from the same sender. The
+      # new process re-sends each batch to itself, so one more call lets the
+      # re-sent messages land before the log is read.
+      :ok = GenServer.call(pid, {:await_down, olds[id]})
+      :pong = GenServer.call(pid, :ping)
+      {id, log(pid), handed_over, sent[id]}
     end
+  end
+
+  defp handed_over(pid) do
+    assert Common.eventually(fn -> GenServer.call(pid, {:get_value, :handed_over_log}) end),
+           "the state never reached the new process"
+
+    GenServer.call(pid, {:get_value, :handed_over_log})
   end
 
   # Sends 1, 2, 3, ... to the child's first pid until that pid is no longer
   # the registered one or is gone, or until told to stop; reports how many.
-  defp spawn_writer(hub_id, child_id, test_pid) do
-    old = ProcessHub.get_pid(hub_id, child_id)
+  defp spawn_writer(hub_id, child_id, old, test_pid) do
     spawn_link(fn -> write(hub_id, child_id, old, 1, test_pid) end)
   end
 
@@ -100,11 +117,18 @@ defmodule Test.HandoverForwardMultiNodeTest do
       :stop -> send(test_pid, {:sent, child_id, n - 1})
     after
       0 ->
-        if Process.alive?(old) and ProcessHub.get_pid(hub_id, child_id) in [old, nil] do
-          send(old, {:append, n})
-          write(hub_id, child_id, old, n + 1, test_pid)
-        else
-          receive do: (:stop -> send(test_pid, {:sent, child_id, n - 1}))
+        cond do
+          not Process.alive?(old) or ProcessHub.get_pid(hub_id, child_id) not in [old, nil] ->
+            receive do: (:stop -> send(test_pid, {:sent, child_id, n - 1}))
+
+          # An unbounded flood outruns what the old process can pass on over
+          # the network, and its stop then waits behind the backlog.
+          match?({_, len} when len > 100, Process.info(old, :message_queue_len)) ->
+            write(hub_id, child_id, old, n, test_pid)
+
+          true ->
+            send(old, {:append, n})
+            write(hub_id, child_id, old, n + 1, test_pid)
         end
     end
   end

@@ -267,6 +267,16 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
 
     assert result.errors == [{on_b, {:error, :no_response}}]
 
+    # Each side takes over the other's children; once it has, their slow stop
+    # is switched off, or the hub would stop them 4s apart.
+    assert eventually(fn ->
+             running_counts(hub_id, [a, b], ids) == Map.put(Map.new(ids, &{&1, 2}), on_b, 1)
+           end)
+
+    for node <- [a, b],
+        id <- local_running(node, :erpc.call(node, ProcessHub.Hub, :get, [hub_id])),
+        do: :ok = GenServer.call({String.to_atom(id), node}, {:set_value, :slow_stop_ms, 0})
+
     stop_hub([a, b], hub_id)
   end
 
