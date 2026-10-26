@@ -75,18 +75,27 @@ defmodule ProcessHub.Service.State do
   end
 
   # A node still in partition mode holds rows as stale as this one's and
-  # sends none; a node that does not answer adds nothing.
+  # sends none; a node that does not answer adds nothing. A node that answers
+  # speaks for itself: what the others still list it as running may be a child
+  # it has just moved away and they have not yet heard of.
   defp merge_from_quorum(hub) do
-    local_node = node()
+    peers = Cluster.nodes(hub.storage.misc, [:connected])
+
+    answers =
+      for {peer, {:ok, rows}} <-
+            Enum.zip(
+              peers,
+              :erpc.multicall(peers, __MODULE__, :quorum_rows, [hub.hub_id], @peer_call_ms)
+            ),
+          do: {peer, rows}
+
+    answered = MapSet.new([node() | Enum.map(answers, &elem(&1, 0))])
 
     observed =
-      for {:ok, rows} <-
-            hub.storage.misc
-            |> Cluster.nodes([:connected])
-            |> :erpc.multicall(__MODULE__, :quorum_rows, [hub.hub_id], @peer_call_ms),
+      for {peer, rows} <- answers,
           {_child_id, {spec, node_pids, meta}} <- rows,
           {node, pid} <- node_pids,
-          node !== local_node,
+          node === peer or not MapSet.member?(answered, node),
           reduce: %{} do
         acc -> Map.update(acc, node, [{spec, pid, meta}], &[{spec, pid, meta} | &1])
       end

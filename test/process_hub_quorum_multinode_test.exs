@@ -176,6 +176,30 @@ defmodule Test.ProcessHubQuorumMultiNodeTest do
     stop_hub([a, b], hub_id)
   end
 
+  test "a hub that leaves partition mode takes each peer's word for its own children",
+       %{peers: peers} do
+    [a, b, c] = Enum.take(peers, 3)
+    hub_id = start_hub([a, b, c], %Divergence{})
+    children = start_children(hub_id, a, 10)
+    hub_b = :erpc.call(b, ProcessHub.Hub, :get, [hub_id])
+    [held | _] = local_running(b, hub_b)
+    :ok = :erpc.call(b, ProcessHub.Service.State, :toggle_quorum_failure, [hub_b])
+
+    # a still lists the child on c, as a peer does that has not yet heard that
+    # c moved it away; c itself runs nothing for it.
+    spec = Enum.find(child_specs(hub_id, 10), &(&1.id == held))
+    stale = :erpc.call(c, :erlang, :whereis, [:init])
+    :ok = :erpc.call(a, ProcessHub.Service.ProcessRegistry, :insert, [hub_id, spec, [{c, stale}]])
+    Bag.all_messages()
+
+    :ok = :erpc.call(b, ProcessHub.Service.State, :toggle_quorum_success, [hub_b])
+
+    assert_receive {:child_started, ^held, ^b}, 2_000
+    assert running_counts(hub_id, [a, b, c], children) == ones(children)
+
+    stop_hub([a, b, c], hub_id)
+  end
+
   test "two hubs that both lost their quorum both restart what they held", %{peers: peers} do
     [a, b] = Enum.take(peers, 2)
     hub_id = start_hub([a, b], %Divergence{})
