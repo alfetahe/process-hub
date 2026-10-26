@@ -121,6 +121,12 @@ defmodule ProcessHub.Request.Handler.StopChildrenRequest do
         Distributor.children_terminate(hub, local_cids, on_empty: :delete)
       end
 
+      # A row a move left unbound is the hub's only memory that the child should
+      # run; a deliberate stop removes it on every node so no janitor re-places it.
+      Distributor.unregister_bindings(hub, Enum.map(already_stopped, &{&1.child_id, []}),
+        on_empty: :delete
+      )
+
       # If this node recently sent a start for the child elsewhere, stop it there too.
       forward_data = forward_in_flight(hub, request.children, forward_data, path)
 

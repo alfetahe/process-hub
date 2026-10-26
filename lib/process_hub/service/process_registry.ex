@@ -497,8 +497,9 @@ defmodule ProcessHub.Service.ProcessRegistry do
   - `:on_empty` - what becomes of a row that just lost its last node entry:
     - `:churn` (default) - a stub with a 30 s expiry. For placement churn, where
       a re-registration from the child's new node is expected imminently.
-    - `:delete` - the row is removed entirely, for a deliberate stop. Stop
-      memory for declared children lives in the declared list, not in the row.
+    - `:delete` - the row is removed entirely, for a deliberate stop, and so is
+      a row already left unbound. Stop memory for declared children lives in the
+      declared list, not in the row.
     - `:keep` - an unbound row with no expiry, for a withdrawn observation.
       The row is kept rather than erased on someone else's say-so.
 
@@ -764,9 +765,14 @@ defmodule ProcessHub.Service.ProcessRegistry do
 
     {rows, deletes, hooks} =
       Enum.reduce(children, {[], [], []}, fn {child_id, rem_nodes}, {rows, deletes, hooks} ->
-        case lookup(hub_id, child_id, with_metadata: true) do
+        # A deliberate delete also reads an unbound row: the placeholder a move
+        # left goes with it, so nothing re-places the stopped child.
+        case lookup(hub_id, child_id, with_metadata: true, include_empty: on_empty === :delete) do
           nil ->
             {rows, deletes, hooks}
+
+          {_child_spec, [], _metadata} ->
+            {rows, [child_id | deletes], hooks}
 
           {child_spec, nodes, metadata} ->
             new_nodes =

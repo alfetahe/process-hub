@@ -194,7 +194,11 @@ each owned by the node it names — a payload from node `N` only touches the
 
 A deliberate stop deletes the registry row (stop memory lives in the list); a
 `:temporary` or `:transient` child the supervisor declines to restart gets the
-same treatment. Placement churn leaves a short-lived stub swept by the janitor.
+same treatment. Placement churn leaves a short-lived stub (30 seconds) for the
+child's new copy to register into. If nothing registers, the janitor removes a
+durable child's stub (the reconcile restarts the child while it is declared)
+and re-places any other child through the distribution strategy, at most five
+times with a growing back-off, before it removes the stub.
 
 ### Rounds and states
 

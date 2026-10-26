@@ -13,6 +13,9 @@ defmodule Test.ProcessHubPersistenceTest do
   alias ProcessHub.Service.Storage.Dets, as: DetsBackend
   alias ProcessHub.Worker.Janitor
 
+  # An expired row the janitor removes at once (a churn placeholder is re-placed).
+  @expired_forward %{forwarded_at: 0, target_nodes: [:gone@nowhere]}
+
   setup do
     tmp_dir =
       Path.join(System.tmp_dir!(), "ph_persist_test_#{System.unique_integer([:positive])}")
@@ -159,15 +162,15 @@ defmodule Test.ProcessHubPersistenceTest do
 
     :erlang.unlink(pid)
 
-    # Dead-child stub shape: folded cspec with no nodes and an already-passed TTL.
+    # Expired forward shape: folded cspec with no nodes and an already-passed TTL.
     stub_spec = %{id: :swept_stub, start: {:m, :f, []}}
-    ProcessRegistry.insert(hub_id, stub_spec, [], metadata: %{}, ttl: -1000)
+    ProcessRegistry.insert(hub_id, stub_spec, [], metadata: @expired_forward, ttl: -1000)
     assert [{_expire}] = Storage.match(hub_id, {:swept_stub, :_, :"$1"})
 
     registry_proc = ProcessHub.Hub.get(hub_id).procs.process_registry
     registry_pid = GenServer.whereis(registry_proc)
 
-    assert Janitor.purge_pending_registry(hub_id) === :ok
+    assert Janitor.purge_pending_registry(hub_id) === %{}
 
     assert Storage.match(hub_id, {:swept_stub, :_, :"$1"}) === []
     assert GenServer.whereis(registry_proc) === registry_pid
@@ -195,13 +198,13 @@ defmodule Test.ProcessHubPersistenceTest do
     :erlang.unlink(pid)
 
     stub_spec = %{id: :swept_stub, start: {:m, :f, []}}
-    ProcessRegistry.insert(hub_id, stub_spec, [], metadata: %{}, ttl: -1000)
+    ProcessRegistry.insert(hub_id, stub_spec, [], metadata: @expired_forward, ttl: -1000)
     assert [{_expire}] = Storage.match(hub_id, {:swept_stub, :_, :"$1"})
 
     registry_proc = ProcessHub.Hub.get(hub_id).procs.process_registry
     registry_pid = GenServer.whereis(registry_proc)
 
-    assert Janitor.purge_pending_registry(hub_id) === :ok
+    assert Janitor.purge_pending_registry(hub_id) === %{}
 
     assert Storage.match(hub_id, {:swept_stub, :_, :"$1"}) === []
     assert GenServer.whereis(registry_proc) === registry_pid

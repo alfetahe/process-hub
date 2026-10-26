@@ -40,7 +40,7 @@ All actions are dispatched to the coordinator process who then delegates the wor
 - `event_queue_sup` (external library) - The event queue supervisor starts and supervises the event queue  processes. The event queue is used to dispatch events within the Erlang distribution system to all nodes in the cluster. This provides a way to communicate between nodes and synchronize the operations in the system.
 These processes are started by external library `blockade`.
 
-- `janitor` - The janitor process is responsible for cleaning up the system and removing any stale data. It periodically checks the system for any stale data and removes it to keep the system clean and efficient.
+- `janitor` - The janitor process is responsible for cleaning up the system and removing any stale data. It periodically checks the system for any stale data and removes it to keep the system clean and efficient. A child whose last copy a move stopped and that no node registered within 30 seconds is not dropped: the janitor starts it again where the distribution strategy places it, a bounded number of times.
 
 - `task_supervisor` - The task supervisor process is responsible for supervising the task processes that are started on demand by the coordinator process. These processes are used to carry out the operations in the system and are supervised by the task supervisor process.
 

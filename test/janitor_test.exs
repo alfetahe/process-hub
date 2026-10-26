@@ -1,8 +1,12 @@
 defmodule Test.JanitorTest do
+  alias ProcessHub.Service.Distributor
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Worker.Janitor
+  alias Test.Helper.Common
 
   use ExUnit.Case
+
+  import ExUnit.CaptureLog
 
   @hub_id :janitor_test
 
@@ -90,8 +94,8 @@ defmodule Test.JanitorTest do
       end)
     end
 
-    test "returns :ok", %{hub_id: hub_id} do
-      assert Janitor.purge_pending_registry(hub_id) == :ok
+    test "returns no re-placement progress when nothing expired", %{hub_id: hub_id} do
+      assert Janitor.purge_pending_registry(hub_id) == %{}
     end
 
     test "delete_if_expired returns false for a re-populated entry", %{hub_id: hub_id} do
@@ -111,8 +115,107 @@ defmodule Test.JanitorTest do
       :ets.insert(table, {:malformed_child, "not_a_tuple_value", 0})
 
       # Should not crash — hits the catch-all `_ -> nil` branch
-      assert Janitor.purge_pending_registry(table) == :ok
+      assert Janitor.purge_pending_registry(table) == %{}
     end
+  end
+
+  describe "expired churn placeholders" do
+    setup do
+      # The janitor's notices sit below the suite's :warning level.
+      level = Logger.level()
+      Logger.configure(level: :notice)
+      on_exit(fn -> Logger.configure(level: level) end)
+    end
+
+    test "a child whose last copy a hub-internal stop removed is re-placed", %{hub: hub} do
+      cspec = start_server!(hub.hub_id, :churned_child)
+
+      # The stop a duplicate resolution makes; nothing registers the child after it.
+      Distributor.children_terminate(hub, [cspec.id])
+      expire_placeholder!(hub.hub_id, cspec)
+
+      log = capture_log(fn -> Janitor.purge_pending_registry(hub.hub_id) end)
+
+      assert Common.eventually(fn -> ProcessRegistry.lookup(hub.hub_id, cspec.id) != nil end)
+      assert [{_node, pid}] = elem(ProcessRegistry.lookup(hub.hub_id, cspec.id), 1)
+      assert Process.alive?(pid)
+
+      assert log =~
+               "Re-placing churn placeholder - child_id: :churned_child, " <>
+                 "module: Test.Helper.TestServer, attempt: 1 of 5, submitted"
+    end
+
+    test "a child a user stopped while it was between nodes is not re-placed", %{hub: hub} do
+      cspec = start_server!(hub.hub_id, :user_stopped_child)
+      Distributor.children_terminate(hub, [cspec.id])
+
+      {:ok, future} = ProcessHub.stop_child(hub.hub_id, cspec.id, awaitable: true, timeout: 1000)
+      ProcessHub.Future.await(future)
+
+      assert ProcessRegistry.lookup(hub.hub_id, cspec.id, include_empty: true) === nil
+      assert Janitor.purge_pending_registry(hub.hub_id) === %{}
+      assert ProcessHub.get_pid(hub.hub_id, cspec.id) === nil
+    end
+
+    test "a placeholder whose child still runs is removed, not started twice", %{hub: hub} do
+      cspec = start_server!(hub.hub_id, :still_running_child)
+      pid = ProcessHub.get_pid(hub.hub_id, cspec.id)
+      expire_placeholder!(hub.hub_id, cspec)
+
+      log =
+        capture_log(fn ->
+          assert Janitor.purge_pending_registry(hub.hub_id) === %{}
+        end)
+
+      assert ProcessRegistry.lookup(hub.hub_id, cspec.id, include_empty: true) === nil
+      assert Process.alive?(pid)
+
+      assert log =~
+               "child_id: :still_running_child, module: Test.Helper.TestServer, " <>
+                 "outcome: removed; the child runs on another node"
+    end
+
+    test "re-placement waits out its back-off and stops after the last attempt", %{hub: hub} do
+      cspec = %{id: :never_starts, start: {Test.Helper.TestServer, :start_link_err, [%{}]}}
+      ProcessRegistry.insert(hub.hub_id, cspec, [], metadata: %{}, ttl: -1000)
+      later = System.os_time(:millisecond) + 600_000
+
+      assert Janitor.purge_pending_registry(hub.hub_id, %{never_starts: {2, later}}) ===
+               %{never_starts: {2, later}}
+
+      log =
+        capture_log(fn ->
+          assert Janitor.purge_pending_registry(hub.hub_id, %{never_starts: {5, 0}}) === %{}
+        end)
+
+      assert ProcessRegistry.lookup(hub.hub_id, :never_starts, include_empty: true) === nil
+      assert log =~ "outcome: removed; not re-placed after 5 attempts"
+    end
+
+    test "a durable child's placeholder is left to the reconcile", %{hub: hub} do
+      cspec = %{id: :durable_placeholder, start: {Test.Helper.TestServer, :start_link, [%{}]}}
+      ProcessRegistry.insert(hub.hub_id, cspec, [], metadata: %{}, ttl: -1000, durable: true)
+
+      log =
+        capture_log(fn ->
+          assert Janitor.purge_pending_registry(hub.hub_id) === %{}
+        end)
+
+      assert ProcessRegistry.lookup(hub.hub_id, :durable_placeholder, include_empty: true) === nil
+      assert log =~ "outcome: removed; a durable child is restarted by the reconcile"
+    end
+  end
+
+  defp start_server!(hub_id, child_id) do
+    cspec = %{id: child_id, start: {Test.Helper.TestServer, :start_link, [%{name: child_id}]}}
+    {:ok, future} = ProcessHub.start_child(hub_id, cspec, awaitable: true, timeout: 1000)
+    ProcessHub.Future.await(future)
+    cspec
+  end
+
+  # Moves the row's 30 s lease into the past, as if it ran out unregistered.
+  defp expire_placeholder!(hub_id, cspec) do
+    ProcessRegistry.insert(hub_id, cspec, [], metadata: %{}, ttl: -1000)
   end
 
   describe "purge_expired_cache/1" do
