@@ -132,6 +132,17 @@ defmodule ProcessHub.Constant.Hook do
   def coordinator_shutdown(), do: :coordinator_shutdown_hook
 
   @doc """
+  Hook triggered once a coordinator restarted by its hub's supervisor is up
+  again, never on the hub's first start. Children keep running across the
+  restart, but state a strategy or user kept for the coordinator's lifetime may
+  be gone: this is the place to rebuild it.
+
+  Data: `%{hub_id: atom()}`
+  """
+  @spec coordinator_restarted() :: atom()
+  def coordinator_restarted(), do: :coordinator_restarted_hook
+
+  @doc """
   Hook triggered right after process has been restarted by local supervisor
   and the pid has been updated.
 

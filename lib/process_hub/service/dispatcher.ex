@@ -55,8 +55,8 @@ defmodule ProcessHub.Service.Dispatcher do
 
   # The registry only learns where a child runs once that node has started it.
   # Until then this node remembers where it sent the start, so a stop issued
-  # meanwhile can still find the child. Written after the send, so a stop
-  # forwarded from here always arrives after the start.
+  # meanwhile can still find the child. Written after the start is handed to the
+  # event queue, so a stop forwarded from here is queued, and sent, behind it.
   @start_ttl 30_000
 
   defp track_starts(hub, requests) do
@@ -121,20 +121,19 @@ defmodule ProcessHub.Service.Dispatcher do
   end
 
   @doc """
-  Dispatches an event to the event queue.
+  Dispatches an event to the event queue without waiting for it.
+
+  The event queue sends to every member in turn, and a send to a peer whose
+  connection has stopped draining holds it until the connection recovers or
+  drops, so a caller never waits on it. Events sent from one process keep
+  their order. Nothing slows a caller down while the queue is held: its backlog
+  grows until the connection drains or the tick timeout drops it.
   """
   @spec dispatch_event(atom(), atom(), term(), %{
           optional(:discard_event) => boolean,
           optional(:members) => :global | :local | :external | [node()]
-        }) :: {:ok, :event_discarded | :event_dispatched | :event_queued}
-  def dispatch_event(event_queue, event_id, event_data, opts \\ %{})
-
-  def dispatch_event(event_queue, event_id, event_data, opts) do
-    Blockade.dispatch_sync(
-      event_queue,
-      event_id,
-      event_data,
-      opts
-    )
+        }) :: :ok
+  def dispatch_event(event_queue, event_id, event_data, opts \\ %{}) do
+    Blockade.dispatch(event_queue, event_id, event_data, opts)
   end
 end

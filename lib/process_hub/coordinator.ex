@@ -56,7 +56,7 @@ defmodule ProcessHub.Coordinator do
 
   @impl true
   @spec init({ProcessHub.t(), Hub.t()}) ::
-          {:ok, State.t(), {:continue, :additional_setup}} | {:stop, term()}
+          {:ok, State.t(), {:continue, {:additional_setup, boolean()}}} | {:stop, term()}
   def init({hub_conf, %Hub{procs: procs, storage: storage} = hub}) do
     Process.flag(:trap_exit, true)
     :net_kernel.monitor_nodes(true)
@@ -106,11 +106,19 @@ defmodule ProcessHub.Coordinator do
     with :ok <- declared_children_boot(hub) do
       Recovery.schedule_first_round(hub)
 
-      boot_token = Cluster.boot_token()
+      # The misc table outlives the coordinator, so a token already there was
+      # written by an earlier coordinator of this hub. Its children still run,
+      # so peers are given the same token and keep their bindings.
+      {boot_token, restarted?} =
+        case Storage.get(storage.misc, StorageKey.sbt()) do
+          nil -> {Cluster.boot_token(), false}
+          token -> {token, true}
+        end
+
       Storage.insert(storage.misc, StorageKey.sbt(), boot_token)
       Cluster.announce_boot(hub, boot_token)
 
-      {:ok, state, {:continue, :additional_setup}}
+      {:ok, state, {:continue, {:additional_setup, restarted?}}}
     end
   end
 
@@ -136,7 +144,7 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_continue(:additional_setup, %State{hub: hub} = state) do
+  def handle_continue({:additional_setup, restarted?}, %State{hub: hub} = state) do
     # Handle partition strategy initialization. This needs to be done
     # after the coordinator has been started.
     part_strat =
@@ -146,6 +154,12 @@ defmodule ProcessHub.Coordinator do
       )
 
     Storage.insert(hub.storage.misc, StorageKey.strpart(), part_strat)
+
+    if restarted? do
+      HookManager.dispatch_hook(hub.storage.hook, Hook.coordinator_restarted(), %{
+        hub_id: hub.hub_id
+      })
+    end
 
     {:noreply, state}
   end
@@ -777,12 +791,14 @@ defmodule ProcessHub.Coordinator do
 
     # Broadcast local registry data to joining nodes, and the declared-list
     # version so a rejoining node catches up on stops it missed before its
-    # first reconcile round.
+    # first reconcile round. The boot token goes first, so a node that learns
+    # it here never purges the registry it is sent right after.
     case Enum.uniq(new_nodes ++ returned) do
       [] ->
         :ok
 
       greeted ->
+        Cluster.announce_boot(hub, Storage.get(hub.storage.misc, StorageKey.sbt()), greeted)
         Synchronizer.broadcast_local_registry(hub, greeted)
         DeclaredChildren.announce_version(hub)
     end

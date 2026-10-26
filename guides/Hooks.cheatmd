@@ -344,6 +344,7 @@ When children are started, hooks fire in this order:
 | `:post_children_start_hook`         | After child processes are started           | `%{children: [%{child_id: cid, pid: pid, result: result, nodes: [node()], child_spec: spec, metadata: map()}]}` |
 | `:pre_children_redistribution_hook` | Before redistribution of children is called | `%{children: list(), event: :node_leave, node: node()}` |
 | `:coordinator_shutdown_hook`        | Coordinator shutdown                        | `%{reason: any()}`                                 |
+| `:coordinator_restarted_hook`       | Coordinator restarted inside a running hub  | `%{hub_id: atom()}`                                |
 | `:child_pid_updated_hook`           | Child process restarted with new pid        | `%{node: node(), pid: pid()}`                      |
 | `:handover_delivered_hook`          | Handover states delivered to migrated procs | `%{child_ids: [child_id()], target_node: node()}`  |
 | `:scoreboard_updated_hook`          | Load balancer scoreboard updated            | `%{scoreboard: term(), node: node()}`              |

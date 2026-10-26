@@ -14,7 +14,6 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
   alias ProcessHub.Utility.Bag
   alias ProcessHub.Hub
   alias ProcessHub.Worker.WorkerQueue
-  alias :blockade, as: Blockade
 
   @typedoc """
   The PubSub synchronization strategy options.
@@ -78,16 +77,12 @@ defmodule ProcessHub.Strategy.Synchronization.PubSub do
       timestamp = Bag.timestamp(:microsecond)
       sync_data = {local_data, timestamp}
 
-      Blockade.dispatch_sync(
+      Dispatcher.dispatch_event(
         hub.procs.event_queue,
         @event_node_registry_broadcast,
         {sync_data, local_node},
-        %{
-          members: target_nodes
-        }
+        %{members: target_nodes}
       )
-
-      :ok
     end
 
     @impl SynchronizationStrategy

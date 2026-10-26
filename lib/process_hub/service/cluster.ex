@@ -205,16 +205,18 @@ defmodule ProcessHub.Service.Cluster do
   def boot_token, do: System.system_time(:microsecond)
 
   @doc """
-  Broadcasts this node's boot token to peers so they can reap any bindings left
-  over from a previous incarnation. Sent once on every boot, for every backend.
+  Sends this node's boot token to `members` so they can reap any bindings left
+  over from a previous incarnation. Sent to every peer on every boot, for every
+  backend, and to each node this node greets on a join, so a peer that joined
+  later knows the token before a restarted coordinator announces it again.
   """
-  @spec announce_boot(Hub.t(), integer()) :: :ok
-  def announce_boot(%Hub{} = hub, token) do
+  @spec announce_boot(Hub.t(), integer(), :external | [node()]) :: :ok
+  def announce_boot(%Hub{} = hub, token, members \\ :external) do
     Dispatcher.dispatch_event(
       hub.procs.event_queue,
       @event_node_restarted,
       {node(), token},
-      %{members: :external}
+      %{members: members}
     )
 
     :ok
