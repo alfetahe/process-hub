@@ -107,11 +107,12 @@ defmodule ProcessHub.Service.Distributor do
 
   def compose_stop_operation(hub, child_ids, opts) do
     {dispatch_opts, opts} = Keyword.split(opts, [:async])
+    {located, opts} = Keyword.pop(opts, :located, %{})
 
     # Group children by the nodes where they exist
     # Also track children that were not found
     {nodes_data, not_found} =
-      Enum.reduce(children_stop_nodes(hub, child_ids), {[], []}, fn
+      Enum.reduce(children_stop_nodes(hub, child_ids, located), {[], []}, fn
         {child_id, []}, {acc, not_found_acc} ->
           {acc, [child_id | not_found_acc]}
 
@@ -165,19 +166,36 @@ defmodule ProcessHub.Service.Distributor do
     end
   end
 
+  # `located` holds what `locate_on_peers/2` found for children this node
+  # knew nothing of when the stop was asked.
+  defp children_stop_nodes(hub, child_ids, located) do
+    Enum.map(child_ids, fn child_id ->
+      case stop_nodes(hub, child_id) do
+        [] -> {child_id, Map.get(located, child_id, [])}
+        nodes -> {child_id, nodes}
+      end
+    end)
+  end
+
+  @doc false
   # A start answers once its own node registered the child, before the row
   # reaches the other copies, and placement cannot always name that node from
   # here (it may rest on the start's options or on load). A child this node
   # knows nothing of is therefore looked for on the peers, all of them in one
-  # bounded call.
-  defp children_stop_nodes(hub, child_ids) do
-    targets = Enum.map(child_ids, &{&1, stop_nodes(hub, &1)})
-    found = running_on_peers(hub, for({child_id, []} <- targets, do: child_id))
+  # bounded call. It runs in the caller of the stop, so the coordinator never
+  # waits on a peer.
+  @spec locate_on_peers(ProcessHub.hub_id(), [ProcessHub.child_id()]) ::
+          %{ProcessHub.child_id() => [node()]}
+  def locate_on_peers(hub_id, child_ids) do
+    case Hub.get(hub_id) do
+      nil -> %{}
+      hub -> running_on_peers(hub, Enum.filter(child_ids, &unknown_here?(hub, &1)))
+    end
+  end
 
-    Enum.map(targets, fn
-      {child_id, []} -> {child_id, Map.get(found, child_id, [])}
-      target -> target
-    end)
+  defp unknown_here?(hub, child_id) do
+    running_here(hub, child_id) === [] and
+      ProcessRegistry.lookup(hub.hub_id, child_id, include_empty: true) === nil
   end
 
   defp running_on_peers(_hub, []), do: %{}

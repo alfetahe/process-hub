@@ -12,6 +12,8 @@ defmodule ProcessHub.Service.Dispatcher do
   alias ProcessHub.Strategy.Synchronization.Base, as: SynchronizationStrategy
   alias :blockade, as: Blockade
 
+  @async_queue_limit 10_000
+
   use ProcessHub.Constant.Event
 
   @doc """
@@ -162,12 +164,36 @@ defmodule ProcessHub.Service.Dispatcher do
   coordinator uses this for its own events so it never waits on such a peer.
   Events sent from one process keep their order, also relative to the ones it
   sends with `dispatch_event/4`.
+
+  The queue is bounded: past #{@async_queue_limit} waiting events the sender
+  waits for it as with `dispatch_event/4`, so a stalled peer slows the sender
+  down instead of growing the queue without limit. The wait ends after the
+  queue's own call timeout; the event stays queued.
   """
   @spec dispatch_event_async(atom(), atom(), term(), %{
           optional(:discard_event) => boolean,
           optional(:members) => :global | :local | :external | [node()]
         }) :: :ok
   def dispatch_event_async(event_queue, event_id, event_data, opts \\ %{}) do
-    Blockade.dispatch(event_queue, event_id, event_data, opts)
+    if queue_len(event_queue) > @async_queue_limit do
+      try do
+        dispatch_event(event_queue, event_id, event_data, opts)
+      catch
+        :exit, {:timeout, _} -> :ok
+      end
+
+      :ok
+    else
+      Blockade.dispatch(event_queue, event_id, event_data, opts)
+    end
+  end
+
+  defp queue_len(event_queue) do
+    with pid when is_pid(pid) <- Process.whereis(event_queue),
+         {:message_queue_len, len} <- Process.info(pid, :message_queue_len) do
+      len
+    else
+      _ -> 0
+    end
   end
 end

@@ -553,6 +553,7 @@ defmodule ProcessHub do
           | {:error, list()}
   def stop_children(hub_id, child_ids, opts \\ []) do
     call_timeout = Distributor.calculate_call_timeout(length(child_ids), opts)
+    opts = [located: Distributor.locate_on_peers(hub_id, child_ids)] ++ opts
     GenServer.call(hub_id, {:init_children_stop, child_ids, opts}, call_timeout)
   end
 
