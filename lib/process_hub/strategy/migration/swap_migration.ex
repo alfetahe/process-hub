@@ -224,17 +224,37 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
   def query_consent([], _timeout), do: MapSet.new()
 
   def query_consent(cid_pids, timeout) do
-    self_pid = self()
-
-    Enum.each(cid_pids, fn {cid, pid} ->
-      send(pid, {:process_hub, :migration_consent, self_pid, cid})
-    end)
-
     cid_pids
-    |> Enum.map(&elem(&1, 0))
-    |> collect_states(timeout, [], :migration_consent_reply)
+    |> ask(
+      &{:process_hub, :migration_consent, &1, &2},
+      timeout,
+      :migration_consent_reply
+    )
     |> Enum.filter(fn {_cid, reply} -> reply === :ready end)
     |> MapSet.new(fn {cid, _reply} -> cid end)
+  end
+
+  # Sends each `{child_id, pid}` the request `request.(reply_to, child_id)` and
+  # collects the `response_msg` replies until `timeout`. Replies go to an alias
+  # that is dropped when the wait ends, so a child answering late can neither
+  # reach the caller's mailbox nor be read as the answer to a later round.
+  defp ask(cid_pids, request, timeout, response_msg) do
+    reply_to = :erlang.alias()
+    Enum.each(cid_pids, fn {cid, pid} -> send(pid, request.(reply_to, cid)) end)
+
+    replies = collect_states(Enum.map(cid_pids, &elem(&1, 0)), timeout, [], response_msg)
+    :erlang.unalias(reply_to)
+    flush_replies(response_msg)
+    replies
+  end
+
+  # Replies that arrived between the deadline and the unalias.
+  defp flush_replies(response_msg) do
+    receive do
+      {:process_hub, ^response_msg, _cid, _reply} -> flush_replies(response_msg)
+    after
+      0 -> :ok
+    end
   end
 
   defp consent_capable?(candidates, cid) do
@@ -308,20 +328,22 @@ defmodule ProcessHub.Strategy.Migration.SwapMigration do
     {query_msg, response_msg} = handover_msgs(strategy)
     pids = alive_local_pids(hub, cids)
 
-    Enum.each(pids, fn {cid, pid} -> send(pid, handover_query(hub, strategy, query_msg, cid)) end)
-
     pids
-    |> Map.keys()
-    |> collect_states(strategy.state_query_timeout, [], response_msg)
+    |> ask(
+      &handover_query(hub, strategy, query_msg, &1, &2),
+      strategy.state_query_timeout,
+      response_msg
+    )
     |> Enum.each(&store_handover_state(hub, strategy, &1, pids))
   end
 
   # With `forward_messages`, the query also tells the process to keep what
   # arrives after its state was read (`HandoverBehaviour.keep_messages/4`).
-  defp handover_query(hub, %{forward_messages: true} = strategy, query_msg, cid),
-    do: {:process_hub, query_msg, self(), cid, {hub.hub_id, strategy.state_ttl}}
+  defp handover_query(hub, %{forward_messages: true} = strategy, query_msg, reply_to, cid),
+    do: {:process_hub, query_msg, reply_to, cid, {hub.hub_id, strategy.state_ttl}}
 
-  defp handover_query(_hub, _strategy, query_msg, cid), do: {:process_hub, query_msg, self(), cid}
+  defp handover_query(_hub, _strategy, query_msg, reply_to, cid),
+    do: {:process_hub, query_msg, reply_to, cid}
 
   defp alive_local_pids(hub, cids) do
     cids

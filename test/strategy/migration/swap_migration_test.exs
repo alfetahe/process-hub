@@ -405,6 +405,29 @@ defmodule Test.Strategy.Migration.SwapMigrationTest do
     end
   end
 
+  describe "query_consent/2" do
+    test "a reply that comes after the deadline never reaches the caller" do
+      test_pid = self()
+
+      child =
+        spawn(fn ->
+          receive do
+            {:process_hub, :migration_consent, reply_to, cid} ->
+              receive do: (:answer -> :ok)
+              send(reply_to, {:process_hub, :migration_consent_reply, cid, :ready})
+              send(test_pid, :answered)
+          end
+        end)
+
+      assert SwapMigration.query_consent([{:late, child}], 10) == MapSet.new()
+
+      send(child, :answer)
+      assert_receive :answered
+      # Both messages come from the child, so the reply would be here first.
+      refute_received {:process_hub, :migration_consent_reply, _, _}
+    end
+  end
+
   describe "collect_states/4" do
     test "returns accumulated states immediately when remaining is empty" do
       result = SwapMigration.collect_states([], 1000, [{:prev, :state}], :coldswap_state)

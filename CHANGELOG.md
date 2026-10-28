@@ -31,6 +31,7 @@ All notable changes to this project will be documented in this file.
 - **Experimental:** for code that calls the recovery functions directly: `Recovery.complete_first_round/2` is now `complete_round/2`, `Recovery.round_due?/2` takes an optional second argument, and `Cluster.nodes/2` accepts `:connected`.
 
 ### Fixed
+- A child that answers a migration consent or handover state query after its timeout no longer leaves the reply in the hub's worker queue, where it was logged as an unexpected message and could be read as the answer to a later consent query.
 - A peer whose network connection stalls no longer crashes the coordinator of the other nodes, which used to restart after waiting on it.
 - A coordinator restarted inside a running hub keeps its identity, so peers no longer drop the registrations of its children, which kept running.
 - Two nodes draining at the same moment no longer lose children. `Migration.drain/2` now returns once every other node has confirmed it (or its `:timeout` passes), and a child being moved is never refused as a forwarding loop.
