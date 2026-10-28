@@ -160,6 +160,10 @@ defmodule ProcessHub.Service.Migration do
   redistribution, so those have been passed on by then. A node silent at the
   deadline is logged as a warning, and one whose hub or node goes away is not
   waited for.
+
+  A hub with work still queued, such as a membership change or a start, answers
+  `{:error, :locked}` by default. Pass `when_busy: :wait` to drain it anyway:
+  the drain's pass runs on the worker queue behind that work, inside `:timeout`.
   """
   @spec drain(ProcessHub.hub_id() | Hub.t(), keyword()) ::
           {:ok, %{migrated: non_neg_integer(), forced: non_neg_integer()}}
@@ -169,7 +173,7 @@ defmodule ProcessHub.Service.Migration do
   def drain(hub_id, opts) when is_atom(hub_id), do: drain(Hub.get(hub_id), opts)
 
   def drain(hub, opts) do
-    with :ok <- preconditions(hub) do
+    with :ok <- preconditions(hub, Keyword.get(opts, :when_busy, :refuse)) do
       do_drain(hub, Keyword.get(opts, :timeout, @drain_timeout))
     end
   end
@@ -333,12 +337,12 @@ defmodule ProcessHub.Service.Migration do
     :ok
   end
 
-  defp preconditions(hub) do
+  defp preconditions(hub, when_busy) do
     cond do
       Cluster.nodes(hub.storage.misc) === [] -> {:error, :no_target_nodes}
       draining?(hub) -> {:error, :draining}
       State.is_partitioned?(hub) -> {:error, :partitioned}
-      ProcessHub.is_locked?(hub.hub_id) -> {:error, :locked}
+      when_busy === :refuse and ProcessHub.is_locked?(hub.hub_id) -> {:error, :locked}
       true -> :ok
     end
   end

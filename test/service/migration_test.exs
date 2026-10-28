@@ -478,6 +478,14 @@ defmodule Test.Service.MigrationTest do
       assert Migration.drain(hub, []) == {:error, :locked}
     end
 
+    test "a locked hub drains anyway when asked to wait for its queued work", %{hub: hub} do
+      Registry.register(hub.procs.system_registry, "dist_sup", nil)
+      :sys.replace_state(hub.hub_id, &%{&1 | locked?: true})
+
+      assert {:ok, %{migrated: 0, forced: 0}} =
+               Migration.drain(hub, when_busy: :wait, timeout: 100)
+    end
+
     test "an already-draining node returns error", %{hub: hub} do
       Registry.register(hub.procs.system_registry, "dist_sup", nil)
       Storage.insert(hub.storage.misc, StorageKey.drn(), %{waiter: self()})
