@@ -8,8 +8,10 @@ defmodule ProcessHub.Service.DeclaredChildren do
   > The declared-children feature is experimental and may change in future
   > releases. Use in production at your own discretion.
 
-  `start_child/3` with `durable: true` adds the child's spec, a deliberate stop
-  removes it, and nothing else writes it — list absence is the stop record and
+  `start_child/3` with `durable: true` adds the child's spec, with the start's
+  caller metadata kept beside it so a replay that finds no registry row still
+  starts the child with it; a deliberate stop removes it, and nothing else
+  writes it — list absence is the stop record and
   never expires. Mutations serialize through the hub's leader (`:elector`,
   with the lowest hub member as deterministic fallback), which bumps one
   version per mutation; adoption replaces the whole list, higher version wins.
@@ -22,6 +24,8 @@ defmodule ProcessHub.Service.DeclaredChildren do
   evidence behind it parks the reconcile instead of opening empty; `clear/1`
   is the operator override. See `guides/Persistence.md` for the full model.
   """
+
+  @metadata :process_hub_metadata
 
   alias :elector, as: Elector
   alias ProcessHub.Constant.Event
@@ -102,8 +106,11 @@ defmodule ProcessHub.Service.DeclaredChildren do
         }
   def declared_children(hub_id) do
     case snapshot(hub_id) do
-      nil -> %{version: 0, children: []}
-      %{version: version, entries: entries} -> %{version: version, children: Map.values(entries)}
+      nil ->
+        %{version: 0, children: []}
+
+      %{version: version, entries: entries} ->
+        %{version: version, children: Enum.map(Map.values(entries), &elem(take_metadata(&1), 1))}
     end
   end
 
@@ -120,7 +127,29 @@ defmodule ProcessHub.Service.DeclaredChildren do
   @spec declared_child(ProcessHub.hub_id(), ProcessHub.child_id()) ::
           ProcessHub.child_spec() | nil
   def declared_child(hub_id, child_id) when is_atom(hub_id) do
-    with %Hub{} = hub <- Hub.get(hub_id), do: Store.entry(hub, child_id)
+    with %Hub{} = hub <- Hub.get(hub_id),
+         %{} = spec <- Store.entry(hub, child_id),
+         do: elem(take_metadata(spec), 1)
+  end
+
+  @doc false
+  # An entry keeps the start's caller metadata under a key of its own, which
+  # every reader that hands a spec out strips. Answers `{metadata, spec}`.
+  @spec take_metadata(ProcessHub.child_spec()) :: {map() | nil, ProcessHub.child_spec()}
+  def take_metadata(spec), do: Map.pop(spec, @metadata)
+
+  defp put_metadata(spec, metadata) when metadata in [nil, %{}], do: spec
+  defp put_metadata(spec, metadata), do: Map.put(spec, @metadata, metadata)
+
+  defp with_start_metadata(child_specs, opts),
+    do: Enum.map(child_specs, &put_metadata(&1, start_metadata(opts, &1.id)))
+
+  # The metadata a start gives one child: its own, else the batch's.
+  defp start_metadata(opts, child_id) do
+    case Keyword.get(opts, :child_metadata) do
+      %{^child_id => metadata} -> metadata
+      _ -> Keyword.get(opts, :metadata)
+    end
   end
 
   @doc "Returns whether the hub's reconcile is parked over a lost declared list."
@@ -156,7 +185,7 @@ defmodule ProcessHub.Service.DeclaredChildren do
       not hub.recovery_config.enabled? -> {:error, :durable_requires_auto_recovery}
       parked?(hub) -> {:error, :declared_list_parked}
       not Enum.all?(child_specs, &restartable?/1) -> {:error, :durable_requires_restartable}
-      true -> mutate(state, {:add, child_specs})
+      true -> mutate(state, {:add, with_start_metadata(child_specs, opts)})
     end
   end
 
@@ -309,9 +338,13 @@ defmodule ProcessHub.Service.DeclaredChildren do
   end
 
   # Each child the mutation names, with the spec it should end up with: `nil`
-  # for a removal. A child already there is left out of the batch.
-  defp change(state, pending, {:add, child_specs}),
-    do: Enum.reduce(child_specs, pending, &set_entry(state, &2, &1.id, &1))
+  # for a removal. A child already there is left out of the batch. A spec added
+  # with no metadata of its own keeps the metadata its entry already holds.
+  defp change(state, pending, {:add, child_specs}) do
+    Enum.reduce(child_specs, pending, fn spec, acc ->
+      set_entry(state, acc, spec.id, kept_metadata(spec, working_entry(state, acc, spec.id)))
+    end)
+  end
 
   defp change(state, pending, {:remove, child_ids}),
     do: Enum.reduce(child_ids, pending, &set_entry(state, &2, &1, nil))
@@ -332,6 +365,11 @@ defmodule ProcessHub.Service.DeclaredChildren do
         }
     end
   end
+
+  defp kept_metadata(spec, %{@metadata => metadata}) when not is_map_key(spec, @metadata),
+    do: Map.put(spec, @metadata, metadata)
+
+  defp kept_metadata(spec, _current), do: spec
 
   # A child's spec as the open batch leaves it, else as stored.
   defp working_entry(%State{declared_unsynced: pending} = state, id),

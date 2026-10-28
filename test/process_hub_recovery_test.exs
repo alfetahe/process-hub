@@ -905,7 +905,8 @@ defmodule Test.ProcessHubRecoveryTest do
       assert shards(hub_id) == [cm_a: 0, cm_b: 1]
     end
 
-    test "an unreadable durable medium costs the metadata, not the restart", %{dets: dets} do
+    test "an unreadable durable medium restarts each child with its declared metadata",
+         %{dets: dets} do
       hub_id = SetupHelper.unique_id(:rec_unreadable_meta)
       backend = {Test.Support.UnreadableDurable, path: dets}
 
@@ -919,9 +920,27 @@ defmodule Test.ProcessHubRecoveryTest do
           )
         end)
 
-      assert shards(hub_id) == []
+      assert shards(hub_id) == [ur_a: 0, ur_b: 0]
       assert log =~ "Reconcile could not read the durable medium (:unreadable)"
       assert log =~ "2 children restart without their registry metadata"
+    end
+
+    test "a re-declared spec keeps its entry's metadata, and readers get the bare spec",
+         %{dets: dets} do
+      hub_id = SetupHelper.unique_id(:rec_redeclare_meta)
+
+      restart_after_durable_start(hub_id, durable_conf(hub_id, dets), [cspec(:rd_a)],
+        metadata: %{shard: 3}
+      )
+
+      assert :ok = GenServer.call(hub_id, {:declared_mutate, {:add, [cspec(:rd_a)]}})
+
+      assert DeclaredChildren.declared_child(hub_id, :rd_a) == cspec(:rd_a)
+      assert %{children: [bare]} = DeclaredChildren.declared_children(hub_id)
+      assert bare == cspec(:rd_a)
+
+      assert {%{shard: 3}, _spec} =
+               DeclaredChildren.take_metadata(DeclaredChildren.snapshot(hub_id).entries[:rd_a])
     end
 
     test "a replay over an unbound row keeps its metadata, and a hook's rewrite wins",

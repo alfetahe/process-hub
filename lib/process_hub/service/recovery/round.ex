@@ -199,14 +199,24 @@ defmodule ProcessHub.Service.Recovery.Round do
       )
     end
 
-    submit_orphans(hub, child_specs, replaced_metadata(hub, child_specs, registered), true)
+    {declared, child_specs} =
+      Enum.reduce(Enum.reverse(child_specs), {%{}, []}, fn entry, {metadata, specs} ->
+        case DeclaredChildren.take_metadata(entry) do
+          {nil, spec} -> {metadata, [spec | specs]}
+          {kept, spec} -> {Map.put(metadata, spec.id, kept), [spec | specs]}
+        end
+      end)
+
+    metadata = Map.merge(declared, replaced_metadata(hub, child_specs, registered))
+    submit_orphans(hub, child_specs, metadata, true)
   end
 
   # A replay registers each child over the row it left behind, so the start
   # carries that row's caller metadata: every key survives unless a
   # `child_data_alter` handler rewrites it. The row is the live one while the
   # registry holds it, bound or not; a restarted hub's live registry starts
-  # empty, and then the durable medium holds the only copy.
+  # empty, and then the durable medium holds the only copy. A child no row
+  # remembers starts with the metadata its declared entry kept.
   defp replaced_metadata(hub, child_specs, registered) do
     {known, unknown} =
       child_specs |> Enum.map(& &1.id) |> Enum.split_with(&is_map_key(registered, &1))
