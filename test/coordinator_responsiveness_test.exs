@@ -92,6 +92,18 @@ defmodule Test.CoordinatorResponsivenessTest do
     end
   end
 
+  describe "exec_call" do
+    test "runs in the coordinator and answers the function's result" do
+      hub_id = SetupHelper.unique_id(:resp_exec_call)
+      {^hub_id, _pid} = SetupHelper.start_hub!(hub_id: hub_id)
+
+      assert GenServer.call(hub_id, {:exec_call, {__MODULE__, :runner, [:arg]}}) ==
+               {Process.whereis(hub_id), hub_id, :arg}
+    end
+  end
+
+  def runner(hub, arg), do: {self(), hub.hub_id, arg}
+
   describe "a coordinator restart" do
     test "keeps the registry it was started with" do
       hub_id = SetupHelper.unique_id(:resp_restart)

@@ -200,6 +200,14 @@ defmodule ProcessHub.Coordinator do
     RequestManager.handle_response(state, transaction_id, responder, results)
   end
 
+  # `exec_cast`'s waiting form: `m.f(hub, ...a)` runs in the coordinator, and
+  # its result is the reply. A process that writes state the coordinator also
+  # writes uses it to keep the coordinator the one writer.
+  @impl true
+  def handle_call({:exec_call, {m, f, a}}, _from, state) do
+    {:reply, apply(m, f, [state.hub | a]), state}
+  end
+
   @impl true
   def handle_call({:register_hook_handlers, hook_key, handlers}, _from, state) do
     result = register_handlers(state.hub.storage.hook, %{hook_key => handlers})
