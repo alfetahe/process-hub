@@ -187,7 +187,10 @@ defmodule ProcessHub.Service.Recovery.Round do
     length(ripe)
   end
 
-  defp start_orphans(_hub, [], _registered, _candidate_count, _first_round?), do: 0
+  defp start_orphans(hub, [], _registered, _candidate_count, _first_round?) do
+    Storage.remove(hub.storage.misc, StorageKey.rsf())
+    0
+  end
 
   defp start_orphans(hub, child_specs, registered, candidate_count, first_round?) do
     if first_round? do
@@ -267,6 +270,7 @@ defmodule ProcessHub.Service.Recovery.Round do
 
     case Distributor.compose_start_operation(hub, child_specs, opts) do
       {:ok, _operation} ->
+        Storage.remove(hub.storage.misc, StorageKey.rsf())
         length(child_specs)
 
       {:error, {:already_started, child_ids}} when retry? ->
@@ -274,14 +278,28 @@ defmodule ProcessHub.Service.Recovery.Round do
         submit_orphans(hub, remaining, child_metadata, false)
 
       {:error, reason} ->
-        LoggerService.warning(
-          "Reconcile could not start @count orphans: @reason",
-          %{"count" => Integer.to_string(length(child_specs)), "reason" => inspect(reason)},
-          prefix: "Recovery"
-        )
-
+        start_refused(hub, reason, length(child_specs))
         0
     end
+  end
+
+  # A refusal repeated round after round, such as orphans no node can take
+  # yet, is one condition: it is a warning when it begins, when its reason
+  # changes or when more orphans join it, and a debug line while it lasts.
+  defp start_refused(hub, reason, count) do
+    log =
+      case Storage.get(hub.storage.misc, StorageKey.rsf()) do
+        {^reason, logged} when count <= logged -> &LoggerService.debug/3
+        _new_or_grown -> &LoggerService.warning/3
+      end
+
+    Storage.insert(hub.storage.misc, StorageKey.rsf(), {reason, count})
+
+    log.(
+      "Reconcile could not start @count orphans: @reason",
+      %{"count" => Integer.to_string(count), "reason" => inspect(reason)},
+      prefix: "Recovery"
+    )
   end
 
   # --- duplicate bindings -----------------------------------------------------

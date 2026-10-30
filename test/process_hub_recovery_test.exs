@@ -798,6 +798,47 @@ defmodule Test.ProcessHubRecoveryTest do
              end)
     end
 
+    # fails when: every round logs the same refusal again, so orphans no node
+    # can take yet flood the log at the reconcile cadence.
+    test "the same refusal is logged once, and again when it grows or after a start",
+         %{dets: dets} do
+      {hub_id, gate} = refused_first_round(:rec_repeat, dets, :rr_repeat)
+
+      repeated =
+        capture_log(fn ->
+          assert :ok = Recovery.request_round(hub_id)
+          assert_receive {:round, %{first_round: false, measurements: %{started: 0}}}, 5_000
+        end)
+
+      refute repeated =~ "Reconcile could not start"
+
+      # More orphans under the same refusal are news.
+      assert :ok = GenServer.call(hub_id, {:declared_mutate, {:add, [cspec(:rr_joined)]}})
+
+      grown =
+        capture_log(fn ->
+          assert :ok = Recovery.request_round(hub_id)
+          assert_receive {:round, %{first_round: false, measurements: %{started: 0}}}, 5_000
+        end)
+
+      assert grown =~ "Reconcile could not start 2 orphans: :not_admitted"
+
+      :atomics.put(gate, 1, 1)
+      assert :ok = Recovery.request_round(hub_id)
+      assert_receive {:round, %{first_round: false, measurements: %{started: 2}}}, 5_000
+
+      :atomics.put(gate, 1, 0)
+      assert :ok = GenServer.call(hub_id, {:declared_mutate, {:add, [cspec(:rr_later)]}})
+
+      again =
+        capture_log(fn ->
+          assert :ok = Recovery.request_round(hub_id)
+          assert_receive {:round, %{first_round: false, measurements: %{started: 0}}}, 5_000
+        end)
+
+      assert again =~ "Reconcile could not start 1 orphans: :not_admitted"
+    end
+
     test "a joining node's registry data brings a round soon", %{dets: dets} do
       {hub_id, gate} = refused_first_round(:rec_join, dets, :rj_child)
 

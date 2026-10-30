@@ -64,6 +64,8 @@ defmodule ProcessHub.Constant.StorageKey do
   def rup, do: :reconcile_undeclared_pending
   @spec rsp() :: :reconcile_stale_pending
   def rsp, do: :reconcile_stale_pending
+  @spec rsf() :: :reconcile_start_failure
+  def rsf, do: :reconcile_start_failure
   @spec dclp() :: :declared_list_parked
   def dclp, do: :declared_list_parked
   @spec dsc() :: :dist_sup_children

@@ -672,20 +672,34 @@ defmodule ProcessHub.Service.ProcessRegistry do
             :ok
 
           {:error, reason} ->
-            Logger.warning(
+            Logger.log(
+              propagation_level(reason),
               "ProcessRegistry update propagation rejected on #{inspect(node)} " <>
                 "for #{inspect(child_id)}: #{inspect(reason)}"
             )
         end
       catch
         kind, reason ->
-          Logger.warning(
+          Logger.log(
+            propagation_level(reason),
             "ProcessRegistry update propagation failed on #{inspect(node)} " <>
               "for #{inspect(child_id)}: #{inspect(kind)} #{inspect(reason)}"
           )
       end
     end)
   end
+
+  # A peer without the row, or whose hub is not running yet, converges through
+  # peer sync on its own: that is expected while it joins, not a fault.
+  defp propagation_level("No child found"), do: :debug
+  defp propagation_level({:exception, {:noproc, _call}}), do: :debug
+
+  defp propagation_level(
+         {:exception, %ArgumentError{message: "unknown registry: " <> _}, _stack}
+       ),
+       do: :debug
+
+  defp propagation_level(_reason), do: :warning
 
   defp handle_insert(state, child_spec, child_nodes, opts) do
     table = Keyword.get(opts, :table, state.hub_id)

@@ -13,7 +13,9 @@ defmodule Test.ProcessHubRegistryUpdatePropagationTest do
   alias Test.Helper.TestNode
   alias Test.Helper.Bootstrap
   alias Test.Helper.RegistryUpdateFns
+  alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Service.Storage
 
   @hub :reg_upd_prop_hub
 
@@ -81,9 +83,8 @@ defmodule Test.ProcessHubRegistryUpdatePropagationTest do
     assert marker(peer, child_id) == :everywhere
   end
 
-  # The peer legitimately rejects with "No child found"; the warning is the
-  # expected best-effort signal, so capture it instead of spamming the suite.
-  @tag capture_log: true
+  # The peer rejects with "No child found" and converges through peer sync, so
+  # the rejection is no warning.
   test "propagation is best-effort when a peer misses the row", %{peer: peer} do
     child_id = "local_only_row"
     child_spec = %{id: child_id, start: {:m, :f, []}}
@@ -91,15 +92,49 @@ defmodule Test.ProcessHubRegistryUpdatePropagationTest do
     ProcessRegistry.insert(@hub, child_spec, [{node(), self()}])
 
     # Local update succeeds even though the peer rejects with "No child found".
-    assert :ok =
-             ProcessRegistry.update(
-               @hub,
-               child_id,
-               RegistryUpdateFns.put_marker(:set),
-               propagate: true
-             )
+    log =
+      ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+        assert :ok =
+                 ProcessRegistry.update(
+                   @hub,
+                   child_id,
+                   RegistryUpdateFns.put_marker(:set),
+                   propagate: true
+                 )
+      end)
 
+    refute log =~ "update propagation"
     assert marker(node(), child_id) == :set
     assert :erpc.call(peer, ProcessRegistry, :lookup, [@hub, child_id]) == nil
+  end
+
+  # A peer whose hub is not running, one still starting, has nothing to update.
+  test "a peer whose hub is not running is skipped without a warning", %{peer: peer} do
+    child_id = "peer_hub_down"
+    ProcessRegistry.insert(@hub, %{id: child_id, start: {:m, :f, []}}, [{node(), self()}])
+
+    # The peer is listed again once its hub's leave is processed: the window
+    # a peer restarting inside the node-down grace opens.
+    :ok = :erpc.call(peer, ProcessHub.Initializer, :stop, [@hub])
+    assert eventually(fn -> peer not in ProcessHub.nodes(@hub) end)
+    misc = ProcessHub.Hub.get(@hub).storage.misc
+    Storage.insert(misc, StorageKey.hn(), [peer | Storage.get(misc, StorageKey.hn())])
+    Logger.configure(level: :debug)
+    on_exit(fn -> Logger.configure(level: :warning) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :debug], fn ->
+        assert :ok =
+                 ProcessRegistry.update(
+                   @hub,
+                   child_id,
+                   RegistryUpdateFns.put_marker(:set),
+                   propagate: true
+                 )
+      end)
+
+    assert log =~ "[debug] ProcessRegistry update propagation failed on #{inspect(peer)}", log
+    refute log =~ "[warning] ProcessRegistry update propagation"
+    assert marker(node(), child_id) == :set
   end
 end
