@@ -102,6 +102,7 @@ defmodule ProcessHub.Coordinator do
     )
 
     state = join_handlers(boot_handlers, state)
+    watch_departed(hub)
 
     with :ok <- declared_children_boot(hub) do
       Recovery.schedule_first_round(hub)
@@ -172,10 +173,13 @@ defmodule ProcessHub.Coordinator do
       %{reason: reason}
     )
 
-    # Notify all the nodes in the cluster that this node is leaving the hub.
-    Dispatcher.dispatch_event_async(hub.procs.event_queue, @event_cluster_leave, node(), %{
-      members: :external
-    })
+    # Only a hub stop shuts the coordinator down; after a crash it restarts
+    # and its node stays in the hub.
+    if reason == :shutdown do
+      Dispatcher.dispatch_event_async(hub.procs.event_queue, @event_cluster_leave, node(), %{
+        members: :external
+      })
+    end
 
     # Terminate all the running tasks before shutting down the coordinator.
     task_sup = hub.procs.task_sup
@@ -377,7 +381,7 @@ defmodule ProcessHub.Coordinator do
 
     # A node back as a same-hub peer kept its place, and one lost again since
     # its timer fired waits out a grace of its own.
-    kept = Map.keys(state.nodedown_grace_timers) ++ external_hub_nodes(state.hub)
+    kept = Map.keys(state.nodedown_grace_timers) ++ Cluster.hub_peers(state.hub)
     {:noreply, dispatch_departure(state, :down, nodes -- kept)}
   end
 
@@ -409,7 +413,7 @@ defmodule ProcessHub.Coordinator do
     # Merge only a genuine same-hub peer: one still connected that registered
     # our cluster_join pg handler (what :join relies on). Anything else — e.g.
     # a node not running our hub — is never added to the batch.
-    if Enum.member?(external_hub_nodes(state.hub), node) do
+    if Enum.member?(Cluster.hub_peers(state.hub), node) do
       {:noreply, batch_event(state, :cluster_join, node)}
     else
       {:noreply, state}
@@ -614,7 +618,19 @@ defmodule ProcessHub.Coordinator do
       prefix: "Coordinator"
     )
 
+    watch_departed(state.hub)
     {:noreply, state}
+  end
+
+  @impl true
+  # A lost connection takes the nodedown path and its grace instead.
+  def handle_info(
+        {:DOWN, _ref, :process, {registry, node}, reason},
+        %State{hub: %Hub{procs: %{system_registry: registry}}} = state
+      ) do
+    if reason == :noconnection,
+      do: {:noreply, state},
+      else: {:noreply, batch_event(state, :cluster_leave, node)}
   end
 
   @impl true
@@ -963,16 +979,6 @@ defmodule ProcessHub.Coordinator do
     handlers |> Enum.map(&node/1) |> Enum.uniq()
   end
 
-  # Remote nodes pg currently resolves as cluster_join handlers. An empty list
-  # while a peer is in `Node.list()` means the pg scope never synced.
-  defp external_hub_nodes(hub) do
-    hub.procs.event_queue
-    |> Blockade.get_handlers(@event_cluster_join)
-    |> elem(1)
-    |> handler_nodes()
-    |> Enum.reject(&(&1 == node()))
-  end
-
   defp join_handlers(handlers, state) do
     node_list = Node.list()
 
@@ -990,6 +996,21 @@ defmodule ProcessHub.Coordinator do
     else
       state
     end
+  end
+
+  # A coordinator also leaves the group when it restarts, so a connected member
+  # without one leaves the hub only once its system registry is gone: started
+  # first and stopped last, it outlives a coordinator restart but not a hub
+  # stop. This also covers a stop whose announcement was lost.
+  defp watch_departed(hub) do
+    {:monitors, monitors} = Process.info(self(), :monitors)
+
+    for node <- Cluster.nodes(hub.storage.misc, [:connected]) -- Cluster.hub_peers(hub),
+        registry = {hub.procs.system_registry, node},
+        {:process, registry} not in monitors,
+        do: Process.monitor(registry)
+
+    :ok
   end
 
   defp get_hub_nodes(misc_storage) do

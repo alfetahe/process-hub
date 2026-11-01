@@ -15,6 +15,7 @@ defmodule ProcessHub.Service.Cluster do
   alias ProcessHub.Strategy.PartitionTolerance.Base, as: PartitionToleranceStrategy
   alias ProcessHub.Task.ClusterUpdateTask
   alias ProcessHub.Hub
+  alias :blockade, as: Blockade
 
   use Event
 
@@ -45,6 +46,17 @@ defmodule ProcessHub.Service.Cluster do
     Storage.insert(misc_storage, StorageKey.hn(), hub_nodes)
 
     hub_nodes
+  end
+
+  @doc """
+  Returns the remote nodes whose hub coordinator is in the hub's `pg` group,
+  that is, the nodes running the hub now. An empty list while peers are
+  connected means the group never synced.
+  """
+  @spec hub_peers(Hub.t()) :: [node()]
+  def hub_peers(%Hub{procs: procs}) do
+    {:ok, handlers} = Blockade.get_handlers(procs.event_queue, @event_cluster_join)
+    handlers |> Enum.map(&node/1) |> Enum.uniq() |> Enum.reject(&(&1 == node()))
   end
 
   @doc "Returns a boolean indicating whether the node exists in the cluster."
@@ -121,7 +133,19 @@ defmodule ProcessHub.Service.Cluster do
   Handles the node down event by dispatching hooks, removing nodes from cluster state,
   and triggering the node down update task.
   """
-  def handle_node_down(%{removed_nodes: removed_nodes, hub: hub, kind: kind}) do
+  def handle_node_down(%{removed_nodes: removed_nodes, hub: hub} = arg) do
+    # Membership changes only on the worker queue, so a node another event
+    # already removed is not removed twice, and one whose coordinator is in
+    # the group runs the hub again, whatever event said it left.
+    removable = nodes(hub.storage.misc) -- hub_peers(hub)
+
+    case Enum.filter(removed_nodes, &(&1 in removable)) do
+      [] -> :ok
+      nodes -> remove_nodes(%{arg | removed_nodes: nodes})
+    end
+  end
+
+  defp remove_nodes(%{removed_nodes: removed_nodes, hub: hub, kind: kind}) do
     # Dispatch pre hooks for all nodes
     Enum.each(removed_nodes, fn n ->
       HookManager.dispatch_hook(hub.storage.hook, Hook.pre_node_leave(), %{node: n})

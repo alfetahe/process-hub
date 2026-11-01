@@ -189,6 +189,28 @@ defmodule Test.Service.ClusterTest do
     refute :single_down in Cluster.nodes(hub.storage.misc, [:include_local])
   end
 
+  test "handle_node_down of a node already removed dispatches nothing", %{hub: hub} do
+    handler = %ProcessHub.Service.HookManager{
+      id: :cluster_test_node_down_twice,
+      m: Bag,
+      f: :hook_erlang_send,
+      a: [:_, self(), :pre_leave_hook]
+    }
+
+    ProcessHub.Service.HookManager.register_handler(
+      hub.storage.hook,
+      ProcessHub.Constant.Hook.pre_node_leave(),
+      handler
+    )
+
+    Cluster.add_hub_node(hub.storage.misc, :twice_down)
+    Cluster.handle_node_down(%{removed_nodes: [:twice_down], hub: hub, kind: :leave})
+    assert_received {:pre_leave_hook, %{node: :twice_down}}
+
+    Cluster.handle_node_down(%{removed_nodes: [:twice_down], hub: hub, kind: :down})
+    refute_received {:pre_leave_hook, %{node: :twice_down}}
+  end
+
   test "handle_node_down with non-existent node does not crash", %{hub: hub} = _context do
     # Should not crash even though the node was never added
     Cluster.handle_node_down(%{removed_nodes: [:never_existed], hub: hub, kind: :down})

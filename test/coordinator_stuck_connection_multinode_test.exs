@@ -3,7 +3,8 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
   A connection to a peer that stops reading (a network partition before the
   tick timeout notices it) must not crash the coordinator, and a coordinator
   restarted inside the hub must say so through a hook and keep its place on
-  the peers.
+  the peers however long the restart takes, while a hub stopped on a peer must
+  leave the others even when its announcement never goes out.
   """
 
   use ExUnit.Case, async: false
@@ -188,5 +189,135 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
     :erpc.call(peer, :sys, :get_state, [hub_id])
 
     assert bound_here.() == kept
+  end
+
+  test "a peer whose hub stops leaves the hub even when its announcement is lost",
+       %{joining: peer} do
+    {hub_id, ids, _kept} = form_hub("stopped", peer, cluster_event_debounce: 0)
+
+    # The peer's event queue holds the leave announcement until the stop kills it.
+    :ok = :erpc.call(peer, :sys, :suspend, [:"hub.#{hub_id}.event_queue"])
+    :ok = :erpc.call(peer, ProcessHub.Initializer, :stop, [hub_id])
+
+    assert_left(hub_id, ids, peer)
+  end
+
+  test "a peer whose coordinator is slow to restart stays in the hub with its bindings",
+       %{joining: peer} do
+    {hub_id, ids, kept} = form_hub("slow_restart", peer)
+
+    with_restart_held(peer, hub_id, fn coordinator ->
+      Process.exit(coordinator, :kill)
+      assert_kept(hub_id, ids, peer, kept)
+    end)
+
+    assert_kept(hub_id, ids, peer, kept)
+  end
+
+  test "a peer whose coordinator crashes announces no leave", %{joining: peer} do
+    {hub_id, ids, kept} = form_hub("crashed", peer)
+
+    with_restart_held(peer, hub_id, fn coordinator ->
+      :ok = GenServer.stop(coordinator, :boom)
+      # A leave announced on the way down has left the peer's event queue.
+      :erpc.call(peer, :sys, :get_state, [:"hub.#{hub_id}.event_queue"])
+      assert_kept(hub_id, ids, peer, kept)
+    end)
+  end
+
+  test "a peer whose hub stops while this coordinator restarts still leaves",
+       %{joining: peer} do
+    {hub_id, ids, _kept} = form_hub("watcher_restart", peer)
+    initializer = :erpc.call(peer, ProcessHub.Hub, :get, [hub_id]).procs.initializer
+
+    # The peer's coordinator leaves the group and is not restarted.
+    :ok = :erpc.call(peer, :sys, :suspend, [initializer])
+    Process.exit(:erpc.call(peer, Process, :whereis, [hub_id]), :kill)
+    assert Common.eventually(fn -> not handler_on?(hub_id, peer) end)
+
+    # This node's new coordinator never saw that leave.
+    first = Process.whereis(hub_id)
+    Process.exit(first, :kill)
+    assert Common.eventually(fn -> Process.whereis(hub_id) not in [nil, first] end)
+    :sys.get_state(hub_id)
+
+    # Killing the suspended supervisor takes the peer's whole hub down.
+    Process.exit(initializer, :kill)
+
+    assert_left(hub_id, ids, peer)
+  end
+
+  test "a leave applied while the node runs the hub removes nothing", %{joining: peer} do
+    {hub_id, ids, kept} = form_hub("late_leave", peer)
+    assert Common.eventually(fn -> handler_on?(hub_id, peer) end)
+
+    Cluster.handle_node_down(%{
+      removed_nodes: [peer],
+      hub: ProcessHub.Hub.get(hub_id),
+      kind: :leave
+    })
+
+    assert hub_nodes(hub_id) == [peer]
+    assert bound_to(hub_id, ids, peer) == kept
+  end
+
+  defp form_hub(prefix, peer, settings \\ []) do
+    hub_id = :"#{prefix}_#{System.unique_integer([:positive])}"
+    start_hub_everywhere(struct(%ProcessHub{hub_id: hub_id}, settings), %{}, [peer])
+    assert Common.eventually(fn -> hub_nodes(hub_id) == [peer] end)
+
+    ids = start_children(hub_id, 16)
+    assert Common.eventually(fn -> bound_to(hub_id, ids, peer) != [] end)
+    {hub_id, ids, bound_to(hub_id, ids, peer)}
+  end
+
+  # Runs `fun` on the peer's coordinator while its hub cannot restart it.
+  defp with_restart_held(peer, hub_id, fun) do
+    initializer = :erpc.call(peer, ProcessHub.Hub, :get, [hub_id]).procs.initializer
+    :ok = :erpc.call(peer, :sys, :suspend, [initializer])
+
+    try do
+      fun.(:erpc.call(peer, Process, :whereis, [hub_id]))
+    after
+      :erpc.call(peer, :sys, :resume, [initializer])
+    end
+  end
+
+  defp assert_kept(hub_id, ids, peer, kept) do
+    registry = :"hub.#{hub_id}.system_registry"
+
+    assert Common.eventually(fn ->
+             {:monitors, monitors} = Process.info(Process.whereis(hub_id), :monitors)
+             {:process, {registry, peer}} in monitors
+           end)
+
+    # A DOWN for that monitor is sent before this reply, so the coordinator
+    # has handled it by the next call; a leave it batched is still pending.
+    assert is_pid(:erpc.call(peer, Process, :whereis, [registry]))
+    state = :sys.get_state(hub_id)
+
+    assert peer not in state.event_batches.cluster_leave.nodes
+    assert hub_nodes(hub_id) == [peer]
+    assert bound_to(hub_id, ids, peer) == kept
+  end
+
+  defp assert_left(hub_id, ids, peer) do
+    assert Common.eventually(fn -> hub_nodes(hub_id) == [] end),
+           "the stopped peer is still a member: #{inspect(hub_nodes(hub_id))}"
+
+    assert Common.eventually(fn -> bound_to(hub_id, ids, peer) == [] end),
+           "rows still bound to the stopped peer: #{inspect(bound_to(hub_id, ids, peer))}"
+  end
+
+  defp bound_to(hub_id, ids, node) do
+    for id <- ids,
+        {_, node_pids} <- [ProcessRegistry.lookup(hub_id, id)],
+        Keyword.has_key?(node_pids, node),
+        do: id
+  end
+
+  defp handler_on?(hub_id, node) do
+    {:ok, handlers} = :blockade.get_handlers(:"hub.#{hub_id}.event_queue", :cluster_join_event)
+    Enum.any?(handlers, &(node(&1) == node))
   end
 end
