@@ -155,6 +155,11 @@ defmodule ProcessHub.Service.Migration do
   force-migrates whatever is still deferred at the `:timeout` deadline
   (default #{@drain_timeout} ms). Leaves children untouched on error.
 
+  A drain pass still queued at the deadline is waited for and whatever it
+  defers is forced, so the drain then overruns `:timeout` by the work queued
+  ahead of the pass, the pass's consent wait (at most `:consent_timeout`) and
+  the forced moves.
+
   Returns once every other node has confirmed it dropped this node. A node
   confirms behind the children it moved here before, during its own drain or
   redistribution, so those have been passed on by then. A node silent at the
@@ -163,7 +168,7 @@ defmodule ProcessHub.Service.Migration do
 
   A hub with work still queued, such as a membership change or a start, answers
   `{:error, :locked}` by default. Pass `when_busy: :wait` to drain it anyway:
-  the drain's pass runs on the worker queue behind that work, inside `:timeout`.
+  the drain's pass runs on the worker queue behind that work.
   """
   @spec drain(ProcessHub.hub_id() | Hub.t(), keyword()) ::
           {:ok, %{migrated: non_neg_integer(), forced: non_neg_integer()}}
@@ -359,8 +364,13 @@ defmodule ProcessHub.Service.Migration do
 
     forced =
       case await_drained(hub, deadline) do
-        :drained -> 0
-        :deadline -> run_pass(hub, :force).migrated
+        :drained ->
+          0
+
+        # Read on the worker queue, behind a drain pass still queued at the
+        # deadline, so the children that pass defers are forced too.
+        :deadline ->
+          WorkerQueue.run_on(hub.procs.worker_queue, fn -> run_pass(hub, :force) end).migrated
       end
 
     await_peers(hub, peers, deadline)
@@ -401,12 +411,14 @@ defmodule ProcessHub.Service.Migration do
   defp await_drained(hub, deadline) do
     wait = remaining(deadline)
 
+    # Past the deadline the drain pass may still be queued and defer children
+    # later, so an empty list then does not mean drained.
     cond do
-      deferred_list(hub) === [] ->
-        :drained
-
       wait === 0 ->
         :deadline
+
+      deferred_list(hub) === [] ->
+        :drained
 
       true ->
         receive do

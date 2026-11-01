@@ -494,15 +494,7 @@ defmodule Test.Service.MigrationTest do
     end
 
     test "distribution removal stops assigning the draining node", %{hub: hub} do
-      Storage.insert(hub.storage.misc, StorageKey.hr(), Ring.create_ring([node(), @remote_node]))
-
-      HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), %HookManager{
-        id: :ch_leave,
-        m: ConsistentHashing,
-        f: :handle_node_leave,
-        a: [hub, :_]
-      })
-
+      allow_drain(hub)
       Migration.handle_drain_distribution_removal(hub, node())
 
       assert Cluster.nodes(hub.storage.misc, [:include_local]) == [@remote_node]
@@ -513,16 +505,7 @@ defmodule Test.Service.MigrationTest do
 
     test "deadline forces remaining deferred children with warning, hook, and summary",
          %{hub: hub} do
-      Registry.register(hub.procs.system_registry, "dist_sup", nil)
-      Storage.insert(hub.storage.misc, StorageKey.hr(), Ring.create_ring([node(), @remote_node]))
-
-      HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), %HookManager{
-        id: :ch_leave,
-        m: ConsistentHashing,
-        f: :handle_node_leave,
-        a: [hub, :_]
-      })
-
+      allow_drain(hub)
       recv_hook(hub, Hook.drain_completed())
 
       {:ok, pid1} = ConsentServer.start_link(%{consent_reply: :defer})
@@ -548,5 +531,53 @@ defmodule Test.Service.MigrationTest do
       # The local node is gone from the distribution.
       assert Cluster.nodes(hub.storage.misc, [:include_local]) == [@remote_node]
     end
+
+    test "a pass still queued at the deadline has what it defers forced", %{hub: hub} do
+      allow_drain(hub)
+      {:ok, pid} = ConsentServer.start_link(%{consent_reply: :defer})
+      register_child(hub, :c1, pid)
+
+      test_pid = self()
+      queue = GenServer.whereis(hub.procs.worker_queue)
+
+      WorkerQueue.run_async(hub.procs.worker_queue, fn ->
+        send(test_pid, :queue_held)
+        receive do: (:release -> :ok)
+      end)
+
+      assert_receive :queue_held
+      :erlang.trace(queue, true, [:receive])
+
+      log =
+        capture_log(fn ->
+          drain = Task.async(fn -> Migration.drain(hub, timeout: 50) end)
+
+          # The drain pass, then the forced pass queued behind it.
+          for _ <- 1..2 do
+            assert_receive {:trace, ^queue, :receive, {:"$gen_call", _, {:handle_work, _}}}, 1_000
+          end
+
+          send(queue, :release)
+          assert {:ok, %{migrated: 0, forced: 1}} = Task.await(drain)
+        end)
+
+      assert log =~ "Drain pass still queued at the deadline"
+      assert Migration.deferred_list(hub) == []
+      assert {%{}, ^pid} = Storage.get(hub.storage.misc, {:hotswap_state, :c1})
+    end
+  end
+
+  # A hub that may drain: not partitioned, the local node in the ring, and the
+  # distribution dropping it on leave.
+  defp allow_drain(hub) do
+    Registry.register(hub.procs.system_registry, "dist_sup", nil)
+    Storage.insert(hub.storage.misc, StorageKey.hr(), Ring.create_ring([node(), @remote_node]))
+
+    HookManager.register_handler(hub.storage.hook, Hook.pre_node_leave(), %HookManager{
+      id: :ch_leave,
+      m: ConsistentHashing,
+      f: :handle_node_leave,
+      a: [hub, :_]
+    })
   end
 end
