@@ -28,8 +28,9 @@ defmodule ProcessHub.Service.Storage.Behaviour do
   Options accepted by `c:insert/4`.
 
     * `:ttl` — time-to-live in milliseconds. When set, the entry is
-      stored as `{key, value, expire_ms}` and reads filter expired
-      entries.
+      stored as `{key, value, expire_ms}` and the janitor purges it once
+      expired; whether reads skip it before then depends on the backend
+      (see `c:get/2`).
   """
   @type insert_opts() :: [{:ttl, pos_integer()}] | keyword()
 
@@ -68,7 +69,8 @@ defmodule ProcessHub.Service.Storage.Behaviour do
   Supported `opts`:
 
     * `:ttl` — milliseconds until the entry is considered expired.
-      Stored as `{key, value, expire_ms}`; reads filter expired entries.
+      Stored as `{key, value, expire_ms}`; see `c:get/2` for how reads
+      treat it once expired.
   """
   @callback insert(ref :: ref(), key :: term(), value :: term(), opts :: insert_opts()) ::
               :ok | {:error, term()}
@@ -93,13 +95,17 @@ defmodule ProcessHub.Service.Storage.Behaviour do
             ) :: :ok | {:error, term()}
 
   @doc """
-  Returns the value stored under `key`, or `nil` if the key is missing
-  or expired.
+  Returns the value stored under `key`, or `nil` if the key is missing.
+  The durable backends (`Dets`, `DurableEts`) also answer `nil` for an
+  expired entry; the default `Ets` backend returns it until the janitor
+  purges it, and the registry's stop path relies on reading an expired
+  placeholder to clear its expiry index.
   """
   @callback get(ref :: ref(), key :: term()) :: term() | nil
 
   @doc """
-  Returns `true` when `key` is present (and not expired).
+  Returns `true` when `key` is present; an expired entry counts as present
+  exactly where `c:get/2` returns it.
   """
   @callback exists?(ref :: ref(), key :: term()) :: boolean()
 
@@ -123,7 +129,8 @@ defmodule ProcessHub.Service.Storage.Behaviour do
   @doc """
   Returns all entries as a list. The shape mirrors the existing
   `:ets.tab2list/1` output: 2-tuples for entries without TTL and
-  3-tuples for entries with TTL. Expired entries are filtered.
+  3-tuples for entries with TTL. Expired entries are left out exactly where
+  `c:get/2` hides them.
   """
   @callback export_all(ref :: ref()) :: list()
 

@@ -2,10 +2,10 @@ defmodule ProcessHub.Service.Storage.Ets do
   @moduledoc """
   ETS-backed registry storage.
 
-  This is the default backend. It preserves bit-for-bit the observable
-  behaviour of the previous `ProcessHub.Service.Storage` module: TTL
-  entries are stored as `{key, value, expire_ms}`, reads filter expired
-  entries, and `match/2` returns a list of tuples.
+  This is the default backend. TTL entries are stored as
+  `{key, value, expire_ms}`, and every read returns an expired entry until
+  the janitor purges it (see `c:ProcessHub.Service.Storage.Behaviour.get/2`);
+  `match/2` returns a list of tuples.
 
   The opaque ref returned by `open/2` is the ETS table name (an atom
   matching the hub id). Existing call sites that pass `hub_id` directly
