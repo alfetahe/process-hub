@@ -173,14 +173,6 @@ defmodule ProcessHub.Coordinator do
       %{reason: reason}
     )
 
-    # Only a hub stop shuts the coordinator down; after a crash it restarts
-    # and its node stays in the hub.
-    if reason == :shutdown do
-      Dispatcher.dispatch_event_async(hub.procs.event_queue, @event_cluster_leave, node(), %{
-        members: :external
-      })
-    end
-
     # Terminate all the running tasks before shutting down the coordinator.
     task_sup = hub.procs.task_sup
 
@@ -349,11 +341,6 @@ defmodule ProcessHub.Coordinator do
   end
 
   @impl true
-  def handle_info({@event_cluster_leave, node}, state) do
-    {:noreply, batch_event(state, :cluster_leave, node)}
-  end
-
-  @impl true
   def handle_info({:nodedown, node}, state) do
     {:noreply,
      state
@@ -389,8 +376,8 @@ defmodule ProcessHub.Coordinator do
   def handle_info({:process_batch, :cluster_leave}, state) do
     {state, nodes} = take_batch(state, :cluster_leave)
 
-    # Graceful leaves need neither connection validation (the node announced
-    # its departure before shutting down) nor a grace.
+    # Graceful leaves need neither connection validation (the node's hub
+    # stopped while it stayed connected) nor a grace.
     {:noreply, dispatch_departure(state, :leave, nodes)}
   end
 
@@ -1001,7 +988,7 @@ defmodule ProcessHub.Coordinator do
   # A coordinator also leaves the group when it restarts, so a connected member
   # without one leaves the hub only once its system registry is gone: started
   # first and stopped last, it outlives a coordinator restart but not a hub
-  # stop. This also covers a stop whose announcement was lost.
+  # stop. This is the only signal that a connected node's hub stopped.
   defp watch_departed(hub) do
     {:monitors, monitors} = Process.info(self(), :monitors)
 
@@ -1085,7 +1072,6 @@ defmodule ProcessHub.Coordinator do
     Blockade.add_handler(eq, @event_cluster_join)
     Blockade.add_handler(eq, @event_cluster_heartbeat)
     Blockade.add_handler(eq, @event_node_restarted)
-    Blockade.add_handler(eq, @event_cluster_leave)
     Blockade.add_handler(eq, @event_cluster_leave_batch)
     Blockade.add_handler(eq, @event_node_registry_broadcast)
     Blockade.add_handler(eq, @event_requests_handle)

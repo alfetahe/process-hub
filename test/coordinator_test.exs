@@ -323,7 +323,7 @@ defmodule CoordinatorTest do
   end
 
   describe "departure kind" do
-    test "a disconnect reaches the strategy as :down and an announced leave as :leave" do
+    test "a disconnect reaches the strategy as :down and a stopped hub as :leave" do
       hub_id = :coord_departure_kind
 
       {:ok, pid} =
@@ -338,14 +338,15 @@ defmodule CoordinatorTest do
 
       hub = ProcessHub.Hub.get(hub_id)
       Cluster.add_hub_node(hub.storage.misc, :vanished@host)
-      Cluster.add_hub_node(hub.storage.misc, :announced@host)
+      Cluster.add_hub_node(hub.storage.misc, :stopped@host)
 
       send(hub_id, {:nodedown, :vanished@host})
-      send(hub_id, {@event_cluster_leave, :announced@host})
+      registry = {hub.procs.system_registry, :stopped@host}
+      send(hub_id, {:DOWN, make_ref(), :process, registry, :shutdown})
 
       local = node()
       assert_receive {:toggle_lock, ^local, :vanished@host, :down}, 2_000
-      assert_receive {:toggle_lock, ^local, :announced@host, :leave}, 2_000
+      assert_receive {:toggle_lock, ^local, :stopped@host, :leave}, 2_000
     end
   end
 

@@ -15,11 +15,6 @@ defmodule ProcessHub.Constant.Event do
   @type event_cluster_heartbeat() :: :cluster_heartbeat_event
 
   @typedoc """
-  Event used when a node leaves the ProcessHub cluster.
-  """
-  @type event_post_cluster_leave() :: :cluster_leave_event
-
-  @typedoc """
   Event a coordinator dispatches when it restarts within `:net_ticktime`, so
   peers can purge bindings that point at its now-dead pids before re-syncing.
   """
@@ -52,7 +47,6 @@ defmodule ProcessHub.Constant.Event do
       @event_cluster_join :cluster_join_event
       @event_cluster_heartbeat :cluster_heartbeat_event
       @event_node_restarted :node_restarted_event
-      @event_cluster_leave :cluster_leave_event
       @event_cluster_leave_batch :cluster_leave_batch_event
       @event_node_registry_broadcast :node_registry_broadcast_event
       @event_requests_handle :requests_handle_event

@@ -23,9 +23,9 @@ defprotocol ProcessHub.Strategy.PartitionTolerance.Base do
   @doc """
   Determines if a quorum failure should be triggered when a node leaves the cluster.
 
-  `kind` is `:leave` when the node announced its departure or drained, so it was
-  reachable when it went and cannot be on the other side of a split, and `:down`
-  when it disappeared without either.
+  `kind` is `:leave` when the node drained or stopped its hub while connected,
+  so it was reachable when it went and cannot be on the other side of a split,
+  and `:down` when it disappeared without either.
   """
   @spec toggle_lock?(__MODULE__.t(), Hub.t(), node(), :down | :leave) :: boolean()
   def toggle_lock?(strategy, hub, down_node, kind)

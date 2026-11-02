@@ -4,7 +4,7 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
   tick timeout notices it) must not crash the coordinator, and a coordinator
   restarted inside the hub must say so through a hook and keep its place on
   the peers however long the restart takes, while a hub stopped on a peer must
-  leave the others even when its announcement never goes out.
+  leave the others even when its event queue is stuck.
   """
 
   use ExUnit.Case, async: false
@@ -191,11 +191,11 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
     assert bound_here.() == kept
   end
 
-  test "a peer whose hub stops leaves the hub even when its announcement is lost",
+  test "a peer whose hub stops leaves the hub even when its event queue is stuck",
        %{joining: peer} do
     {hub_id, ids, _kept} = form_hub("stopped", peer, cluster_event_debounce: 0)
 
-    # The peer's event queue holds the leave announcement until the stop kills it.
+    # Nothing the peer's event queue holds goes out before the stop kills it.
     :ok = :erpc.call(peer, :sys, :suspend, [:"hub.#{hub_id}.event_queue"])
     :ok = :erpc.call(peer, ProcessHub.Initializer, :stop, [hub_id])
 
@@ -214,13 +214,11 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
     assert_kept(hub_id, ids, peer, kept)
   end
 
-  test "a peer whose coordinator crashes announces no leave", %{joining: peer} do
+  test "a peer whose coordinator crashes stays in the hub", %{joining: peer} do
     {hub_id, ids, kept} = form_hub("crashed", peer)
 
     with_restart_held(peer, hub_id, fn coordinator ->
       :ok = GenServer.stop(coordinator, :boom)
-      # A leave announced on the way down has left the peer's event queue.
-      :erpc.call(peer, :sys, :get_state, [:"hub.#{hub_id}.event_queue"])
       assert_kept(hub_id, ids, peer, kept)
     end)
   end

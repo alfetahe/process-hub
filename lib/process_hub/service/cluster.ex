@@ -169,9 +169,9 @@ defmodule ProcessHub.Service.Cluster do
 
   @doc """
   Asks the partition tolerance strategy about each departed node and locks the
-  hub when it says so. `kind` is `:leave` for an announced or drained departure
-  and `:down` for a node that disappeared. Call it after the nodes have left
-  the membership.
+  hub when it says so. `kind` is `:leave` for a node that drained or stopped
+  its hub while connected, and `:down` for a node that disappeared. Call it
+  after the nodes have left the membership.
   """
   @spec lock_on_departure(Hub.t(), [node()], :down | :leave) :: :ok
   def lock_on_departure(hub, nodes, kind) do

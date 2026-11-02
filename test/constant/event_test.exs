@@ -14,10 +14,6 @@ defmodule Test.Constant.EventTest do
     assert @event_node_restarted === :node_restarted_event
   end
 
-  test "event cluster leave" do
-    assert @event_cluster_leave === :cluster_leave_event
-  end
-
   test "event cluster leave batch" do
     assert @event_cluster_leave_batch === :cluster_leave_batch_event
   end
