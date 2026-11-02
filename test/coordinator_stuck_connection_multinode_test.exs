@@ -259,6 +259,27 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
     assert bound_to(hub_id, ids, peer) == kept
   end
 
+  test "a peer whose hub starts again before its leave applies is greeted", %{joining: peer} do
+    {hub_id, ids, _kept} = form_hub("restarted", peer)
+    local = local_ids(hub_id, ids)
+    worker_queue = ProcessHub.Hub.get(hub_id).procs.worker_queue
+
+    # The leave cannot remove the peer before its new hub is in the group.
+    :ok = :sys.suspend(worker_queue)
+
+    try do
+      :ok = :erpc.call(peer, ProcessHub.Initializer, :stop, [hub_id])
+      assert Common.eventually(fn -> not handler_on?(hub_id, peer) end)
+      :erpc.call(peer, Bootstrap, :start_hub_on_node, [%ProcessHub{hub_id: hub_id}, %{}])
+      assert Common.eventually(fn -> handler_on?(hub_id, peer) end)
+    after
+      :sys.resume(worker_queue)
+    end
+
+    assert Common.eventually(fn -> bound_to(hub_id, local, node(), peer) == local end),
+           "the restarted peer never received this node's registry"
+  end
+
   defp form_hub(prefix, peer, settings \\ []) do
     hub_id = :"#{prefix}_#{System.unique_integer([:positive])}"
     start_hub_everywhere(struct(%ProcessHub{hub_id: hub_id}, settings), %{}, [peer])
@@ -307,9 +328,10 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
            "rows still bound to the stopped peer: #{inspect(bound_to(hub_id, ids, peer))}"
   end
 
-  defp bound_to(hub_id, ids, node) do
+  # The ids bound to `node` in the registry as `at` sees it.
+  defp bound_to(hub_id, ids, node, at \\ node()) do
     for id <- ids,
-        {_, node_pids} <- [ProcessRegistry.lookup(hub_id, id)],
+        {_, node_pids} <- [:erpc.call(at, ProcessRegistry, :lookup, [hub_id, id])],
         Keyword.has_key?(node_pids, node),
         do: id
   end

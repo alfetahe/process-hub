@@ -796,15 +796,16 @@ defmodule ProcessHub.Coordinator do
       end)
 
     # A node back within its nodedown grace kept its place, so nothing is
-    # redistributed; it is greeted like a joining node in case it restarted.
-    returned = Enum.filter(nodes, &held?(state, &1))
-    state = release_held(state, returned)
+    # redistributed.
+    state = release_held(state, Enum.filter(nodes, &held?(state, &1)))
 
-    # Broadcast local registry data to joining nodes, and the declared-list
-    # version so a rejoining node catches up on stops it missed before its
+    # Every joining node is greeted, a member too: one back from its grace, or
+    # one whose hub stopped and started again before its leave was applied,
+    # may have restarted with nothing. Local registry data goes out, and the
+    # declared-list version so it catches up on changes it missed before its
     # first reconcile round. The boot token goes first, so a node that learns
     # it here never purges the registry it is sent right after.
-    case Enum.uniq(new_nodes ++ returned) do
+    case Enum.uniq(nodes) -- [local_node] do
       [] ->
         :ok
 
