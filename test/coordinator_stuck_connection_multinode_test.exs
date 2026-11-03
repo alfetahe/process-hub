@@ -218,7 +218,7 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
     {hub_id, ids, kept} = form_hub("crashed", peer)
 
     with_restart_held(peer, hub_id, fn coordinator ->
-      :ok = GenServer.stop(coordinator, :boom)
+      quiet(peer, fn -> :ok = GenServer.stop(coordinator, :boom) end)
       assert_kept(hub_id, ids, peer, kept)
     end)
   end
@@ -227,6 +227,9 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
        %{joining: peer} do
     {hub_id, ids, _kept} = form_hub("watcher_restart", peer)
     initializer = :erpc.call(peer, ProcessHub.Hub, :get, [hub_id]).procs.initializer
+
+    hub_procs =
+      for {_, pid, _, _} <- :erpc.call(peer, Supervisor, :which_children, [initializer]), do: pid
 
     # The peer's coordinator leaves the group and is not restarted.
     :ok = :erpc.call(peer, :sys, :suspend, [initializer])
@@ -240,7 +243,10 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
     :sys.get_state(hub_id)
 
     # Killing the suspended supervisor takes the peer's whole hub down.
-    Process.exit(initializer, :kill)
+    quiet(peer, fn ->
+      Process.exit(initializer, :kill)
+      assert Common.eventually(fn -> not Enum.any?(hub_procs, &alive_on?(peer, &1)) end)
+    end)
 
     assert_left(hub_id, ids, peer)
   end
@@ -289,6 +295,20 @@ defmodule Test.CoordinatorStuckConnectionMultinodeTest do
     assert Common.eventually(fn -> bound_to(hub_id, ids, peer) != [] end)
     {hub_id, ids, bound_to(hub_id, ids, peer)}
   end
+
+  # The crashes these tests cause on purpose would log errors on the peer.
+  defp quiet(peer, fun) do
+    level = :erpc.call(peer, Logger, :level, [])
+    :ok = :erpc.call(peer, Logger, :configure, [[level: :none]])
+
+    try do
+      fun.()
+    after
+      :erpc.call(peer, Logger, :configure, [[level: level]])
+    end
+  end
+
+  defp alive_on?(peer, pid), do: :erpc.call(peer, Process, :alive?, [pid])
 
   # Runs `fun` on the peer's coordinator while its hub cannot restart it.
   defp with_restart_held(peer, hub_id, fun) do
