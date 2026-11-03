@@ -1,7 +1,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## v0.7.1 - Upcoming
+## v0.8.0 - 2026-11-03
 
 ### Added
 - New `forward_messages` option on `HotSwap` and `ColdSwap` (default `false`, needs `handover: true`). Messages that reach the old process after its state was read are no longer lost: they are passed on to the new process, which handles them after the state. Your process code stays the same. The State Handover guide lists what to know. Nothing changes unless you set it.
@@ -15,7 +15,7 @@ All notable changes to this project will be documented in this file.
 - **Experimental:** new `:auto_recovery` option `:cluster_settle_ms` (default `2_000`): how long a starting hub waits for other nodes before deciding it is alone. Set it to `0` if your application connects the cluster before starting its hubs.
 
 ### Deprecated
-- `MajorityQuorum` is deprecated and will be removed in v0.8.0: it cannot be scaled down without `reset_cluster_size/2`, and a node that restarts alone runs as a cluster of one. Use `StaticQuorum` for a fixed number of nodes or `DynamicQuorum` when it changes.
+- `MajorityQuorum` is deprecated and will be removed in v0.9.0: it cannot be scaled down without `reset_cluster_size/2`, and a node that restarts alone runs as a cluster of one. Use `StaticQuorum` for a fixed number of nodes or `DynamicQuorum` when it changes.
 
 ### Changed
 - **BREAKING:** custom partition tolerance strategies implement `toggle_lock?/4` instead of `toggle_lock?/3`; the new last argument is `:leave` for a node that drained or stopped its hub and `:down` for one that disappeared, and ignoring it keeps the old behaviour. Strategies also implement `validate/1`, which checks their settings before the hub starts.
