@@ -133,11 +133,17 @@ defmodule ProcessHub.Service.Cluster do
   Handles the node down event by dispatching hooks, removing nodes from cluster state,
   and triggering the node down update task.
   """
-  def handle_node_down(%{removed_nodes: removed_nodes, hub: hub} = arg) do
+  def handle_node_down(%{removed_nodes: removed_nodes, hub: hub, kind: kind} = arg) do
     # Membership changes only on the worker queue, so a node another event
-    # already removed is not removed twice, and one whose coordinator is in
-    # the group runs the hub again, whatever event said it left.
-    removable = nodes(hub.storage.misc) -- hub_peers(hub)
+    # already removed is not removed twice. A leave skips a node whose
+    # coordinator is back in the group, as its hub runs again; a node down
+    # still applies, since a node that restarted inside its grace is removed
+    # on purpose so its lost children are placed again.
+    removable =
+      case kind do
+        :leave -> nodes(hub.storage.misc) -- hub_peers(hub)
+        :down -> nodes(hub.storage.misc)
+      end
 
     case Enum.filter(removed_nodes, &(&1 in removable)) do
       [] -> :ok
